@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
-import { DragControls } from 'three/addons/controls/DragControls.js'; // Import DragControls
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 // Clock
 const clock = new THREE.Clock();
 
 // Scene
-let scene, camera, viewerContainer, renderer, orbitControls, dragControls, flyControls;
+let scene, camera, viewerContainer, renderer, orbitControls, transformControls, flyControls;
 const geometryGroup = new THREE.Group();
 let raycaster;
 let mouse;
@@ -33,6 +33,12 @@ let isGridVisible = true;
 let toggleGridButton;
 let cameraModeOrbitButton, cameraModeFlyButton;
 
+// Transformation snapping
+let isSnapToGridEnabled = false;
+let gridSnapSize = 10; // in mm
+let angleSnapSize = 1; // in degrees (will convert to radians)
+let toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput;
+
 // Add/delete
 let addObjectButton, deleteSelectedObjectButton;
 let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newObjectParamsDiv, confirmAddObjectButton, cancelAddObjectButton;
@@ -53,7 +59,7 @@ const highlightMaterial = new THREE.MeshLambertMaterial({
 // UI Elements from HTML
 let gdmlFileInput, loadGdmlButton, exportGdmlButton,
     saveProjectButton, loadProjectButton, projectFileInput,
-    modeObserveButton, modeMoveButton, currentModeDisplay;
+    modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton, currentModeDisplay;
 
 function init() {
 
@@ -105,6 +111,56 @@ function init() {
     gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x888888, 0xcccccc);
     gridHelper.position.y = -0.1; // Slightly below origin to avoid z-fighting with objects on y=0 plane
     scene.add(gridHelper);
+
+    // Snap to Grid controls
+    toggleSnapToGridButton = document.getElementById('toggleSnapToGridButton');
+    gridSnapSizeInput = document.getElementById('gridSnapSizeInput');
+    angleSnapSizeInput = document.getElementById('angleSnapSizeInput');
+
+    toggleSnapToGridButton.addEventListener('click', toggleSnapToGrid);
+    gridSnapSizeInput.addEventListener('change', updateSnapSettings);
+    angleSnapSizeInput.addEventListener('change', updateSnapSettings);
+
+    updateSnapSettings(); // Initialize snap settings from input fields
+
+    // TransformControls
+    transformControls = new TransformControls(camera, renderer.domElement);
+    scene.add(transformControls);
+
+    // Attach TransformControls to OrbitControls events to disable orbit when transforming
+    transformControls.addEventListener('dragging-changed', function (event) {
+        orbitControls.enabled = !event.value; // Disable orbit if dragging
+        // Update inspector panel live during drag
+        if (event.value && selectedObjects.length === 1) { // dragging started on single object
+            updateInfoPanelForObject(selectedObjects[0]); // Initial update
+        }
+    });
+
+    // Handle TransformControls transform events
+    transformControls.addEventListener('objectChange', function (event) {
+        // This fires constantly during drag, and once at the end
+        if (selectedObjects.length === 1 && selectedObjects[0].isMesh) { // Only update for single selected mesh
+            updateInfoPanelForObject(selectedObjects[0]); // Live update
+        }
+    });
+
+    // When transformation ends, save to backend
+    transformControls.addEventListener('mouseUp', function (event) { // Use mouseUp for final position
+        if (selectedObjects.length === 1 && selectedObjects[0].isMesh) {
+            const objData = selectedObjects[0].userData;
+            const updatedPosition = {
+                x: selectedObjects[0].position.x,
+                y: selectedObjects[0].position.y,
+                z: selectedObjects[0].position.z
+            };
+            const euler = new THREE.Euler().setFromQuaternion(selectedObjects[0].quaternion, 'ZYX');
+            const updatedRotation = { x: euler.x, y: euler.y, z: euler.z };
+
+            sendTransformUpdate(objData.id, updatedPosition, updatedRotation);
+        }
+    });
+
+    transformControls.enabled = false; // Disabled by default
 
     // Raycaster for object selection
     raycaster = new THREE.Raycaster();
@@ -158,49 +214,49 @@ function init() {
     });
     activateTab('tab_structure'); // Default tab
 
-    // Initialize DragControls (will be activated/deactivated based on mode)
-    // We pass an empty array initially, will update it with selectedObjects
-    dragControls = new DragControls([], camera, renderer.domElement);
-    dragControls.addEventListener('dragstart', function (event) {
-        orbitControls.enabled = false; // Disable camera orbit while dragging
-        event.object.userData.isDragging = true;
-    });
-    dragControls.addEventListener('drag', function(event) {
-        // Constrain drag to axes if X, Y, or Z key is held (implementation later)
-        if (event.object.userData.isDragging) {
-            updateInfoPanelForObject(event.object); // Live update position in panel
-        }
-    });
-    // Modify DragControls 'dragend'
-    dragControls.addEventListener('dragend', function (event) {
-        orbitControls.enabled = true;
-        if (event.object.userData.isDragging) {
-            populateInspectorPanel(event.object); // Final update
-            event.object.userData.isDragging = false;
+    // // Initialize DragControls (will be activated/deactivated based on mode)
+    // // We pass an empty array initially, will update it with selectedObjects
+    // dragControls = new DragControls([], camera, renderer.domElement);
+    // dragControls.addEventListener('dragstart', function (event) {
+    //     orbitControls.enabled = false; // Disable camera orbit while dragging
+    //     event.object.userData.isDragging = true;
+    // });
+    // dragControls.addEventListener('drag', function(event) {
+    //     // Constrain drag to axes if X, Y, or Z key is held (implementation later)
+    //     if (event.object.userData.isDragging) {
+    //         updateInfoPanelForObject(event.object); // Live update position in panel
+    //     }
+    // });
+    // // Modify DragControls 'dragend'
+    // dragControls.addEventListener('dragend', function (event) {
+    //     orbitControls.enabled = true;
+    //     if (event.object.userData.isDragging) {
+    //         populateInspectorPanel(event.object); // Final update
+    //         event.object.userData.isDragging = false;
 
-            // Send update to backend
-            const objData = event.object.userData;
-            const updatedPosition = {
-                x: event.object.position.x,
-                y: event.object.position.y,
-                z: event.object.position.z
-            };
-            // For rotation, you'd get it from event.object.quaternion and convert to ZYX Euler
-            // const euler = new THREE.Euler().setFromQuaternion(event.object.quaternion, 'ZYX');
-            // const updatedRotation = { x: euler.x, y: euler.y, z: euler.z };
+    //         // Send update to backend
+    //         const objData = event.object.userData;
+    //         const updatedPosition = {
+    //             x: event.object.position.x,
+    //             y: event.object.position.y,
+    //             z: event.object.position.z
+    //         };
+    //         // For rotation, you'd get it from event.object.quaternion and convert to ZYX Euler
+    //         // const euler = new THREE.Euler().setFromQuaternion(event.object.quaternion, 'ZYX');
+    //         // const updatedRotation = { x: euler.x, y: euler.y, z: euler.z };
 
-            sendTransformUpdate(objData.id, updatedPosition, null); // Send null for rotation for now
-        }
-    });
-    dragControls.addEventListener('dragend', function (event) {
-        orbitControls.enabled = true;
-        if (event.object.userData.isDragging) {
-             // Final update of info panel after drag
-             populateInspectorPanel(event.object);
-            event.object.userData.isDragging = false;
-        }
-    });
-    dragControls.enabled = false; // Disabled by default
+    //         sendTransformUpdate(objData.id, updatedPosition, null); // Send null for rotation for now
+    //     }
+    // });
+    // dragControls.addEventListener('dragend', function (event) {
+    //     orbitControls.enabled = true;
+    //     if (event.object.userData.isDragging) {
+    //          // Final update of info panel after drag
+    //          populateInspectorPanel(event.object);
+    //         event.object.userData.isDragging = false;
+    //     }
+    // });
+    // dragControls.enabled = false; // Disabled by default
 
     // Menu and Mode Buttons
     gdmlFileInput = document.getElementById('gdmlFile');
@@ -211,7 +267,10 @@ function init() {
     projectFileInput = document.getElementById('projectFile');       
 
     modeObserveButton = document.getElementById('modeObserveButton');
-    modeMoveButton = document.getElementById('modeMoveButton');
+    //modeMoveButton = document.getElementById('modeMoveButton');
+    modeTranslateButton = document.getElementById('modeTranslateButton'); // Renamed
+    modeRotateButton = document.getElementById('modeRotateButton');       // New
+    modeScaleButton = document.getElementById('modeScaleButton');
     currentModeDisplay = document.getElementById('currentModeDisplay');
 
     loadGdmlButton.addEventListener('click', () => gdmlFileInput.click());
@@ -223,7 +282,7 @@ function init() {
     projectFileInput.addEventListener('change', handleLoadProject);
 
     modeObserveButton.addEventListener('click', () => setMode('observe'));
-    modeMoveButton.addEventListener('click', () => setMode('move'));
+    //modeMoveButton.addEventListener('click', () => setMode('move'));
 
     cameraModeOrbitButton.addEventListener('click', () => setCameraMode('orbit'));
     cameraModeFlyButton.addEventListener('click', () => setCameraMode('fly'));
@@ -236,6 +295,11 @@ function init() {
     cancelAddObjectButton.addEventListener('click', hideAddObjectModal);
     modalBackdrop.addEventListener('click', hideAddObjectModal); // Click backdrop to close
     newObjectTypeSelect.addEventListener('change', populateAddObjectParams);
+
+    modeObserveButton.addEventListener('click', () => setMode('observe'));
+    modeTranslateButton.addEventListener('click', () => setMode('translate'));
+    modeRotateButton.addEventListener('click', () => setMode('rotate'));
+    // modeScaleButton.addEventListener('click', () => setMode('scale')); // Enable when ready
     
     setMode('observe'); // Initial mode
 
@@ -283,32 +347,35 @@ function setCameraMode(mode) {
 }
 
 function sendTransformUpdate(objectId, position, rotation) {
-    const payload = { id: objectId };
-    if (position) payload.position = position;
-    if (rotation) payload.rotation = rotation;
-
+    const payload = { id: objectId, position: position, rotation: rotation }; // Always send both
     fetch('/update_object_transform', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
             console.log("Backend updated:", data.message);
-            // Optionally, you could re-fetch and re-render the entire scene from the backend's
-            // "source of truth" to ensure consistency, or trust the local Three.js update for now.
-            // For a robust system, re-fetching or getting a delta update is better.
+            // After update, refresh hierarchy/inspector as current transform values might have snap-applied
+            if (currentlyInspectedItem && currentlyInspectedItem.type === 'physical_volume' && currentlyInspectedItem.id === objectId) {
+                // Fetch fresh details for inspector if the updated object is currently inspected
+                fetch(`/get_object_details?type=${currentlyInspectedItem.type}&id=${currentlyInspectedItem.id}`)
+                    .then(res => res.json())
+                    .then(detailData => {
+                        if (detailData) {
+                            currentlyInspectedItem.data = detailData; // Update local data
+                            populateInspectorPanel(currentlyInspectedItem); // Repopulate inspector
+                        }
+                    })
+                    .catch(err => console.error("Error re-fetching object details:", err));
+            }
         } else {
-            console.error("Backend update failed:", data.error);
-            // Potentially revert the visual change on the frontend if the backend fails
+            alert(`Error updating property: ${data.error}`);
+            // TODO: Revert frontend mesh position if backend failed
         }
     })
-    .catch(error => {
-        console.error('Error sending transform update:', error);
-    });
+    .catch(error => { console.error('Error sending transform update:', error); alert('Failed to send transform update.'); });
 }
 
 // In renderGdmlObjects:
@@ -318,54 +385,66 @@ function sendTransformUpdate(objectId, position, rotation) {
 
 function setMode(mode) {
     currentMode = mode;
+    modeObserveButton.classList.toggle('active_mode', mode === 'observe');
+    modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
+    modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
+    modeScaleButton.classList.toggle('active_mode', mode === 'scale');
     currentModeDisplay.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 
-    // Update button active states
-    modeObserveButton.classList.toggle('active_mode', mode === 'observe');
-    modeMoveButton.classList.toggle('active_mode', mode === 'move');
-    // modeScaleButton.classList.toggle('active_mode', mode === 'scale');
+    transformControls.enabled = false; // Disable by default
+    transformControls.detach(); // Detach from any object
+    orbitControls.enabled = true; // Orbit is default unless transforming or flying
 
-    if (mode === 'move') {
-        orbitControls.enabled = false; // Disable orbit when in move mode for clarity
-        dragControls.enabled = true;
-        dragControls.activate(); // Make sure it's active
-        // Update draggable objects if any are selected
-        dragControls.getObjects().length = 0; // Clear existing
-        selectedObjects.forEach(obj => dragControls.getObjects().push(obj));
-
-    } else { // Observe mode (or other modes in future)
-        orbitControls.enabled = true;
-        dragControls.enabled = false;
-        dragControls.deactivate();
+    if (mode === 'observe') {
+        // Just OrbitControls enabled
+    } else if (mode === 'translate') {
+        transformControls.setMode('translate');
+        transformControls.enabled = true;
+        // Attach to selected object if any
+        if (selectedObjects.length === 1 && selectedObjects[0].isMesh) {
+            transformControls.attach(selectedObjects[0]);
+        }
+    } else if (mode === 'rotate') {
+        transformControls.setMode('rotate');
+        transformControls.enabled = true;
+        if (selectedObjects.length === 1 && selectedObjects[0].isMesh) {
+            transformControls.attach(selectedObjects[0]);
+        }
+    } else if (mode === 'scale') {
+        transformControls.setMode('scale');
+        transformControls.enabled = true;
+        if (selectedObjects.length === 1 && selectedObjects[0].isMesh) {
+            transformControls.attach(selectedObjects[0]);
+        }
     }
-    console.log("Mode set to:", currentMode, "DragControls enabled:", dragControls.enabled);
+    // Update snap settings when mode changes (in case they were changed by UI input)
+    updateSnapSettings(); 
+    console.log("Mode set to:", currentMode, "TransformControls enabled:", transformControls.enabled);
 }
-
 
 function selectObject(object) {
     if (object && object.isMesh && !selectedObjects.includes(object)) {
         selectedObjects.push(object);
         
-        if (object.material !== highlightMaterial) { // Avoid re-cloning if already highlighted by another selection
+        if (object.material !== highlightMaterial) {
             originalMaterials.set(object.uuid, {
                 material: Array.isArray(object.material) ? object.material[0].clone() : object.material.clone(),
                 wasWireframe: Array.isArray(object.material) ? object.material[0].wireframe : object.material.wireframe
             });
         }
         object.material = highlightMaterial;
-        highlightMaterial.wireframe = isWireframeMode;
-        
-        updateInfoPanel(); // Update panel for potentially multiple selections
-        //if (selectedObjects.length > 0) infoPanel.style.display = 'block';
+        highlightMaterial.wireframe = isWireframeMode; // Keep synced
 
-        // If in move mode, update DragControls
-        if (currentMode === 'move') {
-            dragControls.getObjects().length = 0;
-            selectedObjects.forEach(obj => dragControls.getObjects().push(obj));
+        updateInfoPanel(); // Populate inspector based on selection
+        
+        // Attach transformControls to the selected object if in a transform mode
+        if (transformControls.enabled && currentMode !== 'observe') {
+            transformControls.attach(object);
         }
     }
 }
 
+// Modify unselectObject to detach transformControls
 function unselectObject(object) {
     const index = selectedObjects.indexOf(object);
     if (index > -1) {
@@ -374,22 +453,26 @@ function unselectObject(object) {
             const originalState = originalMaterials.get(object.uuid);
             object.material = originalState.material;
             if (Array.isArray(object.material)) {
-                object.material.forEach(mat => mat.wireframe = isWireframeMode);
+                object.material.forEach(m => m.wireframe = isWireframeMode);
             } else {
                 object.material.wireframe = isWireframeMode;
             }
             originalMaterials.delete(object.uuid);
         }
     }
-    
     updateInfoPanel();
-    //if (selectedObjects.length === 0) infoPanel.style.display = 'none';
 
-    if (currentMode === 'move') {
-        dragControls.getObjects().length = 0;
-        selectedObjects.forEach(obj => dragControls.getObjects().push(obj));
+    if (selectedObjects.length === 0) {
+        transformControls.detach(); // Detach when nothing is selected
+        // Clear inspector panel if nothing is selected
+        inspectorContentDiv.innerHTML = '<p>Select an item.</p>'; 
+        currentlyInspectedItem = null;
+    } else if (transformControls.enabled && selectedObjects.length === 1) {
+        // If multiple were selected, but now only one, attach to the remaining one
+        transformControls.attach(selectedObjects[0]);
     }
 }
+
 
 function unselectAllObjects() {
     // Create a copy of the array to iterate over, as unselectObject modifies it
@@ -422,52 +505,46 @@ function updateInfoPanel() { // This is for the main inspector
 }
 
 function updateInfoPanelForObject(object) {
-    if (!inspectorContentDiv) return; // Ensure inspector panel div exists
+    if (!inspectorContentDiv || !object || !object.userData) return;
+    
+    // Clear previous content and populate with actual, current object properties
+    inspectorContentDiv.innerHTML = ''; 
 
-    // Only update if this object is the one currently focused by the inspector
-    // or if no specific hierarchy item is selected but a 3D drag is active.
-    if (!currentlyInspectedItem || (currentlyInspectedItem.type === 'physical_volume' && currentlyInspectedItem.id === object.userData.id) || 
-        (currentMode === 'move' && selectedObjects.length === 1 && selectedObjects[0] === object) ) {
-        
-        inspectorContentDiv.innerHTML = ''; // Clear current inspector
-        if (!object || !object.userData) {
-            inspectorContentDiv.innerHTML = '<p>No data for this object.</p>';
-            return;
-        }
+    const { type, id, name } = currentlyInspectedItem || object.userData; // Use hierarchy data if available, else 3D userData
+    const title = document.createElement('h4');
+    title.textContent = `${type}: ${name}`;
+    inspectorContentDiv.appendChild(title);
 
-        const data = object.userData;
-        const type = 'physical_volume'; // Assume it's a PV if being dragged
-        const id = data.id;
-        const name = data.name;
+    // Display position
+    const posDiv = document.createElement('div');
+    posDiv.classList.add('property_item');
+    posDiv.innerHTML = `<label>Position:</label><div style="padding-left:10px;">
+                        <label>x:</label><input type="number" step="any" value="${object.position.x.toFixed(3)}" data-path="position.x" data-type="${type}" data-id="${id}"><br>
+                        <label>y:</label><input type="number" step="any" value="${object.position.y.toFixed(3)}" data-path="position.y" data-type="${type}" data-id="${id}"><br>
+                        <label>z:</label><input type="number" step="any" value="${object.position.z.toFixed(3)}" data-path="position.z" data-type="${type}" data-id="${id}"></div>`;
+    inspectorContentDiv.appendChild(posDiv);
+    
+    // Display rotation (convert quaternion to ZYX Euler)
+    const euler = new THREE.Euler().setFromQuaternion(object.quaternion, 'ZYX');
+    const rotDiv = document.createElement('div');
+    rotDiv.classList.add('property_item');
+    rotDiv.innerHTML = `<label>Rotation:</label><div style="padding-left:10px;">
+                        <label>x (Z):</label><input type="number" step="any" value="${euler.x.toFixed(3)}" data-path="rotation.x" data-type="${type}" data-id="${id}"><br>
+                        <label>y (Y):</label><input type="number" step="any" value="${euler.y.toFixed(3)}" data-path="rotation.y" data-type="${type}" data-id="${id}"><br>
+                        <label>z (X):</label><input type="number" step="any" value="${euler.z.toFixed(3)}" data-path="rotation.z" data-type="${type}" data-id="${id}"></div>`;
+    inspectorContentDiv.appendChild(rotDiv);
+    
+    // Add event listeners for direct input field changes
+    inspectorContentDiv.querySelectorAll('input[type="number"]').forEach(input => {
+        input.addEventListener('change', (e) => {
+            handlePropertyChange(e.target.dataset.type, e.target.dataset.id, e.target.dataset.path, parseFloat(e.target.value));
+        });
+    });
 
-        const title = document.createElement('h4');
-        title.textContent = `${type}: ${name}`;
-        inspectorContentDiv.appendChild(title);
-
-        // Display subset of info relevant during drag (or full info)
-        // For simplicity, let's reuse parts of populateInspectorPanel logic
-        // This is a simplified version for live update; populateInspectorPanel is more comprehensive
-
-        const posPropertyDiv = document.createElement('div');
-        posPropertyDiv.classList.add('property_item');
-        const posLabel = document.createElement('label');
-        posLabel.textContent = `position:`;
-        posPropertyDiv.appendChild(posLabel);
-        const posValueDiv = document.createElement('div');
-        posValueDiv.style.paddingLeft = "10px";
-        posValueDiv.innerHTML = `<strong>x:</strong> ${object.position.x.toFixed(3)}<br>
-                                 <strong>y:</strong> ${object.position.y.toFixed(3)}<br>
-                                 <strong>z:</strong> ${object.position.z.toFixed(3)}`;
-        posPropertyDiv.appendChild(posValueDiv);
-        inspectorContentDiv.appendChild(posPropertyDiv);
-
-        // Could add live rotation if DragControls modified rotation
-        // const rotPropertyDiv = ...
-        // inspectorContentDiv.appendChild(rotPropertyDiv);
-
-    }
+    // You can add more properties here for editing via Inspector as needed (parameters, material_ref etc.)
+    // For general object properties, you'd usually populate from currentlyInspectedItem.data and make those editable.
+    // This function is for *live updates* during drag. The full inspector population is in populateInspectorPanel.
 }
-
 
 function handleSaveProject() {
     // Fetch the JSON data from the backend
@@ -993,53 +1070,99 @@ function populateInspectorPanel(inspectedItem) {
     const title = document.createElement('h4');
     title.textContent = `${type.replace('_', ' ')}: ${name}`; // Display name is already descriptive
     inspectorContentDiv.appendChild(title);
+
+    // Always display editable name
+    const nameDiv = document.createElement('div');
+    nameDiv.classList.add('property_item');
+    const nameLabel = document.createElement('label');
+    nameLabel.textContent = `Name:`;
+    nameDiv.appendChild(nameLabel);
+    createEditableField(nameDiv, data, 'name', 'name', type, id); // Name is directly editable
+    inspectorContentDiv.appendChild(nameDiv);
     
     let dataToShow = data; // By default, show the main data object
     let objectIdForUpdate = name; // For defines, materials, solids, Id for update is their name
 
-    if (type === 'physical_volume') {
-        // For PVs, 'data' is pvData. We also have lvData and solidData in item.appData
-        // The 'id' for a PV is its UUID.
-        objectIdForUpdate = data.id; // Ensure we use the PV's UUID for updates
+    // Display other properties
+    for (const key in data) {
+        // Skip 'id', 'name' (handled above), 'phys_children', functions, and internal appData
+        if (key === 'id' || key === 'name' || key === 'phys_children' || typeof data[key] === 'function' || key === 'element' || key === 'appData') continue;
 
-        // Display PV specific info
-        displayObjectProperties(inspectorContentDiv, "Physical Volume", data, type, objectIdForUpdate, ['lvData', 'solidData', 'volume_ref']);
-        
-        if(data.lvData) {
-            displayObjectProperties(inspectorContentDiv, "Logical Volume ("+data.lvData.name+")", data.lvData, 'logical_volume', data.lvData.name, ['phys_children', 'solid_ref', 'material_ref']);
-        }
-        if(data.solidData) {
-            displayObjectProperties(inspectorContentDiv, "Solid ("+data.solidData.name+")", data.solidData, 'solid', data.solidData.name, ['parameters']);
-            if(data.solidData.parameters){ // Display parameters of the solid
-                 const paramsContainer = document.createElement('div');
-                 paramsContainer.style.paddingLeft = "10px";
-                 const paramsTitle = document.createElement('strong');
-                 paramsTitle.textContent = "parameters:";
-                 paramsContainer.appendChild(paramsTitle);
-                 displayObjectProperties(paramsContainer, null, data.solidData.parameters, 'solid', data.solidData.name, [], "parameters"); // Pass a base path
-                 inspectorContentDiv.appendChild(paramsContainer);
+        const propertyDiv = document.createElement('div');
+        propertyDiv.classList.add('property_item');
+
+        const label = document.createElement('label');
+        label.textContent = `${key}:`;
+        propertyDiv.appendChild(label);
+
+        let value = data[key];
+
+        if (typeof value === 'object' && value !== null) {
+            // For nested objects like position, rotation, parameters
+            const subDiv = document.createElement('div');
+            subDiv.style.paddingLeft = "10px";
+            for (const subKey in value) {
+                const subPropertyDiv = document.createElement('div');
+                const subLabel = document.createElement('label');
+                subLabel.textContent = `${subKey}:`;
+                subLabel.style.width = "50px"; // Shorter label for sub-properties
+                subPropertyDiv.appendChild(subLabel);
+                
+                // key.subKey forms the property path e.g. "position.x"
+                createEditableField(subPropertyDiv, value, subKey, `${key}.${subKey}`, type, id);
+                subDiv.appendChild(subPropertyDiv);
             }
+            propertyDiv.appendChild(subDiv);
+        } else {
+            // Direct editable field for simple properties
+            createEditableField(propertyDiv, data, key, key, type, id);
         }
-    } else if (type === 'logical_volume') {
-        objectIdForUpdate = data.name;
-        displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate, ['phys_children']);
-    } else if (type === 'solid') {
-        objectIdForUpdate = data.name;
-        console.log("Solid")
-        displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate, ['parameters']);
-        if(data.parameters){
-             const paramsContainer = document.createElement('div');
-             paramsContainer.style.paddingLeft = "10px";
-             const paramsTitle = document.createElement('strong');
-             paramsTitle.textContent = "parameters:";
-             paramsContainer.appendChild(paramsTitle);
-             displayObjectProperties(paramsContainer, null, data.parameters, 'solid', objectIdForUpdate, [], "parameters");
-             inspectorContentDiv.appendChild(paramsContainer);
-        }
-    } else { // Defines, Materials
-        objectIdForUpdate = data.name;
-        displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate);
+        inspectorContentDiv.appendChild(propertyDiv);
     }
+
+    // if (type === 'physical_volume') {
+    //     // For PVs, 'data' is pvData. We also have lvData and solidData in item.appData
+    //     // The 'id' for a PV is its UUID.
+    //     objectIdForUpdate = data.id; // Ensure we use the PV's UUID for updates
+
+    //     // Display PV specific info
+    //     displayObjectProperties(inspectorContentDiv, "Physical Volume", data, type, objectIdForUpdate, ['lvData', 'solidData', 'volume_ref']);
+        
+    //     if(data.lvData) {
+    //         displayObjectProperties(inspectorContentDiv, "Logical Volume ("+data.lvData.name+")", data.lvData, 'logical_volume', data.lvData.name, ['phys_children', 'solid_ref', 'material_ref']);
+    //     }
+    //     if(data.solidData) {
+    //         displayObjectProperties(inspectorContentDiv, "Solid ("+data.solidData.name+")", data.solidData, 'solid', data.solidData.name, ['parameters']);
+    //         if(data.solidData.parameters){ // Display parameters of the solid
+    //              const paramsContainer = document.createElement('div');
+    //              paramsContainer.style.paddingLeft = "10px";
+    //              const paramsTitle = document.createElement('strong');
+    //              paramsTitle.textContent = "parameters:";
+    //              paramsContainer.appendChild(paramsTitle);
+    //              displayObjectProperties(paramsContainer, null, data.solidData.parameters, 'solid', data.solidData.name, [], "parameters"); // Pass a base path
+    //              inspectorContentDiv.appendChild(paramsContainer);
+    //         }
+    //     }
+    // } else if (type === 'logical_volume') {
+    //     objectIdForUpdate = data.name;
+    //     displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate, ['phys_children']);
+    // } else if (type === 'solid') {
+    //     objectIdForUpdate = data.name;
+    //     console.log("Solid")
+    //     displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate, ['parameters']);
+    //     if(data.parameters){
+    //          const paramsContainer = document.createElement('div');
+    //          paramsContainer.style.paddingLeft = "10px";
+    //          const paramsTitle = document.createElement('strong');
+    //          paramsTitle.textContent = "parameters:";
+    //          paramsContainer.appendChild(paramsTitle);
+    //          displayObjectProperties(paramsContainer, null, data.parameters, 'solid', objectIdForUpdate, [], "parameters");
+    //          inspectorContentDiv.appendChild(paramsContainer);
+    //     }
+    // } else { // Defines, Materials
+    //     objectIdForUpdate = data.name;
+    //     displayObjectProperties(inspectorContentDiv, null, data, type, objectIdForUpdate);
+    // }
 
     // Add Hide/Delete buttons (ensure 'id' here is the correct one for the backend)
     const objIdForActions = (type === 'physical_volume') ? data.id : (data.id || data.name);
@@ -1366,6 +1489,56 @@ async function handleDeleteSelected() {
     }
 }
 
+// Transform snapping functions
+function toggleSnapToGrid() {
+    isSnapToGridEnabled = !isSnapToGridEnabled;
+    transformControls.setTranslationSnap(isSnapToGridEnabled ? gridSnapSize : null);
+    transformControls.setRotationSnap(isSnapToGridEnabled ? THREE.MathUtils.degToRad(angleSnapSize) : null);
+    toggleSnapToGridButton.textContent = `Snap to Grid: ${isSnapToGridEnabled ? 'ON' : 'OFF'}`;
+    console.log("Snap to Grid:", isSnapToGridEnabled, "TransSnap:", transformControls.translationSnap, "RotSnap:", transformControls.rotationSnap);
+}
+
+function updateSnapSettings() {
+    gridSnapSize = parseFloat(gridSnapSizeInput.value) || 10;
+    angleSnapSize = parseFloat(angleSnapSizeInput.value) || 1;
+    // Apply immediately if snapping is enabled
+    if (isSnapToGridEnabled) {
+        transformControls.setTranslationSnap(gridSnapSize);
+        transformControls.setRotationSnap(THREE.MathUtils.degToRad(angleSnapSize));
+    }
+    console.log("Snap settings updated. Grid:", gridSnapSize, "Angle:", angleSnapSize);
+}
+
+// Keyboard event handlers for axis constraints (X, Y, Z keys)
+function onKeyDown(event) {
+    if (transformControls.enabled && !event.repeat) { // event.repeat avoids continuous firing
+        switch (event.key.toUpperCase()) {
+            case 'X': transformControls.showX = true; transformControls.showY = false; transformControls.showZ = false; break;
+            case 'Y': transformControls.showX = false; transformControls.showY = true; transformControls.showZ = false; break;
+            case 'Z': transformControls.showX = false; transformControls.showY = false; transformControls.showZ = true; break;
+            case 'W': transformControls.setMode('translate'); break; // Optional: W for translate
+            case 'E': transformControls.setMode('rotate'); break;    // Optional: E for rotate
+            case 'R': transformControls.setMode('scale'); break;     // Optional: R for scale
+            case 'G': toggleSnapToGrid(); break; // Toggle snap with G key
+        }
+    }
+}
+
+function onKeyUp(event) {
+    if (transformControls.enabled && !event.repeat) {
+        switch (event.key.toUpperCase()) {
+            case 'X': 
+            case 'Y': 
+            case 'Z': 
+                // Restore all axes visibility when key is released,
+                // unless another axis is currently pressed or it's a specific mode.
+                // For simplicity, restore all axes when any constraint key is lifted.
+                transformControls.showX = true; transformControls.showY = true; transformControls.showZ = true;
+                break;
+        }
+    }
+}
+
 function onPointerDown(event) {
     const viewerRect = viewerContainer.getBoundingClientRect();
     const menuBarHeight = document.getElementById('menu_bar').offsetHeight; // Get actual menu bar height
@@ -1380,45 +1553,93 @@ function onPointerDown(event) {
     mouse.x = ((event.clientX - viewerRect.left) / viewerRect.width) * 2 - 1;
     mouse.y = -((event.clientY - (viewerRect.top + menuBarHeight)) / (viewerRect.height - menuBarHeight)) * 2 + 1;
 
-
-    if (currentMode === 'observe') {
+    // Handle selection when not in transform mode, or when no object is currently attached to TransformControls
+    // TransformControls typically handles its own mouse events if attached to an object
+    if (!transformControls.enabled || !transformControls.object) {
         raycaster.setFromCamera(mouse, camera);
         const intersects = raycaster.intersectObjects(geometryGroup.children, true);
 
         if (intersects.length > 0) {
             const firstIntersected = intersects[0].object;
-            // If already selected and not Ctrl-clicking, do nothing or allow deselection by clicking again
-            if (selectedObjects.includes(firstIntersected) && !event.ctrlKey) {
-                // Optional: toggle selection or just keep it selected
-                // For now, let's assume clicking an already selected object keeps it selected and inspector populated
-                return; 
+            if (selectedObjects.includes(firstIntersected)) {
+                if (!event.ctrlKey) {
+                    // Clicking already selected object again, if not Ctrl-click, just ensure it's attached
+                    if (currentMode !== 'observe' && selectedObjects.length === 1) { // Single selection, already attached or can be attached
+                         transformControls.attach(firstIntersected);
+                    }
+                    return; // Don't re-select
+                }
+            } else {
+                if (!event.ctrlKey) {
+                    unselectAllObjects(); // Clears 3D & hierarchy selections
+                }
+                selectObject(firstIntersected); // Selects in 3D and attaches to TransformControls if in transform mode
+                selectHierarchyItemByPvId(firstIntersected.userData.id); // Selects in hierarchy
             }
-            
-            if (!event.ctrlKey) { // If not holding Ctrl, clear previous selections
-                unselectAllObjects();       // Clears 3D selection
-                clearHierarchySelection();  // Clears hierarchy selection & inspector
-            }
-            
-            selectObject(firstIntersected); // Selects in 3D (and updates DragControls if in 'move' mode)
-            selectHierarchyItemByPvId(firstIntersected.userData.id); // Selects in hierarchy and populates inspector
-
-            // Set orbital target
-            // const newTarget = new THREE.Vector3();
-            // firstIntersected.getWorldPosition(newTarget);
-            // orbitControls.target.copy(newTarget);
-            // orbitControls.update();
-        
         } else { // Clicked on empty space
             if (!event.ctrlKey) {
-                unselectAllObjects();
+                unselectAllObjects(); // Clears 3D & hierarchy selections
+            }
+        }
+    } else {
+        // TransformControls is enabled AND attached to an object.
+        // If the click is on the gizmo, TransformControls handles it.
+        // If the click is on the object but NOT the gizmo, TransformControls might ignore it.
+        // If the click is on another object, we should switch selection.
+        // For simplicity now, if TransformControls is active and attached,
+        // we let it handle. Clicking elsewhere in scene might deselect current object.
+        // A more complex logic would test if click hit a *different* object and switch.
+        // For now, if TransformControls is active, only its object is considered for direct manipulation.
+        // Clicking empty space or another object in 'translate'/'rotate' modes should detach and deselect.
+        if (!transformControls.object.userData.isDragging) { // Only if not actively dragging with gizmo
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(geometryGroup.children, true);
+            if (intersects.length === 0 || (intersects.length > 0 && intersects[0].object !== transformControls.object)) {
+                // Clicked empty space OR a different object
+                unselectAllObjects(); // Detaches transformControls, clears selection
                 clearHierarchySelection();
-
-                // Reset orbital target to origin if clicking empty space
-                // orbitControls.target.set(0,0,0);
-                // orbitControls.update();
             }
         }
     }
+
+    // if (currentMode === 'observe') {
+    //     raycaster.setFromCamera(mouse, camera);
+    //     const intersects = raycaster.intersectObjects(geometryGroup.children, true);
+
+    //     if (intersects.length > 0) {
+    //         const firstIntersected = intersects[0].object;
+    //         // If already selected and not Ctrl-clicking, do nothing or allow deselection by clicking again
+    //         if (selectedObjects.includes(firstIntersected) && !event.ctrlKey) {
+    //             // Optional: toggle selection or just keep it selected
+    //             // For now, let's assume clicking an already selected object keeps it selected and inspector populated
+    //             return; 
+    //         }
+            
+    //         if (!event.ctrlKey) { // If not holding Ctrl, clear previous selections
+    //             unselectAllObjects();       // Clears 3D selection
+    //             clearHierarchySelection();  // Clears hierarchy selection & inspector
+    //         }
+            
+    //         selectObject(firstIntersected); // Selects in 3D (and updates DragControls if in 'move' mode)
+    //         selectHierarchyItemByPvId(firstIntersected.userData.id); // Selects in hierarchy and populates inspector
+
+    //         // Set orbital target
+    //         // const newTarget = new THREE.Vector3();
+    //         // firstIntersected.getWorldPosition(newTarget);
+    //         // orbitControls.target.copy(newTarget);
+    //         // orbitControls.update();
+        
+    //     } else { // Clicked on empty space
+    //         if (!event.ctrlKey) {
+    //             unselectAllObjects();
+    //             clearHierarchySelection();
+
+    //             // Reset orbital target to origin if clicking empty space
+    //             // orbitControls.target.set(0,0,0);
+    //             // orbitControls.update();
+    //         }
+    //     }
+    // }
     // DragControls handles its own logic in 'move' mode
 }
 

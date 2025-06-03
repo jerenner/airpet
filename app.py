@@ -39,36 +39,19 @@ def process_gdml_route():
 @app.route('/update_object_transform', methods=['POST'])
 def update_object_transform_route():
     data = request.get_json()
-    object_id = data.get('id') # This should be the unique ID of the PVPlacement
-    
-    # Position is expected from Three.js in mm (our internal unit)
+    object_id = data.get('id') # This is the unique ID (UUID) of the PVPlacement
     new_position = data.get('position') # {'x': ..., 'y': ..., 'z': ...}
-    # Rotation from Three.js quaternion, convert to ZYX Euler in radians for internal storage if needed
-    # For now, assume frontend sends Euler ZYX radians if it changes rotation
-    new_rotation = data.get('rotation') # {'x': ..., 'y': ..., 'z': ...} (ZYX Euler in radians)
+    new_rotation = data.get('rotation') # {'x': ..., 'y': ..., 'z': ...}
 
     if not object_id:
         return jsonify({"error": "Object ID missing"}), 400
 
-    # Create a combined "transform" update for simplicity, or handle pos/rot separately
-    # The ProjectManager should have a method to apply this (using a Command pattern ideally)
-    # For now, a direct update:
-    position_updated = False
-    if new_position:
-        position_updated = project_manager.update_object_position(object_id, new_position)
+    success, error_msg = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
 
-    # TODO: Add project_manager.update_object_rotation(object_id, new_rotation)
-    # TODO: Add rotation update similar to position
-    # rotation_updated = False
-    # if new_rotation:
-    #     rotation_updated = project_manager.update_object_rotation(object_id, new_rotation)
-
-    if position_updated: # or rotation_updated
-        # If state changed, potentially send back the updated part or a success message
-        # For now, just confirm. The frontend might refetch the whole scene or update locally.
-        return jsonify({"success": True, "message": f"Object {object_id} position updated."})
+    if success:
+        return jsonify({"success": True, "message": f"Object {object_id} transform updated."})
     else:
-        return jsonify({"success": False, "error": f"Could not update object {object_id}"}), 404
+        return jsonify({"success": False, "error": error_msg or f"Could not update object {object_id} transform."}), 404
     
 @app.route('/get_project_state', methods=['GET'])
 def get_project_state_route():

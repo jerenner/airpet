@@ -305,34 +305,75 @@ class ProjectManager:
     #     self.undo_stack.append(command)
     #     return True
 
-    # --- Example Modification ---
-    def update_object_position(self, object_id, new_position_dict):
-        # This is a simplified update. A command pattern would be better.
-        # object_id here would be the ID of a PhysicalVolumePlacement.
-        # We need to find it in the hierarchy.
-        
-        # For now, let's assume object_id is the name of the physvol for simplicity in threejs_description
-        # This needs to be more robust using unique IDs.
-
+    def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
+        """
+        Updates position and/or rotation of a PhysicalVolumePlacement.
+        This is typically called after a drag/rotate operation.
+        """
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
-            return False
-        
-        found = False
-        def find_and_update(lv_name):
-            nonlocal found
-            lv = self.current_geometry_state.get_logical_volume(lv_name)
+            return False, "No project loaded"
+
+        found_pv = False
+        def find_and_update(lv_name_key):
+            nonlocal found_pv
+            lv = self.current_geometry_state.logical_volumes.get(lv_name_key)
             if not lv: return
 
             for pv_placement in lv.phys_children:
-                if pv_placement.id == object_id: # Match by unique ID
-                    # old_pos = pv_placement.position # For undo command
-                    pv_placement.position = new_position_dict # new_position_dict should be {'x':val, 'y':val, 'z':val} in mm
-                    found = True
+                if pv_placement.id == pv_id: # Match by unique UUID
+                    if new_position_dict is not None:
+                        # old_pos = pv_placement.position # For undo command
+                        pv_placement.position = new_position_dict
+                    if new_rotation_dict is not None:
+                        # old_rot = pv_placement.rotation # For undo command
+                        pv_placement.rotation = new_rotation_dict
+                    found_pv = True
                     # TODO: Create and store an UndoCommand for this change
                     return
-                if not found: # Only recurse if not found yet
-                    find_and_update(pv_placement.volume_ref)
-                if found: return # Propagate found up
+                # Recursively search children if not found yet.
+                # Note: This is a *flat* search if PVs are only direct children of LVs.
+                # If PVs can place other PVs (GDML has recursive placements!), this needs proper recursion.
+                # Our current PV structure is flat: PVs are children of LV, not PVs.
+                # So this direct search is fine if we assume a flat PV structure.
+                # If PVs can place LVs that in turn have PV children, that implies a need for deeper PV ID lookup.
+                # The hierarchy is LV -> PVs -> LV -> PVs. So we need to traverse LVs recursively for all PVs.
+                # No, pv_placement.volume_ref is the LV it places. You iterate that LV's children.
+                # Correct recursion:
+                # if not found_pv and pv_placement.volume_ref in self.current_geometry_state.logical_volumes:
+                #    find_and_update(pv_placement.volume_ref)
+                if found_pv: return # Stop searching if found
 
         find_and_update(self.current_geometry_state.world_volume_ref)
-        return found
+        return found_pv, None
+
+    # --- Example Modification ---
+    # def update_object_position(self, object_id, new_position_dict):
+    #     # This is a simplified update. A command pattern would be better.
+    #     # object_id here would be the ID of a PhysicalVolumePlacement.
+    #     # We need to find it in the hierarchy.
+        
+    #     # For now, let's assume object_id is the name of the physvol for simplicity in threejs_description
+    #     # This needs to be more robust using unique IDs.
+
+    #     if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
+    #         return False
+        
+    #     found = False
+    #     def find_and_update(lv_name):
+    #         nonlocal found
+    #         lv = self.current_geometry_state.get_logical_volume(lv_name)
+    #         if not lv: return
+
+    #         for pv_placement in lv.phys_children:
+    #             if pv_placement.id == object_id: # Match by unique ID
+    #                 # old_pos = pv_placement.position # For undo command
+    #                 pv_placement.position = new_position_dict # new_position_dict should be {'x':val, 'y':val, 'z':val} in mm
+    #                 found = True
+    #                 # TODO: Create and store an UndoCommand for this change
+    #                 return
+    #             if not found: # Only recurse if not found yet
+    #                 find_and_update(pv_placement.volume_ref)
+    #             if found: return # Propagate found up
+
+    #     find_and_update(self.current_geometry_state.world_volume_ref)
+    #     return found

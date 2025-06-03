@@ -164,6 +164,7 @@
     <div id="main_content_area">
         <div id="menu_bar">
             <ul>
+                <!-- File Menu -->
                 <li>
                     <button>File</button>
                     <div class="dropdown_content">
@@ -176,6 +177,18 @@
                         <input type="file" id="projectFile" accept=".json" style="display: none;">
                     </div>
                 </li>
+                <!-- Edit Menu -->
+                <li>
+                    <button>Edit</button>
+                    <div class="dropdown_content">
+                        <button id="toggleSnapToGridButton">Snap to Grid: OFF</button>
+                        <div style="padding: 10px; font-size: 12px;">
+                            Grid Snap (mm): <input type="number" id="gridSnapSizeInput" value="10" step="any" style="width: 60px;">
+                            Angle Snap (deg): <input type="number" id="angleSnapSizeInput" value="1" step="any" style="width: 60px;">
+                        </div>
+                    </div>
+                </li>
+                <!-- View Menu -->
                 <li>
                     <button>View</button>
                     <div class="dropdown_content">
@@ -186,6 +199,7 @@
                         <button id="cameraModeFlyButton">Camera: Fly</button>
                     </div>
                 </li>
+                <!-- Object Menu -->
                 <li>
                     <button>Object</button>
                     <div class="dropdown_content">
@@ -193,18 +207,21 @@
                         <button id="deleteSelectedObjectButton">Delete Selected</button>
                     </div>
                 </li>
+                <!-- Mode Menu -->
                 <li>
                     <button>Mode</button>
                     <div class="dropdown_content">
                         <button id="modeObserveButton" class="active_mode">Observe</button>
-                        <button id="modeMoveButton">Move</button>
-                        <!-- <button id="modeScaleButton">Scale</button> -->
+                        <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
+                        <button id="modeRotateButton">Rotate</button>
+                        <button id="modeScaleButton">Scale</button> <!-- Optional for future -->
                     </div>
                 </li>
                 <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
             </ul>
         </div>
         <div id="viewer_container"></div>
+        <!-- Old floating info panel -->
         <!--<div id="info_panel">
             <h3>Object Information</h3>
             <p><strong>Name:</strong> <span id="info_name">-</span></p>
@@ -216,32 +233,31 @@
             <p><strong>Rotation (rad, ZYX):</strong></p>
             <div id="info_rotation" style="padding-left: 10px;">-</div>
         </div>-->
+        <div id="addObjectModal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; padding:20px; border:1px solid #ccc; z-index:1001;">
+            <h4>Add New Object</h4>
+            <label for="newObjectType">Type:</label>
+            <select id="newObjectType">
+                <option value="define_position">Define: Position</option>
+                <option value="define_rotation">Define: Rotation</option>
+                <option value="material">Material</option>
+                <option value="solid_box">Solid: Box</option>
+                <option value="solid_tube">Solid: Tube</option>
+                <!-- Add more solid types -->
+                <option value="logical_volume" disabled>Logical Volume (select solid/mat)</option> <!-- Disabled for now -->
+                <option value="physical_volume" disabled>Physical Volume (select LV/parent)</option> <!-- Disabled for now -->
+            </select>
+            <br><br>
+            <label for="newObjectName">Name:</label>
+            <input type="text" id="newObjectName" placeholder="e.g., MyNewBox">
+            <br><br>
+            <!-- Fields for parameters will be added dynamically by JS -->
+            <div id="newObjectParams"></div>
+            <br>
+            <button id="confirmAddObject">Add</button>
+            <button id="cancelAddObject">Cancel</button>
+        </div>
+        <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>
     </div>
-    <div id="addObjectModal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; padding:20px; border:1px solid #ccc; z-index:1001;">
-        <h4>Add New Object</h4>
-        <label for="newObjectType">Type:</label>
-        <select id="newObjectType">
-            <option value="define_position">Define: Position</option>
-            <option value="define_rotation">Define: Rotation</option>
-            <option value="material">Material</option>
-            <option value="solid_box">Solid: Box</option>
-            <option value="solid_tube">Solid: Tube</option>
-            <!-- Add more solid types -->
-            <option value="logical_volume" disabled>Logical Volume (select solid/mat)</option> <!-- Disabled for now -->
-            <option value="physical_volume" disabled>Physical Volume (select LV/parent)</option> <!-- Disabled for now -->
-        </select>
-        <br><br>
-        <label for="newObjectName">Name:</label>
-        <input type="text" id="newObjectName" placeholder="e.g., MyNewBox">
-        <br><br>
-        <!-- Fields for parameters will be added dynamically by JS -->
-        <div id="newObjectParams"></div>
-        <br>
-        <button id="confirmAddObject">Add</button>
-        <button id="cancelAddObject">Cancel</button>
-    </div>
-    <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>
-
     <script type="importmap">
     {
         "imports": {
