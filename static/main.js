@@ -1,4 +1,5 @@
-// static/main.js (New, refactored version)
+// static/main.js
+import * as THREE from 'three';
 
 import * as UIManager from './uiManager.js';
 import * as SceneManager from './sceneManager.js';
@@ -228,31 +229,41 @@ function handle3DSelection(selectedThreeObject) { // selectedThreeObject is the 
 // Called by SceneManager when TransformControls finishes a transformation
 async function handleTransformEnd(transformedObject) {
     if (!transformedObject || !transformedObject.userData) return;
-    const objData = transformedObject.userData; // Should contain the PV id
+    const objData = transformedObject.userData;
 
     const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
     const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
     const newRotation = { x: euler.x, y: euler.y, z: euler.z };
-    // TODO: Add scale from transformedObject.scale if scale mode is implemented
 
     UIManager.showLoading("Updating transform...");
     try {
         const result = await APIService.updateObjectTransform(objData.id, newPosition, newRotation);
-        if(result.success){
-            // TransformControls has already updated the object visually.
-            // We need to update the inspector panel if this object is selected.
-            if(AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === objData.id){
-                 const freshDetails = await APIService.getObjectDetails(AppState.selectedHierarchyItem.type, AppState.selectedHierarchyItem.id);
-                 if (freshDetails) {
-                    AppState.selectedHierarchyItem.data = freshDetails; // Update local copy of data
+        if (result.success) {
+            console.log("[MainJS] Backend transform update successful for PV ID:", objData.id);
+            // The Three.js object is already visually in the new state.
+            // Now, refresh the inspector with authoritative data from backend.
+            if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === objData.id) {
+                const freshDetails = await APIService.getObjectDetails(AppState.selectedHierarchyItem.type, AppState.selectedHierarchyItem.id);
+                if (freshDetails) {
+                    AppState.selectedHierarchyItem.data = freshDetails; // Update local cache for hierarchy item
                     UIManager.populateInspector(freshDetails, AppState.selectedHierarchyItem.type, AppState.selectedHierarchyItem.id);
-                 }
+                    console.log("[MainJS] Inspector updated with fresh backend data for:", objData.id);
+                } else {
+                     console.warn("[MainJS] Could not fetch fresh details for inspector after transform update.");
+                }
             }
         } else {
             UIManager.showError("Transform update failed on backend: " + (result.error || "Unknown error"));
-            // TODO: Revert object's transform in Three.js scene to its state before dragging
-            // This would involve fetching the last known good state from AppState.currentProjectState
-            // and re-applying it to the transformedObject.
+            // TODO: Revert object's transform in Three.js scene.
+            // This would involve getting the original transform from AppState.currentProjectState
+            // and applying it back to `transformedObject.position` and `transformedObject.quaternion`.
+            // Example (simplified):
+            // const originalPVData = findPvInState(AppState.currentProjectState, objData.id);
+            // if(originalPVData) {
+            //    transformedObject.position.set(originalPVData.position.x, ...);
+            //    const origEuler = new THREE.Euler(originalPVData.rotation.x, ..., 'ZYX');
+            //    transformedObject.quaternion.setFromEuler(origEuler);
+            // }
         }
     } catch (error) { UIManager.showError("Error saving transform: " + (error.message || error)); }
     finally { UIManager.hideLoading(); }

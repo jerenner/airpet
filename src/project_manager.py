@@ -305,46 +305,82 @@ class ProjectManager:
     #     self.undo_stack.append(command)
     #     return True
 
+          
     def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
-        """
-        Updates position and/or rotation of a PhysicalVolumePlacement.
-        This is typically called after a drag/rotate operation.
-        """
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
             return False, "No project loaded"
+        print(f"[PM] Attempting to update PV transform for ID: {pv_id}")
+        found_pv_object = None # Store the actual PV object
 
-        found_pv = False
-        def find_and_update(lv_name_key):
-            nonlocal found_pv
-            lv = self.current_geometry_state.logical_volumes.get(lv_name_key)
-            if not lv: return
-
+        # This recursive search needs to be robust
+        # It assumes a simple hierarchy for finding. If PVs can be nested deeply via LVs,
+        # a more general tree traversal might be needed.
+        # For now, this searches one level down from all LVs.
+        for lv_name_key in self.current_geometry_state.logical_volumes:
+            lv = self.current_geometry_state.logical_volumes[lv_name_key]
             for pv_placement in lv.phys_children:
                 if pv_placement.id == pv_id: # Match by unique UUID
+                    found_pv_object = pv_placement
                     if new_position_dict is not None:
-                        # old_pos = pv_placement.position # For undo command
+                        print(f"[PM] Old pos for {pv_id}: {pv_placement.position}")
                         pv_placement.position = new_position_dict
+                        print(f"[PM] New pos for {pv_id}: {pv_placement.position}")
                     if new_rotation_dict is not None:
-                        # old_rot = pv_placement.rotation # For undo command
+                        print(f"[PM] Old rot for {pv_id}: {pv_placement.rotation}")
                         pv_placement.rotation = new_rotation_dict
-                    found_pv = True
-                    # TODO: Create and store an UndoCommand for this change
-                    return
-                # Recursively search children if not found yet.
-                # Note: This is a *flat* search if PVs are only direct children of LVs.
-                # If PVs can place other PVs (GDML has recursive placements!), this needs proper recursion.
-                # Our current PV structure is flat: PVs are children of LV, not PVs.
-                # So this direct search is fine if we assume a flat PV structure.
-                # If PVs can place LVs that in turn have PV children, that implies a need for deeper PV ID lookup.
-                # The hierarchy is LV -> PVs -> LV -> PVs. So we need to traverse LVs recursively for all PVs.
-                # No, pv_placement.volume_ref is the LV it places. You iterate that LV's children.
-                # Correct recursion:
-                # if not found_pv and pv_placement.volume_ref in self.current_geometry_state.logical_volumes:
-                #    find_and_update(pv_placement.volume_ref)
-                if found_pv: return # Stop searching if found
+                        print(f"[PM] New rot for {pv_id}: {pv_placement.rotation}")
+                    break # Found and updated
+            if found_pv_object:
+                break
+        
+        if found_pv_object:
+            print(f"[PM] Successfully updated transform for PV ID: {pv_id}")
+            return True, None
+        else:
+            print(f"[PM] Failed to find PV with ID: {pv_id} to update transform.")
+            return False, f"Physical Volume with ID {pv_id} not found."
 
-        find_and_update(self.current_geometry_state.world_volume_ref)
-        return found_pv, None
+    
+    # def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
+    #     """
+    #     Updates position and/or rotation of a PhysicalVolumePlacement.
+    #     This is typically called after a drag/rotate operation.
+    #     """
+    #     if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
+    #         return False, "No project loaded"
+
+    #     found_pv = False
+    #     def find_and_update(lv_name_key):
+    #         nonlocal found_pv
+    #         lv = self.current_geometry_state.logical_volumes.get(lv_name_key)
+    #         if not lv: return
+
+    #         for pv_placement in lv.phys_children:
+    #             if pv_placement.id == pv_id: # Match by unique UUID
+    #                 if new_position_dict is not None:
+    #                     # old_pos = pv_placement.position # For undo command
+    #                     pv_placement.position = new_position_dict
+    #                 if new_rotation_dict is not None:
+    #                     # old_rot = pv_placement.rotation # For undo command
+    #                     pv_placement.rotation = new_rotation_dict
+    #                 found_pv = True
+    #                 # TODO: Create and store an UndoCommand for this change
+    #                 return
+    #             # Recursively search children if not found yet.
+    #             # Note: This is a *flat* search if PVs are only direct children of LVs.
+    #             # If PVs can place other PVs (GDML has recursive placements!), this needs proper recursion.
+    #             # Our current PV structure is flat: PVs are children of LV, not PVs.
+    #             # So this direct search is fine if we assume a flat PV structure.
+    #             # If PVs can place LVs that in turn have PV children, that implies a need for deeper PV ID lookup.
+    #             # The hierarchy is LV -> PVs -> LV -> PVs. So we need to traverse LVs recursively for all PVs.
+    #             # No, pv_placement.volume_ref is the LV it places. You iterate that LV's children.
+    #             # Correct recursion:
+    #             # if not found_pv and pv_placement.volume_ref in self.current_geometry_state.logical_volumes:
+    #             #    find_and_update(pv_placement.volume_ref)
+    #             if found_pv: return # Stop searching if found
+
+    #     find_and_update(self.current_geometry_state.world_volume_ref)
+    #     return found_pv, None
 
     # --- Example Modification ---
     # def update_object_position(self, object_id, new_position_dict):

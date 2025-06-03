@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 
+import { getCurrentMode as getInteractionManagerMode } from './interactionManager.js';
+
 // --- Module-level variables (private to this module) ---
 let scene;
 let camera;
@@ -72,19 +74,32 @@ export function initScene(callbacks) {
         // Optionally call a callback if main.js needs to know about drag start/stop
     });
     transformControls.addEventListener('objectChange', () => {
-        // This fires rapidly during transform. Could be used for live updates if very optimized.
-        // For now, we use 'mouseUp' for final update.
-        if (transformControls.object && onObjectSelectedCallback) { // Update inspector if object is selected
-            // This could potentially call a specific "liveUpdateInspector" if different from full selection
-            // For simplicity, it might re-trigger selection logic which populates inspector
-            // onObjectSelectedCallback(transformControls.object);
+        // This event means the attached object's transform has changed in Three.js
+        if (transformControls.object && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
+            // If a single object is selected and it's the one being transformed,
+            // update the UIManager's inspector panel for live feedback.
+            // This requires UIManager to have a function to update just the transform fields.
+            // For simplicity, if onObjectSelectedCallback triggers a full inspector refresh, this might be okay,
+            // but it could be slow.
+            // A dedicated UIManager.updateInspectorTransformFields(transformControls.object) would be better.
+            if (onObjectSelectedCallback) { // Re-trigger selection to update inspector
+                // This is a bit heavy but ensures inspector gets updated
+                // A more targeted update would be better for performance.
+                 onObjectSelectedCallback(transformControls.object, false, false); 
+            }
         }
     });
-    transformControls.addEventListener('mouseUp', () => {
+    transformControls.addEventListener('mouseUp', () => { // This signifies the end of a user interaction
         if (transformControls.object && onObjectTransformEndCallback) {
-            onObjectTransformEndCallback(transformControls.object);
+            console.log("[SceneManager] Transform mouseUp, calling onObjectTransformEndCallback for:", transformControls.object.name);
+            onObjectTransformEndCallback(transformControls.object); // Send final state to main.js
         }
+        // Re-enable orbit controls if no longer dragging with transform gizmo (handled by dragging-changed too)
+        // if (!transformControls.dragging) {
+        //    if (orbitControls) orbitControls.enabled = true;
+        // }
     });
+
     scene.add(transformControls);
     transformControls.enabled = false; // Start disabled
 
@@ -136,41 +151,49 @@ function initRaycaster(containerElement) {
 }
 
 function handlePointerDownForSelection(event) {
-    // Only process clicks if OrbitControls is enabled (i.e., not transforming with gizmo, not flying)
-    // Or if currentMode is 'observe'
-    if (!orbitControls.enabled && appMode !== 'observe') { // currentMode from InteractionManager/main.js
-        // If TransformControls has an object, and we clicked outside, detach/deselect
-        if (transformControls.object) {
-            const tempRaycaster = new THREE.Raycaster();
-            const tempMouse = new THREE.Vector2(
-                ((event.clientX - renderer.domElement.getBoundingClientRect().left) / renderer.domElement.clientWidth) * 2 - 1,
-                -((event.clientY - renderer.domElement.getBoundingClientRect().top) / renderer.domElement.clientHeight) * 2 + 1
-            );
-            tempRaycaster.setFromCamera(tempMouse, camera);
-            const intersectsGizmoOrObject = tempRaycaster.intersectObject(transformControls, true).length > 0 ||
-                                         (transformControls.object && tempRaycaster.intersectObject(transformControls.object, false).length > 0) ;
-            if(!intersectsGizmoOrObject) {
-                if (onObjectSelectedCallback) onObjectSelectedCallback(null); // Signal deselection
-            }
+    const currentAppMode = getInteractionManagerMode(); // Get current mode
+
+    // If transform controls are active and have an object, let them handle primary interaction.
+    // The user might be trying to click the gizmo.
+    if (transformControls && transformControls.object && transformControls.enabled) {
+        // If the click is NOT on the transform gizmo itself (or its attached object),
+        // then we might want to deselect or select a new object.
+        // This part is tricky because TransformControls consumes events.
+        // For now, if TC is active and attached, we assume it manages its interaction.
+        // A click outside the gizmo could be interpreted as a deselection intent.
+        
+        // Let's simplify: If in a transform mode, primary interaction is via gizmo.
+        // Selection of a *new* object should probably happen in 'observe' mode first,
+        // or by a specific UI action (e.g. "Select Object" button then click).
+        // For now, if we are in translate/rotate/scale, and TC is attached,
+        // we don't do raycasting for new selections here. It's done when TC is detached.
+        if (currentAppMode !== 'observe') {
+            // Check if click was outside the current TC object and its gizmo
+            // This logic needs to be robust, possibly using raycaster.intersectObject(transformControls)
+            // For now, let's assume if in transform mode, selection is "locked" to the TC object
+            // or should be handled by detaching TC first.
+            return; 
         }
-        return;
     }
+    
+    // If in 'observe' mode, or if TransformControls is not actively manipulating something.
+    if (currentAppMode === 'observe' || (transformControls && !transformControls.object) ) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    const rect = renderer.domElement.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(geometryGroup.children, true);
 
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(geometryGroup.children, true); // Recursive check
-
-    if (intersects.length > 0) {
-        const firstIntersected = findActualMesh(intersects[0].object);
-        if (onObjectSelectedCallback) {
-            onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
-        }
-    } else {
-        if (onObjectSelectedCallback) {
-            onObjectSelectedCallback(null, event.ctrlKey, event.shiftKey); // Clicked empty space
+        if (intersects.length > 0) {
+            const firstIntersected = findActualMesh(intersects[0].object);
+            if (onObjectSelectedCallback) {
+                onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
+            }
+        } else {
+            if (onObjectSelectedCallback) {
+                onObjectSelectedCallback(null, event.ctrlKey, event.shiftKey); // Clicked empty space
+            }
         }
     }
 }
@@ -328,7 +351,7 @@ export function selectObjectInSceneByPvId(pvId) {
     if (foundMesh) { // If found, also set orbit target
         const targetPosition = new THREE.Vector3();
         foundMesh.getWorldPosition(targetPosition);
-        orbitControls.target.copy(targetPosition);
+        //orbitControls.target.copy(targetPosition);
     }
 }
 

@@ -307,6 +307,7 @@ export function populateInspector(dataToInspect, objectType, objectId) { // obje
         inspectorContentDiv.innerHTML = '<p>No data for selected item.</p>';
         return;
     }
+    console.log("[UI] Populating inspector for:", objectType, objectId, "Data:", dataToInspect);
 
     const title = document.createElement('h4');
     title.textContent = `${objectType}: ${dataToInspect.name || objectId}`; // Use objectId as fallback name
