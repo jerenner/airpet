@@ -1,4 +1,5 @@
 // static/uiManager.js
+import * as THREE from 'three'; // Needed for THREE.MathUtils
 
 // --- Module-level variables for DOM elements ---
 let gdmlFileInput, loadGdmlButton, exportGdmlButton,
@@ -299,24 +300,88 @@ export function clearHierarchy() {
 }
 
 // --- Inspector Panel Management ---
-export function populateInspector(dataToInspect, objectType, objectId) { // objectId is UUID for PV, name for others
+export function populateInspector(itemContext) { // objectId is UUID for PV, name for others
     if (!inspectorContentDiv) return;
     inspectorContentDiv.innerHTML = ''; // Clear
 
-    if (!dataToInspect) {
-        inspectorContentDiv.innerHTML = '<p>No data for selected item.</p>';
-        return;
-    }
-    console.log("[UI] Populating inspector for:", objectType, objectId, "Data:", dataToInspect);
+    const { type, id, name, data } = itemContext;
 
     const title = document.createElement('h4');
-    title.textContent = `${objectType}: ${dataToInspect.name || objectId}`; // Use objectId as fallback name
+    title.textContent = `${type}: ${name || id}`; // Use objectId as fallback name
     inspectorContentDiv.appendChild(title);
 
-    for (const key in dataToInspect) {
+    // --- Special handling for PV to show position/rotation ---
+    if (type === 'physical_volume') {
+        const pvData = data; // For clarity
+
+        // Position
+        const posDiv = document.createElement('div');
+        posDiv.classList.add('property_item');
+        const posLabel = document.createElement('label');
+        posLabel.textContent = `Position:`;
+        posDiv.appendChild(posLabel);
+
+        if (typeof pvData.position === 'string') {
+            // Display the reference name
+            const refInput = createEditableInputField(posDiv, pvData, 'position', 'position', type, id);
+            refInput.value = pvData.position;
+            // TODO: Add a "Resolve/Break Ref" button next to it
+        } else {
+            // Display x, y, z inputs for inline values
+            const posSubDiv = document.createElement('div');
+            posSubDiv.style.paddingLeft = "10px";
+            const pos = pvData.position || {x:0, y:0, z:0};
+            for (const axis of ['x', 'y', 'z']) {
+                const subPropertyDiv = document.createElement('div');
+                const subLabel = document.createElement('label');
+                subLabel.textContent = `${axis}:`;
+                subPropertyDiv.appendChild(subLabel);
+                const input = createEditableInputField(subPropertyDiv, pos, axis, `position.${axis}`, type, id);
+                input.dataset.liveUpdate = `position.${axis}`; // Tag for live update
+                posSubDiv.appendChild(subPropertyDiv);
+            }
+            posDiv.appendChild(posSubDiv);
+        }
+        inspectorContentDiv.appendChild(posDiv);
+        
+        // Rotation (similar logic)
+        const rotDiv = document.createElement('div');
+        rotDiv.classList.add('property_item');
+        const rotLabel = document.createElement('label');
+        rotLabel.textContent = `Rotation:`;
+        rotDiv.appendChild(rotLabel);
+        
+        if (typeof pvData.rotation === 'string') {
+            const refInput = createEditableInputField(rotDiv, pvData, 'rotation', 'rotation', type, id);
+            refInput.value = pvData.rotation;
+        } else {
+            const rotSubDiv = document.createElement('div');
+            rotSubDiv.style.paddingLeft = "10px";
+            const rot = pvData.rotation || {x:0, y:0, z:0}; // Radians from backend
+            for (const axis of ['x', 'y', 'z']) {
+                const subPropertyDiv = document.createElement('div');
+                const subLabel = document.createElement('label');
+                subLabel.textContent = `${axis} (deg):`;
+                subPropertyDiv.appendChild(subLabel);
+                
+                const rotDeg = THREE.MathUtils.radToDeg(rot[axis] || 0);
+                const input = createEditableInputField(subPropertyDiv, {val: rotDeg}, 'val', `rotation.${axis}`, type, id);
+                input.dataset.liveUpdate = `rotation.${axis}`;
+                input.addEventListener('change', (e) => {
+                    const radValue = THREE.MathUtils.degToRad(parseFloat(e.target.value));
+                    callbacks.onInspectorPropertyChanged(type, id, `rotation.${axis}`, radValue);
+                });
+            }
+            rotDiv.appendChild(rotSubDiv);
+        }
+        inspectorContentDiv.appendChild(rotDiv);
+    }
+
+    // Other properties
+    for (const key in data) {
         // Skip internal/complex fields not directly editable as simple inputs
         if (key === 'id' || key === 'phys_children' || key === 'element' || key === 'appData' || key === 'components' || key === 'facets' || key === 'zplanes' || key === 'rzpoints' || key === 'vertices') continue;
-        if (typeof dataToInspect[key] === 'function') continue;
+        if (typeof data[key] === 'function') continue;
 
         const propertyDiv = document.createElement('div');
         propertyDiv.classList.add('property_item');
@@ -324,7 +389,7 @@ export function populateInspector(dataToInspect, objectType, objectId) { // obje
         label.textContent = `${key}:`;
         propertyDiv.appendChild(label);
 
-        const value = dataToInspect[key];
+        const value = data[key];
         if (typeof value === 'object' && value !== null && !Array.isArray(value)) { // Nested object (e.g., position, parameters)
             const subDiv = document.createElement('div');
             subDiv.style.paddingLeft = "10px";
@@ -334,12 +399,12 @@ export function populateInspector(dataToInspect, objectType, objectId) { // obje
                 subLabel.textContent = `${subKey}:`;
                 subLabel.style.width = "auto"; subLabel.style.marginRight = "5px";
                 subPropertyDiv.appendChild(subLabel);
-                createEditableInputField(subPropertyDiv, value, subKey, `${key}.${subKey}`, objectType, objectId);
+                createEditableInputField(subPropertyDiv, value, subKey, `${key}.${subKey}`, type, id);
                 subDiv.appendChild(subPropertyDiv);
             }
             propertyDiv.appendChild(subDiv);
         } else if (!Array.isArray(value)) { // Simple property
-            createEditableInputField(propertyDiv, dataToInspect, key, key, objectType, objectId);
+            createEditableInputField(propertyDiv, data, key, key, type, id);
         } else { // Array - display as read-only for now
             const valueSpan = document.createElement('span');
             valueSpan.textContent = `[Array of ${value.length}]`; // Simple representation
@@ -347,9 +412,10 @@ export function populateInspector(dataToInspect, objectType, objectId) { // obje
         }
         inspectorContentDiv.appendChild(propertyDiv);
     }
+
      // Add Hide/Delete buttons
-    if (['physical_volume', 'logical_volume', 'solid', 'define', 'material'].includes(objectType)) {
-        addInspectorActions(objectType, objectId, dataToInspect.name);
+    if (['physical_volume', 'logical_volume', 'solid', 'define', 'material'].includes(type)) {
+        addInspectorActions(type, id, name);
     }
 }
 
@@ -365,15 +431,47 @@ function createEditableInputField(parentDiv, object, key, propertyPath, objectTy
     input.dataset.objectId = objectId;
     input.dataset.propertyPath = propertyPath;
 
-    input.addEventListener('change', (e) => {
-        callbacks.onInspectorPropertyChanged(
-            e.target.dataset.objectType,
-            e.target.dataset.objectId,
-            e.target.dataset.propertyPath,
-            e.target.value // Send as string, backend will try to convert
-        );
-    });
+    // Remove the generic 'change' listener from here if it's handled specifically (like for rotation)
+    // The generic one is still good for most cases
+    if (propertyPath.startsWith('rotation.')) {
+        // The specific listener is added in populateInspector
+    } else {
+        input.addEventListener('change', (e) => {
+            callbacks.onInspectorPropertyChanged(
+                e.target.dataset.objectType,
+                e.target.dataset.objectId,
+                e.target.dataset.propertyPath,
+                e.target.value // Send as string, backend will try to convert
+            );
+        });
+    }
     parentDiv.appendChild(input);
+    return input; // Return the input element
+}
+
+export function updateInspectorTransform(liveObject) {
+    if (!inspectorContentDiv || !liveObject) return;
+
+    // Check if the current inspector is showing ref strings. If so, don't update the numbers.
+    // We only update if the number input fields already exist.
+    const posXInput = inspectorContentDiv.querySelector('input[data-live-update="position.x"]');
+    if (!posXInput) return; // The inspector is in "ref" mode, do nothing.
+
+    // Update Position Fields
+    posXInput.value = liveObject.position.x.toFixed(3);
+    const posYInput = inspectorContentDiv.querySelector('input[data-live-update="position.y"]');
+    if (posYInput) posYInput.value = liveObject.position.y.toFixed(3);
+    const posZInput = inspectorContentDiv.querySelector('input[data-live-update="position.z"]');
+    if (posZInput) posZInput.value = liveObject.position.z.toFixed(3);
+
+    // Update Rotation Fields (displaying in degrees)
+    const euler = new THREE.Euler().setFromQuaternion(liveObject.quaternion, 'ZYX');
+    const rotXInput = inspectorContentDiv.querySelector('input[data-live-update="rotation.x"]');
+    if (rotXInput) rotXInput.value = THREE.MathUtils.radToDeg(euler.x).toFixed(3);
+    const rotYInput = inspectorContentDiv.querySelector('input[data-live-update="rotation.y"]');
+    if (rotYInput) rotYInput.value = THREE.MathUtils.radToDeg(euler.y).toFixed(3);
+    const rotZInput = inspectorContentDiv.querySelector('input[data-live-update="rotation.z"]');
+    if (rotZInput) rotZInput.value = THREE.MathUtils.radToDeg(euler.z).toFixed(3);
 }
 
 function addInspectorActions(objectType, objectId, objectName){

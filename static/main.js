@@ -44,6 +44,7 @@ async function initializeApp() {
     SceneManager.initScene({
         onObjectSelectedIn3D: handle3DSelection,          // Callback when object clicked in 3D scene
         onObjectTransformEnd: handleTransformEnd,          // Callback when TransformControls drag/rotate/scale ends
+        onObjectTransformLive: handleTransformLive,       // Live transformations
         getInspectorSnapSettings: () => { // Provide snap settings to SceneManager/TransformControls
             return { 
                 snapEnabled: InteractionManager.isSnapEnabled(), 
@@ -197,32 +198,50 @@ function handleModeChange(newMode) {
 // Called by UIManager when an item in the hierarchy panel is clicked
 function handleHierarchySelection(itemContext) { // itemContext = { type, id, name, data }
     AppState.selectedHierarchyItem = itemContext;
-    UIManager.populateInspector(itemContext.data, itemContext.type, itemContext.id); // Pass type and id for property updates
+    UIManager.populateInspector(itemContext); // Pass type and id for property updates
 
-    if (itemContext.type === 'physical_volume') {
-        SceneManager.selectObjectInSceneByPvId(itemContext.id); // Highlights in 3D, might attach TransformControls
+    const { type, id, name, data } = itemContext;
+    if (type === 'physical_volume') {
+        SceneManager.selectObjectInSceneByPvId(id); // Highlights in 3D, might attach TransformControls
+        // If we are already in a transform mode, attach the gizmo
+        if (InteractionManager.getCurrentMode() !== 'observe' && data) {
+            SceneManager.attachTransformControls(data);
+        }
     } else {
         SceneManager.unselectAllInScene(); // If a non-PV (define, mat, solid) is selected, clear 3D selection
-        SceneManager.getTransformControls().detach();
+        //SceneManager.getTransformControls().detach();
     }
 }
 
 // Called by SceneManager when an object is clicked in 3D
 function handle3DSelection(selectedThreeObject) { // selectedThreeObject is the THREE.Mesh or null
-    SceneManager.updateSelectionState(selectedThreeObject ? [selectedThreeObject] : []); // SceneManager manages its internal selection
-    AppState.selectedThreeObjects = selectedThreeObject ? [selectedThreeObject] : [];
+
+    // if (!isCtrlKey) {
+    //     SceneManager.unselectAllInScene();
+    //     UIManager.clearHierarchySelection();
+    // }
 
     if (selectedThreeObject) {
+        SceneManager.updateSelectionState([selectedThreeObject]); // SceneManager manages its internal selection
+        AppState.selectedThreeObjects = [selectedThreeObject];
+
         const pvId = selectedThreeObject.userData.id;
         UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId, AppState.currentProjectState); // This will trigger handleHierarchySelection -> populateInspector
         if(InteractionManager.getCurrentMode() !== 'observe'){ // If in a transform mode, attach controls
             SceneManager.attachTransformControls(selectedThreeObject);
         }
     } else { // Clicked empty space
+        SceneManager.unselectAllInScene();
         UIManager.clearHierarchySelection();
-        UIManager.clearInspector();
         AppState.selectedHierarchyItem = null;
-        SceneManager.getTransformControls().detach();
+        AppState.selectedThreeObjects = [];
+    }
+}
+
+function handleTransformLive(liveObject) {
+    // Check if the live object is the one currently selected in the hierarchy.
+    if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === liveObject.userData.id) {
+        UIManager.updateInspectorTransform(liveObject);
     }
 }
 
@@ -231,6 +250,7 @@ async function handleTransformEnd(transformedObject) {
     if (!transformedObject || !transformedObject.userData) return;
     const objData = transformedObject.userData;
 
+    // Get final transform values from the live Three.js object
     const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
     const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
     const newRotation = { x: euler.x, y: euler.y, z: euler.z };
@@ -240,6 +260,14 @@ async function handleTransformEnd(transformedObject) {
         const result = await APIService.updateObjectTransform(objData.id, newPosition, newRotation);
         if (result.success) {
             console.log("[MainJS] Backend transform update successful for PV ID:", objData.id);
+            // After saving, we need to refresh the *entire* state, because updating one
+            // Define could have affected many objects. Then rebuild hierarchy and inspector.
+            const fullState = await APIService.getProjectState();
+            AppState.currentProjectState = fullState;
+            UIManager.updateHierarchy(fullState);
+            // Re-select the item that was just edited to show the final state in the inspector.
+            //UIManager.reselectHierarchyItem(AppState.selectedHierarchyItem.type, AppState.selectedHierarchyItem.id, fullState);
+
             // The Three.js object is already visually in the new state.
             // Now, refresh the inspector with authoritative data from backend.
             if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === objData.id) {

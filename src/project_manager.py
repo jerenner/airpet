@@ -310,35 +310,52 @@ class ProjectManager:
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
             return False, "No project loaded"
         print(f"[PM] Attempting to update PV transform for ID: {pv_id}")
-        found_pv_object = None # Store the actual PV object
 
-        # This recursive search needs to be robust
-        # It assumes a simple hierarchy for finding. If PVs can be nested deeply via LVs,
-        # a more general tree traversal might be needed.
-        # For now, this searches one level down from all LVs.
-        for lv_name_key in self.current_geometry_state.logical_volumes:
-            lv = self.current_geometry_state.logical_volumes[lv_name_key]
-            for pv_placement in lv.phys_children:
-                if pv_placement.id == pv_id: # Match by unique UUID
-                    found_pv_object = pv_placement
-                    if new_position_dict is not None:
-                        print(f"[PM] Old pos for {pv_id}: {pv_placement.position}")
-                        pv_placement.position = new_position_dict
-                        print(f"[PM] New pos for {pv_id}: {pv_placement.position}")
-                    if new_rotation_dict is not None:
-                        print(f"[PM] Old rot for {pv_id}: {pv_placement.rotation}")
-                        pv_placement.rotation = new_rotation_dict
-                        print(f"[PM] New rot for {pv_id}: {pv_placement.rotation}")
-                    break # Found and updated
+        found_pv_object = None
+
+        # Find the PhysicalVolumePlacement object first
+        for lv in self.current_geometry_state.logical_volumes.values():
+            for pv in lv.phys_children:
+                if pv.id == pv_id:
+                    found_pv_object = pv
+                    break
             if found_pv_object:
                 break
-        
-        if found_pv_object:
-            print(f"[PM] Successfully updated transform for PV ID: {pv_id}")
-            return True, None
-        else:
-            print(f"[PM] Failed to find PV with ID: {pv_id} to update transform.")
+
+        if not found_pv_object:
             return False, f"Physical Volume with ID {pv_id} not found."
+        
+        # Update Position
+        if new_position_dict is not None:
+            # Check if the PV's position is a reference to a Define
+            if isinstance(found_pv_object.position, str):
+                define_name = found_pv_object.position
+                position_define = self.current_geometry_state.defines.get(define_name)
+                if position_define and position_define.type == 'position':
+                    print(f"[PM] Updating referenced Define '{define_name}' for position.")
+                    position_define.value = new_position_dict # Update the Define's value
+                else:
+                    # The ref was broken or invalid, so convert this PV to use inline values
+                    found_pv_object.position = new_position_dict
+            else: # It was already inline values
+                found_pv_object.position = new_position_dict
+
+        # Update Rotation
+        if new_rotation_dict is not None:
+            if isinstance(found_pv_object.rotation, str):
+                define_name = found_pv_object.rotation
+                rotation_define = self.current_geometry_state.defines.get(define_name)
+                if rotation_define and rotation_define.type == 'rotation':
+                    print(f"[PM] Updating referenced Define '{define_name}' for rotation.")
+                    rotation_define.value = new_rotation_dict # Update the Define's value
+                else:
+                    found_pv_object.rotation = new_rotation_dict
+            else:
+                found_pv_object.rotation = new_rotation_dict
+
+        print(f"[PM] Successfully processed transform update for PV ID: {pv_id}")
+        # TODO: Add to Undo stack here
+        return True, None
 
     
     # def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):

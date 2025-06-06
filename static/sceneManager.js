@@ -5,6 +5,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 
 import { getCurrentMode as getInteractionManagerMode } from './interactionManager.js';
+import * as UIManager from './uiManager.js';
 
 // --- Module-level variables (private to this module) ---
 let scene;
@@ -28,11 +29,13 @@ let currentCameraMode = 'orbit';
 let onObjectSelectedCallback = null; // Called when an object is selected in 3D view -> (selectedMeshOrNull)
 let onObjectTransformEndCallback = null; // Called after a TransformControls operation completes -> (transformedMesh)
 let getSnapSettingsCallback = null; // Function to get current snap settings -> {snapEnabled, translationSnap, rotationSnap}
+let onObjectTransformLiveCallback = null; // callback for live updates
 
 // --- Initialization ---
 export function initScene(callbacks) {
     onObjectSelectedCallback = callbacks.onObjectSelectedIn3D;
     onObjectTransformEndCallback = callbacks.onObjectTransformEnd;
+    onObjectTransformLiveCallback = callbacks.onObjectTransformLive;
     getSnapSettingsCallback = callbacks.getInspectorSnapSettings;
 
     // Basic Scene Setup
@@ -75,18 +78,10 @@ export function initScene(callbacks) {
     });
     transformControls.addEventListener('objectChange', () => {
         // This event means the attached object's transform has changed in Three.js
-        if (transformControls.object && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
-            // If a single object is selected and it's the one being transformed,
-            // update the UIManager's inspector panel for live feedback.
-            // This requires UIManager to have a function to update just the transform fields.
-            // For simplicity, if onObjectSelectedCallback triggers a full inspector refresh, this might be okay,
-            // but it could be slow.
-            // A dedicated UIManager.updateInspectorTransformFields(transformControls.object) would be better.
-            if (onObjectSelectedCallback) { // Re-trigger selection to update inspector
-                // This is a bit heavy but ensures inspector gets updated
-                // A more targeted update would be better for performance.
-                 onObjectSelectedCallback(transformControls.object, false, false); 
-            }
+        if (transformControls.object && onObjectTransformLiveCallback) { // && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
+            // Call the new lightweight UI update function directly
+            console.log("[SceneManager] objectChange for:", transformControls.object.name);
+            onObjectTransformLiveCallback(transformControls.object);
         }
     });
     transformControls.addEventListener('mouseUp', () => { // This signifies the end of a user interaction

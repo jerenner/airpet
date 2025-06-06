@@ -42,6 +42,7 @@ def update_object_transform_route():
     object_id = data.get('id') # This is the unique ID (UUID) of the PVPlacement
     new_position = data.get('position') # {'x': ..., 'y': ..., 'z': ...}
     new_rotation = data.get('rotation') # {'x': ..., 'y': ..., 'z': ...}
+    print(f"Updating with id {object_id}")
 
     if not object_id:
         return jsonify({"error": "Object ID missing"}), 400
