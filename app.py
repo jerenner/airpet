@@ -47,10 +47,14 @@ def update_object_transform_route():
     if not object_id:
         return jsonify({"error": "Object ID missing"}), 400
 
-    success, error_msg = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
+    success, error_msg, updated_defines = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
 
     if success:
-        return jsonify({"success": True, "message": f"Object {object_id} transform updated."})
+        return jsonify({
+            "success": True, 
+            "message": f"Object {object_id} transform updated.",
+            "updated_defines": updated_defines # Send back the updated define data
+        })
     else:
         return jsonify({"success": False, "error": error_msg or f"Could not update object {object_id} transform."}), 404
     
