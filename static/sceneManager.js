@@ -226,7 +226,41 @@ export function renderObjects(objectsDescription) {
 
         switch (objData.solid_type) {
             case 'box': geometry = new THREE.BoxGeometry(p.x, p.y, p.z); break;
-            case 'tube': geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.dz * 2, 32, 1, false, p.startphi, p.deltaphi); break;
+            case 'tube':
+                // If there's no inner radius or it's negligible, use the simpler CylinderGeometry.
+                if (!p.rmin || p.rmin <= 1e-9) {
+                    geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.dz * 2, 32, 1, false, p.startphi, p.deltaphi);
+                    
+                    // FIX: THREE.CylinderGeometry is created along the Y-axis.
+                    // Geant4's G4Tubs is along the Z-axis. We must rotate it to match.
+                    geometry.rotateX(Math.PI / 2);
+                } else {
+                    // For a hollow tube or a tube segment, use ExtrudeGeometry.
+                    const sPhi = p.startphi;
+                    const ePhi = p.startphi + p.deltaphi;
+
+                    const shape = new THREE.Shape();
+
+                    // The shape definition for a ring segment is created by its outline:
+                    shape.moveTo(p.rmax * Math.cos(sPhi), p.rmax * Math.sin(sPhi));
+                    shape.absarc(0, 0, p.rmax, sPhi, ePhi, false);
+                    shape.lineTo(p.rmin * Math.cos(ePhi), p.rmin * Math.sin(ePhi));
+                    shape.absarc(0, 0, p.rmin, ePhi, sPhi, true);
+                    shape.closePath();
+
+                    const extrudeSettings = {
+                        steps: 1,
+                        depth: p.dz * 2, // Use the full length for extrusion depth
+                        bevelEnabled: false,
+                    };
+
+                    geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                    
+                    // ExtrudeGeometry creates the mesh along the Z-axis from z=0 to z=depth.
+                    // We translate it to be centered at the origin, from -dz to +dz.
+                    geometry.translate(0, 0, -p.dz);
+                }
+                break;
             case 'cone':
                 if (p.rmin1 !== undefined && p.rmin2 !== undefined) {
                      geometry = new THREE.CylinderGeometry(p.rmax2, p.rmax1,p.dz*2,32,1,false,p.startphi,p.deltaphi);
