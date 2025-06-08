@@ -168,6 +168,8 @@
                 <li>
                     <button>File</button>
                     <div class="dropdown_content">
+                        <button id="newProjectButton">New Project</button>
+                        <hr style="margin: 5px 0;"> <!-- Separator -->
                         <button id="loadGdmlButton">Load GDML...</button>
                         <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
                         <button id="exportGdmlButton">Export GDML...</button>
@@ -262,7 +264,9 @@
     {
         "imports": {
             "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+            "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.9.0/build/index.module.js",
+            "three-bvh-csg": "https://unpkg.com/three-bvh-csg@0.0.16/build/index.module.js"
         }
     }
     </script>

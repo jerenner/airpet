@@ -47,6 +47,17 @@ async function handleBlobResponse(response, defaultFilename) {
 // --- API Functions ---
 
 /**
+ * Creates a new, empty project on the backend with a default world volume.
+ * @returns {Promise<Object>} A promise that resolves to the new project state.
+ */
+export async function newProject() {
+    const response = await fetch(`${API_BASE_URL}/new_project`, {
+        method: 'POST',
+    });
+    return handleResponse(response);
+}
+
+/**
  * Loads a GDML file by sending it to the backend for processing.
  * @param {File} gdmlFile The GDML file object from a file input.
  * @returns {Promise<Array>} A promise that resolves to the Three.js scene description array.

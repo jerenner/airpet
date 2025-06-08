@@ -42,7 +42,7 @@ class ProjectManager:
         # self.redo_stack.clear()
         return self.current_geometry_state
 
-    def export_to_gdml_string(self): # Ensure this method exists
+    def export_to_gdml_string(self):
         if self.current_geometry_state:
             writer = GDMLWriter(self.current_geometry_state)
             return writer.get_gdml_string()
@@ -173,8 +173,6 @@ class ProjectManager:
         # or that Define constructor handles necessary conversions based on unit/category
         new_define = Define(name, define_type, value_dict, unit, category)
         self.current_geometry_state.add_define(new_define)
-        print(f"Added Define: {name}")
-        # TODO: Add to Undo stack
         return new_define.to_dict(), None
 
     def add_material(self, name_suggestion, properties_dict):
@@ -234,56 +232,51 @@ class ProjectManager:
         return new_pv.to_dict(), None
 
 
-    def delete_object(self, object_type, object_id): # object_id is name for Define/Mat/Solid/LV, UUID for PV
-        if not self.current_geometry_state: return False, "No project loaded", None
+    def delete_object(self, object_type, object_id):
+        if not self.current_geometry_state: return False, "No project loaded"
 
         deleted = False
         error_msg = None
 
         if object_type == "define":
+            # TODO: Check for usages of this define
             if object_id in self.current_geometry_state.defines:
                 del self.current_geometry_state.defines[object_id]
                 deleted = True
         elif object_type == "material":
+            # TODO: Check for LVs using this material
             if object_id in self.current_geometry_state.materials:
-                # TODO: Check for LVs using this material
                 del self.current_geometry_state.materials[object_id]
                 deleted = True
         elif object_type == "solid":
+            # TODO: Check for LVs using this solid
             if object_id in self.current_geometry_state.solids:
-                # TODO: Check for LVs using this solid
                 del self.current_geometry_state.solids[object_id]
                 deleted = True
         elif object_type == "logical_volume":
             if object_id in self.current_geometry_state.logical_volumes:
-                # TODO: Check for PVs placing this LV, or if it's the world
                 if self.current_geometry_state.world_volume_ref == object_id:
                     error_msg = "Cannot delete the world volume."
                 else:
                     del self.current_geometry_state.logical_volumes[object_id]
-                    # Also remove PVs that place this LV from other LVs
-                    for lv_name_key in list(self.current_geometry_state.logical_volumes.keys()):
-                        lv = self.current_geometry_state.logical_volumes[lv_name_key]
+                    for lv in self.current_geometry_state.logical_volumes.values():
                         lv.phys_children = [pv for pv in lv.phys_children if pv.volume_ref != object_id]
                     deleted = True
         elif object_type == "physical_volume":
             found_pv = False
-            for lv_name_key in list(self.current_geometry_state.logical_volumes.keys()):
-                lv = self.current_geometry_state.logical_volumes[lv_name_key]
+            for lv in self.current_geometry_state.logical_volumes.values():
                 original_len = len(lv.phys_children)
                 lv.phys_children = [pv for pv in lv.phys_children if pv.id != object_id]
                 if len(lv.phys_children) < original_len:
                     found_pv = True
-                    deleted = True # Mark as deleted if found and removed
+                    deleted = True
                     break
             if not found_pv: error_msg = "Physical Volume not found."
         
         if deleted:
-            print(f"Deleted {object_type}: {object_id}")
-            # TODO: Add to Undo stack
-            return True, None, self.get_threejs_description()
+            return True, None
         else:
-            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted.", None
+            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
 
     # --- Placeholder for Command Pattern / Undo-Redo ---
     # def execute_command(self, command):
@@ -308,7 +301,7 @@ class ProjectManager:
           
     def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
-            return False, "No project loaded", {}
+            return False, "No project loaded"
 
         found_pv_object = None
         for lv in self.current_geometry_state.logical_volumes.values():
@@ -319,9 +312,7 @@ class ProjectManager:
             if found_pv_object: break
 
         if not found_pv_object:
-            return False, f"Physical Volume with ID {pv_id} not found", {}
-
-        updated_defines = {}
+            return False, f"Physical Volume with ID {pv_id} not found"
 
         if new_position_dict is not None:
             if isinstance(found_pv_object.position, str):
@@ -329,10 +320,9 @@ class ProjectManager:
                 position_define = self.current_geometry_state.defines.get(define_name)
                 if position_define and position_define.type == 'position':
                     position_define.value = new_position_dict
-                    updated_defines['position'] = position_define.to_dict()
-                else:
+                else: # was a ref, but define not found; overwrite with values
                     found_pv_object.position = new_position_dict
-            else:
+            else: # was already a dict of values
                 found_pv_object.position = new_position_dict
 
         if new_rotation_dict is not None:
@@ -341,14 +331,12 @@ class ProjectManager:
                 rotation_define = self.current_geometry_state.defines.get(define_name)
                 if rotation_define and rotation_define.type == 'rotation':
                     rotation_define.value = new_rotation_dict
-                    updated_defines['rotation'] = rotation_define.to_dict()
                 else:
                     found_pv_object.rotation = new_rotation_dict
             else:
                 found_pv_object.rotation = new_rotation_dict
 
-        # Return success, no error, and a dictionary of updated defines
-        return True, None, updated_defines
+        return True, None
 
     
     # def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):

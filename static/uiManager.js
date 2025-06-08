@@ -2,7 +2,7 @@
 import * as THREE from 'three'; // Needed for THREE.MathUtils
 
 // --- Module-level variables for DOM elements ---
-let gdmlFileInput, loadGdmlButton, exportGdmlButton,
+let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
     saveProjectButton, loadProjectButton, projectFileInput,
     addObjectButton, deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton,
@@ -21,6 +21,7 @@ let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newO
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
+    onNewProjectClicked: () => {},
     onLoadGdmlClicked: () => {},
     onLoadProjectClicked: () => {},
     onGdmlFileSelected: (file) => {},
@@ -45,6 +46,7 @@ export function initUI(cb) {
     callbacks = {...callbacks, ...cb}; // Merge provided callbacks
 
     // Get Menu Buttons
+    newProjectButton = document.getElementById('newProjectButton');
     loadGdmlButton = document.getElementById('loadGdmlButton');
     gdmlFileInput = document.getElementById('gdmlFile');
     exportGdmlButton = document.getElementById('exportGdmlButton');
@@ -89,6 +91,7 @@ export function initUI(cb) {
     cancelAddObjectButton = document.getElementById('cancelAddObject');
 
     // Attach Event Listeners
+    newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
     loadGdmlButton.addEventListener('click', callbacks.onLoadGdmlClicked);
     gdmlFileInput.addEventListener('change', (event) => callbacks.onGdmlFileSelected(event.target.files[0]));
     exportGdmlButton.addEventListener('click', callbacks.onExportGdmlClicked);
@@ -506,4 +509,13 @@ export function showLoading(message = "Loading...") {
 }
 export function hideLoading() {
     console.log("[UI Loading] Complete.");
+}
+
+/**
+ * Displays a confirmation dialog to the user.
+ * @param {string} message The question to ask the user.
+ * @returns {boolean} True if the user clicked "OK", false otherwise.
+ */
+export function confirmAction(message) {
+    return window.confirm(message);
 }

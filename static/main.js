@@ -26,6 +26,7 @@ async function initializeApp() {
 
     // Initialize UI elements and pass callback handlers for UI-triggered actions
     UIManager.initUI({
+        onNewProjectClicked: handleNewProject,
         onLoadGdmlClicked: () => UIManager.triggerFileInput('gdmlFile'), // UIManager handles its own file input now
         onLoadProjectClicked: () => UIManager.triggerFileInput('projectFile'),
         onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
@@ -66,9 +67,21 @@ async function initializeApp() {
         SceneManager.getFlyControls()        // Pass the FlyControls instance
     );
 
-    // Optionally, load a default state or welcome message
-    UIManager.clearInspector();
-    UIManager.clearHierarchy();
+    // Restore session from backend on page load
+    console.log("Fetching initial project state from backend...");
+    const initialState = await APIService.getProjectState();
+    // No try/catch needed, as the backend now guarantees a valid response
+    if (initialState && initialState.project_state) {
+        console.log("Initializing UI with project state.");
+        // We use a simplified sync function here as the structure is slightly different
+        AppState.currentProjectState = initialState.project_state;
+        UIManager.updateHierarchy(initialState.project_state);
+        SceneManager.renderObjects(initialState.scene_update || [], initialState.project_state);
+    } else {
+        // This case should theoretically not be reached anymore, but is good for safety
+        UIManager.showError("Failed to retrieve a valid project state from the server.");
+    }
+
     console.log("Application Initialized.");
     
     // Example: Fetch initial empty state or last saved state if implemented
@@ -85,23 +98,67 @@ async function initializeApp() {
     // }
 }
 
+/**
+    The single function to update the entire UI from a new state object from the backend.
+    This is the core of the unidirectional data flow pattern.
+    @param {object} responseData The consistent success response object from the backend.
+*/
+function syncUIWithState(responseData) {
+    if (!responseData || !responseData.success) {
+        UIManager.showError(responseData.error || "An unknown error occurred during state sync.");
+        return;
+    }
+    console.log("[Main] Syncing UI with new backend state. Message: " + responseData.message);
+
+    // 1. Update the global AppState cache
+    AppState.currentProjectState = responseData.project_state;
+    AppState.selectedHierarchyItem = null; // Clear old selections
+    AppState.selectedThreeObjects = [];
+    AppState.selectedPVContext.pvId = null;
+
+    // 2. Re-render the 3D scene
+    if (responseData.scene_update) {
+        SceneManager.renderObjects(responseData.scene_update, responseData.project_state);
+    } else {
+        SceneManager.clearScene(); // Ensure scene is cleared if there's no update
+    }
+
+    // 3. Re-render the hierarchy panels
+    UIManager.updateHierarchy(responseData.project_state);
+
+    // 4. Reset UI elements to a clean state
+    UIManager.clearInspector();
+    UIManager.clearHierarchySelection();
+    SceneManager.unselectAllInScene();
+}
+
 // --- Handler Functions (Act as Controllers/Mediators) ---
+
+// Handler for the "New Project" button
+async function handleNewProject() {
+    if (!UIManager.confirmAction("This will clear the current project. Are you sure?")) return;
+
+    UIManager.showLoading("Creating new project...");
+    try {
+        const result = await APIService.newProject();
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to create new project: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
 
 async function handleLoadGdml(file) {
     if (!file) return;
     UIManager.showLoading("Processing GDML...");
+
     try {
-        const threeJSData = await APIService.loadGdmlFile(file); // Backend returns threejs_description
-        SceneManager.renderObjects(threeJSData || []);
-        
-        const fullState = await APIService.getProjectState(); // Then fetch the full state
-        AppState.currentProjectState = fullState;
-        UIManager.updateHierarchy(fullState);
-        UIManager.clearInspector();
-        SceneManager.unselectAllInScene();
-    } catch (error) { 
-        UIManager.showError("Failed to load GDML: " + (error.message || error)); 
-        SceneManager.clearScene(); 
+        const result = await APIService.loadGdmlFile(file);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to load GDML: " + (error.message || error));
+        SceneManager.clearScene();
         UIManager.clearHierarchy();
     } finally {
         UIManager.hideLoading();
@@ -111,17 +168,12 @@ async function handleLoadGdml(file) {
 async function handleLoadProject(file) {
     if (!file) return;
     UIManager.showLoading("Loading project...");
-    try {
-        const threeJSData = await APIService.loadProjectFile(file); // Backend returns threejs_description
-        SceneManager.renderObjects(threeJSData || []);
 
-        const fullState = await APIService.getProjectState();
-        AppState.currentProjectState = fullState;
-        UIManager.updateHierarchy(fullState);
-        UIManager.clearInspector();
-        SceneManager.unselectAllInScene();
-    } catch (error) { 
-        UIManager.showError("Failed to load project: " + (error.message || error)); 
+    try {
+        const result = await APIService.loadProjectFile(file);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to load project: " + (error.message || error));
         SceneManager.clearScene();
         UIManager.clearHierarchy();
     } finally {
@@ -132,7 +184,7 @@ async function handleLoadProject(file) {
 async function handleSaveProject() {
     UIManager.showLoading("Saving project...");
     try {
-        await APIService.saveProject(); // APIService handles the download
+        await APIService.saveProject();
     } catch (error) { UIManager.showError("Failed to save project: " + (error.message || error)); }
     finally { UIManager.hideLoading(); }
 }
@@ -149,20 +201,11 @@ async function handleAddObject(objectType, nameSuggestion, paramsFromModal) {
     UIManager.showLoading("Adding object...");
     try {
         const result = await APIService.addObject(objectType, nameSuggestion, paramsFromModal);
-        if (result.success) {
-            AppState.currentProjectState = result.project_state;
-            UIManager.updateHierarchy(result.project_state);
-            if (result.scene_update) SceneManager.renderObjects(result.scene_update);
-            UIManager.hideAddObjectModal();
-            // Optionally select the new item in hierarchy and inspector
-            const newItemId = result.new_object.id || result.new_object.name; // Adjust based on what backend returns for id
-            const newItemType = objectType.startsWith('solid_') ? 'solid' : (objectType.startsWith('define_') ? 'define' : objectType);
-            UIManager.selectHierarchyItemByTypeAndId(newItemType, newItemId, result.project_state);
-
-        } else {
-            UIManager.showError("Failed to add object: " + result.error);
-        }
-    } catch (error) { UIManager.showError("Error adding object: " + (error.message || error)); }
+        syncUIWithState(result);
+        UIManager.hideAddObjectModal();
+    } catch (error) {
+        UIManager.showError("Error adding object: " + (error.message || error));
+    }
     finally { UIManager.hideLoading(); }
 }
 
@@ -171,90 +214,97 @@ async function handleDeleteSelectedFromHierarchy() {
         UIManager.showNotification("Please select an item from the hierarchy to delete.");
         return;
     }
+
     const { type, id, name } = AppState.selectedHierarchyItem;
     if (!UIManager.confirmAction(`Are you sure you want to delete ${type}: ${name}?`)) return;
-
-    UIManager.showLoading("Deleting object...");
+        UIManager.showLoading("Deleting object...");
     try {
         const result = await APIService.deleteObject(type, id);
-        if (result.success) {
-            AppState.currentProjectState = result.project_state;
-            UIManager.updateHierarchy(result.project_state);
-            if (result.scene_update) SceneManager.renderObjects(result.scene_update);
-            UIManager.clearInspector();
-            AppState.selectedHierarchyItem = null; // Clear selection
-        } else {
-            UIManager.showError("Failed to delete object: " + result.error);
-        }
-    } catch (error) { UIManager.showError("Error deleting object: " + (error.message || error)); }
+        syncUIWithState(result);
+    } catch (error) { 
+        UIManager.showError("Error deleting object: " + (error.message || error)); 
+    }
     finally { UIManager.hideLoading(); }
 }
 
 function handleModeChange(newMode) {
-    const currentSelectedIn3D = SceneManager.getSelectedObjects(); // Get currently selected 3D objects
+    const currentSelectedIn3D = SceneManager.getSelectedObjects();
     InteractionManager.setMode(newMode, currentSelectedIn3D.length === 1 ? currentSelectedIn3D[0] : null);
     if (newMode === 'observe' && SceneManager.getTransformControls().object) {
-        SceneManager.getTransformControls().detach(); // Detach gizmo when switching to observe
+        SceneManager.getTransformControls().detach();
     } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length === 1){
         SceneManager.attachTransformControls(AppState.selectedThreeObjects[0]);
     }
 }
 
-// Called by UIManager when an item in the hierarchy panel is clicked
-async function handleHierarchySelection(itemContext) { 
+async function handleHierarchySelection(itemContext) {
     AppState.selectedHierarchyItem = itemContext;
-    
     const { type, id } = itemContext;
-    
-    // Fetch fresh details to ensure we have the latest data
+
+    // Fetch fresh details for the inspector
     const details = await APIService.getObjectDetails(type, id);
     if (!details) {
         UIManager.showError(`Could not fetch details for ${type} ${id}`);
         return;
     }
-    
-    itemContext.data = details; // Update context with fresh data
+
+    itemContext.data = details;
     UIManager.populateInspector(itemContext);
 
-    // If a physical volume is selected, cache its define references for live updates
+    // If a physical volume is selected, cache its define references for live updates and select in 3D
     if (type === 'physical_volume') {
         SceneManager.selectObjectInSceneByPvId(id);
+        AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
         AppState.selectedPVContext.pvId = id;
         AppState.selectedPVContext.positionDefineName = typeof details.position === 'string' ? details.position : null;
         AppState.selectedPVContext.rotationDefineName = typeof details.rotation === 'string' ? details.rotation : null;
         
         if (InteractionManager.getCurrentMode() !== 'observe') {
-            const selectedMesh = SceneManager.getSelectedObjects()[0];
+            const selectedMesh = AppState.selectedThreeObjects[0];
             if(selectedMesh) SceneManager.attachTransformControls(selectedMesh);
         }
     } else {
-        // Clear PV context if something else is selected
+        // Clear PV context and 3D selection if something else is selected
         AppState.selectedPVContext.pvId = null;
         AppState.selectedPVContext.positionDefineName = null;
         AppState.selectedPVContext.rotationDefineName = null;
         SceneManager.unselectAllInScene();
+        AppState.selectedThreeObjects = [];
     }
 }
 
 // Called by SceneManager when an object is clicked in 3D
 function handle3DSelection(selectedThreeObject) {
     if (selectedThreeObject) {
-        SceneManager.updateSelectionState([selectedThreeObject]);
-        AppState.selectedThreeObjects = [selectedThreeObject];
         const pvId = selectedThreeObject.userData.id;
-        // This will now trigger the async data fetch and context update
+        // This will now trigger the async data fetch and context update via the hierarchy
         UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId, AppState.currentProjectState);
     } else {
-        SceneManager.unselectAllInScene();
         UIManager.clearHierarchySelection();
         AppState.selectedHierarchyItem = null;
         AppState.selectedThreeObjects = [];
-        // Clear PV context
         AppState.selectedPVContext.pvId = null;
-        AppState.selectedPVContext.positionDefineName = null;
-        AppState.selectedPVContext.rotationDefineName = null;
     }
 }
+
+// function handle3DSelection(selectedThreeObject) {
+//     if (selectedThreeObject) {
+//         SceneManager.updateSelectionState([selectedThreeObject]);
+//         AppState.selectedThreeObjects = [selectedThreeObject];
+//         const pvId = selectedThreeObject.userData.id;
+//         // This will now trigger the async data fetch and context update
+//         UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId, AppState.currentProjectState);
+//     } else {
+//         SceneManager.unselectAllInScene();
+//         UIManager.clearHierarchySelection();
+//         AppState.selectedHierarchyItem = null;
+//         AppState.selectedThreeObjects = [];
+//         // Clear PV context
+//         AppState.selectedPVContext.pvId = null;
+//         AppState.selectedPVContext.positionDefineName = null;
+//         AppState.selectedPVContext.rotationDefineName = null;
+//     }
+// }
 
 function handleTransformLive(liveObject) {
     // 1. Update the PV's own inspector (if it has inline values)
@@ -278,46 +328,20 @@ function handleTransformLive(liveObject) {
 // Called by SceneManager when TransformControls finishes a transformation
 async function handleTransformEnd(transformedObject) {
     if (!transformedObject || !transformedObject.userData) return;
-    const objData = transformedObject.userData;
-
-    const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
-    const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
-    const newRotation = { x: euler.x, y: euler.y, z: euler.z };
-
-    UIManager.showLoading("Updating transform...");
+        UIManager.showLoading("Updating transform...");
     try {
+        const objData = transformedObject.userData;
+        const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
+        const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
+        const newRotation = { x: euler.x, y: euler.y, z: euler.z };
+
         const result = await APIService.updateObjectTransform(objData.id, newPosition, newRotation);
-        if (result.success) {
-            console.log("[MainJS] Backend transform update successful.");
-            
-            // Now, intelligently update the UI instead of a full reload
-            // 1. Update the local project state with the new define values
-            if (result.updated_defines) {
-                if(result.updated_defines.position) {
-                    const posDefine = result.updated_defines.position;
-                    AppState.currentProjectState.defines[posDefine.name] = posDefine;
-                }
-                if(result.updated_defines.rotation) {
-                    const rotDefine = result.updated_defines.rotation;
-                    AppState.currentProjectState.defines[rotDefine.name] = rotDefine;
-                }
-            }
+        syncUIWithState(result);
 
-            // 2. Refresh the inspector for the currently selected item (which should be the PV)
-            if (AppState.selectedHierarchyItem) {
-                const { type, id } = AppState.selectedHierarchyItem;
-                const freshDetails = await APIService.getObjectDetails(type, id);
-                if (freshDetails) {
-                    AppState.selectedHierarchyItem.data = freshDetails;
-                    UIManager.populateInspector(AppState.selectedHierarchyItem);
-                }
-            }
-
-        } else {
-            UIManager.showError("Transform update failed on backend: " + (result.error || "Unknown error"));
-            // TODO: Revert object's transform in Three.js scene.
-        }
-    } catch (error) { UIManager.showError("Error saving transform: " + (error.message || error)); }
+    } catch (error) { 
+        UIManager.showError("Error saving transform: " + (error.message || error)); 
+        // TODO: Could add logic here to revert the object's transform in Three.js on failure.
+    }
     finally { UIManager.hideLoading(); }
 }
 
@@ -326,19 +350,9 @@ async function handleInspectorPropertyUpdate(objectType, objectId, propertyPath,
     UIManager.showLoading("Updating property...");
     try {
         const result = await APIService.updateProperty(objectType, objectId, propertyPath, newValue);
-        if (result.success) {
-            SceneManager.renderObjects(result.scene_update); // Re-render 3D from backend
-            
-            const fullState = await APIService.getProjectState(); // Fetch full state again
-            AppState.currentProjectState = fullState;
-            UIManager.updateHierarchy(fullState); // Rebuild hierarchy
-            
-            // Re-select and re-populate inspector for the edited item
-            UIManager.reselectHierarchyItem(objectType, objectId, fullState);
-
-        } else {
-            UIManager.showError("Property update failed: " + (result.error || "Unknown error"));
-        }
-    } catch (error) { UIManager.showError("Error updating property: " + (error.message || error)); }
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Error updating property: " + (error.message || error));
+    }
     finally { UIManager.hideLoading(); }
 }

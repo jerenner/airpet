@@ -303,6 +303,26 @@ class GDMLParser:
                     'startphi': self._evaluate_expression(solid_el.get('startphi'), aunit_val),
                     'deltaphi': self._evaluate_expression(solid_el.get('deltaphi'), aunit_val),
                 }
+            elif solid_type == 'cutTube':
+                # A cutTube has the same params as a tube, plus two cutting plane normal vectors.
+                # The normal vector points *towards the material to be KEPT*.
+                params = {
+                    'rmin': self._evaluate_expression(solid_el.get('rmin'), lunit_val),
+                    'rmax': self._evaluate_expression(solid_el.get('rmax'), lunit_val),
+                    'dz': self._evaluate_expression(solid_el.get('z'), lunit_val) / 2.0,
+                    'startphi': self._evaluate_expression(solid_el.get('startphi'), aunit_val),
+                    'deltaphi': self._evaluate_expression(solid_el.get('deltaphi'), aunit_val),
+                    'lowNormal': {
+                        'x': self._evaluate_expression(solid_el.get('lowX', '0'), 1.0, "dimensionless"),
+                        'y': self._evaluate_expression(solid_el.get('lowY', '0'), 1.0, "dimensionless"),
+                        'z': self._evaluate_expression(solid_el.get('lowZ', '0'), 1.0, "dimensionless"),
+                    },
+                    'highNormal': {
+                        'x': self._evaluate_expression(solid_el.get('highX', '0'), 1.0, "dimensionless"),
+                        'y': self._evaluate_expression(solid_el.get('highY', '0'), 1.0, "dimensionless"),
+                        'z': self._evaluate_expression(solid_el.get('highZ', '0'), 1.0, "dimensionless"),
+                    }
+                }
             elif solid_type == 'cone': # G4Cons
                 params = {
                     'rmin1': self._evaluate_expression(solid_el.get('rmin1'), lunit_val),
@@ -537,6 +557,28 @@ class GDMLParser:
                 if zplanes: params['zplanes'] = zplanes
                 if rzpoints: params['rzpoints'] = rzpoints
             
+            elif solid_type == 'xtru':
+                two_dim_vertices = []
+                sections = []
+                for child in solid_el:
+                    if child.tag == 'twoDimVertex':
+                        two_dim_vertices.append({
+                            'x': self._evaluate_expression(child.get('x'), lunit_val),
+                            'y': self._evaluate_expression(child.get('y'), lunit_val),
+                        })
+                    elif child.tag == 'section':
+                        sections.append({
+                            'zOrder': int(self._evaluate_expression(child.get('zOrder'), 1.0, "dimensionless")),
+                            'zPosition': self._evaluate_expression(child.get('zPosition'), lunit_val),
+                            'xOffset': self._evaluate_expression(child.get('xOffset'), lunit_val),
+                            'yOffset': self._evaluate_expression(child.get('yOffset'), lunit_val),
+                            'scalingFactor': self._evaluate_expression(child.get('scalingFactor'), 1.0, "dimensionless"),
+                        })
+                # Sort sections by zOrder just in case they are not in order in the file
+                sections.sort(key=lambda s: s['zOrder'])
+                params['twoDimVertices'] = two_dim_vertices
+                params['sections'] = sections
+
             elif solid_type == 'tessellated':
                 # <tessellated name=" شکل " lunit="mm" aunit="deg">
                 #   <triangular vertex1="v1" vertex2="v2" vertex3="v3"/>

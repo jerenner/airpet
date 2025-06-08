@@ -1,18 +1,73 @@
+# FILE: gdml-studio/app.py
+
+import json
+import math
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
-# Correctly import from the 'src' package
+
 from src.project_manager import ProjectManager
-from src.geometry_types import convert_to_internal_units, get_unit_value # if needed directly
+from src.geometry_types import get_unit_value
+from src.geometry_types import Material, Solid, LogicalVolume
 
 app = Flask(__name__)
 CORS(app)
 
-# Instantiate ProjectManager globally (or manage per session if needed)
 project_manager = ProjectManager()
+
+# --- Helper Functions ---
+
+# Function for Consistent API Responses
+def create_success_response(message="Success"):
+    """
+    Helper to create a standard success response object. It packages the
+    entire current project state for the frontend to re-render.
+    """
+    state = project_manager.get_full_project_state_dict()
+    scene = project_manager.get_threejs_description()
+    return jsonify({
+        "success": True,
+        "message": message,
+        "project_state": state,
+        "scene_update": scene
+    })
+
+# Function to define a new project
+def create_empty_project():
+
+    global project_manager
+    # Re-initialize the project manager to clear everything
+    project_manager = ProjectManager() 
+
+    # Create a default material for the world (e.g., vacuum)
+    world_mat = Material(name="G4_Galactic", Z=1, A=1.01, density=1.e-25, state="gas")
+    project_manager.current_geometry_state.add_material(world_mat)
+    
+    # Create a default solid for the world (e.g., a 10m box)
+    world_solid_params = {'x': 10000, 'y': 10000, 'z': 10000} # in mm
+    world_solid = Solid(name="world_solid", solid_type="box", parameters=world_solid_params)
+    project_manager.current_geometry_state.add_solid(world_solid)
+
+    # Create the logical volume for the world
+    world_lv = LogicalVolume(name="World", solid_ref="world_solid", material_ref="G4_Galactic")
+    project_manager.current_geometry_state.add_logical_volume(world_lv)
+
+    # Set this logical volume as the world volume
+    project_manager.current_geometry_state.world_volume_ref = "World"
+
+# --- Main Application Routes ---
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/new_project', methods=['POST']) # Use POST for an action that changes state
+def new_project_route():
+    """Clears the current project and creates a new one with a default world."""
+
+    # Call the helper function for creating an empty project.
+    create_empty_project()
+
+    return create_success_response("New project created.")
 
 @app.route('/process_gdml', methods=['POST'])
 def process_gdml_route():
@@ -25,58 +80,46 @@ def process_gdml_route():
         gdml_content_str = file.read().decode('utf-8')
         try:
             project_manager.load_gdml_from_string(gdml_content_str)
-            geometry_data_for_threejs = project_manager.get_threejs_description()
-            return jsonify(geometry_data_for_threejs)
-        except ValueError as e:
-             print(f"Error during GDML processing: {e}")
-             return jsonify({"error": str(e)}), 500
+            return create_success_response("GDML file processed successfully.")
         except Exception as e:
-            print(f"An unexpected error occurred: {e}")
             import traceback
             traceback.print_exc()
-            return jsonify({"error": "An unexpected error occurred on the server."}), 500
+            return jsonify({"error": str(e)}), 500
+
+@app.route('/load_project_json', methods=['POST'])
+def load_project_json_route():
+    if 'projectFile' not in request.files:
+        return jsonify({"error": "No project file part"}), 400
+    file = request.files['projectFile']
+    if file:
+        try:
+            project_json_string = file.read().decode('utf-8')
+            project_manager.load_project_from_json_string(project_json_string)
+            return create_success_response("Project loaded successfully.")
+        except json.JSONDecodeError:
+            return jsonify({"error": "Invalid JSON file format"}), 400
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"Failed to load project data: {str(e)}"}), 500
 
 @app.route('/update_object_transform', methods=['POST'])
 def update_object_transform_route():
     data = request.get_json()
-    object_id = data.get('id') # This is the unique ID (UUID) of the PVPlacement
-    new_position = data.get('position') # {'x': ..., 'y': ..., 'z': ...}
-    new_rotation = data.get('rotation') # {'x': ..., 'y': ..., 'z': ...}
-    print(f"Updating with id {object_id}")
+    object_id = data.get('id')
+    new_position = data.get('position')
+    new_rotation = data.get('rotation')
 
     if not object_id:
         return jsonify({"error": "Object ID missing"}), 400
 
-    success, error_msg, updated_defines = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
+    success, error_msg = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
 
     if success:
-        return jsonify({
-            "success": True, 
-            "message": f"Object {object_id} transform updated.",
-            "updated_defines": updated_defines # Send back the updated define data
-        })
+        return create_success_response(f"Object {object_id} transform updated.")
     else:
-        return jsonify({"success": False, "error": error_msg or f"Could not update object {object_id} transform."}), 404
+        return jsonify({"success": False, "error": error_msg or "Could not update transform."}), 404
     
-@app.route('/get_project_state', methods=['GET'])
-def get_project_state_route():
-    state_dict = project_manager.get_full_project_state_dict()
-    if state_dict:
-        return jsonify(state_dict)
-    return jsonify({"error": "No project loaded"}), 404
-
-@app.route('/get_object_details', methods=['GET'])
-def get_object_details_route():
-    obj_type = request.args.get('type')
-    obj_id = request.args.get('id') # For PVs, this is the UUID. For others, it's the name for now.
-    if not obj_type or not obj_id:
-        return jsonify({"error": "Type or ID missing"}), 400
-    
-    details = project_manager.get_object_details(obj_type, obj_id)
-    if details:
-        return jsonify(details)
-    return jsonify({"error": f"{obj_type} '{obj_id}' not found"}), 404
-
 @app.route('/update_property', methods=['POST'])
 def update_property_route():
     data = request.get_json()
@@ -90,147 +133,116 @@ def update_property_route():
 
     success = project_manager.update_object_property(obj_type, obj_id, prop_path, new_value)
     if success:
-        # Important: After backend state changes, frontend needs updated scene data
-        new_scene_description = project_manager.get_threejs_description()
-        return jsonify({"success": True, "message": "Property updated", "scene_update": new_scene_description})
+        return create_success_response("Property updated.")
     else:
         return jsonify({"success": False, "error": "Failed to update property"}), 500
 
 @app.route('/add_object', methods=['POST'])
 def add_object_route():
     data = request.get_json()
-    obj_type = data.get('object_type') # e.g., "solid_box", "define_position", "material"
+    obj_type = data.get('object_type')
     name_suggestion = data.get('name')
-    params = data.get('params', {}) # Specific parameters for the object type
+    params = data.get('params', {})
 
     if not obj_type or not name_suggestion:
         return jsonify({"error": "Object type or name missing"}), 400
 
-    new_obj_data = None
-    error = None
+    new_obj_data, error = None, None
 
     if obj_type == "define_position":
-        # Frontend should send params like {'x':0, 'y':0, 'z':0, 'unit':'mm'}
-        unit = params.get('unit', 'mm') # Default unit
+        unit = params.get('unit', 'mm')
         val_dict = {'x': params.get('x',0), 'y': params.get('y',0), 'z': params.get('z',0)}
         new_obj_data, error = project_manager.add_define(name_suggestion, "position", val_dict, unit, "length")
     elif obj_type == "material":
-        # Frontend sends params like {'density': 1.0, 'state': 'solid'}
         new_obj_data, error = project_manager.add_material(name_suggestion, params)
     elif obj_type.startswith("solid_"):
-        solid_actual_type = obj_type.split('_', 1)[1] # "box", "tube"
-        # Frontend sends params like {'x':10, 'y':10, 'z':10} (already in internal units or with explicit units)
-        # For simplicity, assume frontend sends params already converted to internal units (mm, rad)
-        # A more robust way is for frontend to send value+unit, backend converts.
-        # For now, project_manager.add_solid expects params in internal units.
+        solid_actual_type = obj_type.split('_', 1)[1]
         internal_params = {}
-        default_lunit_val = get_unit_value('mm') # default internal unit
-        default_aunit_val = get_unit_value('rad')
-
         if solid_actual_type == "box":
-            internal_params = {
-                'x': float(params.get('x', 100)), # Assume mm if unit not specified by UI
-                'y': float(params.get('y', 100)),
-                'z': float(params.get('z', 100)),
-            }
+            internal_params = {'x': float(params.get('x', 100)), 'y': float(params.get('y', 100)), 'z': float(params.get('z', 100))}
         elif solid_actual_type == "tube":
-             internal_params = {
-                'rmin': float(params.get('rmin', 0)),
-                'rmax': float(params.get('rmax', 50)),
-                'dz': float(params.get('dz', 100)) / 2.0, # Store half-length
-                'startphi': float(params.get('startphi', 0)), # Assume rad
-                'deltaphi': float(params.get('deltaphi', 2*math.pi)), # Assume rad
-            }
-        # Add more solid types based on how their parameters are defined in geometry_types.Solid
+             internal_params = {'rmin': float(params.get('rmin', 0)), 'rmax': float(params.get('rmax', 50)), 'dz': float(params.get('dz', 100)) / 2.0, 'startphi': float(params.get('startphi', 0)), 'deltaphi': float(params.get('deltaphi', 2*math.pi))}
         
         if internal_params:
             new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, internal_params)
         else:
             error = f"Parameters for solid type {solid_actual_type} not handled."
     
-    # TODO: Add cases for logical_volume, physical_volume which require selecting existing refs
-
     if new_obj_data:
-        return jsonify({
-            "success": True, 
-            "message": f"{obj_type} '{new_obj_data.get('name')}' added.",
-            "new_object": new_obj_data,
-            "project_state": project_manager.get_full_project_state_dict(), # For hierarchy refresh
-            "scene_update": project_manager.get_threejs_description() # If PV was added directly
-        })
+        return create_success_response(f"{obj_type} '{new_obj_data.get('name')}' added.")
     else:
         return jsonify({"success": False, "error": error or "Failed to add object"}), 500
 
-
-# Modify /delete_object to return full project state for hierarchy refresh
 @app.route('/delete_object', methods=['POST'])
 def delete_object_route():
     data = request.get_json()
     obj_type = data.get('object_type')
-    obj_id = data.get('object_id') # This is name for Define/Mat/Solid/LV, UUID for PV
+    obj_id = data.get('object_id')
     
-    deleted, error_msg, scene_update = project_manager.delete_object(obj_type, obj_id)
+    deleted, error_msg = project_manager.delete_object(obj_type, obj_id)
     if deleted:
-        return jsonify({
-            "success": True, 
-            "message": "Object deleted", 
-            "scene_update": scene_update, # Can be None if only non-visual item deleted
-            "project_state": project_manager.get_full_project_state_dict() # For hierarchy
-        })
+        return create_success_response("Object deleted.")
     else:
         return jsonify({"success": False, "error": error_msg or "Failed to delete object"}), 500
 
+# --- Read-only and Export Routes (Do not need full state response) ---
+
+@app.route('/get_project_state', methods=['GET'])
+def get_project_state_route():
+    """
+    This route is for initial page load state restoration.
+    If no project exists, it creates a new default one.
+    """
+    state = project_manager.get_full_project_state_dict()
+    
+    # Check if the project is empty (no world volume defined)
+    if not state or not state.get('world_volume_ref'):
+        print("No active project found, creating a new default world.")
+        
+        # Call the same logic as the /new_project route
+        create_empty_project()
+        
+        # Now get the state and scene again from the newly created project
+        state = project_manager.get_full_project_state_dict()
+        scene = project_manager.get_threejs_description()
+    else:
+        # Project already exists, just get the scene
+        scene = project_manager.get_threejs_description()
+
+    # Always return a valid state
+    return jsonify({
+        "project_state": state,
+        "scene_update": scene
+    })
+
+@app.route('/get_object_details', methods=['GET'])
+def get_object_details_route():
+    obj_type = request.args.get('type')
+    obj_id = request.args.get('id')
+    if not obj_type or not obj_id:
+        return jsonify({"error": "Type or ID missing"}), 400
+    details = project_manager.get_object_details(obj_type, obj_id)
+    if details:
+        return jsonify(details)
+    return jsonify({"error": f"{obj_type} '{obj_id}' not found"}), 404
+
 @app.route('/save_project_json', methods=['GET'])
 def save_project_json_route():
-    try:
-        project_json_string = project_manager.save_project_to_json_string()
-        return Response(
-            project_json_string,
-            mimetype="application/json",
-            headers={"Content-Disposition": "attachment;filename=project.json"}
-        )
-    except Exception as e:
-        print(f"Error saving project: {e}")
-        return jsonify({"error": "Failed to save project data"}), 500
-
-@app.route('/load_project_json', methods=['POST'])
-def load_project_json_route():
-    if 'projectFile' not in request.files:
-        return jsonify({"error": "No project file part"}), 400
-    file = request.files['projectFile']
-    if file.filename == '':
-        return jsonify({"error": "No selected project file"}), 400
-    if file:
-        try:
-            project_json_string = file.read().decode('utf-8')
-            project_manager.load_project_from_json_string(project_json_string)
-            # After loading, send back the new scene description for Three.js
-            geometry_data_for_threejs = project_manager.get_threejs_description()
-            return jsonify(geometry_data_for_threejs)
-        except json.JSONDecodeError:
-            return jsonify({"error": "Invalid JSON file format"}), 400
-        except Exception as e:
-            print(f"Error loading project: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": f"Failed to load project data: {str(e)}"}), 500
+    project_json_string = project_manager.save_project_to_json_string()
+    return Response(
+        project_json_string,
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment;filename=project.json"}
+    )
 
 @app.route('/export_gdml', methods=['GET'])
 def export_gdml_route():
-    try:
-        gdml_string = project_manager.export_to_gdml_string()
-        return Response(
-            gdml_string,
-            mimetype="application/xml", # or text/xml
-            headers={"Content-Disposition": "attachment;filename=exported_geometry.gdml"}
-        )
-    except Exception as e:
-        print(f"Error exporting GDML: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": "Failed to export GDML data"}), 500
-
-# Add routes for undo/redo later
+    gdml_string = project_manager.export_to_gdml_string()
+    return Response(
+        gdml_string,
+        mimetype="application/xml",
+        headers={"Content-Disposition": "attachment;filename=exported_geometry.gdml"}
+    )
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

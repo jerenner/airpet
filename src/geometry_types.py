@@ -240,52 +240,55 @@ class GeometryState:
         if not self.world_volume_ref or self.world_volume_ref not in self.logical_volumes:
             return []
 
-        world_lv = self.logical_volumes[self.world_volume_ref]
+        # This map will prevent processing the same LV multiple times in complex hierarchies
+        processed_lvs = set()
+        
+        # We start traversal from the world volume
+        volumes_to_process = [self.logical_volumes[self.world_volume_ref]]
 
-        # Recursive helper
-        # TODO: Implement proper matrix transformation accumulation
-        def process_lv_for_threejs(lv_name, parent_transform_matrix=None): # parent_transform for future
-            lv = self.logical_volumes.get(lv_name)
-            if not lv: return
+        while volumes_to_process:
+            lv = volumes_to_process.pop(0)
+            if lv.name in processed_lvs:
+                continue
+            processed_lvs.add(lv.name)
 
             for pv_placement in lv.phys_children:
                 child_lv_name = pv_placement.volume_ref
                 child_lv = self.logical_volumes.get(child_lv_name)
-                if not child_lv: continue
+                if not child_lv:
+                    continue
+
+                if child_lv.name not in processed_lvs:
+                    volumes_to_process.append(child_lv)
 
                 solid_obj = self.solids.get(child_lv.solid_ref)
-                if not solid_obj: continue
+                if not solid_obj:
+                    continue
                 
                 # Resolve position
                 position_data = pv_placement.position
                 if isinstance(pv_placement.position, str): # It's a ref name
                     pos_define = self.defines.get(pv_placement.position)
                     if pos_define and pos_define.type == 'position':
-                        position_data = pos_define.value # Assumed to be {'x':val, 'y':val, 'z':val}
-                    else: position_data = {'x':0, 'y':0, 'z':0}
+                        position_data = pos_define.value
+                    else:
+                        position_data = {'x': 0, 'y': 0, 'z': 0}
                 
                 # Resolve rotation
                 rotation_data = pv_placement.rotation
                 if isinstance(pv_placement.rotation, str): # It's a ref name
                     rot_define = self.defines.get(pv_placement.rotation)
                     if rot_define and rot_define.type == 'rotation':
-                        rotation_data = rot_define.value # Assumed to be {'x':val, 'y':val, 'z':val} in radians
-                    else: rotation_data = {'x':0, 'y':0, 'z':0}
-
-                # TODO: Apply parent_transform_matrix to current position/rotation
-                # For now, using absolute positions/rotations as in the simpler parser
+                        rotation_data = rot_define.value
+                    else:
+                        rotation_data = {'x': 0, 'y': 0, 'z': 0}
 
                 threejs_objects.append({
-                    "id": pv_placement.id, # Or solid_obj.id, or make pv_placement have its own unique ID
+                    "id": pv_placement.id,
                     "name": pv_placement.name,
-                    "solid_type": solid_obj.type,
-                    "parameters": solid_obj.parameters, # Assumed in mm
-                    "position": position_data, # Assumed in mm
-                    "rotation": rotation_data  # Assumed ZYX Euler in radians
-                    # "material_ref": child_lv.material_ref # For future coloring
+                    # This new key directly tells the frontend which solid definition to use
+                    "solid_ref_for_threejs": child_lv.solid_ref, 
+                    "position": position_data,
+                    "rotation": rotation_data
                 })
-                # Recursive call for children of this placed volume
-                process_lv_for_threejs(child_lv_name, None) # Pass combined transform here
-
-        process_lv_for_threejs(world_lv.name)
         return threejs_objects
