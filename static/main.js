@@ -1,10 +1,11 @@
 // static/main.js
 import * as THREE from 'three';
 
-import * as UIManager from './uiManager.js';
-import * as SceneManager from './sceneManager.js';
-import * as InteractionManager from './interactionManager.js';
 import * as APIService from './apiService.js';
+import * as InteractionManager from './interactionManager.js';
+import * as SceneManager from './sceneManager.js';
+import * as SolidEditor from './solidEditor.js';
+import * as UIManager from './uiManager.js';
 
 // --- Global Application State (Keep this minimal) ---
 const AppState = {
@@ -30,10 +31,10 @@ async function initializeApp() {
         onLoadGdmlClicked: () => UIManager.triggerFileInput('gdmlFile'), // UIManager handles its own file input now
         onLoadProjectClicked: () => UIManager.triggerFileInput('projectFile'),
         onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
+        onEditSolidClicked: handleEditSolid,
         onProjectFileSelected: handleLoadProject,
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
-        onAddObjectClicked: () => UIManager.showAddObjectModal(), // UIManager shows its modal
         onConfirmAddObject: handleAddObject, // Data from modal comes to this handler
         onDeleteSelectedClicked: handleDeleteSelectedFromHierarchy,
         onModeChangeClicked: handleModeChange, // Passes mode to InteractionManager
@@ -66,6 +67,11 @@ async function initializeApp() {
         SceneManager.getOrbitControls(),     // Pass the OrbitControls instance
         SceneManager.getFlyControls()        // Pass the FlyControls instance
     );
+
+    // Initialize solid editor
+    SolidEditor.initSolidEditor({
+        onConfirm: handleSolidEditorConfirm
+    });
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -355,4 +361,62 @@ async function handleInspectorPropertyUpdate(objectType, objectId, propertyPath,
         UIManager.showError("Error updating property: " + (error.message || error));
     }
     finally { UIManager.hideLoading(); }
+}
+
+// Open solid editor for editing.
+function handleEditSolid(solidData) {
+    console.log("Editing solid:", solidData);
+    // The `appData` on the element is the solid object itself from the project state.
+    // It's exactly what the SolidEditor needs.
+    SolidEditor.show(solidData);
+}
+
+async function handleSolidEditorConfirm(data) {
+    console.log("Solid editor confirmed with data:", data);
+
+    if (data.isEdit) {
+        // --- HANDLE EDIT ---
+        UIManager.showLoading("Updating solid...");
+        try {
+            // We'll update each parameter one by one using the existing API endpoint.
+            // This is not the most efficient way, but it works with our current setup.
+            // A dedicated `/update_solid` endpoint would be better in the long run.
+            let lastResult;
+            for (const key in data.params) {
+                const value = data.params[key];
+                const propertyPath = `parameters.${key}`;
+                // Note: The backend will convert dz to half-length automatically
+                lastResult = await APIService.updateProperty('solid', data.id, propertyPath, value);
+                
+                // If any update fails, stop and show an error.
+                if (!lastResult.success) {
+                    UIManager.showError(`Failed to update property ${key}: ${lastResult.error}`);
+                    // It's better to reload the state to revert any partial changes.
+                    const freshState = await APIService.getProjectState();
+                    syncUIWithState({ ...freshState, success: true }); // A bit of a hack to fit syncUI's format
+                    return;
+                }
+            }
+            // Sync the UI with the state from the very last successful update
+            syncUIWithState(lastResult);
+            
+        } catch (error) {
+             UIManager.showError("Error updating solid: " + (error.message || error)); 
+        } finally {
+            UIManager.hideLoading();
+        }
+
+    } else {
+        // --- HANDLE CREATE (Unchanged from before) ---
+        const objectType = `solid_${data.type}`;
+        
+        UIManager.showLoading("Adding solid...");
+        try {
+            const result = await APIService.addObject(objectType, data.name, data.params);
+            syncUIWithState(result);
+        } catch (error) { 
+            UIManager.showError("Error adding solid: " + (error.message || error)); 
+        }
+        finally { UIManager.hideLoading(); }
+    }
 }

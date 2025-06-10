@@ -1,10 +1,12 @@
 // static/uiManager.js
-import * as THREE from 'three'; // Needed for THREE.MathUtils
+import * as THREE from 'three';
+
+import * as SolidEditor from './solidEditor.js';
 
 // --- Module-level variables for DOM elements ---
 let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
     saveProjectButton, loadProjectButton, projectFileInput,
-    addObjectButton, deleteSelectedObjectButton,
+    deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton,
     toggleWireframeButton, toggleGridButton,
     cameraModeOrbitButton, cameraModeFlyButton,
@@ -25,6 +27,7 @@ let callbacks = {
     onLoadGdmlClicked: () => {},
     onLoadProjectClicked: () => {},
     onGdmlFileSelected: (file) => {},
+    onEditSolidClicked: (solidData) => {},
     onProjectFileSelected: (file) => {},
     onSaveProjectClicked: () => {},
     onExportGdmlClicked: () => {},
@@ -53,8 +56,10 @@ export function initUI(cb) {
     saveProjectButton = document.getElementById('saveProjectButton');
     loadProjectButton = document.getElementById('loadProjectButton');
     projectFileInput = document.getElementById('projectFile');
-    addObjectButton = document.getElementById('addObjectButton');
     deleteSelectedObjectButton = document.getElementById('deleteSelectedObjectButton');
+
+    // Add buttons
+    const addButtons = document.querySelectorAll('.add_button');
 
     // Mode Buttons
     modeObserveButton = document.getElementById('modeObserveButton');
@@ -99,7 +104,6 @@ export function initUI(cb) {
     loadProjectButton.addEventListener('click', callbacks.onLoadProjectClicked);
     projectFileInput.addEventListener('change', (event) => callbacks.onProjectFileSelected(event.target.files[0]));
 
-    addObjectButton.addEventListener('click', callbacks.onAddObjectClicked); // This now calls UIManager.showAddObjectModal
     deleteSelectedObjectButton.addEventListener('click', callbacks.onDeleteSelectedClicked);
 
     modeObserveButton.addEventListener('click', () => { setActiveModeButton('observe'); callbacks.onModeChangeClicked('observe'); });
@@ -118,6 +122,20 @@ export function initUI(cb) {
     });
     gridSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(gridSnapSizeInput.value, undefined));
     angleSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(undefined, angleSnapSizeInput.value));
+
+    // Add listeners for add object buttons (call the solid editor)
+    addButtons.forEach(button => {
+        button.addEventListener('click', (event) => {
+            const type = event.target.dataset.addType;
+            if (type.startsWith('solid_')) {
+                // Call the new solid editor instead of the old modal
+                SolidEditor.show(); 
+            } else {
+                // For defines and materials, we can keep the old simple modal for now
+                showAddObjectModal(type);
+            }
+        });
+    });
 
     // Add Object Modal Listeners
     confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
@@ -367,6 +385,15 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.classList.add('selected_item');
         callbacks.onHierarchyItemSelected({ type: itemType, id: itemIdForBackend, name: displayName, data: item.appData, element: item });
     });
+
+    // For double-clicking of solids
+    if (itemType === 'solid') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            // Pass the solid's data to the handler
+            callbacks.onEditSolidClicked(item.appData);
+        });
+    }
     return item;
 }
 
@@ -403,9 +430,18 @@ export function clearInspector() {
 }
 
 // --- Add Object Modal ---
-export function showAddObjectModal() {
+export function showAddObjectModal(preselectedType = 'define_position') {
     if(newObjectNameInput) newObjectNameInput.value = '';
-    if(newObjectTypeSelect) populateAddObjectModalParams();
+    
+    // Set the dropdown to the correct value passed from the button
+    if(newObjectTypeSelect) {
+        newObjectTypeSelect.value = preselectedType;
+    }
+
+    // Populate the parameters for the pre-selected type
+    populateAddObjectModalParams();
+
+    // Show the modal
     if(addObjectModal) addObjectModal.style.display = 'block';
     if(modalBackdrop) modalBackdrop.style.display = 'block';
 }

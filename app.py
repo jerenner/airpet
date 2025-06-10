@@ -153,20 +153,21 @@ def add_object_route():
         unit = params.get('unit', 'mm')
         val_dict = {'x': params.get('x',0), 'y': params.get('y',0), 'z': params.get('z',0)}
         new_obj_data, error = project_manager.add_define(name_suggestion, "position", val_dict, unit, "length")
+    
     elif obj_type == "material":
         new_obj_data, error = project_manager.add_material(name_suggestion, params)
+
     elif obj_type.startswith("solid_"):
         solid_actual_type = obj_type.split('_', 1)[1]
-        internal_params = {}
-        if solid_actual_type == "box":
-            internal_params = {'x': float(params.get('x', 100)), 'y': float(params.get('y', 100)), 'z': float(params.get('z', 100))}
-        elif solid_actual_type == "tube":
-             internal_params = {'rmin': float(params.get('rmin', 0)), 'rmax': float(params.get('rmax', 50)), 'dz': float(params.get('dz', 100)) / 2.0, 'startphi': float(params.get('startphi', 0)), 'deltaphi': float(params.get('deltaphi', 2*math.pi))}
-        
-        if internal_params:
-            new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, internal_params)
-        else:
-            error = f"Parameters for solid type {solid_actual_type} not handled."
+        # Directly pass the parameters from the frontend; ProjectManager will handle them.
+        new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
+    
+    # Placeholder for future LV/PV additions
+    # elif obj_type == "logical_volume":
+    #     ...
+    
+    else:
+        error = f"Object type '{obj_type}' not handled by this endpoint."
     
     if new_obj_data:
         return create_success_response(f"{obj_type} '{new_obj_data.get('name')}' added.")

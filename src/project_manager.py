@@ -1,5 +1,6 @@
 # src/project_manager.py
 import json
+import math
 from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
@@ -186,13 +187,71 @@ class ProjectManager:
         return new_material.to_dict(), None
 
     def add_solid(self, name_suggestion, solid_type, parameters_dict):
-        if not self.current_geometry_state: return None, "No project loaded"
+        """
+        Adds a new solid to the project.
+        The parameters_dict comes directly from the frontend UI. This method
+        is responsible for any conversions (e.g., full-length to half-length).
+        """
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
-        # parameters_dict should have values in internal units (mm, rad)
-        new_solid = Solid(name, solid_type, parameters_dict)
+        
+        # This will hold the parameters in the internal format (what G4/our renderer expects)
+        internal_params = {}
+        
+        # --- NEW: Centralized parameter handling ---
+        p = parameters_dict # for brevity
+        
+        try:
+            if solid_type == "box":
+                # Box params are already 1-to-1 with G4Box half-lengths in the UI for simplicity,
+                # but if the UI sent full lengths, we would divide by 2 here. Let's assume the UI sends full lengths.
+                internal_params = {
+                    'x': float(p.get('x', 100)),
+                    'y': float(p.get('y', 100)),
+                    'z': float(p.get('z', 100))
+                }
+            elif solid_type == "tube":
+                internal_params = {
+                    'rmin': float(p.get('rmin', 0)),
+                    'rmax': float(p.get('rmax', 50)),
+                    'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                }
+            elif solid_type == "cone":
+                internal_params = {
+                    'rmin1': float(p.get('rmin1', 0)),
+                    'rmax1': float(p.get('rmax1', 50)),
+                    'rmin2': float(p.get('rmin2', 0)),
+                    'rmax2': float(p.get('rmax2', 75)),
+                    'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                }
+            elif solid_type == "sphere":
+                # Backend directly uses the parameters from the UI
+                internal_params = {
+                    'rmin': float(p.get('rmin', 0)),
+                    'rmax': float(p.get('rmax', 100)),
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 2 * math.pi)),
+                    'starttheta': float(p.get('starttheta', 0)),
+                    'deltatheta': float(p.get('deltatheta', math.pi))
+                }
+            # Add other primitive solids here following the same pattern
+            # ...
+            else:
+                return None, f"Solid type '{solid_type}' is not supported for creation."
+
+        except (ValueError, TypeError) as e:
+            return None, f"Invalid parameter type for solid '{solid_type}': {e}"
+
+        new_solid = Solid(name, solid_type, internal_params)
         self.current_geometry_state.add_solid(new_solid)
-        print(f"Added Solid: {name}")
-        # TODO: Add to Undo stack
+        print(f"Added Solid: {name} with params {internal_params}")
+        
         return new_solid.to_dict(), None
     
     def add_logical_volume(self, name_suggestion, solid_ref_name, material_ref_name):

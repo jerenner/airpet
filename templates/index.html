@@ -14,6 +14,29 @@
             overflow: hidden;
         }
 
+        /* Tab headers */
+        .tab_header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 10px;
+            background-color: #d8d8d8;
+            border-bottom: 1px solid #ccc;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        .tab_header button {
+            padding: 2px 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .tab_header button:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
         /* Tab Navigation */
         .tab_navigation {
             display: flex;
@@ -57,8 +80,13 @@
             display: block;
         }
         /* Hierarchy specific styles (same as before) */
-        .tab_pane ul { list-style-type: none; padding-left: 15px; margin: 0; }
-        .tab_pane li { padding: 3px 0; cursor: pointer; }
+        .tab_pane ul { 
+            list-style-type: none; 
+            /* REMOVE padding-left: 15px; from here to make it flush */
+            padding-left: 0;
+            margin: 0; 
+        }
+        .tab_pane li { padding: 3px 0 3px 15px; cursor: pointer; }
         .tab_pane li:hover { background-color: #d8d8d8; } /* Slightly darker hover */
         .tab_pane .selected_item { background-color: #c0d0e0; font-weight: bold; }
         .tab_pane .hidden_item { color: #999; font-style: italic; }
@@ -129,6 +157,126 @@
         }
         canvas { display: block; width: 100% !important; height: 100% !important; }
 
+        /* Solid editor */
+        .editor-modal {
+            display: none; /* Hidden by default */
+            position: fixed;
+            z-index: 1001;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 0;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 1400px;
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+        }
+
+        .modal-header {
+            padding: 10px 16px;
+            background-color: #555;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h4 { margin: 0; }
+
+        .close-button {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close-button:hover,
+        .close-button:focus {
+            color: #fff;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .modal-body {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden; /* Prevent body from scrolling */
+        }
+
+        .editor-panel {
+            padding: 10px;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+        }
+        .editor-panel:last-child { border-right: none; }
+
+        #solid-ingredients-panel { flex: 0 0 200px; overflow-y: auto; }
+        #solid-preview-panel { flex: 1 1 auto; padding: 0; position: relative; }
+        #solid-params-panel { flex: 0 0 300px; overflow-y: auto; }
+
+        #solid_preview_container {
+            width: 100%;
+            height: 100%;
+            background-color: #e0e0e0;
+        }
+
+        .ingredient-list { border-top: 1px solid #ccc; margin-top: 5px; padding-top: 5px;}
+        .ingredient-list div { padding: 4px; cursor: grab; border-bottom: 1px solid #eee; }
+        .ingredient-list div:hover { background-color: #f0f0f0; }
+
+        #solid-editor-dynamic-params .property_item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        #solid-editor-dynamic-params .property_item label {
+            flex-basis: 100px;
+            flex-shrink: 0;
+        }
+        #solid-editor-dynamic-params .property_item input {
+            flex-grow: 1;
+        }
+
+        /* Boolean specific styles */
+        .boolean-slot {
+            border: 2px dashed #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+            text-align: center;
+            color: #888;
+        }
+        .boolean-slot.filled {
+            border-style: solid;
+            border-color: #4CAF50;
+            color: #333;
+            background-color: #e8f5e9;
+        }
+        .boolean-slot h6 { margin: 0 0 5px 0; }
+
+        .modal-footer {
+            padding: 10px 16px;
+            background-color: #f1f1f1;
+            border-top: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .quick-add-options {
+            font-size: 13px;
+        }
+
     </style>
 </head>
 <body>
@@ -142,15 +290,34 @@
         <div class="tab_content_area">
             <div id="tab_structure" class="tab_pane active">
                 <!-- Structure (Volumes) Hierarchy will be built here -->
+                <div class="tab_header">
+                    <span>World Structure</span>
+                    <div>
+                        <button id="addLVButton" title="Create a new Logical Volume" disabled>+ LV</button>
+                        <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
+                    </div>
+                </div>
                 <ul id="structure_tree_root"></ul>
             </div>
             <div id="tab_defines" class="tab_pane">
+                <div class="tab_header">
+                    <span>Defines</span>
+                    <button class="add_button" data-add-type="define_position" title="Add new Define">+ Add</button>
+                </div>
                 <ul id="defines_list_root"></ul>
             </div>
             <div id="tab_materials" class="tab_pane">
+                <div class="tab_header">
+                    <span>Materials</span>
+                    <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
+                </div>
                 <ul id="materials_list_root"></ul>
             </div>
             <div id="tab_solids" class="tab_pane">
+                <div class="tab_header">
+                    <span>Solids</span>
+                    <button class="add_button" data-add-type="solid_box" title="Add new Solid">+ Add</button>
+                </div>
                 <ul id="solids_list_root"></ul>
             </div>
         </div>
@@ -205,7 +372,7 @@
                 <li>
                     <button>Object</button>
                     <div class="dropdown_content">
-                        <button id="addObjectButton">Add...</button> <!-- This could open a sub-menu or a dialog -->
+                        <!--<button id="addObjectButton">Add...</button>-->
                         <button id="deleteSelectedObjectButton">Delete Selected</button>
                     </div>
                 </li>
@@ -259,6 +426,73 @@
             <button id="cancelAddObject">Cancel</button>
         </div>
         <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>
+    </div>
+    <div id="solidEditorModal" class="editor-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 id="solidEditorTitle">Create New Solid</h4>
+                <span class="close-button" id="closeSolidEditor">×</span>
+            </div>
+            <div class="modal-body">
+                <!-- Left Panel: For Boolean ingredients -->
+                <div class="editor-panel" id="solid-ingredients-panel">
+                    <h5>Existing Solids</h5>
+                    <div id="boolean-ingredients-list" class="ingredient-list">
+                        <!-- List of solids will be populated here by JS -->
+                    </div>
+                </div>
+
+                <!-- Center Panel: 3D Preview -->
+                <div class="editor-panel" id="solid-preview-panel">
+                    <div id="solid_preview_container">
+                        <!-- The new Three.js canvas will go here -->
+                    </div>
+                </div>
+
+                <!-- Right Panel: Parameters -->
+                <div class="editor-panel" id="solid-params-panel">
+                    <h5>Parameters</h5>
+                    <div class="property_item">
+                        <label for="solidEditorName">Name:</label>
+                        <input type="text" id="solidEditorName" placeholder="e.g., MyNewBox">
+                    </div>
+                    <div class="property_item">
+                        <label for="solidEditorType">Type:</label>
+                        <select id="solidEditorType">
+                            <optgroup label="Primitives">
+                                <option value="box">Box</option>
+                                <option value="tube">Tube</option>
+                                <option value="cone">Cone</option>
+                                <option value="sphere">Sphere</option>
+                                <!-- Add other primitives here -->
+                            </optgroup>
+                            <optgroup label="Booleans">
+                                <option value="union">Union</option>
+                                <option value="subtraction">Subtraction</option>
+                                <option value="intersection">Intersection</option>
+                            </optgroup>
+                        </select>
+                    </div>
+                    <hr>
+                    <!-- Dynamic parameters based on type selection -->
+                    <div id="solid-editor-dynamic-params"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <!-- NEW: Streamlined creation options -->
+                <div class="quick-add-options">
+                    <input type="checkbox" id="createLVCheckbox">
+                    <label for="createLVCheckbox">Create Logical Volume</label>
+                    <div id="lvOptions" style="display:none; margin-left: 20px;">
+                        <select id="lvMaterialSelect"></select>
+                    </div>
+                    <br>
+                    <input type="checkbox" id="placePVCheckbox" disabled>
+                    <label for="placePVCheckbox">Place in Selected Volume</label>
+                </div>
+                <button id="confirmSolidEditor" class="confirm-button">Create Solid</button>
+            </div>
+        </div>
     </div>
     <script type="importmap">
     {

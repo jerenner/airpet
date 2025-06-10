@@ -211,9 +211,12 @@ function findActualMesh(object) { // Helper if selection might hit sub-parts of 
  * @param {Evaluator} csgEvaluator - The CSG evaluator instance.
  * @returns {THREE.BufferGeometry | null}
  */
-function _createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
+export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     let geometry;
     const p = solidData.parameters;
+
+    // Temporary handling of null project state from solid editor
+    const defines = (projectState && projectState.defines) ? projectState.defines : {};
 
     switch (solidData.type) {
         case 'box':
@@ -924,7 +927,7 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
 
     } else {
         // --- PRIMITIVE LOGIC ---
-        finalGeometry = _createPrimitiveGeometry(solidData, projectState, csgEvaluator);
+        finalGeometry = createPrimitiveGeometry(solidData, projectState, csgEvaluator);
     }
     
     // 3. Cache and return the final geometry
