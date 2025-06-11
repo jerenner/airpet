@@ -128,8 +128,8 @@ export function initUI(cb) {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.addType;
             if (type.startsWith('solid_')) {
-                // Call the new solid editor instead of the old modal
-                SolidEditor.show(); 
+                // Call back to main.js
+                callbacks.onAddSolidClicked();
             } else {
                 // For defines and materials, we can keep the old simple modal for now
                 showAddObjectModal(type);

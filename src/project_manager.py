@@ -200,7 +200,7 @@ class ProjectManager:
         # This will hold the parameters in the internal format (what G4/our renderer expects)
         internal_params = {}
         
-        # --- NEW: Centralized parameter handling ---
+        # --- Centralized parameter handling ---
         p = parameters_dict # for brevity
         
         try:
@@ -239,6 +239,19 @@ class ProjectManager:
                     'deltaphi': float(p.get('deltaphi', 2 * math.pi)),
                     'starttheta': float(p.get('starttheta', 0)),
                     'deltatheta': float(p.get('deltatheta', math.pi))
+                }
+            elif solid_type in ['union', 'subtraction', 'intersection']:
+                internal_params = {
+                    'first_ref': p.get('first_ref'),
+                    'second_ref': p.get('second_ref'),
+                    # For now, we assume transform is either absent or well-formed.
+                    # A more robust implementation would validate its structure.
+                    'transform_second': p.get('transform_second', 
+                        {'position': {'x':0, 'y':0, 'z':0}, 'rotation': {'x':0, 'y':0, 'z':0}}
+                    ),
+                    'transform_first': p.get('transform_first',
+                        {'position': {'x':0, 'y':0, 'z':0}, 'rotation': {'x':0, 'y':0, 'z':0}}
+                    )
                 }
             # Add other primitive solids here following the same pattern
             # ...

@@ -1,16 +1,20 @@
 // static/solidEditor.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-// We will need a way to create geometries, let's assume a helper exists
-// for now, we will add it to sceneManager later.
 import { createPrimitiveGeometry } from './sceneManager.js';
+import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 
 // --- Module State ---
 let scene, camera, renderer, controls;
 let currentSolidMesh = null;
 let onConfirmCallback = null;
-let isEditMode = false;       // flag to track mode
-let editingSolidId = null;    // store the ID/name of the solid being edited
+let isEditMode = false;         // flag to track mode
+let editingSolidId = null;      // store the ID/name of the solid being edited
+let currentProjectState = null; // to hold the project state
+
+// State for boolean operations
+let booleanSolidA = null; // Will hold { name, type, parameters }
+let booleanSolidB = null;
 
 const editorContainer = document.getElementById('solid_preview_container');
 const modalElement = document.getElementById('solidEditorModal');
@@ -76,7 +80,11 @@ function onWindowResize() {
 }
 
 // --- Public API ---
-export function show(solidData = null) {
+export function show(solidData = null, projectState = null) {
+    currentProjectState = projectState; // Cache the state
+    booleanSolidA = null; // Reset boolean state
+    booleanSolidB = null;
+
     if (solidData && solidData.name) {
         // --- EDIT MODE ---
         isEditMode = true;
@@ -89,6 +97,20 @@ export function show(solidData = null) {
         typeSelect.disabled = true; // Prevent changing solid type
         
         confirmButton.textContent = "Update Solid";
+
+        // --- Pre-fill boolean state if applicable ---
+        const isBoolean = ['union', 'subtraction', 'intersection'].includes(solidData.type);
+        if (isBoolean && currentProjectState && currentProjectState.solids) {
+            const firstRefName = solidData.parameters.first_ref;
+            const secondRefName = solidData.parameters.second_ref;
+
+            if (firstRefName && currentProjectState.solids[firstRefName]) {
+                booleanSolidA = currentProjectState.solids[firstRefName];
+            }
+            if (secondRefName && currentProjectState.solids[secondRefName]) {
+                booleanSolidB = currentProjectState.solids[secondRefName];
+            }
+        }
         
         // Populate parameters after the UI is rendered
         renderParamsUI(solidData.parameters);
@@ -124,8 +146,9 @@ export function hide() {
 function renderParamsUI(params = {}) {
     dynamicParamsDiv.innerHTML = ''; // Clear previous params
     const type = typeSelect.value;
+    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
 
-    document.getElementById('solid-ingredients-panel').style.display = 'none';
+    document.getElementById('solid-ingredients-panel').style.display = isBoolean ? 'flex' : 'none';
 
     // A map to generate UI for each primitive
     const paramUIBuilder = {
@@ -156,9 +179,25 @@ function renderParamsUI(params = {}) {
             <div class="property_item"><label for="p_deltatheta">Delta Theta (rad)</label><input type="number" id="p_deltatheta" step="any" value="${(Math.PI).toFixed(4)}"></div>`,
         union: () => {
             document.getElementById('solid-ingredients-panel').style.display = 'flex';
-            return `<div class="boolean-slot" id="slot-a"><h6>Solid A</h6><span>Drag a solid here</span></div>
-                    <div class="boolean-slot" id="slot-b"><h6>Solid B</h6><span>Drag a solid here</span></div>
-                    <hr><h6>Transform for Solid B</h6>`;
+            return `
+                <div class="boolean-slot" id="slot-a"><h6>Solid A</h6><span>Drag a solid here</span></div>
+                <div class="boolean-slot" id="slot-b"><h6>Solid B</h6><span>Drag a solid here</span></div>
+                <hr>
+                <h6>Transform for Solid B</h6>
+                <div class="transform-controls">
+                    <div class="transform-group">
+                        <span>Position (mm)</span>
+                        <div class="property_item"><label for="p_pos_x">X:</label><input type="number" id="p_pos_x" value="0" step="any"></div>
+                        <div class="property_item"><label for="p_pos_y">Y:</label><input type="number" id="p_pos_y" value="0" step="any"></div>
+                        <div class="property_item"><label for="p_pos_z">Z:</label><input type="number" id="p_pos_z" value="0" step="any"></div>
+                    </div>
+                    <div class="transform-group">
+                        <span>Rotation (deg, ZYX order)</span>
+                        <div class="property_item"><label for="p_rot_x">X:</label><input type="number" id="p_rot_x" value="0" step="any"></div>
+                        <div class="property_item"><label for="p_rot_y">Y:</label><input type="number" id="p_rot_y" value="0" step="any"></div>
+                        <div class="property_item"><label for="p_rot_z">Z:</label><input type="number" id="p_rot_z" value="0" step="any"></div>
+                    </div>
+                </div>`;
         }
     };
     
@@ -170,6 +209,49 @@ function renderParamsUI(params = {}) {
         dynamicParamsDiv.innerHTML = paramUIBuilder[type]();
     } else {
         dynamicParamsDiv.innerHTML = `<p>Parameters for '${type}' not implemented yet.</p>`;
+    }
+
+    // Handle drag-and-drop for boolean solids
+    if (isBoolean) {
+
+        // --- Populate solids ingredients list for boolean operations ---
+        const ingredientsPanel = document.getElementById('boolean-ingredients-list');
+        ingredientsPanel.innerHTML = '';
+        if (currentProjectState && currentProjectState.solids) {
+            for (const solidName in currentProjectState.solids) {
+                // Don't allow a solid to be unioned with itself in edit mode
+                if (isEditMode && solidName === editingSolidId) continue;
+                
+                const solid = currentProjectState.solids[solidName];
+                const div = document.createElement('div');
+                div.textContent = solid.name;
+                div.draggable = true;
+                // Store the data on the element for easy access on drop
+                div.dataset.solidName = solid.name; 
+                div.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/plain', solid.name);
+                });
+                ingredientsPanel.appendChild(div);
+            }
+        }
+
+        // --- REVISED: Re-populate slots if state exists ---
+        const slotA = document.getElementById('slot-a');
+        const slotB = document.getElementById('slot-b');
+
+        // Re-populate drag-and-drop slots
+        updateSlotUI(slotA, booleanSolidA);
+        updateSlotUI(slotB, booleanSolidB);
+        
+        // Re-attach listeners
+        [slotA, slotB].forEach(slot => {
+            slot.addEventListener('dragover', (e) => e.preventDefault());
+            slot.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const solidName = e.dataTransfer.getData('text/plain');
+                handleDrop(slot, solidName);
+            });
+        });
     }
 
     // Populate the values if in edit mode
@@ -193,6 +275,23 @@ function renderParamsUI(params = {}) {
              p_in('p_startphi', params.startphi); p_in('p_deltaphi', params.deltaphi);
              p_in('p_starttheta', params.starttheta); p_in('p_deltatheta', params.deltatheta);
         }
+
+        // --- Populate transform controls in Edit Mode ---
+        if (isBoolean && params.transform_second) {
+            const pos = params.transform_second.position || {x:0, y:0, z:0};
+            const rot_rad = params.transform_second.rotation || {x:0, y:0, z:0};
+            
+            const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+
+            p_in('p_pos_x', pos.x);
+            p_in('p_pos_y', pos.y);
+            p_in('p_pos_z', pos.z);
+
+            // Convert backend radians to frontend degrees for UI
+            p_in('p_rot_x', THREE.MathUtils.radToDeg(rot_rad.x));
+            p_in('p_rot_y', THREE.MathUtils.radToDeg(rot_rad.y));
+            p_in('p_rot_z', THREE.MathUtils.radToDeg(rot_rad.z));
+        }
     }
     
     dynamicParamsDiv.querySelectorAll('input').forEach(input => {
@@ -203,12 +302,36 @@ function renderParamsUI(params = {}) {
     updatePreview();
 }
 
+function handleDrop(slot, solidName) {
+    if (!currentProjectState || !currentProjectState.solids[solidName]) return;
+    
+    const solidData = currentProjectState.solids[solidName];
+
+    if (slot.id === 'slot-a') {
+        booleanSolidA = solidData;
+    } else {
+        booleanSolidB = solidData;
+    }
+    
+    updateSlotUI(slot, solidData);
+    updatePreview(); // Re-render the preview with the new boolean component
+}
+
 function getParamsFromUI() {
     const type = typeSelect.value;
     const params = {};
     const p = (id) => parseFloat(document.getElementById(id)?.value || 0);
+    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
 
-    if (type === 'box') {
+    if (isBoolean) {
+        if (booleanSolidA) params.first_ref = booleanSolidA.name;
+        if (booleanSolidB) params.second_ref = booleanSolidB.name;
+        
+        // Get the transform and attach it.
+        // The backend expects radians, which getTransformFromUI provides.
+        params.transform_second = getTransformFromUI();
+
+    } else if (type === 'box') {
         params.x = p('p_x'); params.y = p('p_y'); params.z = p('p_z');
     } else if (type === 'tube') {
         params.rmin = p('p_rmin'); params.rmax = p('p_rmax'); 
@@ -227,6 +350,19 @@ function getParamsFromUI() {
     return params;
 }
 
+function getTransformFromUI() {
+    const p = (id) => parseFloat(document.getElementById(id)?.value || 0);
+    const pos = { x: p('p_pos_x'), y: p('p_pos_y'), z: p('p_pos_z') };
+    
+    // Convert degrees from UI to radians for Three.js
+    const rot = {
+        x: THREE.MathUtils.degToRad(p('p_rot_x')),
+        y: THREE.MathUtils.degToRad(p('p_rot_y')),
+        z: THREE.MathUtils.degToRad(p('p_rot_z'))
+    };
+    return { position: pos, rotation: rot };
+}
+
 function updatePreview() {
     if (currentSolidMesh) {
         scene.remove(currentSolidMesh);
@@ -235,19 +371,86 @@ function updatePreview() {
     }
 
     const type = typeSelect.value;
-    const params = getParamsFromUI();
+    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
+    let geometry = null;
 
-    // The solidData object must match the structure expected by createPrimitiveGeometry
-    const solidData = { name: 'preview', type: type, parameters: params };
+    if (isBoolean) {
+        // --- BOOLEAN RENDERING LOGIC ---
+        if (!booleanSolidA || !booleanSolidB) {
+            // Not ready to render yet, do nothing.
+            return;
+        }
 
-    // For primitives, projectState and csgEvaluator can be null
-    const geometry = createPrimitiveGeometry(solidData, null, null);
+        const geomA = createPrimitiveGeometry(booleanSolidA, currentProjectState, null);
+        const geomB = createPrimitiveGeometry(booleanSolidB, currentProjectState, null);
+
+        if (!geomA || !geomB) return;
+
+        const brushA = new Brush(geomA);
+        const brushB = new Brush(geomB);
+        
+        // --- NEW: Apply transform from UI ---
+        const transform = getTransformFromUI();
+        brushB.position.set(transform.position.x, transform.position.y, transform.position.z);
+        // Apply rotation in ZYX order, as is common in GDML
+        brushB.quaternion.setFromEuler(new THREE.Euler(transform.rotation.x, transform.rotation.y, transform.rotation.z, 'ZYX'));
+        brushB.updateMatrixWorld();
+
+        // Perform the CSG operation
+        const csgEvaluator = new Evaluator();
+        let resultBrush;
+        if (type === 'union') {
+            resultBrush = csgEvaluator.evaluate(brushA, brushB, ADDITION);
+        } else if (type === 'subtraction') {
+            resultBrush = csgEvaluator.evaluate(brushA, brushB, SUBTRACTION);
+        } else { // intersection
+            resultBrush = csgEvaluator.evaluate(brushA, brushB, INTERSECTION);
+        }
+        
+        if (resultBrush) {
+            geometry = resultBrush.geometry;
+        }
+
+    } else {
+        // --- PRIMITIVE RENDERING LOGIC (Unchanged) ---
+        const params = getParamsFromUI();
+        const solidData = { name: 'preview', type: type, parameters: params };
+        geometry = createPrimitiveGeometry(solidData, null, null);
+    }
     
     if (geometry) {
-        const material = new THREE.MeshLambertMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+        const material = new THREE.MeshLambertMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
         currentSolidMesh = new THREE.Mesh(geometry, material);
         scene.add(currentSolidMesh);
     }
+}
+
+function updateSlotUI(slot, solidData) {
+    const slotContent = slot.id === 'slot-a' ? 'Solid A' : 'Solid B';
+    const removeBtnHTML = `<span class="remove-solid-btn" title="Remove Solid">×</span>`;
+
+    if (solidData) {
+        slot.innerHTML = `<h6>${slotContent}</h6>${solidData.name}${removeBtnHTML}`;
+        slot.classList.add('filled');
+        // Add listener to the new remove button
+        slot.querySelector('.remove-solid-btn').addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent any parent listeners from firing
+            clearSlot(slot);
+        });
+    } else {
+        slot.innerHTML = `<h6>${slotContent}</h6><span>Drag a solid here</span>`;
+        slot.classList.remove('filled');
+    }
+}
+
+function clearSlot(slot) {
+    if (slot.id === 'slot-a') {
+        booleanSolidA = null;
+    } else {
+        booleanSolidB = null;
+    }
+    updateSlotUI(slot, null);
+    updatePreview(); // Update preview to show the solid has been removed
 }
 
 function handleConfirm() {

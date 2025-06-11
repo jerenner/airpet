@@ -31,6 +31,7 @@ async function initializeApp() {
         onLoadGdmlClicked: () => UIManager.triggerFileInput('gdmlFile'), // UIManager handles its own file input now
         onLoadProjectClicked: () => UIManager.triggerFileInput('projectFile'),
         onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
+        onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
         onProjectFileSelected: handleLoadProject,
         onSaveProjectClicked: handleSaveProject,
@@ -363,12 +364,16 @@ async function handleInspectorPropertyUpdate(objectType, objectId, propertyPath,
     finally { UIManager.hideLoading(); }
 }
 
+// Open solid editor to add a solid.
+function handleAddSolid() {
+    SolidEditor.show(null, AppState.currentProjectState);
+}
+
 // Open solid editor for editing.
 function handleEditSolid(solidData) {
     console.log("Editing solid:", solidData);
-    // The `appData` on the element is the solid object itself from the project state.
-    // It's exactly what the SolidEditor needs.
-    SolidEditor.show(solidData);
+    // Pass the full project state so the editor knows about other solids
+    SolidEditor.show(solidData, AppState.currentProjectState); 
 }
 
 async function handleSolidEditorConfirm(data) {

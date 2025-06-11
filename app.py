@@ -159,8 +159,20 @@ def add_object_route():
 
     elif obj_type.startswith("solid_"):
         solid_actual_type = obj_type.split('_', 1)[1]
-        # Directly pass the parameters from the frontend; ProjectManager will handle them.
-        new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
+        
+        # --- Handle boolean solids ---
+        if solid_actual_type in ['union', 'subtraction', 'intersection']:
+            # The frontend should send params like:
+            # { first_ref: "SolidNameA", second_ref: "SolidNameB", 
+            #   transform_second: { position: {...}, rotation: {...} } }
+            if not params.get('first_ref') or not params.get('second_ref'):
+                error = "Boolean solid requires references to two other solids."
+            else:
+                # The project_manager.add_solid can just pass these through
+                new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
+        else:
+             # --- Handle primitive solids ---
+            new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
     
     # Placeholder for future LV/PV additions
     # elif obj_type == "logical_volume":
