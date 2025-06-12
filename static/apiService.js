@@ -199,3 +199,27 @@ export async function updateProperty(objectType, objectId, propertyPath, newValu
     });
     return handleResponse(response);
 }
+
+/**
+ * Creates a new boolean solid by sending its recipe to the backend.
+ * @param {string} nameSuggestion The user-suggested name for the new solid.
+ * @param {Array} recipe The list of operations for the boolean solid.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function addBooleanSolid(nameSuggestion, recipe) {
+    const response = await fetch(`${API_BASE_URL}/add_boolean_solid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameSuggestion, recipe: recipe })
+    });
+    return handleResponse(response);
+}
+
+export async function updateBooleanSolid(solidId, recipe) {
+    const response = await fetch(`${API_BASE_URL}/update_boolean_solid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: solidId, recipe: recipe })
+    });
+    return handleResponse(response);
+}

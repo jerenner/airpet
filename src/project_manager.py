@@ -195,6 +195,9 @@ class ProjectManager:
         if not self.current_geometry_state:
             return None, "No project loaded"
 
+        if solid_type == "boolean":
+            return None, f"'{solid_type}' should be created via the boolean editor endpoint."
+
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
         
         # This will hold the parameters in the internal format (what G4/our renderer expects)
@@ -240,19 +243,6 @@ class ProjectManager:
                     'starttheta': float(p.get('starttheta', 0)),
                     'deltatheta': float(p.get('deltatheta', math.pi))
                 }
-            elif solid_type in ['union', 'subtraction', 'intersection']:
-                internal_params = {
-                    'first_ref': p.get('first_ref'),
-                    'second_ref': p.get('second_ref'),
-                    # For now, we assume transform is either absent or well-formed.
-                    # A more robust implementation would validate its structure.
-                    'transform_second': p.get('transform_second', 
-                        {'position': {'x':0, 'y':0, 'z':0}, 'rotation': {'x':0, 'y':0, 'z':0}}
-                    ),
-                    'transform_first': p.get('transform_first',
-                        {'position': {'x':0, 'y':0, 'z':0}, 'rotation': {'x':0, 'y':0, 'z':0}}
-                    )
-                }
             # Add other primitive solids here following the same pattern
             # ...
             else:
@@ -266,7 +256,51 @@ class ProjectManager:
         print(f"Added Solid: {name} with params {internal_params}")
         
         return new_solid.to_dict(), None
+
+    def add_boolean_solid(self, name_suggestion, recipe):
+        """
+        Creates a single 'virtual' boolean solid that stores the recipe.
+        """
+        if not self.current_geometry_state: return False, "No project loaded."
+        if len(recipe) < 2 or recipe[0].get('op') != 'base':
+            return False, "Invalid recipe format."
+
+        # Validate that all referenced solids exist
+        for item in recipe:
+            ref = item.get('solid_ref')
+            if not ref or ref not in self.current_geometry_state.solids:
+                return False, f"Solid '{ref}' not found in project."
+
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
+        params = {"recipe": recipe}
+        new_solid = Solid(name, "boolean", params)
+        self.current_geometry_state.add_solid(new_solid)
+        
+        return True, None
+
+    def update_boolean_solid(self, solid_name, new_recipe):
+        """
+        Updates an existing boolean solid with a new recipe.
+        """
+        if not self.current_geometry_state: return False, "No project loaded."
+        
+        target_solid = self.current_geometry_state.solids.get(solid_name)
+        if not target_solid or target_solid.type != 'boolean':
+            return False, f"Boolean solid '{solid_name}' not found."
+
+        # Validate new recipe
+        for item in new_recipe:
+            ref = item.get('solid_ref')
+            if not ref or ref not in self.current_geometry_state.solids:
+                return False, f"Solid '{ref}' not found in project."
+
+        target_solid.parameters['recipe'] = new_recipe
+        return True, None
     
+    def add_solid_object(self, solid_obj):
+        """Helper to add an already-created Solid object."""
+        self.current_geometry_state.solids[solid_obj.name] = solid_obj
+
     def add_logical_volume(self, name_suggestion, solid_ref_name, material_ref_name):
         if not self.current_geometry_state: return None, "No project loaded"
         if solid_ref_name not in self.current_geometry_state.solids:

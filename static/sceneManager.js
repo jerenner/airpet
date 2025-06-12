@@ -892,38 +892,36 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
     let finalGeometry = null;
 
     // 2. Build geometry based on type
-    const booleanTypes = ['union', 'subtraction', 'intersection'];
-    if (booleanTypes.includes(solidData.type)) {
-        // --- BOOLEAN LOGIC ---
-        const params = solidData.parameters;
-        
-        // Recursively get constituent geometries
-        const geomA = _getOrBuildGeometry(params.first_ref, solidsDict, projectState, geometryCache, csgEvaluator);
-        const geomB = _getOrBuildGeometry(params.second_ref, solidsDict, projectState, geometryCache, csgEvaluator);
-
-        if (!geomA || !geomB) {
-            console.error(`Could not build boolean solid '${solidName}' due to missing components.`);
+    if (solidData.type === 'boolean') {
+        const recipe = solidData.parameters.recipe;
+        if (!recipe || recipe.length < 1 || !recipe[0].solid_ref) {
+            console.error(`Boolean solid '${solidName}' has an invalid recipe.`);
             return null;
         }
 
-        // The CSG library works on "Brushes" (which are basically Meshes)
-        const brushA = new Brush(geomA);
-        const brushB = new Brush(geomB);
-        
-        // Apply transforms *before* the boolean operation
-        _applyTransform(brushA, params.transform_first);
-        _applyTransform(brushB, params.transform_second);
+        // 1. Get the base solid's geometry
+        let resultBrush = new Brush(_getOrBuildGeometry(recipe[0].solid_ref, solidsDict, projectState, geometryCache, csgEvaluator));
 
-        // Perform the CSG operation
-        let csgResult;
-        if (solidData.type === 'union') {
-            csgResult = csgEvaluator.evaluate(brushA, brushB, ADDITION);
-        } else if (solidData.type === 'subtraction') {
-            csgResult = csgEvaluator.evaluate(brushA, brushB, SUBTRACTION);
-        } else { // intersection
-            csgResult = csgEvaluator.evaluate(brushA, brushB, INTERSECTION);
+        // 2. Iteratively apply the operations
+        for (let i = 1; i < recipe.length; i++) {
+            const item = recipe[i];
+            const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+            if (!nextSolidGeom) continue;
+
+            const nextBrush = new Brush(nextSolidGeom);
+            const transform = item.transform || {};
+            const pos = transform.position || {x:0, y:0, z:0};
+            const rot = transform.rotation || {x:0, y:0, z:0}; // Radians
+
+            nextBrush.position.set(pos.x, pos.y, pos.z);
+            nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+            nextBrush.updateMatrixWorld();
+
+            const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
+            resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
         }
-        finalGeometry = csgResult.geometry;
+        
+        finalGeometry = resultBrush.geometry;
 
     } else {
         // --- PRIMITIVE LOGIC ---

@@ -186,6 +186,32 @@ def add_object_route():
     else:
         return jsonify({"success": False, "error": error or "Failed to add object"}), 500
 
+@app.route('/add_boolean_solid', methods=['POST'])
+def add_boolean_solid_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    recipe = data.get('recipe')
+    
+    success, error_msg = project_manager.add_boolean_solid(name_suggestion, recipe)
+
+    if success:
+        return create_success_response("Boolean solid created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_boolean_solid', methods=['POST'])
+def update_boolean_solid_route():
+    data = request.get_json()
+    solid_name = data.get('id') # The name of the solid to update
+    recipe = data.get('recipe')
+    
+    success, error_msg = project_manager.update_boolean_solid(solid_name, recipe)
+
+    if success:
+        return create_success_response(f"Boolean solid '{solid_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 @app.route('/delete_object', methods=['POST'])
 def delete_object_route():
     data = request.get_json()

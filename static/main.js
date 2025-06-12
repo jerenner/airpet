@@ -377,51 +377,83 @@ function handleEditSolid(solidData) {
 }
 
 async function handleSolidEditorConfirm(data) {
-    console.log("Solid editor confirmed with data:", data);
+    console.log("Solid Editor confirmed. Data:", data);
 
+    // --- The data object from solidEditor.js now looks like one of these:
+    // For creating a primitive: { isEdit: false, name, type, params, ... }
+    // For creating a boolean:  { isChainedBoolean: true, name, recipe }
+    // For editing a primitive: { isEdit: true, id, type, params }
+    // For editing a boolean:  { isEdit: true, isChainedBoolean: true, id, recipe }
+    
     if (data.isEdit) {
-        // --- HANDLE EDIT ---
-        UIManager.showLoading("Updating solid...");
-        try {
-            // We'll update each parameter one by one using the existing API endpoint.
-            // This is not the most efficient way, but it works with our current setup.
-            // A dedicated `/update_solid` endpoint would be better in the long run.
-            let lastResult;
-            for (const key in data.params) {
-                const value = data.params[key];
-                const propertyPath = `parameters.${key}`;
-                // Note: The backend will convert dz to half-length automatically
-                lastResult = await APIService.updateProperty('solid', data.id, propertyPath, value);
-                
-                // If any update fails, stop and show an error.
-                if (!lastResult.success) {
-                    UIManager.showError(`Failed to update property ${key}: ${lastResult.error}`);
-                    // It's better to reload the state to revert any partial changes.
-                    const freshState = await APIService.getProjectState();
-                    syncUIWithState({ ...freshState, success: true }); // A bit of a hack to fit syncUI's format
-                    return;
-                }
+        // --- HANDLE ALL UPDATES (EDIT MODE) ---
+        if (data.isChainedBoolean) {
+            // --- Update an existing Boolean Solid ---
+            UIManager.showLoading("Updating boolean solid...");
+            try {
+                const result = await APIService.updateBooleanSolid(data.id, data.recipe);
+                syncUIWithState(result);
+            } catch (error) {
+                UIManager.showError("Error updating boolean solid: " + (error.message || error));
+            } finally {
+                UIManager.hideLoading();
             }
-            // Sync the UI with the state from the very last successful update
-            syncUIWithState(lastResult);
-            
-        } catch (error) {
-             UIManager.showError("Error updating solid: " + (error.message || error)); 
-        } finally {
-            UIManager.hideLoading();
+        } else {
+            // --- Update an existing Primitive Solid ---
+            UIManager.showLoading("Updating solid...");
+            try {
+                // The loop is still the best approach with our current API
+                let lastResult;
+                for (const key in data.params) {
+                    const value = data.params[key];
+                    // The backend expects radians for angles and full length for dz,
+                    // which getParamsFromUI now correctly provides.
+                    lastResult = await APIService.updateProperty('solid', data.id, `parameters.${key}`, value);
+                    
+                    if (!lastResult.success) {
+                        UIManager.showError(`Failed to update property ${key}: ${lastResult.error}`);
+                        const freshState = await APIService.getProjectState();
+                        syncUIWithState({ ...freshState, success: true, message: "Update failed, state restored." });
+                        return;
+                    }
+                }
+                syncUIWithState(lastResult);
+            } catch (error) {
+                UIManager.showError("Error updating solid: " + (error.message || error));
+            } finally {
+                UIManager.hideLoading();
+            }
         }
 
     } else {
-        // --- HANDLE CREATE (Unchanged from before) ---
-        const objectType = `solid_${data.type}`;
-        
-        UIManager.showLoading("Adding solid...");
-        try {
-            const result = await APIService.addObject(objectType, data.name, data.params);
-            syncUIWithState(result);
-        } catch (error) { 
-            UIManager.showError("Error adding solid: " + (error.message || error)); 
+        // --- HANDLE ALL CREATIONS (CREATE MODE) ---
+        if (data.isChainedBoolean) {
+            // --- Create a new Boolean Solid ---
+            UIManager.showLoading("Creating boolean solid...");
+            try {
+                // We now call the correct new API function
+                const result = await APIService.addBooleanSolid(data.name, data.recipe);
+                syncUIWithState(result);
+            } catch (error) {
+                UIManager.showError("Error creating boolean solid: " + (error.message || error));
+            } finally {
+                UIManager.hideLoading();
+            }
+        } else {
+            // --- Create a new Primitive Solid ---
+            const objectType = `solid_${data.type}`;
+            UIManager.showLoading("Adding solid...");
+            try {
+                // This logic remains the same, but it's now clearly for primitives only
+                const result = await APIService.addObject(objectType, data.name, data.params);
+                // TODO: Here is where we would chain calls to create LV and PV
+                // if data.createLV or data.placePV are true.
+                syncUIWithState(result);
+            } catch (error) {
+                UIManager.showError("Error adding solid: " + (error.message || error));
+            } finally {
+                UIManager.hideLoading();
+            }
         }
-        finally { UIManager.hideLoading(); }
     }
 }

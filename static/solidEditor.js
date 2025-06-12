@@ -1,11 +1,13 @@
 // static/solidEditor.js
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createPrimitiveGeometry } from './sceneManager.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 
 // --- Module State ---
 let scene, camera, renderer, controls;
+let transformControls;
 let currentSolidMesh = null;
 let onConfirmCallback = null;
 let isEditMode = false;         // flag to track mode
@@ -15,6 +17,9 @@ let currentProjectState = null; // to hold the project state
 // State for boolean operations
 let booleanSolidA = null; // Will hold { name, type, parameters }
 let booleanSolidB = null;
+
+// State variable for the boolean recipe
+let booleanRecipe = []; // An array of {op, solid, transform}
 
 const editorContainer = document.getElementById('solid_preview_container');
 const modalElement = document.getElementById('solidEditorModal');
@@ -55,6 +60,20 @@ export function initSolidEditor(callbacks) {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
+    // TransformControls for the editor's scene
+    transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.addEventListener('dragging-changed', (event) => {
+        controls.enabled = !event.value; // Disable orbit while transforming
+    });
+    transformControls.addEventListener('objectChange', () => {
+        // When the gizmo moves the object, update the UI and the preview
+        if (transformControls.object) {
+            updateTransformUIFromGizmo();
+            updatePreview();
+        }
+    });
+    scene.add(transformControls);
+
     // Event Listeners
     document.getElementById('closeSolidEditor').addEventListener('click', hide);
     typeSelect.addEventListener('change', renderParamsUI);
@@ -82,8 +101,7 @@ function onWindowResize() {
 // --- Public API ---
 export function show(solidData = null, projectState = null) {
     currentProjectState = projectState; // Cache the state
-    booleanSolidA = null; // Reset boolean state
-    booleanSolidB = null;
+    booleanRecipe = []; // Reset recipe
 
     if (solidData && solidData.name) {
         // --- EDIT MODE ---
@@ -99,17 +117,20 @@ export function show(solidData = null, projectState = null) {
         confirmButton.textContent = "Update Solid";
 
         // --- Pre-fill boolean state if applicable ---
-        const isBoolean = ['union', 'subtraction', 'intersection'].includes(solidData.type);
-        if (isBoolean && currentProjectState && currentProjectState.solids) {
-            const firstRefName = solidData.parameters.first_ref;
-            const secondRefName = solidData.parameters.second_ref;
+        if (solidData.type === 'boolean') {
+            // It's a "virtual" boolean solid. The recipe is right here.
+            const savedRecipe = solidData.parameters.recipe || [];
+            
+            // Reconstruct the recipe with full solid objects, not just refs
+            booleanRecipe = savedRecipe.map(item => {
+                const solidObject = currentProjectState.solids[item.solid_ref];
+                return {
+                    op: item.op,
+                    solid: solidObject, // Use the full solid object
+                    transform: item.transform // This is already in the correct format
+                };
+            });
 
-            if (firstRefName && currentProjectState.solids[firstRefName]) {
-                booleanSolidA = currentProjectState.solids[firstRefName];
-            }
-            if (secondRefName && currentProjectState.solids[secondRefName]) {
-                booleanSolidB = currentProjectState.solids[secondRefName];
-            }
         }
         
         // Populate parameters after the UI is rendered
@@ -125,8 +146,13 @@ export function show(solidData = null, projectState = null) {
         nameInput.disabled = false;
         typeSelect.value = 'box';
         typeSelect.disabled = false;
-        
         confirmButton.textContent = "Create Solid";
+
+        // When creating a new boolean, start with an empty base slot.
+        if (typeSelect.value === 'boolean') {
+             booleanRecipe.push({ op: 'base', solid: null, transform: null });
+        }
+
         renderParamsUI();
     }
     
@@ -144,157 +170,96 @@ export function hide() {
 // --- Internal Logic ---
 
 function renderParamsUI(params = {}) {
-    dynamicParamsDiv.innerHTML = ''; // Clear previous params
+    // 1. Clear previous UI and get the current solid type
+    dynamicParamsDiv.innerHTML = '';
     const type = typeSelect.value;
-    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
+    const isBoolean = type === 'boolean';
 
+    // 2. Show/Hide the ingredients panel based on type
     document.getElementById('solid-ingredients-panel').style.display = isBoolean ? 'flex' : 'none';
 
-    // A map to generate UI for each primitive
-    const paramUIBuilder = {
-        box: () => `
-            <div class="property_item"><label for="p_x">Size X (mm)</label><input type="number" id="p_x" value="100"></div>
-            <div class="property_item"><label for="p_y">Size Y (mm)</label><input type="number" id="p_y" value="100"></div>
-            <div class="property_item"><label for="p_z">Size Z (mm)</label><input type="number" id="p_z" value="100"></div>`,
-        tube: () => `
-            <div class="property_item"><label for="p_rmin">Inner Radius (mm)</label><input type="number" id="p_rmin" value="0"></div>
-            <div class="property_item"><label for="p_rmax">Outer Radius (mm)</label><input type="number" id="p_rmax" value="50"></div>
-            <div class="property_item"><label for="p_dz">Full Length Z (mm)</label><input type="number" id="p_dz" value="200"></div>
-            <div class="property_item"><label for="p_startphi">Start Phi (rad)</label><input type="number" id="p_startphi" step="any" value="0"></div>
-            <div class="property_item"><label for="p_deltaphi">Delta Phi (rad)</label><input type="number" id="p_deltaphi" step="any" value="${(2*Math.PI).toFixed(4)}"></div>`,
-        cone: () => `
-            <div class="property_item"><label for="p_rmin1">Inner Radius 1 (mm)</label><input type="number" id="p_rmin1" value="0"></div>
-            <div class="property_item"><label for="p_rmax1">Outer Radius 1 (mm)</label><input type="number" id="p_rmax1" value="50"></div>
-            <div class="property_item"><label for="p_rmin2">Inner Radius 2 (mm)</label><input type="number" id="p_rmin2" value="0"></div>
-            <div class="property_item"><label for="p_rmax2">Outer Radius 2 (mm)</label><input type="number" id="p_rmax2" value="75"></div>
-            <div class="property_item"><label for="p_dz">Full Length Z (mm)</label><input type="number" id="p_dz" value="200"></div>
-            <div class="property_item"><label for="p_startphi">Start Phi (rad)</label><input type="number" id="p_startphi" step="any" value="0"></div>
-            <div class="property_item"><label for="p_deltaphi">Delta Phi (rad)</label><input type="number" id="p_deltaphi" step="any" value="${(2*Math.PI).toFixed(4)}"></div>`,
-        sphere: () => `
-            <div class="property_item"><label for="p_rmin">Inner Radius (mm)</label><input type="number" id="p_rmin" value="0"></div>
-            <div class="property_item"><label for="p_rmax">Outer Radius (mm)</label><input type="number" id="p_rmax" value="100"></div>
-            <div class="property_item"><label for="p_startphi">Start Phi (rad)</label><input type="number" id="p_startphi" step="any" value="0"></div>
-            <div class="property_item"><label for="p_deltaphi">Delta Phi (rad)</label><input type="number" id="p_deltaphi" step="any" value="${(2*Math.PI).toFixed(4)}"></div>
-            <div class="property_item"><label for="p_starttheta">Start Theta (rad)</label><input type="number" id="p_starttheta" step="any" value="0"></div>
-            <div class="property_item"><label for="p_deltatheta">Delta Theta (rad)</label><input type="number" id="p_deltatheta" step="any" value="${(Math.PI).toFixed(4)}"></div>`,
-        union: () => {
-            document.getElementById('solid-ingredients-panel').style.display = 'flex';
-            return `
-                <div class="boolean-slot" id="slot-a"><h6>Solid A</h6><span>Drag a solid here</span></div>
-                <div class="boolean-slot" id="slot-b"><h6>Solid B</h6><span>Drag a solid here</span></div>
-                <hr>
-                <h6>Transform for Solid B</h6>
-                <div class="transform-controls">
-                    <div class="transform-group">
-                        <span>Position (mm)</span>
-                        <div class="property_item"><label for="p_pos_x">X:</label><input type="number" id="p_pos_x" value="0" step="any"></div>
-                        <div class="property_item"><label for="p_pos_y">Y:</label><input type="number" id="p_pos_y" value="0" step="any"></div>
-                        <div class="property_item"><label for="p_pos_z">Z:</label><input type="number" id="p_pos_z" value="0" step="any"></div>
-                    </div>
-                    <div class="transform-group">
-                        <span>Rotation (deg, ZYX order)</span>
-                        <div class="property_item"><label for="p_rot_x">X:</label><input type="number" id="p_rot_x" value="0" step="any"></div>
-                        <div class="property_item"><label for="p_rot_y">Y:</label><input type="number" id="p_rot_y" value="0" step="any"></div>
-                        <div class="property_item"><label for="p_rot_z">Z:</label><input type="number" id="p_rot_z" value="0" step="any"></div>
-                    </div>
-                </div>`;
-        }
-    };
-    
-    // Add subtraction and intersection to use the same UI as union
-    paramUIBuilder.subtraction = paramUIBuilder.union;
-    paramUIBuilder.intersection = paramUIBuilder.union;
+    // 3. Main logic branch: Is it a boolean or a primitive?
+    if (isBoolean) {
+        // --- BOOLEAN UI LOGIC ---
+        // Create the container for the recipe list and the "Add" button
+        dynamicParamsDiv.innerHTML = `
+            <div id="boolean-recipe-list"></div>
+            <button id="add-boolean-op-btn" class="add_button" style="margin-top: 10px;">+ Add Operation</button>
+        `;
+        document.getElementById('add-boolean-op-btn').addEventListener('click', addBooleanOperation);
+        
+        // Populate the UI from the `booleanRecipe` state variable
+        rebuildBooleanUI();
 
-    if (paramUIBuilder[type]) {
-        dynamicParamsDiv.innerHTML = paramUIBuilder[type]();
     } else {
-        dynamicParamsDiv.innerHTML = `<p>Parameters for '${type}' not implemented yet.</p>`;
+        // --- PRIMITIVE UI LOGIC ---
+        const paramUIBuilder = {
+            box: () => `
+                <div class="property_item"><label for="p_x">Size X (mm)</label><input type="number" id="p_x" value="100"></div>
+                <div class="property_item"><label for="p_y">Size Y (mm)</label><input type="number" id="p_y" value="100"></div>
+                <div class="property_item"><label for="p_z">Size Z (mm)</label><input type="number" id="p_z" value="100"></div>`,
+            tube: () => `
+                <div class="property_item"><label for="p_rmin">Inner Radius (mm)</label><input type="number" id="p_rmin" value="0"></div>
+                <div class="property_item"><label for="p_rmax">Outer Radius (mm)</label><input type="number" id="p_rmax" value="50"></div>
+                <div class="property_item"><label for="p_dz">Full Length Z (mm)</label><input type="number" id="p_dz" value="200"></div>
+                <div class="property_item"><label for="p_startphi">Start Phi (deg)</label><input type="number" id="p_startphi" step="any" value="0"></div>
+                <div class="property_item"><label for="p_deltaphi">Delta Phi (deg)</label><input type="number" id="p_deltaphi" step="any" value="360"></div>`,
+            cone: () => `
+                <div class="property_item"><label for="p_rmin1">Inner Radius 1 (mm)</label><input type="number" id="p_rmin1" value="0"></div>
+                <div class="property_item"><label for="p_rmax1">Outer Radius 1 (mm)</label><input type="number" id="p_rmax1" value="50"></div>
+                <div class="property_item"><label for="p_rmin2">Inner Radius 2 (mm)</label><input type="number" id="p_rmin2" value="0"></div>
+                <div class="property_item"><label for="p_rmax2">Outer Radius 2 (mm)</label><input type="number" id="p_rmax2" value="75"></div>
+                <div class="property_item"><label for="p_dz">Full Length Z (mm)</label><input type="number" id="p_dz" value="200"></div>
+                <div class="property_item"><label for="p_startphi">Start Phi (deg)</label><input type="number" id="p_startphi" step="any" value="0"></div>
+                <div class="property_item"><label for="p_deltaphi">Delta Phi (deg)</label><input type="number" id="p_deltaphi" step="any" value="360"></div>`,
+            sphere: () => `
+                <div class="property_item"><label for="p_rmin">Inner Radius (mm)</label><input type="number" id="p_rmin" value="0"></div>
+                <div class="property_item"><label for="p_rmax">Outer Radius (mm)</label><input type="number" id="p_rmax" value="100"></div>
+                <div class="property_item"><label for="p_startphi">Start Phi (deg)</label><input type="number" id="p_startphi" step="any" value="0"></div>
+                <div class="property_item"><label for="p_deltaphi">Delta Phi (deg)</label><input type="number" id="p_deltaphi" step="any" value="360"></div>
+                <div class="property_item"><label for="p_starttheta">Start Theta (deg)</label><input type="number" id="p_starttheta" step="any" value="0"></div>
+                <div class="property_item"><label for="p_deltatheta">Delta Theta (deg)</label><input type="number" id="p_deltatheta" step="any" value="180"></div>`
+        };
+
+        if (paramUIBuilder[type]) {
+            dynamicParamsDiv.innerHTML = paramUIBuilder[type]();
+        } else {
+            dynamicParamsDiv.innerHTML = `<p>Parameters for '${type}' not implemented yet.</p>`;
+        }
     }
 
-    // Handle drag-and-drop for boolean solids
-    if (isBoolean) {
-
-        // --- Populate solids ingredients list for boolean operations ---
-        const ingredientsPanel = document.getElementById('boolean-ingredients-list');
-        ingredientsPanel.innerHTML = '';
-        if (currentProjectState && currentProjectState.solids) {
-            for (const solidName in currentProjectState.solids) {
-                // Don't allow a solid to be unioned with itself in edit mode
-                if (isEditMode && solidName === editingSolidId) continue;
-                
-                const solid = currentProjectState.solids[solidName];
-                const div = document.createElement('div');
-                div.textContent = solid.name;
-                div.draggable = true;
-                // Store the data on the element for easy access on drop
-                div.dataset.solidName = solid.name; 
-                div.addEventListener('dragstart', (e) => {
-                    e.dataTransfer.setData('text/plain', solid.name);
-                });
-                ingredientsPanel.appendChild(div);
+    // 4. If in Edit Mode, populate the fields with the solid's current data
+    if (isEditMode) {
+        // The `rebuildBooleanUI` function already handles populating the boolean recipe.
+        // We only need to handle primitives here.
+        if (!isBoolean) {
+            const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+            
+            if (type === 'box') {
+                p_in('p_x', params.x); p_in('p_y', params.y); p_in('p_z', params.z);
+            } else if (type === 'tube') {
+                p_in('p_rmin', params.rmin); p_in('p_rmax', params.rmax);
+                p_in('p_dz', params.dz * 2.0); // Convert half-length back to full-length
+                p_in('p_startphi', THREE.MathUtils.radToDeg(params.startphi)); // rad to deg
+                p_in('p_deltaphi', THREE.MathUtils.radToDeg(params.deltaphi)); // rad to deg
+            } else if (type === 'cone') {
+                p_in('p_rmin1', params.rmin1); p_in('p_rmax1', params.rmax1);
+                p_in('p_rmin2', params.rmin2); p_in('p_rmax2', params.rmax2);
+                p_in('p_dz', params.dz * 2.0); // Convert half-length back to full-length
+                p_in('p_startphi', THREE.MathUtils.radToDeg(params.startphi)); // rad to deg
+                p_in('p_deltaphi', THREE.MathUtils.radToDeg(params.deltaphi)); // rad to deg
+            } else if (type === 'sphere') {
+                 p_in('p_rmin', params.rmin); p_in('p_rmax', params.rmax);
+                 p_in('p_startphi', THREE.MathUtils.radToDeg(params.startphi)); // rad to deg
+                 p_in('p_deltaphi', THREE.MathUtils.radToDeg(params.deltaphi)); // rad to deg
+                 p_in('p_starttheta', THREE.MathUtils.radToDeg(params.starttheta)); // rad to deg
+                 p_in('p_deltatheta', THREE.MathUtils.radToDeg(params.deltatheta)); // rad to deg
             }
         }
-
-        // --- REVISED: Re-populate slots if state exists ---
-        const slotA = document.getElementById('slot-a');
-        const slotB = document.getElementById('slot-b');
-
-        // Re-populate drag-and-drop slots
-        updateSlotUI(slotA, booleanSolidA);
-        updateSlotUI(slotB, booleanSolidB);
-        
-        // Re-attach listeners
-        [slotA, slotB].forEach(slot => {
-            slot.addEventListener('dragover', (e) => e.preventDefault());
-            slot.addEventListener('drop', (e) => {
-                e.preventDefault();
-                const solidName = e.dataTransfer.getData('text/plain');
-                handleDrop(slot, solidName);
-            });
-        });
     }
 
-    // Populate the values if in edit mode
-    if (isEditMode) {
-        const type = typeSelect.value;
-        const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-        
-        if (type === 'box') {
-            p_in('p_x', params.x); p_in('p_y', params.y); p_in('p_z', params.z);
-        } else if (type === 'tube') {
-            p_in('p_rmin', params.rmin); p_in('p_rmax', params.rmax);
-            p_in('p_dz', params.dz * 2.0); // Convert half-length back to full-length for UI
-            p_in('p_startphi', params.startphi); p_in('p_deltaphi', params.deltaphi);
-        } else if (type === 'cone') {
-            p_in('p_rmin1', params.rmin1); p_in('p_rmax1', params.rmax1);
-            p_in('p_rmin2', params.rmin2); p_in('p_rmax2', params.rmax2);
-            p_in('p_dz', params.dz * 2.0); // Convert half-length back to full-length
-            p_in('p_startphi', params.startphi); p_in('p_deltaphi', params.deltaphi);
-        } else if (type === 'sphere') {
-             p_in('p_rmin', params.rmin); p_in('p_rmax', params.rmax);
-             p_in('p_startphi', params.startphi); p_in('p_deltaphi', params.deltaphi);
-             p_in('p_starttheta', params.starttheta); p_in('p_deltatheta', params.deltatheta);
-        }
-
-        // --- Populate transform controls in Edit Mode ---
-        if (isBoolean && params.transform_second) {
-            const pos = params.transform_second.position || {x:0, y:0, z:0};
-            const rot_rad = params.transform_second.rotation || {x:0, y:0, z:0};
-            
-            const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-
-            p_in('p_pos_x', pos.x);
-            p_in('p_pos_y', pos.y);
-            p_in('p_pos_z', pos.z);
-
-            // Convert backend radians to frontend degrees for UI
-            p_in('p_rot_x', THREE.MathUtils.radToDeg(rot_rad.x));
-            p_in('p_rot_y', THREE.MathUtils.radToDeg(rot_rad.y));
-            p_in('p_rot_z', THREE.MathUtils.radToDeg(rot_rad.z));
-        }
-    }
-    
-    dynamicParamsDiv.querySelectorAll('input').forEach(input => {
+    // 5. Attach listeners and update the 3D preview
+    dynamicParamsDiv.querySelectorAll('input, select').forEach(input => {
         input.addEventListener('change', updatePreview);
         input.addEventListener('input', updatePreview);
     });
@@ -302,50 +267,170 @@ function renderParamsUI(params = {}) {
     updatePreview();
 }
 
-function handleDrop(slot, solidName) {
-    if (!currentProjectState || !currentProjectState.solids[solidName]) return;
-    
-    const solidData = currentProjectState.solids[solidName];
+// Function to build/rebuild the boolean UI from the recipe
+function rebuildBooleanUI() {
+    const recipeListDiv = document.getElementById('boolean-recipe-list');
+    const ingredientsPanel = document.getElementById('boolean-ingredients-list'); // Get the panel
+    recipeListDiv.innerHTML = '';
+    ingredientsPanel.innerHTML = ''; // Clear and re-populate this too
 
-    if (slot.id === 'slot-a') {
-        booleanSolidA = solidData;
-    } else {
-        booleanSolidB = solidData;
+    // Populate ingredients
+    if (currentProjectState && currentProjectState.solids) {
+        for (const solidName in currentProjectState.solids) {
+            if (isEditMode && solidName === editingSolidId) continue;
+            const solid = currentProjectState.solids[solidName];
+            const div = document.createElement('div');
+            div.textContent = solid.name;
+            div.draggable = true;
+            div.dataset.solidName = solid.name; 
+            div.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', solid.name);
+            });
+            ingredientsPanel.appendChild(div);
+        }
     }
     
-    updateSlotUI(slot, solidData);
-    updatePreview(); // Re-render the preview with the new boolean component
+    booleanRecipe.forEach((item, index) => {
+        const isBase = index === 0;
+        const opHTML = isBase ? '<h6>Base Solid</h6>' : `
+            <select class="boolean-op-select" data-index="${index}">
+                <option value="subtraction" ${item.op === 'subtraction' ? 'selected' : ''}>Subtract (-)</option>
+                <option value="union" ${item.op === 'union' ? 'selected' : ''}>Union (+)</option>
+                <option value="intersection" ${item.op === 'intersection' ? 'selected' : ''}>Intersect (∩)</option>
+            </select>
+        `;
+
+        const slotClass = item.solid ? 'boolean-slot filled' : 'boolean-slot';
+        const slotContent = item.solid ? item.solid.name : 'Drag a solid here';
+
+        // --- Add transform inputs for non-base solids ---
+        const transformHTML = isBase ? '' : `
+            <div class="transform-controls-inline">
+                <div class="transform-group">
+                    <label>Pos (mm)</label>
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="x" data-type="pos" value="${item.transform.position.x}">
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="y" data-type="pos" value="${item.transform.position.y}">
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="z" data-type="pos" value="${item.transform.position.z}">
+                </div>
+                <div class="transform-group">
+                    <label>Rot (deg)</label>
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="x" data-type="rot" value="${THREE.MathUtils.radToDeg(item.transform.rotation.x)}">
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="y" data-type="rot" value="${THREE.MathUtils.radToDeg(item.transform.rotation.y)}">
+                    <input type="number" class="inline-trans" data-index="${index}" data-axis="z" data-type="rot" value="${THREE.MathUtils.radToDeg(item.transform.rotation.z)}">
+                </div>
+            </div>
+        `;
+        
+        const row = document.createElement('div');
+        row.className = 'boolean-recipe-row';
+        row.innerHTML = `
+            <div class="op-and-slot">
+                ${opHTML}
+                <div class="${slotClass}" data-index="${index}">${slotContent}</div>
+            </div>
+            ${transformHTML}
+            <button class="remove-op-btn" data-index="${index}" title="Remove Operation">×</button>
+        `;
+        recipeListDiv.appendChild(row);
+    });
+
+    // Attach all event listeners
+    attachBooleanListeners();
+    updatePreview();
+}
+
+// Function to add a new, empty operation to the recipe
+function addBooleanOperation() {
+    booleanRecipe.push({
+        op: 'subtraction', // Default to the most common operation
+        solid: null,
+        transform: { position: {x:0, y:0, z:0}, rotation: {x:0, y:0, z:0} }
+    });
+    rebuildBooleanUI();
+}
+
+// Centralized listener attachment
+function attachBooleanListeners() {
+    document.querySelectorAll('.boolean-recipe-row .boolean-slot').forEach(slot => {
+        slot.addEventListener('dragover', e => e.preventDefault());
+        slot.addEventListener('drop', e => {
+            e.preventDefault();
+            const solidName = e.dataTransfer.getData('text/plain');
+            const index = parseInt(slot.dataset.index, 10);
+            const solidData = currentProjectState.solids[solidName];
+            if (solidData) {
+                booleanRecipe[index].solid = solidData;
+                rebuildBooleanUI();
+            }
+        });
+        // TODO: Add click listener to show transform editor for this slot
+    });
+
+    document.querySelectorAll('.boolean-op-select').forEach(select => {
+        select.addEventListener('change', e => {
+            const index = parseInt(e.target.dataset.index, 10);
+            booleanRecipe[index].op = e.target.value;
+            updatePreview();
+        });
+    });
+
+    document.querySelectorAll('.remove-op-btn').forEach(button => {
+        button.addEventListener('click', e => {
+            const index = parseInt(e.target.dataset.index, 10);
+            booleanRecipe.splice(index, 1);
+            rebuildBooleanUI();
+        });
+    });
+
+    // --- Listener for transform inputs ---
+    document.querySelectorAll('.inline-trans').forEach(input => {
+        const updateTransformState = (e) => {
+            const index = parseInt(e.target.dataset.index, 10);
+            const axis = e.target.dataset.axis;
+            const type = e.target.dataset.type;
+            let value = parseFloat(e.target.value);
+
+            if (type === 'pos') {
+                booleanRecipe[index].transform.position[axis] = value;
+            } else { // rot
+                // Convert UI degrees to radians for internal state
+                booleanRecipe[index].transform.rotation[axis] = THREE.MathUtils.degToRad(value);
+            }
+            updatePreview();
+        };
+        input.addEventListener('change', updateTransformState);
+        input.addEventListener('input', updateTransformState);
+    });
 }
 
 function getParamsFromUI() {
     const type = typeSelect.value;
     const params = {};
     const p = (id) => parseFloat(document.getElementById(id)?.value || 0);
-    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
+    const d2r = (id) => THREE.MathUtils.degToRad(p(id)); // degrees to radians helper
+    const isBoolean = type === 'boolean';
 
     if (isBoolean) {
-        if (booleanSolidA) params.first_ref = booleanSolidA.name;
-        if (booleanSolidB) params.second_ref = booleanSolidB.name;
-        
-        // Get the transform and attach it.
-        // The backend expects radians, which getTransformFromUI provides.
-        params.transform_second = getTransformFromUI();
-
+        // Handled by the handleConfirm logic
     } else if (type === 'box') {
         params.x = p('p_x'); params.y = p('p_y'); params.z = p('p_z');
     } else if (type === 'tube') {
         params.rmin = p('p_rmin'); params.rmax = p('p_rmax'); 
-        params.dz = p('p_dz'); // Send FULL length to backend
-        params.startphi = p('p_startphi'); params.deltaphi = p('p_deltaphi');
+        params.dz = p('p_dz'); // Send FULL length
+        params.startphi = d2r('p_startphi'); // Convert to rad
+        params.deltaphi = d2r('p_deltaphi'); // Convert to rad
     } else if (type === 'cone') {
         params.rmin1 = p('p_rmin1'); params.rmax1 = p('p_rmax1');
         params.rmin2 = p('p_rmin2'); params.rmax2 = p('p_rmax2');
-        params.dz = p('p_dz'); // Send FULL length to backend
-        params.startphi = p('p_startphi'); params.deltaphi = p('p_deltaphi');
+        params.dz = p('p_dz'); // Send FULL length
+        params.startphi = d2r('p_startphi');
+        params.deltaphi = d2r('p_deltaphi');
     } else if (type === 'sphere') {
         params.rmin = p('p_rmin'); params.rmax = p('p_rmax');
-        params.startphi = p('p_startphi'); params.deltaphi = p('p_deltaphi');
-        params.starttheta = p('p_starttheta'); params.deltatheta = p('p_deltatheta');
+        params.startphi = d2r('p_startphi');
+        params.deltaphi = d2r('p_deltaphi');
+        params.starttheta = d2r('p_starttheta');
+        params.deltatheta = d2r('p_deltatheta');
     }
     return params;
 }
@@ -364,6 +449,11 @@ function getTransformFromUI() {
 }
 
 function updatePreview() {
+    // --- Detach gizmo before clearing the scene ---
+    if (transformControls.object) {
+        transformControls.detach();
+    }
+
     if (currentSolidMesh) {
         scene.remove(currentSolidMesh);
         if (currentSolidMesh.geometry) currentSolidMesh.geometry.dispose();
@@ -371,45 +461,34 @@ function updatePreview() {
     }
 
     const type = typeSelect.value;
-    const isBoolean = ['union', 'subtraction', 'intersection'].includes(type);
+    const isBoolean = type === 'boolean';
     let geometry = null;
 
     if (isBoolean) {
         // --- BOOLEAN RENDERING LOGIC ---
-        if (!booleanSolidA || !booleanSolidB) {
-            // Not ready to render yet, do nothing.
-            return;
-        }
-
-        const geomA = createPrimitiveGeometry(booleanSolidA, currentProjectState, null);
-        const geomB = createPrimitiveGeometry(booleanSolidB, currentProjectState, null);
-
-        if (!geomA || !geomB) return;
-
-        const brushA = new Brush(geomA);
-        const brushB = new Brush(geomB);
+        if (booleanRecipe.length === 0 || !booleanRecipe[0].solid) return; // Need at least a base solid
         
-        // --- NEW: Apply transform from UI ---
-        const transform = getTransformFromUI();
-        brushB.position.set(transform.position.x, transform.position.y, transform.position.z);
-        // Apply rotation in ZYX order, as is common in GDML
-        brushB.quaternion.setFromEuler(new THREE.Euler(transform.rotation.x, transform.rotation.y, transform.rotation.z, 'ZYX'));
-        brushB.updateMatrixWorld();
-
-        // Perform the CSG operation
-        const csgEvaluator = new Evaluator();
-        let resultBrush;
-        if (type === 'union') {
-            resultBrush = csgEvaluator.evaluate(brushA, brushB, ADDITION);
-        } else if (type === 'subtraction') {
-            resultBrush = csgEvaluator.evaluate(brushA, brushB, SUBTRACTION);
-        } else { // intersection
-            resultBrush = csgEvaluator.evaluate(brushA, brushB, INTERSECTION);
-        }
+        let resultBrush = new Brush(createPrimitiveGeometry(booleanRecipe[0].solid, currentProjectState));
         
-        if (resultBrush) {
-            geometry = resultBrush.geometry;
+        if (booleanRecipe.length > 1) {
+            const csgEvaluator = new Evaluator();
+            for (let i = 1; i < booleanRecipe.length; i++) {
+                const item = booleanRecipe[i];
+                if (!item.solid) continue;
+
+                const nextBrush = new Brush(createPrimitiveGeometry(item.solid, currentProjectState));
+                
+                // --- USE THE STORED TRANSFORM ---
+                const transform = item.transform;
+                nextBrush.position.set(transform.position.x, transform.position.y, transform.position.z);
+                nextBrush.quaternion.setFromEuler(new THREE.Euler(transform.rotation.x, transform.rotation.y, transform.rotation.z, 'ZYX'));
+                nextBrush.updateMatrixWorld();
+
+                const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
+                resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
+            }
         }
+        if (resultBrush) geometry = resultBrush.geometry;
 
     } else {
         // --- PRIMITIVE RENDERING LOGIC (Unchanged) ---
@@ -455,35 +534,83 @@ function clearSlot(slot) {
 
 function handleConfirm() {
     if (!onConfirmCallback) return;
+    
+    const type = typeSelect.value;
+    const isBoolean = type === 'boolean';
 
     if (isEditMode) {
         // --- EDIT LOGIC ---
-        const type = typeSelect.value;
-        const params = getParamsFromUI(); // This gets the latest values from the UI
-        onConfirmCallback({
+        const data = {
             isEdit: true,
             id: editingSolidId,
             type: type,
-            params: params,
-        });
+            isChainedBoolean: isBoolean
+        };
+
+        if (isBoolean) {
+            if (booleanRecipe.length < 2 || !booleanRecipe.every(item => item.solid)) {
+                alert("All boolean operation slots must be filled.");
+                return;
+            }
+            data.recipe = booleanRecipe.map(item => ({
+                op: item.op,
+                solid_ref: item.solid.name,
+                transform: item.transform
+            }));
+        } else {
+            data.params = getParamsFromUI();
+        }
+        onConfirmCallback(data);
+
     } else {
         // --- CREATE LOGIC ---
         const name = nameInput.value.trim();
-        if (!name) {
-            alert("Please enter a name for the solid.");
-            return;
-        }
-        const type = typeSelect.value;
-        const params = getParamsFromUI();
-        const createLV = document.getElementById('createLVCheckbox').checked;
-        const placePV = document.getElementById('placePVCheckbox').checked;
-        const materialRef = createLV ? document.getElementById('lvMaterialSelect').value : null;
+        if (!name) { alert("Please enter a name for the solid."); return; }
+        
+        if (isBoolean) {
+            if (booleanRecipe.length < 2 || !booleanRecipe.every(item => item.solid)) {
+                alert("All boolean operation slots must be filled.");
+                return;
+            }
+            const recipeForBackend = booleanRecipe.map(item => ({
+                op: item.op,
+                solid_ref: item.solid.name,
+                transform: item.transform
+            }));
+            onConfirmCallback({
+                isChainedBoolean: true, // This flag is the key differentiator
+                name: name,
+                recipe: recipeForBackend
+            });
+        } else {
+            const params = getParamsFromUI();
+            const createLV = document.getElementById('createLVCheckbox').checked;
+            const placePV = document.getElementById('placePVCheckbox').checked;
+            const materialRef = createLV ? document.getElementById('lvMaterialSelect').value : null;
 
-        onConfirmCallback({
-            isEdit: false,
-            name, type, params,
-            createLV, placePV, materialRef
-        });
+            onConfirmCallback({
+                isEdit: false,
+                isChainedBoolean: false, // Explicitly false
+                name, type, params,
+                createLV, placePV, materialRef
+            });
+        }
     }
     hide();
+}
+
+function updateTransformUIFromGizmo() {
+    const obj = transformControls.object;
+    if (!obj) return;
+    
+    const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val.toFixed(3); };
+
+    p_in('p_pos_x', obj.position.x);
+    p_in('p_pos_y', obj.position.y);
+    p_in('p_pos_z', obj.position.z);
+
+    const euler = new THREE.Euler().setFromQuaternion(obj.quaternion, 'ZYX');
+    p_in('p_rot_x', THREE.MathUtils.radToDeg(euler.x));
+    p_in('p_rot_y', THREE.MathUtils.radToDeg(euler.y));
+    p_in('p_rot_z', THREE.MathUtils.radToDeg(euler.z));
 }

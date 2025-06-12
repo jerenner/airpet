@@ -281,6 +281,36 @@
             color: #333;
         }
 
+        .boolean-recipe-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .op-and-slot {
+            flex-grow: 1;
+        }
+        .transform-controls-inline .transform-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .transform-controls-inline .transform-group label {
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .transform-controls-inline input {
+            width: 60px;
+        }
+        .remove-op-btn {
+            background: none;
+            border: none;
+            color: #f44336;
+            font-size: 20px;
+            cursor: pointer;
+        }
+
         /* Boolean transform controls */
         .transform-controls {
             display: flex;
@@ -507,10 +537,9 @@
                                 <option value="sphere">Sphere</option>
                                 <!-- Add other primitives here -->
                             </optgroup>
-                            <optgroup label="Booleans">
-                                <option value="union">Union</option>
-                                <option value="subtraction">Subtraction</option>
-                                <option value="intersection">Intersection</option>
+                            <!-- Single "Boolean" option -->
+                            <optgroup label="Composites">
+                                <option value="boolean">Boolean</option>
                             </optgroup>
                         </select>
                     </div>
