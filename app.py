@@ -212,6 +212,34 @@ def update_boolean_solid_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_logical_volume', methods=['POST'])
+def add_logical_volume_route():
+    data = request.get_json()
+    name = data.get('name')
+    solid_ref = data.get('solid_ref')
+    material_ref = data.get('material_ref')
+    
+    new_lv, error_msg = project_manager.add_logical_volume(name, solid_ref, material_ref)
+    
+    if new_lv:
+        return create_success_response("Logical Volume created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_logical_volume', methods=['POST'])
+def update_logical_volume_route():
+    data = request.get_json()
+    lv_name = data.get('id')
+    solid_ref = data.get('solid_ref')
+    material_ref = data.get('material_ref')
+
+    success, error_msg = project_manager.update_logical_volume(lv_name, solid_ref, material_ref)
+
+    if success:
+        return create_success_response(f"Logical Volume '{lv_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 @app.route('/delete_object', methods=['POST'])
 def delete_object_route():
     data = request.get_json()

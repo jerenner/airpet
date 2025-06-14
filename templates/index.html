@@ -222,7 +222,7 @@
 
         #solid-ingredients-panel { flex: 0 0 200px; overflow-y: auto; }
         #solid-preview-panel { flex: 1 1 auto; padding: 0; position: relative; }
-        #solid-params-panel { flex: 0 0 300px; overflow-y: auto; }
+        #solid-params-panel { flex: 0 0 340px; overflow-y: auto; }
 
         #solid_preview_container {
             width: 100%;
@@ -291,6 +291,14 @@
         .op-and-slot {
             flex-grow: 1;
         }
+        .transform-controls-inline {
+            display: flex;
+            flex-wrap: wrap; 
+            gap: 10px;
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px dotted #ccc;
+        }
         .transform-controls-inline .transform-group {
             display: flex;
             align-items: center;
@@ -301,7 +309,7 @@
             font-weight: bold;
         }
         .transform-controls-inline input {
-            width: 60px;
+            width: 50px;
         }
         .remove-op-btn {
             background: none;
@@ -346,6 +354,25 @@
 
         .quick-add-options {
             font-size: 13px;
+        }
+
+        /* Re-center button */
+        #recenter-solid-preview-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            z-index: 10; /* Ensure it's above the canvas */
+            border: 1px solid #999;
+            background-color: rgba(240, 240, 240, 0.8);
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            font-size: 18px;
+            cursor: pointer;
+            line-height: 24px;
+        }
+        #recenter-solid-preview-btn:hover {
+            background-color: rgba(220, 220, 220, 1.0);
         }
 
     </style>
@@ -518,6 +545,7 @@
                     <div id="solid_preview_container">
                         <!-- The new Three.js canvas will go here -->
                     </div>
+                    <button id="recenter-solid-preview-btn" title="Recenter View">↺</button>
                 </div>
 
                 <!-- Right Panel: Parameters -->
@@ -561,6 +589,35 @@
                     <label for="placePVCheckbox">Place in Selected Volume</label>
                 </div>
                 <button id="confirmSolidEditor" class="confirm-button">Create Solid</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor modal for logical volumes -->
+    <div id="lvEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="lvEditorTitle">Create New Logical Volume</h4>
+                <span class="close-button" id="closeLVEditor">×</span>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="lvEditorName">Name:</label>
+                    <input type="text" id="lvEditorName" placeholder="e.g., myDetectorLV">
+                </div>
+                <div class="property_item">
+                    <label for="lvEditorSolid">Solid:</label>
+                    <select id="lvEditorSolid"></select>
+                </div>
+                <div class="property_item">
+                    <label for="lvEditorMaterial">Material:</label>
+                    <select id="lvEditorMaterial"></select>
+                </div>
+                <!-- Placeholders for future additions -->
+                <hr>
+                <p style="text-align:center; color:#888;"><i>Sensitive Detector, User Limits, and Vis Attributes can be added here later.</i></p>
+            </div>
+            <div class="modal-footer">
+                <button id="confirmLVEditor" class="confirm-button">Create LV</button>
             </div>
         </div>
     </div>

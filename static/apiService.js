@@ -223,3 +223,21 @@ export async function updateBooleanSolid(solidId, recipe) {
     });
     return handleResponse(response);
 }
+
+export async function addLogicalVolume(name, solid_ref, material_ref) {
+    const response = await fetch(`${API_BASE_URL}/add_logical_volume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, solid_ref, material_ref })
+    });
+    return handleResponse(response);
+}
+
+export async function updateLogicalVolume(id, solid_ref, material_ref) {
+    const response = await fetch(`${API_BASE_URL}/update_logical_volume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, solid_ref, material_ref })
+    });
+    return handleResponse(response);
+}

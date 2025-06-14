@@ -28,6 +28,8 @@ let callbacks = {
     onLoadProjectClicked: () => {},
     onGdmlFileSelected: (file) => {},
     onEditSolidClicked: (solidData) => {},
+    onAddLVClicked: () => {},
+    onEditLVClicked: (lvData) => {},
     onProjectFileSelected: (file) => {},
     onSaveProjectClicked: () => {},
     onExportGdmlClicked: () => {},
@@ -60,6 +62,7 @@ export function initUI(cb) {
 
     // Add buttons
     const addButtons = document.querySelectorAll('.add_button');
+    const addLVButton = document.getElementById('addLVButton');
 
     // Mode Buttons
     modeObserveButton = document.getElementById('modeObserveButton');
@@ -136,6 +139,10 @@ export function initUI(cb) {
             }
         });
     });
+
+    // Add listeners for add logical and physical volume buttons
+    addLVButton.addEventListener('click', callbacks.onAddLVClicked);
+    addLVButton.disabled = false; 
 
     // Add Object Modal Listeners
     confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
@@ -386,12 +393,17 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         callbacks.onHierarchyItemSelected({ type: itemType, id: itemIdForBackend, name: displayName, data: item.appData, element: item });
     });
 
-    // For double-clicking of solids
+    // For double-clicking of solids, volumes, etc.
     if (itemType === 'solid') {
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             // Pass the solid's data to the handler
             callbacks.onEditSolidClicked(item.appData);
+        });
+    } else if (itemType === 'logical_volume') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditLVClicked(item.appData);
         });
     }
     return item;

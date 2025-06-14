@@ -301,18 +301,36 @@ class ProjectManager:
         """Helper to add an already-created Solid object."""
         self.current_geometry_state.solids[solid_obj.name] = solid_obj
 
-    def add_logical_volume(self, name_suggestion, solid_ref_name, material_ref_name):
+    def add_logical_volume(self, name_suggestion, solid_ref, material_ref):
         if not self.current_geometry_state: return None, "No project loaded"
-        if solid_ref_name not in self.current_geometry_state.solids:
-            return None, f"Solid '{solid_ref_name}' not found."
-        if material_ref_name not in self.current_geometry_state.materials:
-            return None, f"Material '{material_ref_name}' not found."
+        if solid_ref not in self.current_geometry_state.solids:
+            return None, f"Solid '{solid_ref}' not found."
+        if material_ref not in self.current_geometry_state.materials:
+            return None, f"Material '{material_ref}' not found."
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.logical_volumes)
-        new_lv = LogicalVolume(name, solid_ref_name, material_ref_name)
+        new_lv = LogicalVolume(name, solid_ref, material_ref)
         self.current_geometry_state.add_logical_volume(new_lv)
-        print(f"Added Logical Volume: {name}")
         return new_lv.to_dict(), None
+
+    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref):
+        if not self.current_geometry_state: return False, "No project loaded"
+        
+        lv = self.current_geometry_state.logical_volumes.get(lv_name)
+        if not lv:
+            return False, f"Logical Volume '{lv_name}' not found."
+
+        if new_solid_ref and new_solid_ref not in self.current_geometry_state.solids:
+            return False, f"New solid '{new_solid_ref}' not found."
+        if new_material_ref and new_material_ref not in self.current_geometry_state.materials:
+            return False, f"New material '{new_material_ref}' not found."
+            
+        if new_solid_ref:
+            lv.solid_ref = new_solid_ref
+        if new_material_ref:
+            lv.material_ref = new_material_ref
+            
+        return True, None
 
     def add_physical_volume(self, parent_lv_name, pv_name_suggestion,
                             placed_lv_name, position_dict, rotation_dict, copy_number=0):

@@ -76,6 +76,7 @@ export function initSolidEditor(callbacks) {
 
     // Event Listeners
     document.getElementById('closeSolidEditor').addEventListener('click', hide);
+    document.getElementById('recenter-solid-preview-btn').addEventListener('click', recenterCamera);
     typeSelect.addEventListener('change', renderParamsUI);
     confirmButton.addEventListener('click', handleConfirm);
     
@@ -161,6 +162,10 @@ export function show(solidData = null, projectState = null) {
 
     modalElement.style.display = 'block';
     onWindowResize();
+
+    // Automatically set camera: use a small timeout to ensure the preview mesh has 
+    // been rendered once before trying to calculate its bounding box.
+    setTimeout(recenterCamera, 50);
 }
 
 export function hide() {
@@ -498,7 +503,7 @@ function updatePreview() {
     }
     
     if (geometry) {
-        const material = new THREE.MeshLambertMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+        const material = new THREE.MeshLambertMaterial({ /* ... */ });
         currentSolidMesh = new THREE.Mesh(geometry, material);
         scene.add(currentSolidMesh);
     }
@@ -613,4 +618,35 @@ function updateTransformUIFromGizmo() {
     p_in('p_rot_x', THREE.MathUtils.radToDeg(euler.x));
     p_in('p_rot_y', THREE.MathUtils.radToDeg(euler.y));
     p_in('p_rot_z', THREE.MathUtils.radToDeg(euler.z));
+}
+
+// Helper function to frame the camera on the current mesh
+function recenterCamera() {
+    if (!currentSolidMesh || !controls || !camera) {
+        if(controls) controls.reset();
+        return;
+    }
+
+    const boundingBox = new THREE.Box3().setFromObject(currentSolidMesh);
+    const center = boundingBox.getCenter(new THREE.Vector3());
+    const size = boundingBox.getSize(new THREE.Vector3());
+
+    // Get the maximum dimension of the object
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    // Calculate camera distance
+    const fov = camera.fov * (Math.PI / 180);
+    let cameraZ = Math.abs(maxDim / 2 * 3 / Math.tan(fov / 2));
+    
+    // Give a minimum distance for very small objects
+    cameraZ = Math.max(cameraZ, 200); 
+
+    // Update orbit controls
+    controls.target.copy(center);
+    
+    // Position the camera
+    camera.position.set(center.x, center.y, center.z + cameraZ);
+
+    // This is important - you must call update after changing camera position/target
+    controls.update();
 }

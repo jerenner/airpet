@@ -3,6 +3,7 @@ import * as THREE from 'three';
 
 import * as APIService from './apiService.js';
 import * as InteractionManager from './interactionManager.js';
+import * as LVEditor from './logicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SolidEditor from './solidEditor.js';
 import * as UIManager from './uiManager.js';
@@ -33,6 +34,8 @@ async function initializeApp() {
         onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
+        onAddLVClicked: handleAddLV,
+        onEditLVClicked: handleEditLV,
         onProjectFileSelected: handleLoadProject,
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -68,6 +71,11 @@ async function initializeApp() {
         SceneManager.getOrbitControls(),     // Pass the OrbitControls instance
         SceneManager.getFlyControls()        // Pass the FlyControls instance
     );
+
+    // Initialize logical volume editor
+    LVEditor.initLVEditor({
+        onConfirm: handleLVEditorConfirm
+    });
 
     // Initialize solid editor
     SolidEditor.initSolidEditor({
@@ -454,6 +462,38 @@ async function handleSolidEditorConfirm(data) {
             } finally {
                 UIManager.hideLoading();
             }
+        }
+    }
+}
+
+function handleAddLV() {
+    LVEditor.show(null, AppState.currentProjectState);
+}
+
+function handleEditLV(lvData) {
+    LVEditor.show(lvData, AppState.currentProjectState);
+}
+
+async function handleLVEditorConfirm(data) {
+    if (data.isEdit) {
+        UIManager.showLoading("Updating Logical Volume...");
+        try {
+            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error updating LV: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+    } else {
+        UIManager.showLoading("Creating Logical Volume...");
+        try {
+            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error creating LV: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
         }
     }
 }
