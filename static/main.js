@@ -456,19 +456,41 @@ async function handleSolidEditorConfirm(data) {
                 UIManager.hideLoading();
             }
         } else {
-            // --- Create a new Primitive Solid ---
+            // --- Create a new Primitive Solid (with optional LV/PV) ---
             const objectType = `solid_${data.type}`;
             UIManager.showLoading("Adding solid...");
             try {
-                // This logic remains the same, but it's now clearly for primitives only
-                const result = await APIService.addObject(objectType, data.name, data.params);
-                // TODO: Here is where we would chain calls to create LV and PV
-                // if data.createLV or data.placePV are true.
-                syncUIWithState(result);
-            } catch (error) {
-                UIManager.showError("Error adding solid: " + (error.message || error));
-            } finally {
-                UIManager.hideLoading();
+                // If either quick-add checkbox is checked, use the new powerful endpoint
+                if (data.createLV) {
+                    const solidParams = { name: data.name, type: data.type, params: data.params };
+                    
+                    const lvParams = { material_ref: data.materialRef };
+                    // Let the backend generate the LV name, or use a convention
+                    // lvParams.name = `${data.name}_lv`; 
+
+                    let pvParams = null;
+                    if (data.placePV) {
+                        // Default to placing in the World if nothing else is selected
+                        const parentContext = UIManager.getSelectedParentContext();
+                        const parentName = (parentContext && parentContext.name) 
+                                           ? parentContext.name 
+                                           : AppState.currentProjectState.world_volume_ref;
+                        pvParams = { parent_lv_name: parentName };
+                    }
+                    
+                    const result = await APIService.addSolidAndPlace(solidParams, lvParams, pvParams);
+                    syncUIWithState(result);
+
+                } else {
+                    // Otherwise, use the original simple "add solid" endpoint
+                    const objectType = `solid_${data.type}`;
+                    const result = await APIService.addObject(objectType, data.name, data.params);
+                    syncUIWithState(result);
+                }
+            } catch (error) { 
+                UIManager.showError("Error adding solid: " + (error.message || error)); 
+            } finally { 
+                UIManager.hideLoading(); 
             }
         }
     }

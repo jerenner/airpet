@@ -200,6 +200,19 @@ export async function updateProperty(objectType, objectId, propertyPath, newValu
     return handleResponse(response);
 }
 
+export async function addSolidAndPlace(solidParams, lvParams, pvParams) {
+    const response = await fetch(`${API_BASE_URL}/add_solid_and_place`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            solid_params: solidParams,
+            lv_params: lvParams,
+            pv_params: pvParams
+        })
+    });
+    return handleResponse(response);
+}
+
 /**
  * Creates a new boolean solid by sending its recipe to the backend.
  * @param {string} nameSuggestion The user-suggested name for the new solid.

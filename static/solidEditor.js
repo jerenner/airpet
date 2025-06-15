@@ -13,6 +13,7 @@ let onConfirmCallback = null;
 let isEditMode = false;         // flag to track mode
 let editingSolidId = null;      // store the ID/name of the solid being edited
 let currentProjectState = null; // to hold the project state
+let createLVCheckbox, placePVCheckbox, lvOptionsDiv, lvMaterialSelect;
 
 // State for boolean operations
 let booleanSolidA = null; // Will hold { name, type, parameters }
@@ -74,11 +75,28 @@ export function initSolidEditor(callbacks) {
     });
     scene.add(transformControls);
 
+    // Checkboxes
+    createLVCheckbox = document.getElementById('createLVCheckbox');
+    placePVCheckbox = document.getElementById('placePVCheckbox');
+    lvOptionsDiv = document.getElementById('lvOptions');
+    lvMaterialSelect = document.getElementById('lvMaterialSelect');
+
     // Event Listeners
     document.getElementById('closeSolidEditor').addEventListener('click', hide);
     document.getElementById('recenter-solid-preview-btn').addEventListener('click', recenterCamera);
     typeSelect.addEventListener('change', renderParamsUI);
     confirmButton.addEventListener('click', handleConfirm);
+
+    createLVCheckbox.addEventListener('change', () => {
+        const isChecked = createLVCheckbox.checked;
+        lvOptionsDiv.style.display = isChecked ? 'block' : 'none';
+        
+        // The "Place PV" checkbox should only be enabled if "Create LV" is also checked
+        placePVCheckbox.disabled = !isChecked;
+        if (!isChecked) {
+            placePVCheckbox.checked = false; // Uncheck it if its parent is unchecked
+        }
+    });
     
     // Start animation loop
     animate();
@@ -103,6 +121,19 @@ function onWindowResize() {
 export function show(solidData = null, projectState = null) {
     currentProjectState = projectState; // Cache the state
     booleanRecipe = []; // Reset recipe
+
+    // Populate the material dropdown for the quick-add feature
+    if (projectState && projectState.materials) {
+        populateSelect(lvMaterialSelect, Object.keys(projectState.materials));
+    } else {
+        populateSelect(lvMaterialSelect, []); // Clear it if no materials
+    }
+    
+    // Reset checkboxes when opening
+    createLVCheckbox.checked = false;
+    placePVCheckbox.checked = false;
+    placePVCheckbox.disabled = true;
+    lvOptionsDiv.style.display = 'none';
 
     if (solidData && solidData.name) {
         // --- EDIT MODE ---
@@ -166,6 +197,16 @@ export function show(solidData = null, projectState = null) {
     // Automatically set camera: use a small timeout to ensure the preview mesh has 
     // been rendered once before trying to calculate its bounding box.
     setTimeout(recenterCamera, 50);
+}
+
+function populateSelect(selectElement, optionsArray) {
+    selectElement.innerHTML = '';
+    optionsArray.forEach(optionText => {
+        const option = document.createElement('option');
+        option.value = optionText;
+        option.textContent = optionText;
+        selectElement.appendChild(option);
+    });
 }
 
 export function hide() {

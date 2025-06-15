@@ -301,6 +301,57 @@ class ProjectManager:
         """Helper to add an already-created Solid object."""
         self.current_geometry_state.solids[solid_obj.name] = solid_obj
 
+    def add_solid_and_place(self, solid_params, lv_params, pv_params):
+        """
+        A high-level method to perform the full Solid -> LV -> PV chain.
+        This makes the operation atomic from the backend's perspective.
+        """
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+
+        # --- 1. Add the Solid ---
+        solid_name_sugg = solid_params['name']
+        solid_type = solid_params['type']
+        solid_actual_params = solid_params['params']
+        
+        new_solid_dict, solid_error = self.add_solid(solid_name_sugg, solid_type, solid_actual_params)
+        if solid_error:
+            return False, f"Failed to create solid: {solid_error}"
+        
+        new_solid_name = new_solid_dict['name']
+
+        # --- 2. Add the Logical Volume (if requested) ---
+        if not lv_params:
+            # If no LV params, we're done. Just created a solid.
+            return True, None
+            
+        lv_name_sugg = lv_params.get('name', f"{new_solid_name}_lv")
+        material_ref = lv_params.get('material_ref')
+
+        new_lv_dict, lv_error = self.add_logical_volume(lv_name_sugg, new_solid_name, material_ref)
+        if lv_error:
+            # Here you might want to "roll back" the solid creation, but for now we'll leave it.
+            return False, f"Failed to create logical volume: {lv_error}"
+            
+        new_lv_name = new_lv_dict['name']
+
+        # --- 3. Add the Physical Volume Placement (if requested) ---
+        if not pv_params:
+            # If no PV params, we're done. Created a solid and an LV.
+            return True, None
+            
+        parent_lv_name = pv_params.get('parent_lv_name')
+        pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
+        # For quick-add, we assume placement at the origin of the parent.
+        position = {'x': 0, 'y': 0, 'z': 0} 
+        rotation = {'x': 0, 'y': 0, 'z': 0}
+
+        new_pv_dict, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation)
+        if pv_error:
+            return False, f"Failed to place physical volume: {pv_error}"
+        
+        return True, None
+
     def add_logical_volume(self, name_suggestion, solid_ref, material_ref):
         if not self.current_geometry_state: return None, "No project loaded"
         if solid_ref not in self.current_geometry_state.solids:

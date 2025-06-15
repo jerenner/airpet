@@ -186,6 +186,23 @@ def add_object_route():
     else:
         return jsonify({"success": False, "error": error or "Failed to add object"}), 500
 
+@app.route('/add_solid_and_place', methods=['POST'])
+def add_solid_and_place_route():
+    data = request.get_json()
+    solid_params = data.get('solid_params') # {name, type, params}
+    lv_params = data.get('lv_params')       # {name?, material_ref} or None
+    pv_params = data.get('pv_params')       # {name?, parent_lv_name} or None
+
+    if not solid_params:
+        return jsonify({"success": False, "error": "Solid parameters are required."}), 400
+
+    success, error_msg = project_manager.add_solid_and_place(solid_params, lv_params, pv_params)
+
+    if success:
+        return create_success_response("Object(s) created successfully.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 @app.route('/add_boolean_solid', methods=['POST'])
 def add_boolean_solid_route():
     data = request.get_json()
