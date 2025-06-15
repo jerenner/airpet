@@ -628,6 +628,44 @@
             </div>
         </div>
     </div>
+    <!-- Editor modal for physical volumes -->
+    <div id="pvEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="pvEditorTitle">Place New Physical Volume</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="pvEditorName">Placement Name:</label>
+                    <input type="text" id="pvEditorName" placeholder="e.g., myDetectorPlacement_1">
+                </div>
+                <div class="property_item">
+                    <label for="pvEditorLV">Logical Volume:</label>
+                    <select id="pvEditorLV"></select>
+                </div>
+                <hr>
+                <div class="transform-controls">
+                    <div class="transform-group">
+                        <span>Position (mm)</span>
+                        <div class="property_item"><label for="pv_pos_x">X:</label><input type="number" id="pv_pos_x" value="0" step="any"></div>
+                        <div class="property_item"><label for="pv_pos_y">Y:</label><input type="number" id="pv_pos_y" value="0" step="any"></div>
+                        <div class="property_item"><label for="pv_pos_z">Z:</label><input type="number" id="pv_pos_z" value="0" step="any"></div>
+                    </div>
+                    <div class="transform-group">
+                        <span>Rotation (deg, ZYX)</span>
+                        <div class="property_item"><label for="pv_rot_x">X:</label><input type="number" id="pv_rot_x" value="0" step="any"></div>
+                        <div class="property_item"><label for="pv_rot_y">Y:</label><input type="number" id="pv_rot_y" value="0" step="any"></div>
+                        <div class="property_item"><label for="pv_rot_z">Z:</label><input type="number" id="pv_rot_z" value="0" step="any"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <!-- Add a close button -->
+                <button id="cancelPVEditor">Cancel</button>
+                <button id="confirmPVEditor" class="confirm-button">Place Volume</button>
+            </div>
+        </div>
+    </div>
     <script type="importmap">
     {
         "imports": {

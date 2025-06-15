@@ -21,6 +21,12 @@ let currentlyInspectedUIItem = null; // { type, id, name, element (DOM in hierar
 // Add Object Modal
 let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newObjectParamsDiv, confirmAddObjectButton, cancelAddObjectButton;
 
+// Buttons for adding logical and physical volumes
+let addLVButton, addPVButton;
+
+// Keep track of selected parent LV in structure hierarchy.
+let selectedParentContext = null;
+
 // Callbacks to main.js (controller logic)
 let callbacks = {
     onNewProjectClicked: () => {},
@@ -62,7 +68,8 @@ export function initUI(cb) {
 
     // Add buttons
     const addButtons = document.querySelectorAll('.add_button');
-    const addLVButton = document.getElementById('addLVButton');
+    addLVButton = document.getElementById('addLVButton');
+    addPVButton = document.getElementById('addPVButton');
 
     // Mode Buttons
     modeObserveButton = document.getElementById('modeObserveButton');
@@ -143,7 +150,9 @@ export function initUI(cb) {
 
     // Add listeners for add logical and physical volume buttons
     addLVButton.addEventListener('click', callbacks.onAddLVClicked);
-    addLVButton.disabled = false; 
+    addLVButton.disabled = false;
+    addPVButton.addEventListener('click', callbacks.onAddPVClicked);
+    addPVButton.disabled = false;
 
     // Add Object Modal Listeners
     confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
@@ -340,26 +349,34 @@ export function updateHierarchy(projectState) {
         if(solidsListRoot) solidsListRoot.appendChild(createTreeItem(name, 'solid', name, projectState.solids[name]));
     }
 
-    // Build the physical placement tree (Structure tab)
-    if (projectState.world_volume_ref && projectState.logical_volumes) {
-        const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
-        if (worldLV && structureTreeRoot) {
-            
-            // Start the recursive build from the world's direct children
-            (worldLV.phys_children || []).forEach(pvData => {
-                 const childLVData = projectState.logical_volumes[pvData.volume_ref];
-                 if (childLVData) {
-                    structureTreeRoot.appendChild(buildVolumeNode(pvData, projectState));
-                 }
-            });
-            if (!structureTreeRoot.hasChildNodes()) {
-                structureTreeRoot.innerHTML = '<li>World is empty.</li>';
+    // --- Build the physical placement tree (Structure tab) ---
+    if (structureTreeRoot) { // Make sure the element exists
+        if (projectState.world_volume_ref && projectState.logical_volumes) {
+            const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
+            if (worldLV) {
+                // Create the root of the tree representing the World LV
+                const worldItem = createTreeItem(`(World) ${worldLV.name}`, 'logical_volume', worldLV.name, worldLV);
+                worldItem.classList.add('world-volume-item'); // Add a class for special styling/selection
+
+                // Now, recursively build the tree for all PVs placed *inside* the world
+                if (worldLV.phys_children && worldLV.phys_children.length > 0) {
+                    const childrenUl = document.createElement('ul');
+                    worldLV.phys_children.forEach(pvData => {
+                        const childNode = buildVolumeNode(pvData, projectState);
+                        if (childNode) childrenUl.appendChild(childNode);
+                    });
+                    if (childrenUl.hasChildNodes()) {
+                        worldItem.appendChild(childrenUl);
+                    }
+                }
+                structureTreeRoot.appendChild(worldItem);
+
+            } else {
+                structureTreeRoot.innerHTML = '<li>World volume not found in logical volumes list.</li>';
             }
-        } else if (structureTreeRoot) {
-            structureTreeRoot.innerHTML = '<li>World volume not found.</li>';
+        } else {
+             structureTreeRoot.innerHTML = '<li>No world volume defined in project.</li>';
         }
-    } else if (structureTreeRoot) {
-         structureTreeRoot.innerHTML = '<li>No structure to display.</li>';
     }
 }
 
@@ -415,10 +432,32 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         if(selected) selected.classList.remove('selected_item');
         item.classList.add('selected_item');
         callbacks.onHierarchyItemSelected({ type: itemType, id: itemIdForBackend, name: displayName, data: item.appData, element: item });
+
+        // --- Logic to enable/disable the +PV button ---
+        // A PV can be placed inside a LV. A physical volume in the tree represents
+        // a placed LV, so we can place things inside it.
+        if (itemType === 'physical_volume') {
+             // The parent context is the LOGICAL volume name of the item clicked
+            selectedParentContext = { name: (additionalData.lvData).name };
+        } else if (itemType === 'logical_volume') {
+            // This case handles clicking on the World volume in the tree
+             selectedParentContext = { name: fullItemData.name };
+        } else {
+            selectedParentContext = null; // Clear if something else is clicked
+        }
     });
 
     // For double-clicking of solids, volumes, etc.
-    if (itemType === 'solid') {
+    if (itemType === 'physical_volume') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            // We need to find the parent LV name. For a PV, the LV data is in additionalData.
+            const parentLV = findParentLV(item);
+            if (parentLV) {
+                 callbacks.onEditPVClicked(item.appData, parentLV.dataset.name);
+            }
+        });
+    } else if (itemType === 'solid') {
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             // Pass the solid's data to the handler
@@ -431,6 +470,23 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         });
     }
     return item;
+}
+
+// Helper to find the parent LV element in the DOM tree
+function findParentLV(pvElement) {
+    let current = pvElement.parentElement;
+    while(current) {
+        if (current.tagName === 'LI' && (current.dataset.type === 'logical_volume' || current.dataset.type === 'physical_volume')) {
+            return current;
+        }
+        current = current.parentElement;
+    }
+    return null; // Should ideally find the world
+}
+
+// Return the selected parent LV
+export function getSelectedParentContext() {
+    return selectedParentContext;
 }
 
 export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {
@@ -448,10 +504,10 @@ export function reselectHierarchyItem(itemType, itemId, projectState) {
     selectHierarchyItemByTypeAndId(itemType, itemId, projectState);
 }
 
-
 export function clearHierarchySelection() {
     const selected = document.querySelector('#left_panel_container .selected_item');
     if (selected) selected.classList.remove('selected_item');
+    selectedParentContext = null; // Reset the context
 }
 
 export function clearHierarchy() {

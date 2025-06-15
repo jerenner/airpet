@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import * as APIService from './apiService.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
+import * as PVEditor from './physicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SolidEditor from './solidEditor.js';
 import * as UIManager from './uiManager.js';
@@ -36,6 +37,8 @@ async function initializeApp() {
         onEditSolidClicked: handleEditSolid,
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
+        onAddPVClicked: handleAddPV,
+        onEditPVClicked: handleEditPV,
         onProjectFileSelected: handleLoadProject,
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -75,6 +78,11 @@ async function initializeApp() {
     // Initialize logical volume editor
     LVEditor.initLVEditor({
         onConfirm: handleLVEditorConfirm
+    });
+
+    // Initialize physical volume editor
+    PVEditor.initPVEditor({ 
+        onConfirm: handlePVEditorConfirm 
     });
 
     // Initialize solid editor
@@ -492,6 +500,51 @@ async function handleLVEditorConfirm(data) {
             syncUIWithState(result);
         } catch (error) {
             UIManager.showError("Error creating LV: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+    }
+}
+
+function handleAddPV() {
+    let parentContext = UIManager.getSelectedParentContext();
+
+    // If nothing is selected, default to the World volume
+    if (!parentContext) {
+            if (AppState.currentProjectState && AppState.currentProjectState.world_volume_ref) {
+                parentContext = { name: AppState.currentProjectState.world_volume_ref };
+                console.log("No parent selected, defaulting to World.");
+            } else {
+            UIManager.showError("No world volume found to place object into.");
+            return;
+        }
+    }
+    
+    PVEditor.show(null, AppState.currentProjectState, parentContext);
+}
+
+function handleEditPV(pvData, parentLVName) {
+    PVEditor.show(pvData, AppState.currentProjectState, { name: parentLVName });
+}
+
+async function handlePVEditorConfirm(data) {
+    if (data.isEdit) {
+        UIManager.showLoading("Updating Physical Volume...");
+        try {
+            const result = await APIService.updatePhysicalVolume(data.id, data.name, data.position, data.rotation);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error updating PV: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+    } else {
+        UIManager.showLoading("Placing Physical Volume...");
+        try {
+            const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error placing PV: " + (error.message || error));
         } finally {
             UIManager.hideLoading();
         }

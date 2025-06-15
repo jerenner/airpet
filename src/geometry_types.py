@@ -264,6 +264,9 @@ class GeometryState:
                 solid_obj = self.solids.get(child_lv.solid_ref)
                 if not solid_obj:
                     continue
+
+                # Flag to identify the world volume's placements for the renderer
+                is_world = (child_lv_name == self.world_volume_ref)
                 
                 # Resolve position
                 position_data = pv_placement.position
@@ -289,6 +292,7 @@ class GeometryState:
                     # This new key directly tells the frontend which solid definition to use
                     "solid_ref_for_threejs": child_lv.solid_ref, 
                     "position": position_data,
-                    "rotation": rotation_data
+                    "rotation": rotation_data,
+                    "is_world_volume_placement": is_world
                 })
         return threejs_objects

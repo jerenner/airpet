@@ -332,29 +332,49 @@ class ProjectManager:
             
         return True, None
 
-    def add_physical_volume(self, parent_lv_name, pv_name_suggestion,
-                            placed_lv_name, position_dict, rotation_dict, copy_number=0):
+    def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation):
         if not self.current_geometry_state: return None, "No project loaded"
         
         parent_lv = self.current_geometry_state.logical_volumes.get(parent_lv_name)
         if not parent_lv:
             return None, f"Parent Logical Volume '{parent_lv_name}' not found."
-        if placed_lv_name not in self.current_geometry_state.logical_volumes:
-             return None, f"Placed Logical Volume '{placed_lv_name}' not found."
+        if placed_lv_ref not in self.current_geometry_state.logical_volumes:
+            return None, f"Placed Logical Volume '{placed_lv_ref}' not found."
 
         # Generate a unique name for this PV *within its parent* (GDML PV names are not global)
         # For simplicity, we'll use a globally unique suggested name for now.
         # A better approach for pv_name would be to ensure it's unique among siblings.
-        pv_name = pv_name_suggestion # Assume caller suggests a reasonable one
+        pv_name = pv_name_suggestion or f"{placed_lv_ref}_placement"
 
         # position_dict and rotation_dict are assumed to be {'x':val,...} in internal units
-        new_pv = PhysicalVolumePlacement(pv_name, placed_lv_name, copy_number,
-                                         position_val_or_ref=position_dict,
-                                         rotation_val_or_ref=rotation_dict)
+        new_pv = PhysicalVolumePlacement(pv_name, placed_lv_ref,
+                                        position_val_or_ref=position,
+                                        rotation_val_or_ref=rotation)
         parent_lv.add_child(new_pv)
         print(f"Added Physical Volume: {pv_name} into {parent_lv_name}")
         return new_pv.to_dict(), None
 
+    def update_physical_volume(self, pv_id, new_name, new_position, new_rotation):
+        if not self.current_geometry_state: return False, "No project loaded"
+        
+        # This just uses the existing update_physical_volume_transform and update_object_property
+        # For simplicity, we can do it directly here.
+        pv_to_update = None
+        for lv in self.current_geometry_state.logical_volumes.values():
+            for pv in lv.phys_children:
+                if pv.id == pv_id:
+                    pv_to_update = pv
+                    break
+            if pv_to_update: break
+        
+        if not pv_to_update:
+            return False, f"Physical Volume with ID '{pv_id}' not found."
+            
+        if new_name: pv_to_update.name = new_name
+        if new_position: pv_to_update.position = new_position
+        if new_rotation: pv_to_update.rotation = new_rotation
+            
+        return True, None
 
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"

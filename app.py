@@ -240,6 +240,37 @@ def update_logical_volume_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_physical_volume', methods=['POST'])
+def add_physical_volume_route():
+    data = request.get_json()
+    parent_lv_name = data.get('parent_lv_name')
+    name = data.get('name')
+    volume_ref = data.get('volume_ref')
+    position = data.get('position')
+    rotation = data.get('rotation')
+    
+    new_pv, error_msg = project_manager.add_physical_volume(parent_lv_name, name, volume_ref, position, rotation)
+    
+    if new_pv:
+        return create_success_response("Physical Volume placed.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_physical_volume', methods=['POST'])
+def update_physical_volume_route():
+    data = request.get_json()
+    pv_id = data.get('id')
+    name = data.get('name')
+    position = data.get('position')
+    rotation = data.get('rotation')
+
+    success, error_msg = project_manager.update_physical_volume(pv_id, name, position, rotation)
+
+    if success:
+        return create_success_response(f"Physical Volume '{pv_id}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 @app.route('/delete_object', methods=['POST'])
 def delete_object_route():
     data = request.get_json()

@@ -960,6 +960,13 @@ export function renderObjects(pvDescriptions, projectState) {
 
     // --- Stage 2: Place Geometries in the Scene ---
     pvDescriptions.forEach(pvData => {
+
+        // --- Check the flag and skip rendering if it's the world ---
+        if (pvData.is_world_volume_placement) {
+             console.log(`[SceneManager] Skipping render of world volume placement: ${pvData.name}`);
+             return; // 'return' inside a forEach acts like 'continue'
+        }
+
         const solidName = pvData.solid_ref_for_threejs; // Backend should provide this direct ref
         const cachedGeom = geometryCache.get(solidName);
 
