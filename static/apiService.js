@@ -145,18 +145,29 @@ export async function updateDefine(id, value, unit, category) {
     return handleResponse(response);
 }
 
-/**
- * Adds a new object to the geometry.
- * @param {string} objectType The type of object to add (e.g., 'solid_box').
- * @param {string} nameSuggestion The user-suggested name for the new object.
- * @param {Object} params A dictionary of parameters for the new object.
- * @returns {Promise<Object>} A promise that resolves to the backend's response, typically including success status and updated scene/project data.
- */
-export async function addObject(objectType, nameSuggestion, params) {
-    const response = await fetch(`${API_BASE_URL}/add_object`, {
+export async function addMaterial(name, params) {
+    const response = await fetch(`${API_BASE_URL}/add_material`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ object_type: objectType, name: nameSuggestion, params: params })
+        body: JSON.stringify({ name, params })
+    });
+    return handleResponse(response);
+}
+
+export async function updateMaterial(id, params) {
+    const response = await fetch(`${API_BASE_URL}/update_material`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, params })
+    });
+    return handleResponse(response);
+}
+
+export async function addPrimitiveSolid(name, type, params) {
+    const response = await fetch(`${API_BASE_URL}/add_primitive_solid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, type, params })
     });
     return handleResponse(response);
 }
@@ -288,5 +299,10 @@ export async function updatePhysicalVolume(id, name, position, rotation) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, position, rotation })
     });
+    return handleResponse(response);
+}
+
+export async function getDefinesByType(type) {
+    const response = await fetch(`${API_BASE_URL}/get_defines_by_type?type=${type}`);
     return handleResponse(response);
 }

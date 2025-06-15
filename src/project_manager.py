@@ -195,12 +195,22 @@ class ProjectManager:
     def add_material(self, name_suggestion, properties_dict):
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.materials)
-        # properties_dict might contain 'density', 'state', 'components', etc.
         new_material = Material(name, **properties_dict)
         self.current_geometry_state.add_material(new_material)
-        print(f"Added Material: {name}")
-        # TODO: Add to Undo stack
         return new_material.to_dict(), None
+
+    def update_material(self, mat_name, new_properties):
+        if not self.current_geometry_state: return False, "No project loaded"
+        target_mat = self.current_geometry_state.materials.get(mat_name)
+        if not target_mat: return False, f"Material '{mat_name}' not found."
+
+        # Update properties from the provided dictionary
+        if 'density' in new_properties: target_mat.density = new_properties['density']
+        if 'Z' in new_properties: target_mat.Z = new_properties['Z']
+        if 'A' in new_properties: target_mat.A = new_properties['A']
+        if 'components' in new_properties: target_mat.components = new_properties['components']
+        
+        return True, None
 
     def add_solid(self, name_suggestion, solid_type, parameters_dict):
         """

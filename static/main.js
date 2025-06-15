@@ -5,6 +5,7 @@ import * as APIService from './apiService.js';
 import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
+import * as MaterialEditor from './materialEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SolidEditor from './solidEditor.js';
@@ -38,6 +39,8 @@ async function initializeApp() {
         onEditSolidClicked: handleEditSolid,
         onAddDefineClicked: handleAddDefine,
         onEditDefineClicked: handleEditDefine,
+        onAddMaterialClicked: handleAddMaterial,
+        onEditMaterialClicked: handleEditMaterial,
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
         onAddPVClicked: handleAddPV,
@@ -86,6 +89,11 @@ async function initializeApp() {
     // Initialize logical volume editor
     LVEditor.initLVEditor({
         onConfirm: handleLVEditorConfirm
+    });
+
+    // Initialize the materials editor
+    MaterialEditor.initMaterialEditor({
+        onConfirm: handleMaterialEditorConfirm
     });
 
     // Initialize physical volume editor
@@ -492,7 +500,7 @@ async function handleSolidEditorConfirm(data) {
                 } else {
                     // Otherwise, use the original simple "add solid" endpoint
                     const objectType = `solid_${data.type}`;
-                    const result = await APIService.addObject(objectType, data.name, data.params);
+                    const result = await APIService.addPrimitiveSolid(data.name, data.type, data.params);
                     syncUIWithState(result);
                 }
             } catch (error) { 
@@ -606,5 +614,33 @@ async function handleDefineEditorConfirm(data) {
         } catch (error) {
             UIManager.showError("Error creating define: " + (error.message || error));
         } finally { UIManager.hideLoading(); }
+    }
+}
+
+function handleAddMaterial() {
+    MaterialEditor.show(null, AppState.currentProjectState);
+}
+function handleEditMaterial(matData) {
+    MaterialEditor.show(matData, AppState.currentProjectState);
+}
+
+async function handleMaterialEditorConfirm(data) {
+    if (data.isEdit) {
+        UIManager.showLoading("Updating Material...");
+        try {
+            const result = await APIService.updateMaterial(data.id, data.params);
+            syncUIWithState(result);
+        } catch (error) { /* ... */ } 
+        finally { UIManager.hideLoading(); }
+    } else {
+        UIManager.showLoading("Creating Material...");
+        try {
+            const result = await APIService.addMaterial(data.name, data.params);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error creating material: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
     }
 }

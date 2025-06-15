@@ -88,7 +88,7 @@ class Material:
         self.A = A # Atomic mass in g/mole
         self.density = density # Density in g/cm3 typically in GDML, store as some consistent internal unit or as parsed.
         self.state = state # 'solid', 'liquid', 'gas'
-        self.components = components if components else [] # List of (MaterialRef/ElementRef, fraction)
+        self.components = components if components else [] # List of {ref, fraction} dicts
 
     def to_dict(self):
         return {

@@ -137,56 +137,33 @@ def update_property_route():
     else:
         return jsonify({"success": False, "error": "Failed to update property"}), 500
 
-@app.route('/add_object', methods=['POST'])
-def add_object_route():
+@app.route('/add_material', methods=['POST'])
+def add_material_route():
     data = request.get_json()
-    obj_type = data.get('object_type')
     name_suggestion = data.get('name')
-    params = data.get('params', {})
+    params = data.get('params')
 
-    if not obj_type or not name_suggestion:
-        return jsonify({"error": "Object type or name missing"}), 400
+    if not name_suggestion or params is None:
+        return jsonify({"success": False, "error": "Missing name or parameters for material."}), 400
 
-    new_obj_data, error = None, None
+    new_obj, error_msg = project_manager.add_material(name_suggestion, params)
 
-    if obj_type == "define":
-        define_type = data.get('type') # 'position', 'rotation', etc.
-        value = data.get('value')
-        unit = data.get('unit')
-        category = data.get('category')
-        new_obj_data, error = project_manager.add_define(name_suggestion, define_type, value, unit, category)
-    
-    elif obj_type == "material":
-        new_obj_data, error = project_manager.add_material(name_suggestion, params)
-
-    elif obj_type.startswith("solid_"):
-        solid_actual_type = obj_type.split('_', 1)[1]
-        
-        # --- Handle boolean solids ---
-        if solid_actual_type in ['union', 'subtraction', 'intersection']:
-            # The frontend should send params like:
-            # { first_ref: "SolidNameA", second_ref: "SolidNameB", 
-            #   transform_second: { position: {...}, rotation: {...} } }
-            if not params.get('first_ref') or not params.get('second_ref'):
-                error = "Boolean solid requires references to two other solids."
-            else:
-                # The project_manager.add_solid can just pass these through
-                new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
-        else:
-             # --- Handle primitive solids ---
-            new_obj_data, error = project_manager.add_solid(name_suggestion, solid_actual_type, params)
-    
-    # Placeholder for future LV/PV additions
-    # elif obj_type == "logical_volume":
-    #     ...
-    
+    if new_obj:
+        return create_success_response("Material created.")
     else:
-        error = f"Object type '{obj_type}' not handled by this endpoint."
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_material', methods=['POST'])
+def update_material_route():
+    data = request.get_json()
+    mat_name = data.get('id')
+    new_params = data.get('params')
     
-    if new_obj_data:
-        return create_success_response(f"{obj_type} '{new_obj_data.get('name')}' added.")
+    success, error_msg = project_manager.update_material(mat_name, new_params)
+    if success:
+        return create_success_response(f"Material '{mat_name}' updated.")
     else:
-        return jsonify({"success": False, "error": error or "Failed to add object"}), 500
+        return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_define', methods=['POST'])
 def add_define_route():
@@ -232,6 +209,23 @@ def add_solid_and_place_route():
 
     if success:
         return create_success_response("Object(s) created successfully.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/add_primitive_solid', methods=['POST'])
+def add_primitive_solid_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    solid_type = data.get('type')
+    params = data.get('params')
+
+    if not all([name_suggestion, solid_type, params]):
+        return jsonify({"success": False, "error": "Missing data for primitive solid"}), 400
+        
+    new_obj, error_msg = project_manager.add_solid(name_suggestion, solid_type, params)
+    
+    if new_obj:
+        return create_success_response("Primitive solid created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
@@ -390,6 +384,25 @@ def export_gdml_route():
         mimetype="application/xml",
         headers={"Content-Disposition": "attachment;filename=exported_geometry.gdml"}
     )
+
+@app.route('/get_defines_by_type', methods=['GET'])
+def get_defines_by_type_route():
+    """Returns a list of define names for a given type (position, rotation, etc.)."""
+    define_type = request.args.get('type')
+    if not define_type:
+        return jsonify({"error": "Define type parameter is missing"}), 400
+
+    if not project_manager.current_geometry_state:
+        return jsonify([]) # Return empty list if no project
+
+    # Filter defines based on the requested type
+    filtered_defines = {
+        name: define.to_dict()
+        for name, define in project_manager.current_geometry_state.defines.items()
+        if define.type == define_type
+    }
+    
+    return jsonify(filtered_defines)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

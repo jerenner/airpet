@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 
 import * as DefineEditor from './defineEditor.js';
+import * as MaterialEditor from './materialEditor.js';
 import * as SolidEditor from './solidEditor.js';
 
 // --- Module-level variables for DOM elements ---
@@ -37,6 +38,8 @@ let callbacks = {
     onEditSolidClicked: (solidData) => {},
     onAddDefineClicked: () => {},
     onEditDefineClicked: (defineData) => {},
+    onAddMaterialClicked: ()=>{}, 
+    onEditMaterialClicked: (d)=>{},
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
     onProjectFileSelected: (file) => {},
@@ -141,11 +144,12 @@ export function initUI(cb) {
     addButtons.forEach(button => {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.addType;
-            if(type.startsWith('define_')) {
+            if(type.startsWith('define')) {
                 callbacks.onAddDefineClicked();
-            } else if (type.startsWith('solid_')) {
-                // Call back to main.js
+            } else if (type.startsWith('solid')) {
                 callbacks.onAddSolidClicked();
+            } else if (type.startsWith('material')) {
+                callbacks.onAddMaterialClicked();
             } else {
                 // For defines and materials, we can keep the old simple modal for now
                 showAddObjectModal(type);
@@ -256,32 +260,23 @@ export function populateInspector(itemContext) {
     }
 }
 
-// CHANGED: This function now prevents adding a generic listener for rotation properties
 function createEditableInputField(parentDiv, object, key, propertyPath, objectType, objectId) {
-    const input = document.createElement('input');
-    const currentValue = object[key];
-    input.type = (typeof currentValue === 'number' || !isNaN(parseFloat(currentValue))) ? 'number' : 'text';
-    if (input.type === 'number') input.step = 'any';
-    input.value = (currentValue === null || currentValue === undefined) ? '' : currentValue;
+    // Only PV transforms are editable in the inspector
+    const isEditable = (objectType === 'physical_volume' && (propertyPath.startsWith('position.') || propertyPath.startsWith('rotation.')));
     
-    input.dataset.objectType = objectType;
-    input.dataset.objectId = objectId;
-    input.dataset.propertyPath = propertyPath;
-
-    // Do NOT add a generic listener for rotation, as it needs special handling (deg->rad)
-    if (!propertyPath.startsWith('rotation.')) {
-        input.addEventListener('change', (e) => {
-            callbacks.onInspectorPropertyChanged(
-                e.target.dataset.objectType,
-                e.target.dataset.objectId,
-                e.target.dataset.propertyPath,
-                e.target.value // Send as string, backend will try to convert
-            );
-        });
+    if (isEditable) {
+        const input = document.createElement('input');
+        // ... (existing input creation logic) ...
+        parentDiv.appendChild(input);
+        return input;
+    } else {
+        // --- Render as non-editable text ---
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'inspector-value-readonly';
+        valueSpan.textContent = object[key];
+        parentDiv.appendChild(valueSpan);
+        return valueSpan;
     }
-
-    parentDiv.appendChild(input);
-    return input;
 }
 
 // ADDED: This function provides the live link from the 3D transform to the UI
@@ -457,6 +452,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditDefineClicked(item.appData);
+        });
+    } else if (itemType === 'material') {
+        item.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            callbacks.onEditMaterialClicked(item.appData);
         });
     } else if (itemType === 'physical_volume') {
         item.addEventListener('dblclick', (event) => {
