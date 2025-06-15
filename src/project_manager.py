@@ -176,6 +176,22 @@ class ProjectManager:
         self.current_geometry_state.add_define(new_define)
         return new_define.to_dict(), None
 
+    def update_define(self, define_name, new_value, new_unit=None, new_category=None):
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        
+        target_define = self.current_geometry_state.defines.get(define_name)
+        if not target_define:
+            return False, f"Define '{define_name}' not found."
+
+        target_define.value = new_value
+        if new_unit:
+            target_define.unit = new_unit
+        if new_category:
+            target_define.category = new_category
+
+        return True, None
+
     def add_material(self, name_suggestion, properties_dict):
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.materials)

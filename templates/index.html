@@ -532,6 +532,36 @@
         </div>
         <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>
     </div>
+    <!-- Editor for defines -->
+    <div id="defineEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 400px; height: auto;">
+            <div class="modal-header">
+                <h4 id="defineEditorTitle">Create New Define</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="defineEditorName">Name:</label>
+                    <input type="text" id="defineEditorName" placeholder="e.g., TargetPosition">
+                </div>
+                <div class="property_item">
+                    <label for="defineEditorType">Type:</label>
+                    <select id="defineEditorType">
+                        <option value="position">Position</option>
+                        <option value="rotation">Rotation</option>
+                        <option value="scale">Scale</option>
+                        <option value="constant">Constant</option>
+                    </select>
+                </div>
+                <hr>
+                <div id="define-editor-params"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="defineEditorCancel">Cancel</button>
+                <button id="defineEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for solids -->
     <div id="solidEditorModal" class="editor-modal">
         <div class="modal-content">
             <div class="modal-header">

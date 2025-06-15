@@ -1,6 +1,7 @@
 // static/uiManager.js
 import * as THREE from 'three';
 
+import * as DefineEditor from './defineEditor.js';
 import * as SolidEditor from './solidEditor.js';
 
 // --- Module-level variables for DOM elements ---
@@ -34,6 +35,8 @@ let callbacks = {
     onLoadProjectClicked: () => {},
     onGdmlFileSelected: (file) => {},
     onEditSolidClicked: (solidData) => {},
+    onAddDefineClicked: () => {},
+    onEditDefineClicked: (defineData) => {},
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
     onProjectFileSelected: (file) => {},
@@ -138,7 +141,9 @@ export function initUI(cb) {
     addButtons.forEach(button => {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.addType;
-            if (type.startsWith('solid_')) {
+            if(type.startsWith('define_')) {
+                callbacks.onAddDefineClicked();
+            } else if (type.startsWith('solid_')) {
                 // Call back to main.js
                 callbacks.onAddSolidClicked();
             } else {
@@ -448,7 +453,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     });
 
     // For double-clicking of solids, volumes, etc.
-    if (itemType === 'physical_volume') {
+    if (itemType === 'define') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditDefineClicked(item.appData);
+        });
+    } else if (itemType === 'physical_volume') {
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             // We need to find the parent LV name. For a PV, the LV data is in additionalData.

@@ -127,6 +127,24 @@ export async function getObjectDetails(objectType, objectId) {
     return handleResponse(response);
 }
 
+export async function addDefine(name, type, value, unit, category) {
+    const response = await fetch(`${API_BASE_URL}/add_define`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, type, value, unit, category })
+    });
+    return handleResponse(response);
+}
+
+export async function updateDefine(id, value, unit, category) {
+    const response = await fetch(`${API_BASE_URL}/update_define`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, value, unit, category })
+    });
+    return handleResponse(response);
+}
+
 /**
  * Adds a new object to the geometry.
  * @param {string} objectType The type of object to add (e.g., 'solid_box').

@@ -149,10 +149,12 @@ def add_object_route():
 
     new_obj_data, error = None, None
 
-    if obj_type == "define_position":
-        unit = params.get('unit', 'mm')
-        val_dict = {'x': params.get('x',0), 'y': params.get('y',0), 'z': params.get('z',0)}
-        new_obj_data, error = project_manager.add_define(name_suggestion, "position", val_dict, unit, "length")
+    if obj_type == "define":
+        define_type = data.get('type') # 'position', 'rotation', etc.
+        value = data.get('value')
+        unit = data.get('unit')
+        category = data.get('category')
+        new_obj_data, error = project_manager.add_define(name_suggestion, define_type, value, unit, category)
     
     elif obj_type == "material":
         new_obj_data, error = project_manager.add_material(name_suggestion, params)
@@ -185,6 +187,36 @@ def add_object_route():
         return create_success_response(f"{obj_type} '{new_obj_data.get('name')}' added.")
     else:
         return jsonify({"success": False, "error": error or "Failed to add object"}), 500
+
+@app.route('/add_define', methods=['POST'])
+def add_define_route():
+    data = request.get_json()
+    name = data.get('name')
+    define_type = data.get('type')
+    value = data.get('value')
+    unit = data.get('unit')
+    category = data.get('category')
+    
+    new_obj, error_msg = project_manager.add_define(name, define_type, value, unit, category)
+    if new_obj:
+        return create_success_response("Define created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_define', methods=['POST'])
+def update_define_route():
+    data = request.get_json()
+    define_name = data.get('id')
+    value = data.get('value')
+    unit = data.get('unit')
+    category = data.get('category')
+
+    success, error_msg = project_manager.update_define(define_name, value, unit, category)
+
+    if success:
+        return create_success_response(f"Define '{define_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_solid_and_place', methods=['POST'])
 def add_solid_and_place_route():

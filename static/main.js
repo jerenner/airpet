@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 
 import * as APIService from './apiService.js';
+import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
@@ -35,6 +36,8 @@ async function initializeApp() {
         onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
+        onAddDefineClicked: handleAddDefine,
+        onEditDefineClicked: handleEditDefine,
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
         onAddPVClicked: handleAddPV,
@@ -74,6 +77,11 @@ async function initializeApp() {
         SceneManager.getOrbitControls(),     // Pass the OrbitControls instance
         SceneManager.getFlyControls()        // Pass the FlyControls instance
     );
+
+    // Initialize define editor
+    DefineEditor.initDefineEditor({ 
+        onConfirm: handleDefineEditorConfirm 
+    });
 
     // Initialize logical volume editor
     LVEditor.initLVEditor({
@@ -570,5 +578,33 @@ async function handlePVEditorConfirm(data) {
         } finally {
             UIManager.hideLoading();
         }
+    }
+}
+
+function handleAddDefine() {
+    DefineEditor.show();
+}
+
+function handleEditDefine(defineData) {
+    DefineEditor.show(defineData);
+}
+
+async function handleDefineEditorConfirm(data) {
+    if (data.isEdit) {
+        UIManager.showLoading("Updating Define...");
+        try {
+            const result = await APIService.updateDefine(data.id, data.value, data.unit, data.category);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error updating define: " + (error.message || error));
+        } finally { UIManager.hideLoading(); }
+    } else {
+        UIManager.showLoading("Creating Define...");
+        try {
+            const result = await APIService.addDefine(data.name, data.type, data.value, data.unit, data.category);
+            syncUIWithState(result);
+        } catch (error) {
+            UIManager.showError("Error creating define: " + (error.message || error));
+        } finally { UIManager.hideLoading(); }
     }
 }
