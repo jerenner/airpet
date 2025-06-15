@@ -14,7 +14,7 @@ let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
-let structureTreeRoot, definesListRoot, materialsListRoot, solidsListRoot;
+let structureTreeRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot;
 let inspectorContentDiv;
 let currentlyInspectedUIItem = null; // { type, id, name, element (DOM in hierarchy) }
 
@@ -84,6 +84,7 @@ export function initUI(cb) {
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
+    lvolumesListRoot = document.getElementById('lvolumes_list_root');
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
@@ -321,10 +322,14 @@ export function updateHierarchy(projectState) {
         return;
     }
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
 
+    for (const name in projectState.logical_volumes) {
+        if(lvolumesListRoot) lvolumesListRoot.appendChild(createTreeItem(name, 'logical_volume', name, projectState.logical_volumes[name]));
+    }
     for (const name in projectState.defines) {
         if(definesListRoot) definesListRoot.appendChild(createTreeItem(name, 'define', name, projectState.defines[name]));
     }
@@ -334,10 +339,22 @@ export function updateHierarchy(projectState) {
     for (const name in projectState.solids) {
         if(solidsListRoot) solidsListRoot.appendChild(createTreeItem(name, 'solid', name, projectState.solids[name]));
     }
+
+    // Build the physical placement tree (Structure tab)
     if (projectState.world_volume_ref && projectState.logical_volumes) {
         const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
         if (worldLV && structureTreeRoot) {
-            structureTreeRoot.appendChild(buildVolumeNode(worldLV, projectState.logical_volumes, projectState.solids, 0, worldLV.name));
+            
+            // Start the recursive build from the world's direct children
+            (worldLV.phys_children || []).forEach(pvData => {
+                 const childLVData = projectState.logical_volumes[pvData.volume_ref];
+                 if (childLVData) {
+                    structureTreeRoot.appendChild(buildVolumeNode(pvData, projectState));
+                 }
+            });
+            if (!structureTreeRoot.hasChildNodes()) {
+                structureTreeRoot.innerHTML = '<li>World is empty.</li>';
+            }
         } else if (structureTreeRoot) {
             structureTreeRoot.innerHTML = '<li>World volume not found.</li>';
         }
@@ -346,35 +363,42 @@ export function updateHierarchy(projectState) {
     }
 }
 
-function buildVolumeNode(lvData, allLVs, allSolids, depth, lvIdForBackend) {
-    const lvItem = createTreeItem(lvData.name, 'logical_volume', lvIdForBackend, lvData);
-    if (lvData.phys_children && lvData.phys_children.length > 0) {
+function buildVolumeNode(pvData, projectState) {
+    const allLVs = projectState.logical_volumes;
+    const childLVData = allLVs[pvData.volume_ref];
+    if (!childLVData) return null; // Safety check
+
+    let displayName = pvData.name || `pv_${pvData.id.substring(0,4)}`;
+    displayName += ` (LV: ${childLVData.name})`;
+
+    // The list item represents the Physical Volume
+    const pvItem = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData });
+    
+    // Check if the placed LV has children of its own
+    if (childLVData.phys_children && childLVData.phys_children.length > 0) {
         const toggle = document.createElement('span');
         toggle.classList.add('toggle');
         toggle.textContent = '[-] ';
         toggle.onclick = (e) => { e.stopPropagation();
-            const childrenUl = lvItem.querySelector('ul');
+            const childrenUl = pvItem.querySelector('ul');
             if (childrenUl) {
                 childrenUl.style.display = childrenUl.style.display === 'none' ? 'block' : 'none';
                 toggle.textContent = childrenUl.style.display === 'none' ? '[+] ' : '[-] ';
             }
         };
-        if (lvItem.firstChild) lvItem.insertBefore(toggle, lvItem.firstChild); 
-        else lvItem.appendChild(toggle);
+        // Insert toggle at the beginning of the li content
+        const firstSpan = pvItem.querySelector('span');
+        if (firstSpan) firstSpan.before(toggle);
+        
+        const childrenUl = document.createElement('ul');
+        childLVData.phys_children.forEach(nestedPvData => {
+            const nestedNode = buildVolumeNode(nestedPvData, projectState);
+            if (nestedNode) childrenUl.appendChild(nestedNode);
+        });
+        if (childrenUl.hasChildNodes()) pvItem.appendChild(childrenUl);
     }
 
-    const childrenUl = document.createElement('ul');
-    (lvData.phys_children || []).forEach(pvData => {
-        const childLVData = allLVs[pvData.volume_ref];
-        let displayName = pvData.name || `pv_${pvData.id.substring(0,4)}`;
-        if (childLVData) {
-             displayName += ` (LV: ${childLVData.name})`;
-             const pvItem = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData, solidData: allSolids[childLVData.solid_ref] });
-             childrenUl.appendChild(pvItem);
-        }
-    });
-    if (childrenUl.children.length > 0) lvItem.appendChild(childrenUl);
-    return lvItem;
+    return pvItem;
 }
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
@@ -432,6 +456,7 @@ export function clearHierarchySelection() {
 
 export function clearHierarchy() {
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';

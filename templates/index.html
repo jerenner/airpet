@@ -381,6 +381,7 @@
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Structure</button>
+            <button class="tab_button" data-tab="tab_lvolumes">L. Volumes</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_materials">Materials</button>
             <button class="tab_button" data-tab="tab_solids">Solids</button>
@@ -391,11 +392,17 @@
                 <div class="tab_header">
                     <span>World Structure</span>
                     <div>
-                        <button id="addLVButton" title="Create a new Logical Volume" disabled>+ LV</button>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
                 </div>
                 <ul id="structure_tree_root"></ul>
+            </div>
+            <div id="tab_lvolumes" class="tab_pane">
+                <div class="tab_header">
+                    <span>Logical Volumes</span>
+                    <button id="addLVButton" title="Create a new Logical Volume">+ Add LV</button>
+                </div>
+                <ul id="lvolumes_list_root"></ul>
             </div>
             <div id="tab_defines" class="tab_pane">
                 <div class="tab_header">
