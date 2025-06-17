@@ -118,59 +118,60 @@ class ProjectManager:
                 print(f"Available solids: {list(self.current_geometry_state.solids.keys())}")
             return False
 
-        try:
-            # --- Handle full object update ---
-            if property_path == 'value' and object_type == 'define' and isinstance(new_value, dict):
-                # This is a special case for updating the whole value object of a define
-                target_obj.value = new_value
-                print(f"Successfully updated define '{object_name_or_id_from_frontend}' full value object.")
-                return True
-
-            # Simple path update (e.g., "name", "parameters.x")
-            path_parts = property_path.split('.')
-            current_level_obj = target_obj
+        # Simple path update (e.g., "name", "parameters.x")
+        path_parts = property_path.split('.')
+        current_level_obj = target_obj
+    
+        for i, part_key in enumerate(path_parts[:-1]):
+            if isinstance(current_level_obj, dict): # If it's a dict like parameters/position
+                current_level_obj = current_level_obj[part_key]
+            else: # If it's an object
+                current_level_obj = getattr(current_level_obj, part_key)
         
-            for i, part_key in enumerate(path_parts[:-1]):
-                if isinstance(current_level_obj, dict): # If it's a dict like parameters/position
-                    current_level_obj = current_level_obj[part_key]
-                else: # If it's an object
-                    current_level_obj = getattr(current_level_obj, part_key)
-            
-            final_key = path_parts[-1]
+        final_key = path_parts[-1]
 
-            # Get the old value to infer the target type
-            old_value = getattr(current_level_obj, final_key) if not isinstance(current_level_obj, dict) else current_level_obj.get(final_key)
-            
-            converted_value = new_value
-            if old_value is not None:
-                target_type = type(old_value)
-                try:
-                    if target_type == float:
-                        converted_value = float(new_value)
-                    elif target_type == int:
-                        converted_value = int(float(new_value)) # Convert to float first to handle "50.0"
-                    elif target_type == dict and isinstance(new_value, (dict, str)):
-                        # If the new_value is a string that looks like a dict, parse it
-                        if isinstance(new_value, str):
-                            import ast
-                            # Use literal_eval for safely evaluating a string containing a Python literal
-                            converted_value = ast.literal_eval(new_value)
-                        else: # It's already a dict
-                            converted_value = new_value
-                    # Add other types like bool if needed
-                except (ValueError, TypeError, SyntaxError) as e:
-                    print(f"Warning: Could not convert new value '{new_value}' to type '{target_type}'. Error: {e}")
-                    return False # Fail the update if conversion is not possible
+        # --- Type Coercion ---
+        old_value = getattr(current_level_obj, final_key, None) if not isinstance(current_level_obj, dict) else current_level_obj.get(final_key)    
+        converted_value = new_value
 
-            if isinstance(current_level_obj, dict):
-                current_level_obj[final_key] = converted_value
+        # --- SPECIAL CASE for PV transform properties ---
+        # These properties are allowed to be either a string (reference) or a dict (absolute value).
+        # We should not try to coerce a string reference into a dict.
+        if object_type == 'physical_volume' and final_key in ['position', 'rotation', 'scale']:
+            if isinstance(new_value, str) or isinstance(new_value, dict):
+                converted_value = new_value # Accept either type as is
             else:
-                setattr(current_level_obj, final_key, converted_value)
-            
-            return True
-        except (AttributeError, KeyError, IndexError) as e:
-            print(f"Error during property update for {object_type} '{object_id}', path '{property_path}': {e}")
-            return False
+                return False, f"Invalid value type for PV transform: {type(new_value)}"
+        
+        # --- GENERAL CASE for other properties ---
+        elif old_value is not None and not isinstance(new_value, type(old_value)):
+            target_type = type(old_value)
+            try:
+                if target_type == float:
+                    converted_value = float(new_value)
+                elif target_type == int:
+                    converted_value = int(float(new_value))
+                elif target_type == dict:
+                    # This logic is for when a dict is expected, but might be passed as a string
+                    # It's less relevant now but good to keep for other potential dict properties.
+                    if isinstance(new_value, str):
+                        import ast
+                        converted_value = ast.literal_eval(new_value)
+                    else: # It's already a dict, which is fine
+                        converted_value = new_value
+                # Add other type checks as needed
+            except (ValueError, TypeError, SyntaxError) as e:
+                print(f"Update failed: Could not convert new value '{new_value}' to target type '{target_type}'. Error: {e}")
+                return False, f"Invalid value format for property '{final_key}'."
+
+        # --- SET THE VALUE ---
+        if isinstance(current_level_obj, dict):
+            current_level_obj[final_key] = converted_value
+        else:
+            setattr(current_level_obj, final_key, converted_value)
+        
+        print(f"Successfully updated {object_type}:{object_name_or_id_from_frontend} -> {property_path}")
+        return True, None # Return success
 
     def add_define(self, name_suggestion, define_type, value_dict, unit=None, category=None):
         if not self.current_geometry_state: return None, "No project loaded"
