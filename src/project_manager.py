@@ -81,7 +81,7 @@ class ProjectManager:
     def update_object_property(self, object_type, object_name_or_id_from_frontend, property_path, new_value):
         """
         Updates a property of an object.
-        object_id: unique ID for Solids, LVs, PVs. For Defines/Materials, it's their name.
+        object_name_or_id_from_frontend: unique ID for Solids, LVs, PVs. For Defines/Materials, it's their name.
         property_path: e.g., "name", "parameters.x", "position.x"
         """
         # This needs careful implementation to find the object and update its property.
@@ -118,11 +118,18 @@ class ProjectManager:
                 print(f"Available solids: {list(self.current_geometry_state.solids.keys())}")
             return False
 
-        # Simple path update (e.g., "name", "parameters.x")
-        path_parts = property_path.split('.')
-        current_level_obj = target_obj
-        
         try:
+            # --- Handle full object update ---
+            if property_path == 'value' and object_type == 'define' and isinstance(new_value, dict):
+                # This is a special case for updating the whole value object of a define
+                target_obj.value = new_value
+                print(f"Successfully updated define '{object_name_or_id_from_frontend}' full value object.")
+                return True
+
+            # Simple path update (e.g., "name", "parameters.x")
+            path_parts = property_path.split('.')
+            current_level_obj = target_obj
+        
             for i, part_key in enumerate(path_parts[:-1]):
                 if isinstance(current_level_obj, dict): # If it's a dict like parameters/position
                     current_level_obj = current_level_obj[part_key]
@@ -131,38 +138,38 @@ class ProjectManager:
             
             final_key = path_parts[-1]
 
-            # Type conversion for the new value
-            converted_value = new_value
-            # Get current value to infer type if possible
-            current_value_for_type_inference = None
-            if isinstance(current_level_obj, dict):
-                current_value_for_type_inference = current_level_obj.get(final_key)
-            else: # Is an object
-                current_value_for_type_inference = getattr(current_level_obj, final_key, None)
-
-            if current_value_for_type_inference is not None and not isinstance(new_value, type(current_value_for_type_inference)):
-                try:
-                    converted_value = type(current_value_for_type_inference)(new_value)
-                    print(f"Converted '{new_value}' ({type(new_value)}) to '{converted_value}' ({type(converted_value)})")
-                except (ValueError, TypeError) as e:
-                    print(f"Warning: Could not convert '{new_value}' to type '{type(current_value_for_type_inference)}' for property '{property_path}'. Error: {e}. Using as string or original type.")
-                    # Fallback to string if number conversion fails but original was not number
-                    if not isinstance(current_value_for_type_inference, (int, float)) and isinstance(new_value, str):
-                        converted_value = new_value 
-                    # else keep new_value as is if conversion fails and original was number. Or reject.
+            # Get the old value to infer the target type
+            old_value = getattr(current_level_obj, final_key) if not isinstance(current_level_obj, dict) else current_level_obj.get(final_key)
             
+            converted_value = new_value
+            if old_value is not None:
+                target_type = type(old_value)
+                try:
+                    if target_type == float:
+                        converted_value = float(new_value)
+                    elif target_type == int:
+                        converted_value = int(float(new_value)) # Convert to float first to handle "50.0"
+                    elif target_type == dict and isinstance(new_value, (dict, str)):
+                        # If the new_value is a string that looks like a dict, parse it
+                        if isinstance(new_value, str):
+                            import ast
+                            # Use literal_eval for safely evaluating a string containing a Python literal
+                            converted_value = ast.literal_eval(new_value)
+                        else: # It's already a dict
+                            converted_value = new_value
+                    # Add other types like bool if needed
+                except (ValueError, TypeError, SyntaxError) as e:
+                    print(f"Warning: Could not convert new value '{new_value}' to type '{target_type}'. Error: {e}")
+                    return False # Fail the update if conversion is not possible
+
             if isinstance(current_level_obj, dict):
                 current_level_obj[final_key] = converted_value
-            else: # Is an object
+            else:
                 setattr(current_level_obj, final_key, converted_value)
             
-            print(f"Successfully updated {object_type} '{object_name_or_id_from_frontend}': {property_path} to {converted_value}")
-            # TODO: Add to Undo stack
             return True
-        except (AttributeError, KeyError, IndexError, TypeError) as e:
-            print(f"Error during property update for {object_type} '{object_name_or_id_from_frontend}', path '{property_path}': {e}")
-            # import traceback
-            # traceback.print_exc()
+        except (AttributeError, KeyError, IndexError) as e:
+            print(f"Error during property update for {object_type} '{object_id}', path '{property_path}': {e}")
             return False
 
     def add_define(self, name_suggestion, define_type, value_dict, unit=None, category=None):

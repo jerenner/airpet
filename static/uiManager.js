@@ -1,9 +1,6 @@
 // static/uiManager.js
 import * as THREE from 'three';
-
-import * as DefineEditor from './defineEditor.js';
-import * as MaterialEditor from './materialEditor.js';
-import * as SolidEditor from './solidEditor.js';
+import * as APIService from './apiService.js';
 
 // --- Module-level variables for DOM elements ---
 let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
@@ -202,7 +199,7 @@ export function updateDefineInspectorValues(defineName, newValues, isRotation = 
 }
 
 // --- Inspector Panel Management ---
-export function populateInspector(itemContext) {
+export async function populateInspector(itemContext, projectState) {
     if (!inspectorContentDiv) return;
     inspectorContentDiv.innerHTML = '';
 
@@ -212,74 +209,212 @@ export function populateInspector(itemContext) {
     title.textContent = `${type}: ${name || id}`;
     inspectorContentDiv.appendChild(title);
 
-    // Other properties (this loop now handles everything)
-    for (const key in data) {
-        if (key === 'id' || key === 'phys_children') continue;
-        if (typeof data[key] === 'function') continue;
+    // --- Special handling for Physical Volumes ---
+    if (type === 'physical_volume') {
+        // Create the smart transform editor for position and rotation
+        await createPVTransformEditor(inspectorContentDiv, data, projectState);
+        
+        // Display other PV properties as read-only
+        const otherPropsLabel = document.createElement('h5');
+        otherPropsLabel.textContent = "Other Properties";
+        otherPropsLabel.style.marginTop = '15px';
+        otherPropsLabel.style.borderTop = '1px solid #ccc';
+        otherPropsLabel.style.paddingTop = '10px';
+        inspectorContentDiv.appendChild(otherPropsLabel);
 
-        const propertyDiv = document.createElement('div');
-        propertyDiv.classList.add('property_item');
-        const label = document.createElement('label');
-        label.textContent = `${key}:`;
-        propertyDiv.appendChild(label);
+        // Render other properties as read-only spans
+        createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
+        createReadOnlyProperty(inspectorContentDiv, "Copy Number:", data.copy_number);
 
-        const value = data[key];
-        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-            const subDiv = document.createElement('div');
-            subDiv.style.paddingLeft = "10px";
-            for (const subKey in value) {
-                const subPropertyDiv = document.createElement('div');
-                const subLabel = document.createElement('label');
-                subLabel.textContent = `${subKey}:`;
-                subLabel.style.width = "auto"; subLabel.style.marginRight = "5px";
-                subPropertyDiv.appendChild(subLabel);
-                
-                // Special handling for rotation degrees
-                if (key === 'value' && type === 'define' && data.type === 'rotation') {
-                     const rotDeg = THREE.MathUtils.radToDeg(value[subKey] || 0);
-                     const input = createEditableInputField(subPropertyDiv, {val: rotDeg.toFixed(3)}, 'val', `${key}.${subKey}`, type, id);
-                     input.addEventListener('change', (e) => {
-                        const radValue = THREE.MathUtils.degToRad(parseFloat(e.target.value));
-                        callbacks.onInspectorPropertyChanged(type, id, `${key}.${subKey}`, radValue);
-                     });
-                } else {
-                    createEditableInputField(subPropertyDiv, value, subKey, `${key}.${subKey}`, type, id);
-                }
-
-                subDiv.appendChild(subPropertyDiv);
-            }
-            propertyDiv.appendChild(subDiv);
-        } else if (!Array.isArray(value)) {
-            createEditableInputField(propertyDiv, data, key, key, type, id);
-        } else {
-            const valueSpan = document.createElement('span');
-            valueSpan.textContent = `[Array of ${value.length}]`;
-            propertyDiv.appendChild(valueSpan);
-        }
-        inspectorContentDiv.appendChild(propertyDiv);
-    }
-}
-
-function createEditableInputField(parentDiv, object, key, propertyPath, objectType, objectId) {
-    // Only PV transforms are editable in the inspector
-    const isEditable = (objectType === 'physical_volume' && (propertyPath.startsWith('position.') || propertyPath.startsWith('rotation.')));
-    
-    if (isEditable) {
-        const input = document.createElement('input');
-        // ... (existing input creation logic) ...
-        parentDiv.appendChild(input);
-        return input;
     } else {
-        // --- Render as non-editable text ---
-        const valueSpan = document.createElement('span');
-        valueSpan.className = 'inspector-value-readonly';
-        valueSpan.textContent = object[key];
-        parentDiv.appendChild(valueSpan);
-        return valueSpan;
+        // --- For all other object types, render all properties as read-only ---
+        for (const key in data) {
+            // Skip redundant or internal properties
+            if (key === 'id' || key === 'name' || key === 'phys_children' || typeof data[key] === 'function') continue;
+
+            const value = data[key];
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                // Handle nested objects like 'parameters' or 'value'
+                const subDiv = document.createElement('div');
+                subDiv.style.paddingLeft = "10px";
+                const label = document.createElement('label');
+                label.textContent = `${key}:`;
+                label.style.fontWeight = 'bold';
+                subDiv.appendChild(label);
+                
+                for (const subKey in value) {
+                    createReadOnlyProperty(subDiv, `${subKey}:`, value[subKey]);
+                }
+                inspectorContentDiv.appendChild(subDiv);
+            } else {
+                createReadOnlyProperty(inspectorContentDiv, `${key}:`, value);
+            }
+        }
     }
 }
 
-// ADDED: This function provides the live link from the 3D transform to the UI
+// NEW: Helper to create a simple read-only property line
+function createReadOnlyProperty(parent, labelText, value) {
+    const propDiv = document.createElement('div');
+    propDiv.className = 'property_item readonly';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    propDiv.appendChild(label);
+    
+    const valueSpan = document.createElement('span');
+    valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
+    propDiv.appendChild(valueSpan);
+    parent.appendChild(propDiv);
+}
+
+
+// NEW: The main function to build the interactive transform editor
+async function createPVTransformEditor(parent, pvData, projectState) {
+    const transformWrapper = document.createElement('div');
+    
+    // --- Get defines from the passed-in state, not a new API call ---
+    const allDefines = projectState.defines || {};
+    const posDefines = {};
+    const rotDefines = {};
+    for (const name in allDefines) {
+        if (allDefines[name].type === 'position') posDefines[name] = allDefines[name];
+        if (allDefines[name].type === 'rotation') rotDefines[name] = allDefines[name];
+    }
+    
+    // --- Create Position Editor ---
+    const posEditor = buildSingleTransformEditor('position', 'Position (mm)', 'pos', pvData, posDefines);
+    transformWrapper.appendChild(posEditor);
+
+    // --- Create Rotation Editor ---
+    const rotEditor = buildSingleTransformEditor('rotation', 'Rotation (deg, ZYX)', 'rot', pvData, rotDefines);
+    transformWrapper.appendChild(rotEditor);
+
+    parent.appendChild(transformWrapper);
+}
+
+// Helper to build one transform block (e.g., for position or rotation)
+function buildSingleTransformEditor(transformType, labelText, prefix, pvData, defines) {
+    const group = document.createElement('div');
+    group.className = 'transform-group';
+
+    // --- 1. Create all DOM elements first ---
+    const header = document.createElement('div');
+    header.className = 'define-header';
+    header.innerHTML = `<span>${labelText}</span>`;
+    
+    const select = document.createElement('select');
+    select.className = 'define-select';
+    
+    header.appendChild(select);
+    group.appendChild(header);
+
+    const inputs = {};
+    ['x', 'y', 'z'].forEach(axis => {
+        const item = document.createElement('div');
+        item.className = 'property_item';
+        item.innerHTML = `<label>${axis.toUpperCase()}:</label>`;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = 'any';
+        item.appendChild(input);
+        group.appendChild(item);
+        inputs[axis] = input;
+    });
+
+    // --- 2. Create helper to populate inputs from a value object ---
+    const updateInputUI = (valueObj) => {
+        const val = valueObj || { x: 0, y: 0, z: 0 };
+        console.log("Value is ", val)
+        if (transformType === 'rotation') {
+            inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0).toFixed(3);
+            inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0).toFixed(3);
+            inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0).toFixed(3);
+        } else {
+            inputs.x.value = (val.x || 0).toFixed(3);
+            inputs.y.value = (val.y || 0).toFixed(3);
+            inputs.z.value = (val.z || 0).toFixed(3);
+        }
+    };
+    
+    // --- 3. Set the initial state of the component from pvData ---
+    populateDefineSelect(select, defines); // Populate options first
+    const initialTransformValue = pvData[transformType];
+
+    if (typeof initialTransformValue === 'string' && defines[initialTransformValue]) {
+        // State is a define reference
+        select.value = initialTransformValue;
+        updateInputUI(defines[initialTransformValue].value);
+    } else {
+        // State is an absolute value object (or null)
+        select.value = '[Absolute]';
+        updateInputUI(initialTransformValue);
+    }
+
+    // --- 4. Attach Event Listeners ---
+    
+    // Listener for when the user changes the dropdown (e.g., links to a new define)
+    select.addEventListener('change', () => {
+        const selectedValue = select.value;
+        if (selectedValue === '[Absolute]') {
+            // Switching TO Absolute. The value should be taken from the currently displayed inputs.
+            const currentUiValues = {
+                x: parseFloat(inputs.x.value),
+                y: parseFloat(inputs.y.value),
+                z: parseFloat(inputs.z.value),
+            };
+            const valuesForBackend = (transformType === 'rotation')
+                ? { x: THREE.MathUtils.degToRad(currentUiValues.x), y: THREE.MathUtils.degToRad(currentUiValues.y), z: THREE.MathUtils.degToRad(currentUiValues.z) }
+                : currentUiValues;
+            callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, valuesForBackend);
+        } else {
+            // Switching TO a define. Update the PV to link to this define name.
+            // Also, update the input boxes to reflect this define's values.
+            const define = defines[selectedValue];
+            if (define) {
+                updateInputUI(define.value);
+                callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, selectedValue);
+            }
+        }
+    });
+
+    // Listener for when the user types a new value in an input box
+    Object.values(inputs).forEach(input => {
+        input.addEventListener('change', () => {
+            // Read all three boxes to form a complete object
+            const newUiValues = {
+                x: parseFloat(inputs.x.value),
+                y: parseFloat(inputs.y.value),
+                z: parseFloat(inputs.z.value),
+            };
+            const valuesForBackend = (transformType === 'rotation')
+                ? { x: THREE.MathUtils.degToRad(newUiValues.x), y: THREE.MathUtils.degToRad(newUiValues.y), z: THREE.MathUtils.degToRad(newUiValues.z) }
+                : newUiValues;
+
+            const selectedDefineName = select.value;
+            if (selectedDefineName === '[Absolute]') {
+                // If absolute, update the PV's own transform property.
+                callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, valuesForBackend);
+            } else {
+                // If linked to a define, update the define's value property.
+                callbacks.onInspectorPropertyChanged('define', selectedDefineName, 'value', valuesForBackend);
+            }
+        });
+    });
+
+    return group;
+}
+
+function populateDefineSelect(selectElement, defines) {
+    selectElement.innerHTML = '<option value="[Absolute]">[Absolute Value]</option>';
+    for (const name in defines) {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        selectElement.appendChild(option);
+    }
+}
+
+// This function provides the live link from the 3D transform to the UI
 export function updateInspectorTransform(liveObject) {
     if (!inspectorContentDiv || !liveObject) return;
 
@@ -511,7 +646,34 @@ export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {
 }
 
 export function reselectHierarchyItem(itemType, itemId, projectState) {
-    selectHierarchyItemByTypeAndId(itemType, itemId, projectState);
+    // Find the DOM element in the currently active tab
+    // Note: LVs and PVs can appear in different tabs. We need to find the right one.
+    let itemElement;
+    if (itemType === 'physical_volume') {
+        itemElement = document.querySelector(`#tab_structure li[data-id="${itemId}"]`);
+    } else if (itemType === 'logical_volume') {
+        itemElement = document.querySelector(`#tab_lvolumes li[data-id="${itemId}"]`);
+        // It might also be the World volume in the structure tab
+        if (!itemElement) {
+             itemElement = document.querySelector(`#tab_structure li[data-id="${itemId}"]`);
+        }
+    } else {
+        // For defines, solids, materials
+        itemElement = document.querySelector(`.tab_pane.active li[data-id="${itemId}"]`);
+    }
+    
+    if (itemElement) {
+        // Programmatically click the element. This will trigger the 'click' event
+        // listener we set up in `createTreeItem`, which in turn calls the
+        // `onHierarchyItemSelected` callback in main.js. This is the correct way
+        // to re-establish the full selection state.
+        itemElement.click();
+        itemElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+        console.warn(`Could not re-select item: type=${itemType}, id=${itemId}`);
+        clearInspector();
+        clearHierarchySelection();
+    }
 }
 
 export function clearHierarchySelection() {

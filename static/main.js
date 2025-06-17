@@ -49,7 +49,7 @@ async function initializeApp() {
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
         onConfirmAddObject: handleAddObject, // Data from modal comes to this handler
-        onDeleteSelectedClicked: handleDeleteSelectedFromHierarchy,
+        onDeleteSelectedClicked: handleDeleteSelected,
         onModeChangeClicked: handleModeChange, // Passes mode to InteractionManager
         onSnapToggleClicked: InteractionManager.toggleSnap, // Direct call if no complex logic
         onSnapSettingsChanged: InteractionManager.updateSnapSettings,
@@ -137,12 +137,26 @@ async function initializeApp() {
     // }
 }
 
+// --- State Synchronization and Selection Management ---
+
+/**
+ * Gets the context of the currently selected item.
+ * @returns {object|null} An object with {type, id} or null.
+ */
+function getSelectionContext() {
+    if (!AppState.selectedHierarchyItem) return null;
+    return {
+        type: AppState.selectedHierarchyItem.type,
+        id: AppState.selectedHierarchyItem.id
+    };
+}
+
 /**
     The single function to update the entire UI from a new state object from the backend.
     This is the core of the unidirectional data flow pattern.
     @param {object} responseData The consistent success response object from the backend.
 */
-function syncUIWithState(responseData) {
+function syncUIWithState(responseData, selectionToRestore = null) {
     if (!responseData || !responseData.success) {
         UIManager.showError(responseData.error || "An unknown error occurred during state sync.");
         return;
@@ -165,59 +179,49 @@ function syncUIWithState(responseData) {
     // 3. Re-render the hierarchy panels
     UIManager.updateHierarchy(responseData.project_state);
 
-    // 4. Reset UI elements to a clean state
-    UIManager.clearInspector();
-    UIManager.clearHierarchySelection();
-    SceneManager.unselectAllInScene();
+    // 4. Restore selection and repopulate inspector ---
+    if (selectionToRestore) {
+        // This UIManager function will find the new DOM element and "click" it
+        UIManager.reselectHierarchyItem(selectionToRestore.type, selectionToRestore.id, responseData.project_state);
+    } else {
+        // If no selection to restore, just clear everything
+        UIManager.clearInspector();
+        UIManager.clearHierarchySelection();
+        SceneManager.unselectAllInScene();
+    }
 }
 
 // --- Handler Functions (Act as Controllers/Mediators) ---
 
 // Handler for the "New Project" button
 async function handleNewProject() {
-    if (!UIManager.confirmAction("This will clear the current project. Are you sure?")) return;
-
+    if (!UIManager.confirmAction("This will clear the current session. Are you sure?")) return;
     UIManager.showLoading("Creating new project...");
     try {
         const result = await APIService.newProject();
-        syncUIWithState(result);
-    } catch (error) {
-        UIManager.showError("Failed to create new project: " + (error.message || error));
-    } finally {
-        UIManager.hideLoading();
-    }
+        syncUIWithState(result); // No selection to restore
+    } catch (error) { UIManager.showError("Failed to create new project: " + error.message); }
+    finally { UIManager.hideLoading(); }
 }
 
 async function handleLoadGdml(file) {
     if (!file) return;
     UIManager.showLoading("Processing GDML...");
-
     try {
         const result = await APIService.loadGdmlFile(file);
-        syncUIWithState(result);
-    } catch (error) {
-        UIManager.showError("Failed to load GDML: " + (error.message || error));
-        SceneManager.clearScene();
-        UIManager.clearHierarchy();
-    } finally {
-        UIManager.hideLoading();
-    }
+        syncUIWithState(result); // No selection to restore
+    } catch (error) { UIManager.showError("Failed to load GDML: " + error.message); }
+    finally { UIManager.hideLoading(); }
 }
 
 async function handleLoadProject(file) {
     if (!file) return;
     UIManager.showLoading("Loading project...");
-
     try {
         const result = await APIService.loadProjectFile(file);
-        syncUIWithState(result);
-    } catch (error) {
-        UIManager.showError("Failed to load project: " + (error.message || error));
-        SceneManager.clearScene();
-        UIManager.clearHierarchy();
-    } finally {
-        UIManager.hideLoading();
-    }
+        syncUIWithState(result); // No selection to restore
+    } catch (error) { UIManager.showError("Failed to load project: " + error.message); }
+    finally { UIManager.hideLoading(); }
 }
 
 async function handleSaveProject() {
@@ -248,21 +252,19 @@ async function handleAddObject(objectType, nameSuggestion, paramsFromModal) {
     finally { UIManager.hideLoading(); }
 }
 
-async function handleDeleteSelectedFromHierarchy() {
-    if (!AppState.selectedHierarchyItem) {
+async function handleDeleteSelected() {
+    const selectionContext = getSelectionContext();
+    if (!selectionContext) {
         UIManager.showNotification("Please select an item from the hierarchy to delete.");
         return;
     }
+    if (!UIManager.confirmAction(`Are you sure you want to delete ${selectionContext.type}: ${selectionContext.id}?`)) return;
 
-    const { type, id, name } = AppState.selectedHierarchyItem;
-    if (!UIManager.confirmAction(`Are you sure you want to delete ${type}: ${name}?`)) return;
-        UIManager.showLoading("Deleting object...");
+    UIManager.showLoading("Deleting object...");
     try {
-        const result = await APIService.deleteObject(type, id);
-        syncUIWithState(result);
-    } catch (error) { 
-        UIManager.showError("Error deleting object: " + (error.message || error)); 
-    }
+        const result = await APIService.deleteObject(selectionContext.type, selectionContext.id);
+        syncUIWithState(result); // No selection to restore after delete
+    } catch (error) { UIManager.showError("Error deleting object: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
 
@@ -288,7 +290,11 @@ async function handleHierarchySelection(itemContext) {
     }
 
     itemContext.data = details;
-    UIManager.populateInspector(itemContext);
+    
+    // --- Pass the full project state to the inspector ---
+    // The inspector can now get the defines list directly from here,
+    // avoiding another async API call during a critical redraw.
+    UIManager.populateInspector(itemContext, AppState.currentProjectState);
 
     // If a physical volume is selected, cache its define references for live updates and select in 3D
     if (type === 'physical_volume') {
@@ -326,25 +332,6 @@ function handle3DSelection(selectedThreeObject) {
     }
 }
 
-// function handle3DSelection(selectedThreeObject) {
-//     if (selectedThreeObject) {
-//         SceneManager.updateSelectionState([selectedThreeObject]);
-//         AppState.selectedThreeObjects = [selectedThreeObject];
-//         const pvId = selectedThreeObject.userData.id;
-//         // This will now trigger the async data fetch and context update
-//         UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId, AppState.currentProjectState);
-//     } else {
-//         SceneManager.unselectAllInScene();
-//         UIManager.clearHierarchySelection();
-//         AppState.selectedHierarchyItem = null;
-//         AppState.selectedThreeObjects = [];
-//         // Clear PV context
-//         AppState.selectedPVContext.pvId = null;
-//         AppState.selectedPVContext.positionDefineName = null;
-//         AppState.selectedPVContext.rotationDefineName = null;
-//     }
-// }
-
 function handleTransformLive(liveObject) {
     // 1. Update the PV's own inspector (if it has inline values)
     if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === liveObject.userData.id) {
@@ -367,32 +354,27 @@ function handleTransformLive(liveObject) {
 // Called by SceneManager when TransformControls finishes a transformation
 async function handleTransformEnd(transformedObject) {
     if (!transformedObject || !transformedObject.userData) return;
-        UIManager.showLoading("Updating transform...");
+    const selectionContext = getSelectionContext(); // Get selection BEFORE update
+    UIManager.showLoading("Updating transform...");
     try {
         const objData = transformedObject.userData;
         const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
         const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
         const newRotation = { x: euler.x, y: euler.y, z: euler.z };
-
         const result = await APIService.updateObjectTransform(objData.id, newPosition, newRotation);
-        syncUIWithState(result);
-
-    } catch (error) { 
-        UIManager.showError("Error saving transform: " + (error.message || error)); 
-        // TODO: Could add logic here to revert the object's transform in Three.js on failure.
-    }
+        syncUIWithState(result, selectionContext); // Restore selection
+    } catch (error) { UIManager.showError("Error saving transform: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
 
 // Called by UIManager when a property is changed in the Inspector Panel
 async function handleInspectorPropertyUpdate(objectType, objectId, propertyPath, newValue) {
+    const selectionContext = getSelectionContext(); // Get selection BEFORE update
     UIManager.showLoading("Updating property...");
     try {
         const result = await APIService.updateProperty(objectType, objectId, propertyPath, newValue);
-        syncUIWithState(result);
-    } catch (error) {
-        UIManager.showError("Error updating property: " + (error.message || error));
-    }
+        syncUIWithState(result, selectionContext); // Restore selection
+    } catch (error) { UIManager.showError("Error updating property: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
 
@@ -410,6 +392,7 @@ function handleEditSolid(solidData) {
 
 async function handleSolidEditorConfirm(data) {
     console.log("Solid Editor confirmed. Data:", data);
+    const selectionContext = getSelectionContext();
 
     // --- The data object from solidEditor.js now looks like one of these:
     // For creating a primitive: { isEdit: false, name, type, params, ... }
@@ -424,7 +407,7 @@ async function handleSolidEditorConfirm(data) {
             UIManager.showLoading("Updating boolean solid...");
             try {
                 const result = await APIService.updateBooleanSolid(data.id, data.recipe);
-                syncUIWithState(result);
+                syncUIWithState(result, { type: 'solid', id: data.id });
             } catch (error) {
                 UIManager.showError("Error updating boolean solid: " + (error.message || error));
             } finally {
@@ -501,7 +484,10 @@ async function handleSolidEditorConfirm(data) {
                     // Otherwise, use the original simple "add solid" endpoint
                     const objectType = `solid_${data.type}`;
                     const result = await APIService.addPrimitiveSolid(data.name, data.type, data.params);
-                    syncUIWithState(result);
+
+                    // After creation, we want to select the new solid
+                    const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).pop();
+                    syncUIWithState(result, { type: 'solid', id: newSolidName });
                 }
             } catch (error) { 
                 UIManager.showError("Error adding solid: " + (error.message || error)); 
@@ -521,11 +507,12 @@ function handleEditLV(lvData) {
 }
 
 async function handleLVEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
     if (data.isEdit) {
         UIManager.showLoading("Updating Logical Volume...");
         try {
             const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref);
-            syncUIWithState(result);
+            syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating LV: " + (error.message || error));
         } finally {
@@ -535,12 +522,9 @@ async function handleLVEditorConfirm(data) {
         UIManager.showLoading("Creating Logical Volume...");
         try {
             const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref);
-            syncUIWithState(result);
-        } catch (error) {
-            UIManager.showError("Error creating LV: " + (error.message || error));
-        } finally {
-            UIManager.hideLoading();
-        }
+            syncUIWithState(result, { type: 'logical_volume', id: data.name });
+        } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); } 
+        finally { UIManager.hideLoading(); }
     }
 }
 
@@ -566,26 +550,23 @@ function handleEditPV(pvData, parentLVName) {
 }
 
 async function handlePVEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
     if (data.isEdit) {
         UIManager.showLoading("Updating Physical Volume...");
         try {
             const result = await APIService.updatePhysicalVolume(data.id, data.name, data.position, data.rotation);
-            syncUIWithState(result);
-        } catch (error) {
-            UIManager.showError("Error updating PV: " + (error.message || error));
-        } finally {
-            UIManager.hideLoading();
-        }
+            syncUIWithState(result, selectionContext);
+        } catch (error) { UIManager.showError("Error updating PV: " + (error.message || error)); } 
+        finally { UIManager.hideLoading(); }
     } else {
         UIManager.showLoading("Placing Physical Volume...");
         try {
             const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation);
-            syncUIWithState(result);
-        } catch (error) {
-            UIManager.showError("Error placing PV: " + (error.message || error));
-        } finally {
-            UIManager.hideLoading();
-        }
+            
+            // After placement, we want the PARENT LV to remain selected
+            syncUIWithState(result, { type: 'logical_volume', id: data.parent_lv_name });
+        } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); } 
+        finally { UIManager.hideLoading(); }
     }
 }
 
@@ -598,11 +579,12 @@ function handleEditDefine(defineData) {
 }
 
 async function handleDefineEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
     if (data.isEdit) {
         UIManager.showLoading("Updating Define...");
         try {
             const result = await APIService.updateDefine(data.id, data.value, data.unit, data.category);
-            syncUIWithState(result);
+            syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating define: " + (error.message || error));
         } finally { UIManager.hideLoading(); }
@@ -610,7 +592,9 @@ async function handleDefineEditorConfirm(data) {
         UIManager.showLoading("Creating Define...");
         try {
             const result = await APIService.addDefine(data.name, data.type, data.value, data.unit, data.category);
-            syncUIWithState(result);
+            
+            // After creating, set the selection to the newly created define
+            syncUIWithState(result, { type: 'define', id: data.name });
         } catch (error) {
             UIManager.showError("Error creating define: " + (error.message || error));
         } finally { UIManager.hideLoading(); }
@@ -625,6 +609,8 @@ function handleEditMaterial(matData) {
 }
 
 async function handleMaterialEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+
     if (data.isEdit) {
         UIManager.showLoading("Updating Material...");
         try {
@@ -636,7 +622,9 @@ async function handleMaterialEditorConfirm(data) {
         UIManager.showLoading("Creating Material...");
         try {
             const result = await APIService.addMaterial(data.name, data.params);
-            syncUIWithState(result);
+
+            // After creating, set the selection to the newly created material
+            syncUIWithState(result, { type: 'material', id: data.name });
         } catch (error) {
             UIManager.showError("Error creating material: " + (error.message || error));
         } finally {
