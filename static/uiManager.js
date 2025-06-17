@@ -6,7 +6,7 @@ import * as APIService from './apiService.js';
 let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
     saveProjectButton, loadProjectButton, projectFileInput,
     deleteSelectedObjectButton,
-    modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton,
+    modeObserveButton, modeTranslateButton, modeRotateButton, //modeScaleButton,
     toggleWireframeButton, toggleGridButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
@@ -78,7 +78,7 @@ export function initUI(cb) {
     modeObserveButton = document.getElementById('modeObserveButton');
     modeTranslateButton = document.getElementById('modeTranslateButton');
     modeRotateButton = document.getElementById('modeRotateButton');
-    modeScaleButton = document.getElementById('modeScaleButton'); // If you add it
+    //modeScaleButton = document.getElementById('modeScaleButton'); // If you add it
     currentModeDisplay = document.getElementById('currentModeDisplay');
 
     // View Menu Buttons
@@ -123,7 +123,7 @@ export function initUI(cb) {
     modeObserveButton.addEventListener('click', () => { setActiveModeButton('observe'); callbacks.onModeChangeClicked('observe'); });
     modeTranslateButton.addEventListener('click', () => { setActiveModeButton('translate'); callbacks.onModeChangeClicked('translate'); });
     modeRotateButton.addEventListener('click', () => { setActiveModeButton('rotate'); callbacks.onModeChangeClicked('rotate'); });
-    if(modeScaleButton) modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
+    //if(modeScaleButton) modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
 
     toggleWireframeButton.addEventListener('click', callbacks.onWireframeToggleClicked);
     toggleGridButton.addEventListener('click', callbacks.onGridToggleClicked);
@@ -445,7 +445,7 @@ function setActiveModeButton(mode) {
     if(modeObserveButton) modeObserveButton.classList.toggle('active_mode', mode === 'observe');
     if(modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
     if(modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
-    if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
+    //if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
     if(currentModeDisplay) currentModeDisplay.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 }
 

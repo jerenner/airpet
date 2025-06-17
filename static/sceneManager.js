@@ -76,14 +76,14 @@ export function initScene(callbacks) {
         orbitControls.enabled = !event.value; // Disable orbit while transforming
         // Optionally call a callback if main.js needs to know about drag start/stop
     });
-    transformControls.addEventListener('objectChange', () => {
-        // This event means the attached object's transform has changed in Three.js
-        if (transformControls.object && onObjectTransformLiveCallback) { // && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
-            // Call the new lightweight UI update function directly
-            console.log("[SceneManager] objectChange for:", transformControls.object.name);
-            onObjectTransformLiveCallback(transformControls.object);
-        }
-    });
+    // transformControls.addEventListener('objectChange', () => {
+    //     // This event means the attached object's transform has changed in Three.js
+    //     if (transformControls.object && onObjectTransformLiveCallback) { // && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
+    //         // Call the new lightweight UI update function directly
+    //         console.log("[SceneManager] objectChange for:", transformControls.object.name);
+    //         onObjectTransformLiveCallback(transformControls.object);
+    //     }
+    // });
     transformControls.addEventListener('mouseUp', () => { // This signifies the end of a user interaction
         if (transformControls.object && onObjectTransformEndCallback) {
             console.log("[SceneManager] Transform mouseUp, calling onObjectTransformEndCallback for:", transformControls.object.name);
@@ -146,49 +146,60 @@ function initRaycaster(containerElement) {
 }
 
 function handlePointerDownForSelection(event) {
-    const currentAppMode = getInteractionManagerMode(); // Get current mode
+    if (event.button !== 0) return;
+    if (transformControls.dragging) return;
 
-    // If transform controls are active and have an object, let them handle primary interaction.
-    // The user might be trying to click the gizmo.
-    if (transformControls && transformControls.object && transformControls.enabled) {
-        // If the click is NOT on the transform gizmo itself (or its attached object),
-        // then we might want to deselect or select a new object.
-        // This part is tricky because TransformControls consumes events.
-        // For now, if TC is active and attached, we assume it manages its interaction.
-        // A click outside the gizmo could be interpreted as a deselection intent.
-        
-        // Let's simplify: If in a transform mode, primary interaction is via gizmo.
-        // Selection of a *new* object should probably happen in 'observe' mode first,
-        // or by a specific UI action (e.g. "Select Object" button then click).
-        // For now, if we are in translate/rotate/scale, and TC is attached,
-        // we don't do raycasting for new selections here. It's done when TC is detached.
-        if (currentAppMode !== 'observe') {
-            // Check if click was outside the current TC object and its gizmo
-            // This logic needs to be robust, possibly using raycaster.intersectObject(transformControls)
-            // For now, let's assume if in transform mode, selection is "locked" to the TC object
-            // or should be handled by detaching TC first.
-            return; 
-        }
-    }
-    
-    // If in 'observe' mode, or if TransformControls is not actively manipulating something.
-    if (currentAppMode === 'observe' || (transformControls && !transformControls.object) ) {
-        const rect = renderer.domElement.getBoundingClientRect();
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-        raycaster.setFromCamera(mouse, camera);
-        const intersects = raycaster.intersectObjects(geometryGroup.children, true);
+    raycaster.setFromCamera(mouse, camera);
 
-        if (intersects.length > 0) {
-            const firstIntersected = findActualMesh(intersects[0].object);
-            if (onObjectSelectedCallback) {
-                onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
+    let clickedOnGizmo = false;
+    if (transformControls.object && transformControls.visible) {
+        // --- THE FIX: Use the internal '_gizmo' property ---
+        // Accessing _gizmo is necessary to raycast against only the visible handles.
+        if (transformControls._gizmo) {
+            const gizmoIntersects = raycaster.intersectObjects(transformControls._gizmo.children, true);
+            if (gizmoIntersects.length > 0) {
+                clickedOnGizmo = true;
             }
         } else {
-            if (onObjectSelectedCallback) {
-                onObjectSelectedCallback(null, event.ctrlKey, event.shiftKey); // Clicked empty space
+             // Fallback for safety in case the internal structure changes in a future version.
+             // This uses the whole helper, which is less precise but won't crash.
+            const gizmoIntersects = raycaster.intersectObject(transformControls.getHelper(), true);
+            if (gizmoIntersects.length > 0) {
+                 clickedOnGizmo = true;
             }
+        }
+    }
+
+    if (clickedOnGizmo) {
+        // User clicked a handle. Let TransformControls manage the event.
+        // We do nothing here to allow the drag to start.
+        return;
+    }
+
+    // If we reach here, the user did NOT click a gizmo handle.
+    // Proceed with selection/deselection logic.
+    const intersects = raycaster.intersectObjects(geometryGroup.children, true);
+
+    if (intersects.length > 0) {
+        const firstIntersected = findActualMesh(intersects[0].object);
+        
+        // If the user clicks the object that is already selected, do nothing.
+        if (transformControls.object === firstIntersected) {
+             return;
+        }
+        
+        // The user clicked a NEW object. Select it.
+        if (onObjectSelectedCallback) {
+            onObjectSelectedCallback(firstIntersected);
+        }
+    } else {
+        // The user clicked on empty space. Deselect everything.
+        if (onObjectSelectedCallback) {
+            onObjectSelectedCallback(null);
         }
     }
 }
