@@ -45,6 +45,9 @@ async function initializeApp() {
         onEditLVClicked: handleEditLV,
         onAddPVClicked: handleAddPV,
         onEditPVClicked: handleEditPV,
+        onPVVisibilityToggle: handlePVVisibilityToggle,
+        onDeleteSelectedClicked: handleDeleteSelected,
+        onDeleteSpecificItemClicked: handleDeleteSpecificItem,
         onProjectFileSelected: handleLoadProject,
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -105,6 +108,10 @@ async function initializeApp() {
     SolidEditor.initSolidEditor({
         onConfirm: handleSolidEditorConfirm
     });
+
+    // Add menu listeners
+    document.getElementById('hideSelectedBtn').addEventListener('click', handleHideSelected);
+    document.getElementById('showAllBtn').addEventListener('click', handleShowAll);
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -260,17 +267,26 @@ async function handleDeleteSelected() {
     }
     if (!UIManager.confirmAction(`Are you sure you want to delete ${selectionContext.type}: ${selectionContext.id}?`)) return;
 
+    handleDeleteSpecificItem(selectionContext.type, selectionContext.id);
+}
+
+// NEW handler for specific deletions from button clicks
+async function handleDeleteSpecificItem(type, id) {
     UIManager.showLoading("Deleting object...");
     try {
-        const result = await APIService.deleteObject(selectionContext.type, selectionContext.id);
-        syncUIWithState(result); // No selection to restore after delete
+        const result = await APIService.deleteObject(type, id);
+        syncUIWithState(result);
     } catch (error) { UIManager.showError("Error deleting object: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
 
 function handleModeChange(newMode) {
+    // Correctly update the UI button's active state
+    UIManager.setActiveModeButton(newMode); 
+
     const currentSelectedIn3D = SceneManager.getSelectedObjects();
     InteractionManager.setMode(newMode, currentSelectedIn3D.length === 1 ? currentSelectedIn3D[0] : null);
+    
     if (newMode === 'observe' && SceneManager.getTransformControls().object) {
         SceneManager.getTransformControls().detach();
     } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length === 1){
@@ -631,4 +647,36 @@ async function handleMaterialEditorConfirm(data) {
             UIManager.hideLoading();
         }
     }
+}
+
+function handlePVVisibilityToggle(pvId, isVisible) {
+    // Update the visibility in the 3D scene
+    SceneManager.setPVVisibility(pvId, isVisible);
+
+    // --- Check if the hidden object has the gizmo attached ---
+    if (!isVisible) {
+        const selectedObjects = SceneManager.getSelectedObjects();
+        if (selectedObjects.length === 1 && selectedObjects[0].userData.id === pvId) {
+            // The object we just hid is the selected one. Detach the gizmo.
+            console.log("Hiding selected object, detaching transform controls.");
+            handleModeChange('observe');
+        }
+    }
+}
+
+function handleHideSelected() {
+    if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.type === 'physical_volume') {
+        const pvId = AppState.selectedHierarchyItem.id;
+        // This function now automatically handles detaching the gizmo
+        handlePVVisibilityToggle(pvId, false);
+        UIManager.setTreeItemVisibility(pvId, false);
+    } else {
+        UIManager.showNotification("Please select a Physical Volume to hide.");
+    }
+}
+
+function handleShowAll() {
+    SceneManager.setAllPVVisibility(true);
+    // Update all UI elements
+    UIManager.setAllTreeItemVisibility(true); // Need to add this helper to uiManager
 }

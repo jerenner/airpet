@@ -399,6 +399,60 @@
             max-width: 120px;
         }
 
+        /* Item controls */
+        .tree-item-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+        }
+
+        .item-name {
+            flex-grow: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .item-controls {
+            display: none; /* Hidden by default */
+            margin-left: 5px;
+        }
+
+        /* Show controls only when the list item is hovered */
+        li:hover > .tree-item-content > .item-controls {
+            display: flex;
+        }
+
+        .delete-item-btn {
+            background: none;
+            border: none;
+            color: #f44336;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .delete-item-btn:hover {
+            color: #c62828;
+        }
+
+        /* Visibility controls */
+        .visibility-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0 4px;
+        }
+        .item-hidden .item-name {
+            color: #999;
+            font-style: italic;
+        }
+        .visibility-btn {
+            opacity: 1.0; /* Default to visible */
+        }
+
     </style>
 </head>
 <body>
@@ -503,6 +557,8 @@
                     <div class="dropdown_content">
                         <!--<button id="addObjectButton">Add...</button>-->
                         <button id="deleteSelectedObjectButton">Delete Selected</button>
+                        <button id="hideSelectedBtn">Hide Selected</button>
+                        <button id="showAllBtn">Show All</button>
                     </div>
                 </li>
                 <!-- Mode Menu -->

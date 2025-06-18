@@ -25,6 +25,9 @@ let isWireframeMode = false;
 let isGridVisible = true;
 let currentCameraMode = 'orbit';
 
+// Set to remember visibility state
+const hiddenPvIds = new Set();
+
 // Callbacks to main.js or other modules
 let onObjectSelectedCallback = null; // Called when an object is selected in 3D view -> (selectedMeshOrNull)
 let onObjectTransformEndCallback = null; // Called after a TransformControls operation completes -> (transformedMesh)
@@ -181,8 +184,11 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    // Proceed with selection/deselection logic.
-    const intersects = raycaster.intersectObjects(geometryGroup.children, true);
+    // Get all intersections, both visible and invisible
+    const allIntersects = raycaster.intersectObjects(geometryGroup.children, true);
+
+    // --- Filter the results to only include visible objects ---
+    const intersects = allIntersects.filter(intersection => intersection.object.visible);
 
     if (intersects.length > 0) {
         const firstIntersected = findActualMesh(intersects[0].object);
@@ -213,6 +219,48 @@ function findActualMesh(object) { // Helper if selection might hit sub-parts of 
     return (current.userData && current.userData.id) ? current : object; // Fallback to original if no ID found up chain
 }
 
+export function setPVVisibility(pvId, isVisible) {
+    const mesh = findMeshByPvId(pvId);
+    if (mesh) {
+        mesh.visible = isVisible;
+    }
+    // --- Update the persistent state ---
+    if (isVisible) {
+        hiddenPvIds.delete(pvId);
+    } else {
+        hiddenPvIds.add(pvId);
+    }
+}
+
+export function setAllPVVisibility(isVisible) {
+    geometryGroup.traverse(child => {
+        if (child.isMesh) {
+            child.visible = isVisible;
+        }
+    });
+    // --- Update the persistent state ---
+    if (isVisible) {
+        hiddenPvIds.clear();
+    } else {
+        // Add all current PV IDs to the hidden set
+        geometryGroup.traverse(child => {
+            if (child.isMesh && child.userData.id) {
+                hiddenPvIds.add(child.userData.id);
+            }
+        });
+    }
+}
+
+// Helper function to find a mesh by its PV ID
+function findMeshByPvId(pvId) {
+    let foundMesh = null;
+    geometryGroup.traverse(child => {
+        if (child.isMesh && child.userData && child.userData.id === pvId) {
+            foundMesh = child;
+        }
+    });
+    return foundMesh;
+}
 
 // --- Object Rendering ---
 /**
@@ -1006,6 +1054,12 @@ export function renderObjects(pvDescriptions, projectState) {
             const euler = new THREE.Euler(pvData.rotation.x, pvData.rotation.y, pvData.rotation.z, 'ZYX');
             mesh.quaternion.setFromEuler(euler);
         }
+
+        // --- Apply persistent visibility state ---
+        if (hiddenPvIds.has(pvData.id)) {
+            mesh.visible = false;
+        }
+
         geometryGroup.add(mesh);
     });
 
@@ -1026,7 +1080,15 @@ export function clearScene() {
         }
         geometryGroup.remove(object);
     }
+
+    // --- Clear the visibility state when the scene is fully cleared ---
+    //hiddenPvIds.clear();
+
     console.log("[SceneManager] Scene cleared.");
+}
+
+export function isPvHidden(pvId) {
+    return hiddenPvIds.has(pvId);
 }
 
 // --- Selection and Highlighting in 3D ---

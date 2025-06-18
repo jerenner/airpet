@@ -1,5 +1,6 @@
 // static/uiManager.js
 import * as THREE from 'three';
+import * as SceneManager from './sceneManager.js';
 import * as APIService from './apiService.js';
 
 // --- Module-level variables for DOM elements ---
@@ -52,7 +53,8 @@ let callbacks = {
     onWireframeToggleClicked: () => {},
     onGridToggleClicked: () => {},
     onHierarchyItemSelected: (itemContext) => {}, // {type, id, name, data}
-    onInspectorPropertyChanged: (type, id, path, value) => {}
+    onInspectorPropertyChanged: (type, id, path, value) => {},
+    onPVVisibilityToggle: (pvId, isVisible) => {}
 };
 
 // --- Initialization ---
@@ -175,6 +177,17 @@ export function initUI(cb) {
         });
     });
     activateTab('tab_structure'); // Default tab
+
+    // --- Global Keyboard Listener ---
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+            // Prevent the browser's default back navigation on Backspace
+            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                event.preventDefault();
+                callbacks.onDeleteSelectedClicked();
+            }
+        }
+    });
 
     console.log("UIManager initialized.");
 }
@@ -441,7 +454,7 @@ export function updateInspectorTransform(liveObject) {
 
 // --- The rest of the file is unchanged, but included for completeness ---
 // --- UI Update Functions ---
-function setActiveModeButton(mode) {
+export function setActiveModeButton(mode) {
     if(modeObserveButton) modeObserveButton.classList.toggle('active_mode', mode === 'observe');
     if(modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
     if(modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
@@ -555,12 +568,23 @@ function buildVolumeNode(pvData, projectState) {
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
     const item = document.createElement('li');
-    item.innerHTML = `<span>${displayName}</span>`;
+    // --- Add a container for the name and buttons ---
+    item.innerHTML = `
+        <div class="tree-item-content">
+            <span class="item-name">${displayName}</span>
+            <div class="item-controls">
+                ${itemType === 'physical_volume' ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
+                <button class="delete-item-btn" title="Delete Item">×</button>
+            </div>
+        </div>
+    `;
     item.dataset.type = itemType;
     item.dataset.id = itemIdForBackend;
     item.dataset.name = displayName;
     item.appData = {...fullItemData, ...additionalData};
 
+    // Main click listener for selection
+    //const contentDiv = item.querySelector('.tree-item-content');
     item.addEventListener('click', (event) => {
         event.stopPropagation();
         const selected = document.querySelector('#left_panel_container .selected_item');
@@ -581,6 +605,39 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             selectedParentContext = null; // Clear if something else is clicked
         }
     });
+
+    // Listener for the new delete button
+    const deleteBtn = item.querySelector('.delete-item-btn');
+    deleteBtn.addEventListener('click', (event) => {
+        event.stopPropagation(); // Prevent the item from being selected
+        // We manually call the main delete handler after confirming
+        if (confirmAction(`Are you sure you want to delete ${itemType}: ${displayName}?`)) {
+            // We need to tell main.js *what* to delete
+            callbacks.onDeleteSpecificItemClicked(itemType, itemIdForBackend);
+        }
+    });
+
+    // Add listener for the new visibility button
+    if (itemType === 'physical_volume') {
+        const visBtn = item.querySelector('.visibility-btn');
+
+        // --- Set the initial state of the button ---
+        const isHidden = SceneManager.isPvHidden(itemIdForBackend);
+        item.classList.toggle('item-hidden', isHidden);
+        visBtn.style.opacity = isHidden ? '0.4' : '1.0';
+
+        visBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+
+            // Toggle the current state.
+            const wasHidden = item.classList.contains('item-hidden');
+            const isNowVisible = wasHidden; // If it was hidden, it is now visible.
+
+            item.classList.toggle('item-hidden', !isNowVisible);
+            visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
+            callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible);
+        });
+    }
 
     // For double-clicking of solids, volumes, etc.
     if (itemType === 'define') {
@@ -819,4 +876,20 @@ export function hideLoading() {
  */
 export function confirmAction(message) {
     return window.confirm(message);
+}
+
+export function setTreeItemVisibility(pvId, isVisible) {
+    const item = document.querySelector(`li[data-id="${pvId}"]`);
+    if (item) {
+        const visBtn = item.querySelector('.visibility-btn');
+        item.classList.toggle('item-hidden', !isVisible);
+        if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
+    }
+}
+export function setAllTreeItemVisibility(isVisible) {
+    document.querySelectorAll('#tab_structure li[data-type="physical_volume"]').forEach(item => {
+        const visBtn = item.querySelector('.visibility-btn');
+        item.classList.toggle('item-hidden', !isVisible);
+        if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
+    });
 }
