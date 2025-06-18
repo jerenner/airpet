@@ -1,9 +1,10 @@
-// CREATE NEW FILE: gdml-studio/static/logicalVolumeEditor.js
+import * as THREE from 'three';
 
 let modalElement, titleElement, nameInput, solidSelect, materialSelect, confirmButton;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingLVId = null;
+let colorInput, alphaInput;
 
 export function initLVEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -14,6 +15,8 @@ export function initLVEditor(callbacks) {
     solidSelect = document.getElementById('lvEditorSolid');
     materialSelect = document.getElementById('lvEditorMaterial');
     confirmButton = document.getElementById('confirmLVEditor');
+    colorInput = document.getElementById('lvEditorColor');
+    alphaInput = document.getElementById('lvEditorAlpha');
 
     document.getElementById('closeLVEditor').addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -44,6 +47,13 @@ export function show(lvData = null, projectState = null) {
         solidSelect.value = lvData.solid_ref;
         materialSelect.value = lvData.material_ref;
 
+        // Set the color and alpha from existing attributes
+        const vis = lvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:0.5}};
+        const color = vis.color;
+        // Convert RGB (0-1) to hex string for color input
+        colorInput.value = `#${new THREE.Color(color.r, color.g, color.b).getHexString()}`;
+        alphaInput.value = color.a;
+
         confirmButton.textContent = "Update LV";
     } else {
         // --- CREATE MODE ---
@@ -54,6 +64,10 @@ export function show(lvData = null, projectState = null) {
         nameInput.value = '';
         nameInput.disabled = false;
         confirmButton.textContent = "Create LV";
+
+        // Set default color/alpha
+        colorInput.value = '#cccccc';
+        alphaInput.value = 0.5;
     }
 
     modalElement.style.display = 'block';
@@ -89,12 +103,26 @@ function handleConfirm() {
         return;
     }
 
+    // --- Get color and opacity ---
+    const colorHex = colorInput.value;
+    const alpha = parseFloat(alphaInput.value);
+    const threeColor = new THREE.Color(colorHex);
+    const visAttributes = {
+        color: {
+            r: threeColor.r,
+            g: threeColor.g,
+            b: threeColor.b,
+            a: alpha
+        }
+    };
+
     onConfirmCallback({
         isEdit: isEditMode,
         id: isEditMode ? editingLVId : name,
         name: name,
         solid_ref: solidRef,
-        material_ref: materialRef
+        material_ref: materialRef,
+        vis_attributes: visAttributes
     });
     
     hide();

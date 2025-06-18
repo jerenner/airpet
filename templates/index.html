@@ -760,9 +760,15 @@
                     <label for="lvEditorMaterial">Material:</label>
                     <select id="lvEditorMaterial"></select>
                 </div>
+                <div class="property_item">
+                    <label for="lvEditorColor">Color:</label>
+                    <input type="color" id="lvEditorColor" value="#cccccc">
+                    <label for="lvEditorAlpha" style="width:auto; margin-left:10px;">Opacity:</label>
+                    <input type="range" id="lvEditorAlpha" min="0" max="1" step="0.05" value="0.5">
+                </div>
                 <!-- Placeholders for future additions -->
                 <hr>
-                <p style="text-align:center; color:#888;"><i>Sensitive Detector, User Limits, and Vis Attributes can be added here later.</i></p>
+                <p style="text-align:center; color:#888;"><i>Sensitive Detector, User Limits can be added here later.</i></p>
             </div>
             <div class="modal-footer">
                 <button id="confirmLVEditor" class="confirm-button">Create LV</button>

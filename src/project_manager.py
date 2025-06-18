@@ -386,7 +386,7 @@ class ProjectManager:
         
         return True, None
 
-    def add_logical_volume(self, name_suggestion, solid_ref, material_ref):
+    def add_logical_volume(self, name_suggestion, solid_ref, material_ref, vis_attributes=None):
         if not self.current_geometry_state: return None, "No project loaded"
         if solid_ref not in self.current_geometry_state.solids:
             return None, f"Solid '{solid_ref}' not found."
@@ -394,11 +394,11 @@ class ProjectManager:
             return None, f"Material '{material_ref}' not found."
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.logical_volumes)
-        new_lv = LogicalVolume(name, solid_ref, material_ref)
+        new_lv = LogicalVolume(name, solid_ref, material_ref, vis_attributes)
         self.current_geometry_state.add_logical_volume(new_lv)
         return new_lv.to_dict(), None
 
-    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref):
+    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None):
         if not self.current_geometry_state: return False, "No project loaded"
         
         lv = self.current_geometry_state.logical_volumes.get(lv_name)
@@ -414,6 +414,8 @@ class ProjectManager:
             lv.solid_ref = new_solid_ref
         if new_material_ref:
             lv.material_ref = new_material_ref
+        if new_vis_attributes: 
+            lv.vis_attributes = new_vis_attributes
             
         return True, None
 

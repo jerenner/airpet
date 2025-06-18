@@ -124,11 +124,12 @@ class Solid:
 
 class LogicalVolume:
     """Represents a logical volume."""
-    def __init__(self, name, solid_ref, material_ref):
+    def __init__(self, name, solid_ref, material_ref, vis_attributes=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.solid_ref = solid_ref # Name/ID of the Solid object
         self.material_ref = material_ref # Name/ID of the Material object
+        self.vis_attributes = vis_attributes if vis_attributes is not None else {'color': {'r':0.8, 'g':0.8, 'b':0.8, 'a':0.5}}
         self.phys_children = [] # List of PhysicalVolumePlacement objects
 
     def add_child(self, placement):
@@ -139,12 +140,13 @@ class LogicalVolume:
             "id": self.id, "name": self.name,
             "solid_ref": self.solid_ref,
             "material_ref": self.material_ref,
+            "vis_attributes": self.vis_attributes,
             "phys_children": [child.to_dict() for child in self.phys_children]
         }
 
     @classmethod
     def from_dict(cls, data, all_objects_map=None): # all_objects_map for resolving refs if they are objects not just names
-        instance = cls(data['name'], data['solid_ref'], data['material_ref'])
+        instance = cls(data['name'], data['solid_ref'], data['material_ref'], data.get('vis_attributes'))
         instance.id = data.get('id', str(uuid.uuid4()))
         instance.phys_children = [
             PhysicalVolumePlacement.from_dict(child_data, all_objects_map)
@@ -293,6 +295,7 @@ class GeometryState:
                     "solid_ref_for_threejs": child_lv.solid_ref, 
                     "position": position_data,
                     "rotation": rotation_data,
-                    "is_world_volume_placement": is_world
+                    "is_world_volume_placement": is_world,
+                    "vis_attributes": child_lv.vis_attributes 
                 })
         return threejs_objects

@@ -1,7 +1,6 @@
 // static/uiManager.js
 import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
-import * as APIService from './apiService.js';
 
 // --- Module-level variables for DOM elements ---
 let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
