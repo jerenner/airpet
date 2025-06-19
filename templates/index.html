@@ -79,18 +79,43 @@
         .tab_pane.active {
             display: block;
         }
-        /* Hierarchy specific styles (same as before) */
+        
+        /* The main list container */
         .tab_pane ul { 
             list-style-type: none; 
-            /* REMOVE padding-left: 15px; from here to make it flush */
-            padding-left: 0;
+            padding-left: 0; /* Remove default padding */
             margin: 0; 
         }
-        .tab_pane li { padding: 3px 0 3px 15px; cursor: pointer; }
+
+        /* Individual list items */
+        .tab_pane li {
+            /* We apply padding to the inner div now, not the li itself */
+            padding: 0;
+            margin: 0;
+        }
         .tab_pane li:hover { background-color: #d8d8d8; } /* Slightly darker hover */
-        .tab_pane .selected_item { background-color: #c0d0e0; font-weight: bold; }
-        .tab_pane .hidden_item { color: #999; font-style: italic; }
-        .tab_pane .toggle { display: inline-block; width: 15px; text-align: center; margin-right: 3px;}
+
+        /* Nested lists for hierarchy */
+        .tab_pane li ul {
+            padding-left: 20px; /* Indent nested items */
+        }
+        
+        /* Selected item style */
+        .tab_pane li.selected_item > .tree-item-content {
+            background-color: #3b82f6; /* A modern blue */
+            color: white;
+            font-weight: bold;
+            border-bottom-color: #2563eb; /* Darker blue separator */
+        }
+
+        /* Change icon colors on a selected item for better visibility */
+        .tab_pane li.selected_item .visibility-btn,
+        .tab_pane li.selected_item .delete-item-btn {
+            color: white;
+        }
+        .tab_pane li.selected_item .delete-item-btn:hover {
+            color: #fecaca; /* A light red for hover on delete */
+        }
 
         #inspector_panel {
             height: 300px; /* Fixed height, or use flex-basis for proportions */
@@ -157,6 +182,35 @@
         }
         #menu_bar li:hover .dropdown_content { display: block; }
         #menu_bar button.active_mode { background-color: #007bff; color: white; }
+
+        /* Snap-to-grid formatting */
+        #menu_bar .dropdown_content .snap-settings-container {
+            padding: 8px 12px;
+            background-color: #f9f9f9; /* Match dropdown background */
+        }
+
+        #menu_bar .dropdown_content .snap-input-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            color: #333; /* Text color for the label */
+            margin-bottom: 5px;
+        }
+
+        #menu_bar .dropdown_content .snap-input-row:last-child {
+            margin-bottom: 0;
+        }
+
+        #menu_bar .dropdown_content .snap-input-row label {
+            margin-right: 8px; /* Space between label and input */
+        }
+
+        #menu_bar .dropdown_content .snap-input-row input[type="number"] {
+            width: 60px;
+            padding: 2px;
+            border: 1px solid #ccc;
+        }
 
         #viewer_container { /* Now relative within main_content_area */
             width: 100%; height: 100%;
@@ -400,11 +454,21 @@
         }
 
         /* Item controls */
+        /* The clickable content area inside each li */
         .tree-item-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
             width: 100%;
+            padding: 4px 8px; /* Consistent padding */
+            box-sizing: border-box; /* Ensures padding doesn't increase width */
+            border-bottom: 1px solid #e0e0e0; /* Subtle separator line */
+            cursor: pointer;
+            transition: background-color 0.15s ease-in-out; /* Smooth transition */
+        }
+        /* Hover effect */
+        .tree-item-content:hover {
+            background-color: #e2e8f0; /* A light, cool gray/blue */
         }
 
         .item-name {
@@ -414,43 +478,54 @@
             text-overflow: ellipsis;
         }
 
+        /* Item controls (buttons) */
         .item-controls {
-            display: none; /* Hidden by default */
+            display: flex; /* Changed from none to flex to always show them */
+            align-items: center;
             margin-left: 5px;
+            opacity: 0; /* Hidden by default, will fade in on hover */
+            transition: opacity 0.15s ease-in-out;
         }
 
-        /* Show controls only when the list item is hovered */
         li:hover > .tree-item-content > .item-controls {
-            display: flex;
+            opacity: 1; /* Fade in controls on hover */
         }
 
-        .delete-item-btn {
+        .selected_item .item-controls {
+            opacity: 1; /* Always show controls for the selected item */
+        }
+
+        /* Delete item and visibility controls */
+        .delete-item-btn, .visibility-btn {
             background: none;
             border: none;
-            color: #f44336;
-            font-size: 18px;
             cursor: pointer;
             padding: 0 4px;
             line-height: 1;
+            border-radius: 4px;
         }
-        .delete-item-btn:hover {
-            color: #c62828;
+        .delete-item-btn { font-size: 18px; color: #9ca3af; }
+        .visibility-btn { font-size: 14px; color: #9ca3af; }
+
+        .delete-item-btn:hover, .visibility-btn:hover {
+            background-color: rgba(0,0,0,0.1);
         }
 
-        /* Visibility controls */
-        .visibility-btn {
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 14px;
-            padding: 0 4px;
-        }
         .item-hidden .item-name {
             color: #999;
             font-style: italic;
         }
-        .visibility-btn {
-            opacity: 1.0; /* Default to visible */
+        .item-hidden .visibility-btn {
+            opacity: 0.4 !important; /* Ensure hidden eye is always dim */
+        }
+
+        /* Toggle for expanding/collapsing */
+        .toggle { 
+            display: inline-block; 
+            width: 20px; 
+            text-align: center;
+            margin-right: 0px; /* Adjust spacing */
+            font-family: monospace;
         }
 
     </style>
@@ -533,10 +608,16 @@
                 <li>
                     <button>Edit</button>
                     <div class="dropdown_content">
-                        <button id="toggleSnapToGridButton">Snap to Grid: OFF</button>
-                        <div style="padding: 10px; font-size: 12px;">
-                            Grid Snap (mm): <input type="number" id="gridSnapSizeInput" value="10" step="any" style="width: 60px;">
-                            Angle Snap (deg): <input type="number" id="angleSnapSizeInput" value="1" step="any" style="width: 60px;">
+                        <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
+                        <div class="snap-settings-container">
+                            <div class="snap-input-row">
+                                <label for="gridSnapSizeInput">Translate (mm):</label>
+                                <input type="number" id="gridSnapSizeInput" value="10" step="any">
+                            </div>
+                            <div class="snap-input-row">
+                                <label for="angleSnapSizeInput">Rotate (deg):</label>
+                                <input type="number" id="angleSnapSizeInput" value="45" step="5">
+                            </div>
                         </div>
                     </div>
                 </li>
@@ -769,7 +850,7 @@
                     <label for="lvEditorColor">Color:</label>
                     <input type="color" id="lvEditorColor" value="#cccccc">
                     <label for="lvEditorAlpha" style="width:auto; margin-left:10px;">Opacity:</label>
-                    <input type="range" id="lvEditorAlpha" min="0" max="1" step="0.05" value="0.5">
+                    <input type="range" id="lvEditorAlpha" min="0" max="1" step="0.05" value="1.0">
                 </div>
                 <!-- Placeholders for future additions -->
                 <hr>

@@ -110,6 +110,11 @@ export function initUI(cb) {
     confirmAddObjectButton = document.getElementById('confirmAddObject');
     cancelAddObjectButton = document.getElementById('cancelAddObject');
 
+    // --- Initialize snap settings from UI values on startup ---
+    const initialTransSnap = document.getElementById('gridSnapSizeInput').value;
+    const initialAngleSnap = document.getElementById('angleSnapSizeInput').value;
+    callbacks.onSnapSettingsChanged(initialTransSnap, initialAngleSnap);
+
     // Attach Event Listeners
     newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
     loadGdmlButton.addEventListener('click', callbacks.onLoadGdmlClicked);

@@ -48,7 +48,7 @@ export function show(lvData = null, projectState = null) {
         materialSelect.value = lvData.material_ref;
 
         // Set the color and alpha from existing attributes
-        const vis = lvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:0.5}};
+        const vis = lvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
         const color = vis.color;
         // Convert RGB (0-1) to hex string for color input
         colorInput.value = `#${new THREE.Color(color.r, color.g, color.b).getHexString()}`;

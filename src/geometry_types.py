@@ -129,7 +129,7 @@ class LogicalVolume:
         self.name = name
         self.solid_ref = solid_ref # Name/ID of the Solid object
         self.material_ref = material_ref # Name/ID of the Material object
-        self.vis_attributes = vis_attributes if vis_attributes is not None else {'color': {'r':0.8, 'g':0.8, 'b':0.8, 'a':0.5}}
+        self.vis_attributes = vis_attributes if vis_attributes is not None else {'color': {'r':0.8, 'g':0.8, 'b':0.8, 'a':1.0}}
         self.phys_children = [] # List of PhysicalVolumePlacement objects
 
     def add_child(self, placement):

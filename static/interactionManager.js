@@ -8,9 +8,9 @@ let transformControlsInstance = null;
 let orbitControlsInstance = null;
 let flyControlsInstance = null; // If you implement camera fly mode
 
-let isSnapActive = false;
+let isSnapActive = true;
 let translationSnapValue = 10;    // Default in mm
-let rotationSnapValueRad = THREE.MathUtils.degToRad(1); // Default in radians
+let rotationSnapValueRad = THREE.MathUtils.degToRad(45); // Default in radians
 
 // --- Initialization ---
 export function initInteractionManager(transformControls, orbitControls, flyControls) {
