@@ -33,7 +33,9 @@ class GDMLParser:
         return it.root
     
     def _evaluate_expression(self, expr_str, default_unit_val_for_bare_numbers=1.0, category="length"):
-        if expr_str is None: return 0.0
+        if expr_str is None:
+            print(f"Warning: Got None for an expression, returning 0.0. This might indicate a missing attribute in the GDML file.")
+            return 0.0
 
         # Ensure it's a string and strip whitespace
         expr_str = str(expr_str).strip() 
@@ -606,7 +608,7 @@ class GDMLParser:
                         facets.append(facet_data)
                 params['facets'] = facets
 
-            # TODO: Add other solids: cutTube, reflectedSolid, scaledSolid
+            # TODO: Add other solids: reflectedSolid, scaledSolid
             # For reflectedSolid and scaledSolid, store ref to original solid and the transformation params.
             
             else:

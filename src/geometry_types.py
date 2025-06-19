@@ -12,6 +12,8 @@ OUTPUT_UNIT_FACTORS = {
     "length": {"mm": 1.0, "cm": 0.1, "m": 0.001},
     "angle": {"rad": 1.0, "deg": 180.0 / math.pi}
 }
+DEFAULT_OUTPUT_LUNIT = "mm"
+DEFAULT_OUTPUT_AUNIT = "rad"
 
 def convert_to_internal_units(value, unit_str, category="length"):
     if value is None: return None

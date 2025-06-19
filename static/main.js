@@ -218,7 +218,11 @@ async function handleLoadGdml(file) {
         const result = await APIService.loadGdmlFile(file);
         syncUIWithState(result); // No selection to restore
     } catch (error) { UIManager.showError("Failed to load GDML: " + error.message); }
-    finally { UIManager.hideLoading(); }
+    finally { 
+        // Reset the file input so the same file can be loaded again.
+        document.getElementById('gdmlFile').value = null;
+        UIManager.hideLoading(); 
+    }
 }
 
 async function handleLoadProject(file) {
@@ -228,7 +232,11 @@ async function handleLoadProject(file) {
         const result = await APIService.loadProjectFile(file);
         syncUIWithState(result); // No selection to restore
     } catch (error) { UIManager.showError("Failed to load project: " + error.message); }
-    finally { UIManager.hideLoading(); }
+    finally { 
+        // Reset the file input so the same file can be loaded again.
+        document.getElementById('projectFile').value = null;
+        UIManager.hideLoading(); 
+    }
 }
 
 async function handleSaveProject() {
