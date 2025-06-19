@@ -1037,13 +1037,13 @@ export function renderObjects(pvDescriptions, projectState) {
         const geometry = cachedGeom.clone(); // Use a clone for each instance
 
         // --- Create material based on vis_attributes ---
-        const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:0.5}};
+        const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
         const color = vis.color;
 
         const material = new THREE.MeshLambertMaterial({
             color: new THREE.Color(color.r, color.g, color.b),
-            transparent: true,
-            opacity: 0.75,
+            transparent: color.a < 1.0,
+            opacity: color.a,
             side: THREE.DoubleSide,
             wireframe: isWireframeMode
         });

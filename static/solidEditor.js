@@ -264,7 +264,32 @@ function renderParamsUI(params = {}) {
                 <div class="property_item"><label for="p_startphi">Start Phi (deg)</label><input type="number" id="p_startphi" step="any" value="0"></div>
                 <div class="property_item"><label for="p_deltaphi">Delta Phi (deg)</label><input type="number" id="p_deltaphi" step="any" value="360"></div>
                 <div class="property_item"><label for="p_starttheta">Start Theta (deg)</label><input type="number" id="p_starttheta" step="any" value="0"></div>
-                <div class="property_item"><label for="p_deltatheta">Delta Theta (deg)</label><input type="number" id="p_deltatheta" step="any" value="180"></div>`
+                <div class="property_item"><label for="p_deltatheta">Delta Theta (deg)</label><input type="number" id="p_deltatheta" step="any" value="180"></div>`,
+            orb: () => `
+            <div class="property_item"><label for="p_r">Radius (mm)</label><input type="number" id="p_r" value="100"></div>`,
+        torus: () => `
+            <div class="property_item"><label for="p_rmin">Min Radius (mm)</label><input type="number" id="p_rmin" value="20"></div>
+            <div class="property_item"><label for="p_rmax">Max Radius (mm)</label><input type="number" id="p_rmax" value="30"></div>
+            <div class="property_item"><label for="p_rtor">Torus Radius (mm)</label><input type="number" id="p_rtor" value="100"></div>
+            <div class="property_item"><label for="p_startphi">Start Phi (deg)</label><input type="number" id="p_startphi" step="any" value="0"></div>
+            <div class="property_item"><label for="p_deltaphi">Delta Phi (deg)</label><input type="number" id="p_deltaphi" step="any" value="360"></div>`,
+        trd: () => `
+            <div class="property_item"><label for="p_dx1">X Half-Length 1 (mm)</label><input type="number" id="p_dx1" value="50"></div>
+            <div class="property_item"><label for="p_dx2">X Half-Length 2 (mm)</label><input type="number" id="p_dx2" value="75"></div>
+            <div class="property_item"><label for="p_dy1">Y Half-Length 1 (mm)</label><input type="number" id="p_dy1" value="50"></div>
+            <div class="property_item"><label for="p_dy2">Y Half-Length 2 (mm)</label><input type="number" id="p_dy2" value="75"></div>
+            <div class="property_item"><label for="p_dz">Z Half-Length (mm)</label><input type="number" id="p_dz" value="100"></div>`,
+        para: () => `
+            <div class="property_item"><label for="p_dx">X Half-Length (mm)</label><input type="number" id="p_dx" value="50"></div>
+            <div class="property_item"><label for="p_dy">Y Half-Length (mm)</label><input type="number" id="p_dy" value="60"></div>
+            <div class="property_item"><label for="p_dz">Z Half-Length (mm)</label><input type="number" id="p_dz" value="70"></div>
+            <div class="property_item"><label for="p_alpha">Alpha (deg)</label><input type="number" id="p_alpha" step="any" value="15"></div>
+            <div class="property_item"><label for="p_theta">Theta (deg)</label><input type="number" id="p_theta" step="any" value="15"></div>
+            <div class="property_item"><label for="p_phi">Phi (deg)</label><input type="number" id="p_phi" step="any" value="15"></div>`,
+        eltube: () => `
+            <div class="property_item"><label for="p_dx">Semi-axis dx (mm)</label><input type="number" id="p_dx" value="50"></div>
+            <div class="property_item"><label for="p_dy">Semi-axis dy (mm)</label><input type="number" id="p_dy" value="75"></div>
+            <div class="property_item"><label for="p_dz">Half-length dz (mm)</label><input type="number" id="p_dz" value="100"></div>`
         };
 
         if (paramUIBuilder[type]) {
@@ -280,6 +305,7 @@ function renderParamsUI(params = {}) {
         // We only need to handle primitives here.
         if (!isBoolean) {
             const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+            const r2d = (rad) => THREE.MathUtils.radToDeg(rad);
             
             if (type === 'box') {
                 p_in('p_x', params.x); p_in('p_y', params.y); p_in('p_z', params.z);
@@ -300,6 +326,34 @@ function renderParamsUI(params = {}) {
                  p_in('p_deltaphi', THREE.MathUtils.radToDeg(params.deltaphi)); // rad to deg
                  p_in('p_starttheta', THREE.MathUtils.radToDeg(params.starttheta)); // rad to deg
                  p_in('p_deltatheta', THREE.MathUtils.radToDeg(params.deltatheta)); // rad to deg
+            } else if (type === 'orb') {
+                p_in('p_r', params.r);
+            } else if (type === 'torus') {
+                p_in('p_rmin', params.rmin); 
+                p_in('p_rmax', params.rmax); 
+                p_in('p_rtor', params.rtor);
+                p_in('p_startphi', r2d(params.startphi));
+                p_in('p_deltaphi', r2d(params.deltaphi));
+            } else if (type === 'trd') {
+                // UI shows half-lengths, which matches backend storage for trd
+                p_in('p_dx1', params.dx1); 
+                p_in('p_dx2', params.dx2);
+                p_in('p_dy1', params.dy1); 
+                p_in('p_dy2', params.dy2);
+                p_in('p_dz', params.dz);
+            } else if (type === 'para') {
+                // UI shows half-lengths, which matches backend storage for para
+                p_in('p_dx', params.dx); 
+                p_in('p_dy', params.dy);
+                p_in('p_dz', params.dz);
+                p_in('p_alpha', r2d(params.alpha));
+                p_in('p_theta', r2d(params.theta));
+                p_in('p_phi', r2d(params.phi));
+            } else if (type === 'eltube') {
+                // UI shows semi-axes/half-length, matches backend
+                p_in('p_dx', params.dx);
+                p_in('p_dy', params.dy);
+                p_in('p_dz', params.dz);
             }
         }
     }
@@ -477,6 +531,20 @@ function getParamsFromUI() {
         params.deltaphi = d2r('p_deltaphi');
         params.starttheta = d2r('p_starttheta');
         params.deltatheta = d2r('p_deltatheta');
+    } else if (type === 'orb') {
+        params.r = p('p_r');
+    } else if (type === 'torus') {
+        params.rmin = p('p_rmin'); params.rmax = p('p_rmax'); params.rtor = p('p_rtor');
+        params.startphi = d2r('p_startphi'); params.deltaphi = d2r('p_deltaphi');
+    } else if (type === 'trd') {
+        params.dx1 = p('p_dx1'); params.dx2 = p('p_dx2');
+        params.dy1 = p('p_dy1'); params.dy2 = p('p_dy2');
+        params.dz = p('p_dz');
+    } else if (type === 'para') {
+        params.dx = p('p_dx'); params.dy = p('p_dy'); params.dz = p('p_dz');
+        params.alpha = d2r('p_alpha'); params.theta = d2r('p_theta'); params.phi = d2r('p_phi');
+    } else if (type === 'eltube') {
+        params.dx = p('p_dx'); params.dy = p('p_dy'); params.dz = p('p_dz');
     }
     return params;
 }

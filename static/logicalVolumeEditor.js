@@ -67,7 +67,7 @@ export function show(lvData = null, projectState = null) {
 
         // Set default color/alpha
         colorInput.value = '#cccccc';
-        alphaInput.value = 0.5;
+        alphaInput.value = 1.0;
     }
 
     modalElement.style.display = 'block';

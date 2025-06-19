@@ -277,8 +277,40 @@ class ProjectManager:
                     'starttheta': float(p.get('starttheta', 0)),
                     'deltatheta': float(p.get('deltatheta', math.pi))
                 }
+            elif solid_type == "orb":
+                internal_params = {'r': float(p.get('r', 100))}
+            elif solid_type == "torus":
+                internal_params = {
+                    'rmin': float(p.get('rmin', 20)),
+                    'rmax': float(p.get('rmax', 30)),
+                    'rtor': float(p.get('rtor', 100)),
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                }
+            elif solid_type == "trd":
+                internal_params = {
+                    'dx1': float(p.get('dx1', 50)), # UI sends half-length
+                    'dx2': float(p.get('dx2', 75)),
+                    'dy1': float(p.get('dy1', 50)),
+                    'dy2': float(p.get('dy2', 75)),
+                    'dz': float(p.get('dz', 100)),  # UI sends half-length
+                }
+            elif solid_type == "para":
+                 internal_params = {
+                    'dx': float(p.get('dx', 50)), # UI sends half-length
+                    'dy': float(p.get('dy', 60)),
+                    'dz': float(p.get('dz', 70)),
+                    'alpha': float(p.get('alpha', 0)),
+                    'theta': float(p.get('theta', 0)),
+                    'phi': float(p.get('phi', 0))
+                }
+            elif solid_type == "eltube":
+                internal_params = {
+                    'dx': float(p.get('dx', 50)), # semi-axis
+                    'dy': float(p.get('dy', 75)),
+                    'dz': float(p.get('dz', 100))  # half-length
+                }
             # Add other primitive solids here following the same pattern
-            # ...
             else:
                 return None, f"Solid type '{solid_type}' is not supported for creation."
 
