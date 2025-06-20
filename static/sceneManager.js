@@ -184,28 +184,21 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    // Get all intersections, both visible and invisible
-    const allIntersects = raycaster.intersectObjects(geometryGroup.children, true);
-
     // --- Filter the results to only include visible objects ---
-    const intersects = allIntersects.filter(intersection => intersection.object.visible);
+    const intersects = raycaster.intersectObjects(geometryGroup.children, true)
+                                .filter(intersection => intersection.object.visible);
 
     if (intersects.length > 0) {
         const firstIntersected = findActualMesh(intersects[0].object);
         
-        // If the user clicks the object that is already selected, do nothing.
-        if (transformControls.object === firstIntersected) {
-             return;
-        }
-        
-        // The user clicked a NEW object. Select it.
+        // --- Pass the event modifier keys to the callback ---
         if (onObjectSelectedCallback) {
-            onObjectSelectedCallback(firstIntersected);
+            onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
         }
     } else {
-        // The user clicked on empty space. Deselect everything.
-        if (onObjectSelectedCallback) {
-            onObjectSelectedCallback(null);
+        // The user clicked on empty space. Deselect all IF ctrl is not held.
+        if (!event.ctrlKey && onObjectSelectedCallback) {
+            onObjectSelectedCallback(null, false, false);
         }
     }
 }
@@ -252,7 +245,7 @@ export function setAllPVVisibility(isVisible) {
 }
 
 // Helper function to find a mesh by its PV ID
-function findMeshByPvId(pvId) {
+export function findMeshByPvId(pvId) {
     let foundMesh = null;
     geometryGroup.traverse(child => {
         if (child.isMesh && child.userData && child.userData.id === pvId) {
@@ -1103,41 +1096,55 @@ const _highlightMaterial = new THREE.MeshLambertMaterial({
 let _selectedThreeObjects = []; // Internal list of THREE.Mesh objects
 let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
-export function updateSelectionState(newSelectedMeshes = []) {
-    // Unhighlight previously selected
+export function updateSelectionState(clickedMeshes = []) {
+
+    // Unhighlight everything first.
     _selectedThreeObjects.forEach(obj => {
         if (_originalMaterialsMap.has(obj.uuid)) {
-            const originalState = _originalMaterialsMap.get(obj.uuid);
-            obj.material = originalState.material;
-            // Ensure wireframe status is consistent with global mode AFTER restoring material
-            if (Array.isArray(obj.material)) obj.material.forEach(m => m.wireframe = isWireframeMode);
-            else obj.material.wireframe = isWireframeMode;
+            obj.material = _originalMaterialsMap.get(obj.uuid).material;
             _originalMaterialsMap.delete(obj.uuid);
         }
     });
-    _selectedThreeObjects = [];
 
-    // Highlight new selection
-    newSelectedMeshes.forEach(mesh => {
-        if (mesh && mesh.isMesh) {
-            _selectedThreeObjects.push(mesh);
-            if (mesh.material !== _highlightMaterial) {
-                _originalMaterialsMap.set(mesh.uuid, {
-                    material: Array.isArray(mesh.material) ? mesh.material[0].clone() : mesh.material.clone(),
-                    // wasWireframe property is not strictly needed if we always conform to global
-                });
-            }
+    // Update the internal list of selected objects
+    _selectedThreeObjects = clickedMeshes;
+
+    // Highlight all objects in the new selection list.
+    _selectedThreeObjects.forEach(mesh => {
+        if (mesh && mesh.isMesh && mesh.material !== _highlightMaterial) {
+            _originalMaterialsMap.set(mesh.uuid, { material: mesh.material });
             mesh.material = _highlightMaterial;
-            _highlightMaterial.wireframe = isWireframeMode;
         }
     });
 
-    // Manage TransformControls attachment
-    if (_selectedThreeObjects.length === 1 && transformControls.enabled) {
-        transformControls.attach(_selectedThreeObjects[0]);
+    // --- Gizmo Logic ---
+    if (_selectedThreeObjects.length === 1) {
+        // If only one object is selected, attach the gizmo
+        if (getInteractionManagerMode() !== 'observe') {
+             transformControls.attach(_selectedThreeObjects[0]);
+        }
     } else {
+        // If multiple or zero objects are selected, always detach the gizmo
         transformControls.detach();
     }
+}
+
+function highlightObject(obj) {
+    if (obj.material !== _highlightMaterial) {
+        _originalMaterialsMap.set(obj.uuid, { material: obj.material.clone() });
+    }
+    obj.material = _highlightMaterial;
+}
+
+function unhighlightObject(obj) {
+    if (_originalMaterialsMap.has(obj.uuid)) {
+        obj.material = _originalMaterialsMap.get(obj.uuid).material;
+        _originalMaterialsMap.delete(obj.uuid);
+    }
+}
+
+function unhighlightAll() {
+    _selectedThreeObjects.forEach(obj => unhighlightObject(obj));
 }
 
 export function selectObjectInSceneByPvId(pvId) {

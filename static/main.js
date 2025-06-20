@@ -14,8 +14,8 @@ import * as UIManager from './uiManager.js';
 // --- Global Application State (Keep this minimal) ---
 const AppState = {
     currentProjectState: null,    // Full state dict from backend (defines, materials, solids, LVs, world_ref)
-    selectedHierarchyItem: null,  // { type, id, name, data (raw from projectState) }
-    selectedThreeObjects: [],      // Managed by SceneManager, but AppState might need to know for coordination
+    selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
+    selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
     selectedPVContext: {
         pvId: null,
         positionDefineName: null,
@@ -59,6 +59,7 @@ async function initializeApp() {
         onCameraModeChangeClicked: SceneManager.setCameraMode,
         onWireframeToggleClicked: SceneManager.toggleGlobalWireframe,
         onGridToggleClicked: SceneManager.toggleGridVisibility,
+        onHierarchySelectionChanged: handleHierarchySelection,
         onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
     });
@@ -147,15 +148,16 @@ async function initializeApp() {
 // --- State Synchronization and Selection Management ---
 
 /**
- * Gets the context of the currently selected item.
- * @returns {object|null} An object with {type, id} or null.
+ * Gets the context of the currently selected item(s).
  */
 function getSelectionContext() {
-    if (!AppState.selectedHierarchyItem) return null;
-    return {
-        type: AppState.selectedHierarchyItem.type,
-        id: AppState.selectedHierarchyItem.id
-    };
+    // Check the new array property
+    if (!AppState.selectedHierarchyItems || AppState.selectedHierarchyItems.length === 0) {
+        return null;
+    }
+    // Return the array of selected items.
+    // Each item in the array is already a context object: {type, id, name, data}
+    return AppState.selectedHierarchyItems;
 }
 
 /**
@@ -163,7 +165,7 @@ function getSelectionContext() {
     This is the core of the unidirectional data flow pattern.
     @param {object} responseData The consistent success response object from the backend.
 */
-function syncUIWithState(responseData, selectionToRestore = null) {
+function syncUIWithState(responseData, selectionToRestore = []) {
     if (!responseData || !responseData.success) {
         UIManager.showError(responseData.error || "An unknown error occurred during state sync.");
         return;
@@ -187,11 +189,18 @@ function syncUIWithState(responseData, selectionToRestore = null) {
     UIManager.updateHierarchy(responseData.project_state);
 
     // 4. Restore selection and repopulate inspector ---
-    if (selectionToRestore) {
-        // This UIManager function will find the new DOM element and "click" it
-        UIManager.reselectHierarchyItem(selectionToRestore.type, selectionToRestore.id, responseData.project_state);
+    if (selectionToRestore && selectionToRestore.length > 0) {
+        // Extract just the IDs to pass to the UI manager
+        const idsToSelect = selectionToRestore.map(item => item.id);
+        UIManager.setHierarchySelection(idsToSelect); // Use the existing function!
+
+        // After setting the visual selection, we still need to trigger the main
+        // handler to update the inspector, gizmo, etc.
+        // We'll pass the full context array to it.
+        handleHierarchySelection(selectionToRestore);
+        
     } else {
-        // If no selection to restore, just clear everything
+        // If no selection to restore, clear everything
         UIManager.clearInspector();
         UIManager.clearHierarchySelection();
         SceneManager.unselectAllInScene();
@@ -267,15 +276,51 @@ async function handleAddObject(objectType, nameSuggestion, paramsFromModal) {
     finally { UIManager.hideLoading(); }
 }
 
+// --- Delete all selected items ---
 async function handleDeleteSelected() {
-    const selectionContext = getSelectionContext();
-    if (!selectionContext) {
-        UIManager.showNotification("Please select an item from the hierarchy to delete.");
+    const selectionContexts = getSelectionContext();
+    
+    if (!selectionContexts) {
+        UIManager.showNotification("Please select one or more items to delete.");
         return;
     }
-    if (!UIManager.confirmAction(`Are you sure you want to delete ${selectionContext.type}: ${selectionContext.id}?`)) return;
 
-    handleDeleteSpecificItem(selectionContext.type, selectionContext.id);
+    // Create a confirmation message
+    let confirmationMessage;
+    if (selectionContexts.length === 1) {
+        confirmationMessage = `Are you sure you want to delete ${selectionContexts[0].type}: ${selectionContexts[0].name}?`;
+    } else {
+        confirmationMessage = `Are you sure you want to delete ${selectionContexts.length} items?`;
+    }
+
+    if (!UIManager.confirmAction(confirmationMessage)) return;
+
+    UIManager.showLoading(`Deleting ${selectionContexts.length} item(s)...`);
+    try {
+        let lastResult;
+        // Loop through all selected items and delete them one by one.
+        for (const context of selectionContexts) {
+            lastResult = await APIService.deleteObject(context.type, context.id);
+            // If any deletion fails, we can stop and report it.
+            if (!lastResult.success) {
+                UIManager.showError(`Failed to delete ${context.type} ${context.id}: ${lastResult.error}`);
+                break; // Stop the loop on the first error
+            }
+        }
+        
+        // After all deletions are done (or on the first failure),
+        // sync the UI with the state from the last successful operation.
+        if (lastResult) {
+            syncUIWithState(lastResult); // No selection to restore after deletion
+        } else {
+            // This case might happen if the loop doesn't run, though unlikely
+             UIManager.hideLoading();
+        }
+
+    } catch (error) { 
+        UIManager.showError("An error occurred during deletion: " + error.message); 
+        UIManager.hideLoading();
+    }
 }
 
 // NEW handler for specific deletions from button clicks
@@ -302,58 +347,132 @@ function handleModeChange(newMode) {
     }
 }
 
-async function handleHierarchySelection(itemContext) {
-    AppState.selectedHierarchyItem = itemContext;
-    const { type, id } = itemContext;
+async function handleHierarchySelection(newSelection) {
+    console.log("Hierarchy selection changed. New selection count:", newSelection.length);
+    AppState.selectedHierarchyItems = newSelection;
 
-    // Fetch fresh details for the inspector
-    const details = await APIService.getObjectDetails(type, id);
-    if (!details) {
-        UIManager.showError(`Could not fetch details for ${type} ${id}`);
-        return;
-    }
-
-    itemContext.data = details;
-    
-    // --- Pass the full project state to the inspector ---
-    // The inspector can now get the defines list directly from here,
-    // avoiding another async API call during a critical redraw.
-    UIManager.populateInspector(itemContext, AppState.currentProjectState);
-
-    // If a physical volume is selected, cache its define references for live updates and select in 3D
-    if (type === 'physical_volume') {
-        SceneManager.selectObjectInSceneByPvId(id);
-        AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
-        AppState.selectedPVContext.pvId = id;
-        AppState.selectedPVContext.positionDefineName = typeof details.position === 'string' ? details.position : null;
-        AppState.selectedPVContext.rotationDefineName = typeof details.rotation === 'string' ? details.rotation : null;
+    // Sync the 3D view to match the hierarchy selection
+    const pvIdsToSelect = newSelection
+        .filter(item => item.type === 'physical_volume')
+        .map(item => item.id);
         
-        if (InteractionManager.getCurrentMode() !== 'observe') {
-            const selectedMesh = AppState.selectedThreeObjects[0];
-            if(selectedMesh) SceneManager.attachTransformControls(selectedMesh);
+    const meshesToSelect = pvIdsToSelect.map(id => SceneManager.findMeshByPvId(id)).filter(mesh => mesh);
+    SceneManager.updateSelectionState(meshesToSelect);
+    AppState.selectedThreeObjects = meshesToSelect;
+
+    // Update the inspector panel
+    if (newSelection.length === 1) {
+        
+        const singleItem = newSelection[0];
+        const { type, id, data } = singleItem;
+
+        // Fetch fresh details for the inspector
+        const details = await APIService.getObjectDetails(type, id);
+        if (!details) {
+            UIManager.showError(`Could not fetch details for ${type} ${id}`);
+            UIManager.clearInspector();
+            return;
         }
-    } else {
-        // Clear PV context and 3D selection if something else is selected
+        singleItem.data = details; // Ensure context has the latest data
+
+        // If one item is selected, populate the inspector as before
+        UIManager.populateInspector(singleItem, AppState.currentProjectState);
+
+        // If a physical volume is selected, cache its define references for live updates and select in 3D
+        if (type === 'physical_volume') {
+            SceneManager.selectObjectInSceneByPvId(id);
+            AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
+            AppState.selectedPVContext.pvId = id;
+            AppState.selectedPVContext.positionDefineName = typeof details.position === 'string' ? details.position : null;
+            AppState.selectedPVContext.rotationDefineName = typeof details.rotation === 'string' ? details.rotation : null;
+            
+            if (InteractionManager.getCurrentMode() !== 'observe') {
+                const selectedMesh = AppState.selectedThreeObjects[0];
+                if(selectedMesh) SceneManager.attachTransformControls(selectedMesh);
+            }
+        } else {
+            // Clear PV context and 3D selection if something else is selected
+            AppState.selectedPVContext.pvId = null;
+            AppState.selectedPVContext.positionDefineName = null;
+            AppState.selectedPVContext.rotationDefineName = null;
+            SceneManager.unselectAllInScene();
+            AppState.selectedThreeObjects = [];
+        }
+    } else if (newSelection.length > 1) {
+        UIManager.clearInspector();
+        UIManager.setInspectorTitle(`${newSelection.length} items selected`);
+        // Clear PV context since we can't edit transforms of multiple items yet
         AppState.selectedPVContext.pvId = null;
-        AppState.selectedPVContext.positionDefineName = null;
-        AppState.selectedPVContext.rotationDefineName = null;
-        SceneManager.unselectAllInScene();
-        AppState.selectedThreeObjects = [];
+    } else {
+        UIManager.clearInspector();
+        // Clear PV context
+        AppState.selectedPVContext.pvId = null;
     }
 }
 
 // Called by SceneManager when an object is clicked in 3D
-function handle3DSelection(selectedThreeObject) {
-    if (selectedThreeObject) {
-        const pvId = selectedThreeObject.userData.id;
-        // This will now trigger the async data fetch and context update via the hierarchy
-        UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId, AppState.currentProjectState);
+function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
+
+    let currentSelection = [...AppState.selectedHierarchyItems]; // Work with a copy
+    let newSelection = [];
+
+    const clickedPvContext = clickedMesh ? {
+        type: 'physical_volume',
+        id: clickedMesh.userData.id,
+        name: clickedMesh.userData.name,
+        data: clickedMesh.userData
+    } : null;
+
+    if (isCtrlHeld) {
+        const existingIndex = currentSelection.findIndex(item => item.id === clickedPvContext?.id);
+
+        if (existingIndex > -1) {
+            // Already selected -> remove it
+            currentSelection.splice(existingIndex, 1);
+            newSelection = currentSelection;
+        } else if (clickedPvContext) {
+            // Not selected -> add it
+            currentSelection.push(clickedPvContext);
+            newSelection = currentSelection;
+        } else {
+            newSelection = currentSelection; // Ctrl-clicking empty space does nothing
+        }
     } else {
-        UIManager.clearHierarchySelection();
-        AppState.selectedHierarchyItem = null;
-        AppState.selectedThreeObjects = [];
-        AppState.selectedPVContext.pvId = null;
+        // Not holding Ctrl, so just select the clicked item (or nothing)
+        if (clickedPvContext) {
+            newSelection = [clickedPvContext];
+        } else {
+            newSelection = [];
+        }
     }
+
+    // Now, update the hierarchy UI to reflect the new selection state
+    const newSelectedIds = newSelection.map(item => item.id);
+    UIManager.setHierarchySelection(newSelectedIds);
+
+    // And finally, call the central handler to update the rest of the app
+    handleHierarchySelection(newSelection);
+
+    //--
+    // Let the SceneManager handle the 3D visual state (highlighting, gizmo)
+    // SceneManager.updateSelectionState(selectedThreeObject, isCtrlHeld);
+
+    // // Now, update the application's logical state (what's shown in the hierarchy/inspector)
+    // AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
+
+    // // Clear the inspector and hierarchy selection if we have more than one object selected
+    // if (AppState.selectedThreeObjects.length > 1) {
+    //     UIManager.clearInspector();
+    //     UIManager.setInspectorTitle(`${AppState.selectedThreeObjects.length} items selected`); // New UIManager function
+    //     UIManager.clearHierarchySelection(); // We can enhance this to show multiple selections later
+    // } else if (AppState.selectedThreeObjects.length === 1) {
+    //     const pvId = AppState.selectedThreeObjects[0].userData.id;
+    //     UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId);
+    // } else {
+    //     UIManager.clearInspector();
+    //     UIManager.clearHierarchySelection();
+    //     AppState.selectedHierarchyItem = null;
+    // }
 }
 
 function handleTransformLive(liveObject) {
@@ -416,7 +535,6 @@ function handleEditSolid(solidData) {
 
 async function handleSolidEditorConfirm(data) {
     console.log("Solid Editor confirmed. Data:", data);
-    const selectionContext = getSelectionContext();
 
     // --- The data object from solidEditor.js now looks like one of these:
     // For creating a primitive: { isEdit: false, name, type, params, ... }
@@ -431,7 +549,7 @@ async function handleSolidEditorConfirm(data) {
             UIManager.showLoading("Updating boolean solid...");
             try {
                 const result = await APIService.updateBooleanSolid(data.id, data.recipe);
-                syncUIWithState(result, { type: 'solid', id: data.id });
+                syncUIWithState(result, [{ type: 'solid', id: data.id }]);
             } catch (error) {
                 UIManager.showError("Error updating boolean solid: " + (error.message || error));
             } finally {
@@ -511,7 +629,7 @@ async function handleSolidEditorConfirm(data) {
 
                     // After creation, we want to select the new solid
                     const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).pop();
-                    syncUIWithState(result, { type: 'solid', id: newSolidName });
+                    syncUIWithState(result, [{ type: 'solid', id: newSolidName }]);
                 }
             } catch (error) { 
                 UIManager.showError("Error adding solid: " + (error.message || error)); 
@@ -546,7 +664,7 @@ async function handleLVEditorConfirm(data) {
         UIManager.showLoading("Creating Logical Volume...");
         try {
             const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes);
-            syncUIWithState(result, { type: 'logical_volume', id: data.name });
+            syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
         } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
     }
@@ -588,7 +706,7 @@ async function handlePVEditorConfirm(data) {
             const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation);
             
             // After placement, we want the PARENT LV to remain selected
-            syncUIWithState(result, { type: 'logical_volume', id: data.parent_lv_name });
+            syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name }]);
         } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
     }
@@ -618,7 +736,7 @@ async function handleDefineEditorConfirm(data) {
             const result = await APIService.addDefine(data.name, data.type, data.value, data.unit, data.category);
             
             // After creating, set the selection to the newly created define
-            syncUIWithState(result, { type: 'define', id: data.name });
+            syncUIWithState(result, [{ type: 'define', id: data.name }]);
         } catch (error) {
             UIManager.showError("Error creating define: " + (error.message || error));
         } finally { UIManager.hideLoading(); }
@@ -648,7 +766,7 @@ async function handleMaterialEditorConfirm(data) {
             const result = await APIService.addMaterial(data.name, data.params);
 
             // After creating, set the selection to the newly created material
-            syncUIWithState(result, { type: 'material', id: data.name });
+            syncUIWithState(result, [{ type: 'material', id: data.name }]);
         } catch (error) {
             UIManager.showError("Error creating material: " + (error.message || error));
         } finally {

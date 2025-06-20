@@ -45,6 +45,7 @@ let callbacks = {
     onAddObjectClicked: () => {}, // To show modal
     onConfirmAddObject: (type, name, params) => {},
     onDeleteSelectedClicked: () => {},
+    onHierarchySelectionChanged: (selectedItems) => {},
     onModeChangeClicked: (mode) => {},
     onSnapToggleClicked: () => {},
     onSnapSettingsChanged: (transSnap, angleSnap) => {},
@@ -591,23 +592,36 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     //const contentDiv = item.querySelector('.tree-item-content');
     item.addEventListener('click', (event) => {
         event.stopPropagation();
-        const selected = document.querySelector('#left_panel_container .selected_item');
-        if(selected) selected.classList.remove('selected_item');
-        item.classList.add('selected_item');
-        callbacks.onHierarchyItemSelected({ type: itemType, id: itemIdForBackend, name: displayName, data: item.appData, element: item });
+        
+        const isCtrlHeld = event.ctrlKey;
+        const isShiftHeld = event.shiftKey; // We'll handle shift-click later, for now just pass it.
 
-        // --- Logic to enable/disable the +PV button ---
-        // A PV can be placed inside a LV. A physical volume in the tree represents
-        // a placed LV, so we can place things inside it.
-        if (itemType === 'physical_volume') {
-             // The parent context is the LOGICAL volume name of the item clicked
-            selectedParentContext = { name: (additionalData.lvData).name };
-        } else if (itemType === 'logical_volume') {
-            // This case handles clicking on the World volume in the tree
-             selectedParentContext = { name: fullItemData.name };
-        } else {
-            selectedParentContext = null; // Clear if something else is clicked
+        if (!isCtrlHeld) {
+            // If Ctrl is not held, clear all other selections first.
+            const allSelected = document.querySelectorAll('#left_panel_container .selected_item');
+            allSelected.forEach(sel => {
+                if (sel !== item) { // Don't deselect the item we are about to select
+                    sel.classList.remove('selected_item');
+                }
+            });
         }
+        
+        // Toggle the selection state of the currently clicked item
+        item.classList.toggle('selected_item');
+        
+        // Gather all currently selected items from the DOM
+        const selectedItemContexts = [];
+        document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
+            selectedItemContexts.push({
+                type: sel.dataset.type,
+                id: sel.dataset.id,
+                name: sel.dataset.name,
+                data: sel.appData // The full data object we stored earlier
+            });
+        });
+        
+        // Notify the main controller about the new selection state
+        callbacks.onHierarchySelectionChanged(selectedItemContexts);
     });
 
     // Listener for the new delete button
@@ -678,6 +692,21 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     return item;
 }
 
+// This function is called by main.js to sync 3D selection TO the hierarchy
+export function setHierarchySelection(selectedIds = []) {
+    const allItems = document.querySelectorAll('#left_panel_container li[data-id]');
+    allItems.forEach(item => {
+        // Check if the item's ID is in the array of IDs to select
+        const shouldBeSelected = selectedIds.includes(item.dataset.id);
+        item.classList.toggle('selected_item', shouldBeSelected);
+        
+        // Scroll the last selected item into view
+        if (shouldBeSelected && item.dataset.id === selectedIds[selectedIds.length - 1]) {
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    });
+}
+
 // Helper to find the parent LV element in the DOM tree
 function findParentLV(pvElement) {
     let current = pvElement.parentElement;
@@ -688,6 +717,15 @@ function findParentLV(pvElement) {
         current = current.parentElement;
     }
     return null; // Should ideally find the world
+}
+
+export function setInspectorTitle(titleText) {
+    const title = inspectorContentDiv.querySelector('h4');
+    if (title) {
+        title.textContent = titleText;
+    } else {
+        inspectorContentDiv.innerHTML = `<h4>${titleText}</h4>`;
+    }
 }
 
 // Return the selected parent LV
@@ -703,37 +741,6 @@ export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {
         }
         itemElement.click(); // Simulate a click to run the selection logic
         itemElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-}
-
-export function reselectHierarchyItem(itemType, itemId, projectState) {
-    // Find the DOM element in the currently active tab
-    // Note: LVs and PVs can appear in different tabs. We need to find the right one.
-    let itemElement;
-    if (itemType === 'physical_volume') {
-        itemElement = document.querySelector(`#tab_structure li[data-id="${itemId}"]`);
-    } else if (itemType === 'logical_volume') {
-        itemElement = document.querySelector(`#tab_lvolumes li[data-id="${itemId}"]`);
-        // It might also be the World volume in the structure tab
-        if (!itemElement) {
-             itemElement = document.querySelector(`#tab_structure li[data-id="${itemId}"]`);
-        }
-    } else {
-        // For defines, solids, materials
-        itemElement = document.querySelector(`.tab_pane.active li[data-id="${itemId}"]`);
-    }
-    
-    if (itemElement) {
-        // Programmatically click the element. This will trigger the 'click' event
-        // listener we set up in `createTreeItem`, which in turn calls the
-        // `onHierarchyItemSelected` callback in main.js. This is the correct way
-        // to re-establish the full selection state.
-        itemElement.click();
-        itemElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    } else {
-        console.warn(`Could not re-select item: type=${itemType}, id=${itemId}`);
-        clearInspector();
-        clearHierarchySelection();
     }
 }
 
