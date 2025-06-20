@@ -32,24 +32,33 @@ async function initializeApp() {
     // Initialize UI elements and pass callback handlers for UI-triggered actions
     UIManager.initUI({
         onNewProjectClicked: handleNewProject,
-        onLoadGdmlClicked: () => UIManager.triggerFileInput('gdmlFile'), // UIManager handles its own file input now
-        onLoadProjectClicked: () => UIManager.triggerFileInput('projectFile'),
-        onGdmlFileSelected: handleLoadGdml, // Files are passed to handlers
+        // Open Project Handlers
+        onOpenGdmlClicked: handleOpenGdmlProject,
+        onOpenProjectClicked: handleOpenJsonProject,
+        // Import Part Handlers
+        onImportGdmlClicked: handleImportGdmlPart,
+        onImportProjectClicked: handleImportJsonPart,
+        // Other File Handlers
+        onSaveProjectClicked: handleSaveProject,
+        onExportGdmlClicked: handleExportGdml,
+        // Add/edit solids
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
+        // Add/edit defines
         onAddDefineClicked: handleAddDefine,
         onEditDefineClicked: handleEditDefine,
+        // Add/edit materials
         onAddMaterialClicked: handleAddMaterial,
         onEditMaterialClicked: handleEditMaterial,
+        // Add/edit LVs
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
+        // Add/edit PVs
         onAddPVClicked: handleAddPV,
         onEditPVClicked: handleEditPV,
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
         onDeleteSpecificItemClicked: handleDeleteSpecificItem,
-        onProjectFileSelected: handleLoadProject,
-        onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
         onConfirmAddObject: handleAddObject, // Data from modal comes to this handler
         onDeleteSelectedClicked: handleDeleteSelected,
@@ -209,6 +218,70 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
 // --- Handler Functions (Act as Controllers/Mediators) ---
 
+async function handleOpenGdmlProject(file) {
+    if (!file) return;
+    if (!UIManager.confirmAction("This will replace your current project. Are you sure?")) {
+        document.getElementById('gdmlFile').value = null; // Reset input
+        return;
+    }
+    UIManager.showLoading("Opening GDML Project...");
+    try {
+        const result = await APIService.openGdmlProject(file);
+        syncUIWithState(result);
+    } catch (error) { 
+        UIManager.showError("Failed to open GDML Project: " + (error.message || error));
+    } finally {
+        document.getElementById('gdmlFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
+async function handleOpenJsonProject(file) {
+    if (!file) return;
+    if (!UIManager.confirmAction("This will replace your current project. Are you sure?")) {
+        document.getElementById('projectFile').value = null; // Reset input
+        return;
+    }
+    UIManager.showLoading("Opening JSON Project...");
+    try {
+        const result = await APIService.openJsonProject(file);
+        syncUIWithState(result);
+    } catch (error) { 
+        UIManager.showError("Failed to open JSON Project: " + (error.message || error));
+    } finally {
+        document.getElementById('projectFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
+async function handleImportGdmlPart(file) {
+    if (!file) return;
+    UIManager.showLoading("Importing GDML Part...");
+    try {
+        const result = await APIService.importGdmlPart(file);
+        syncUIWithState(result); // The sync function handles the refresh perfectly
+    } catch (error) { 
+        UIManager.showError("Failed to import GDML Part: " + (error.message || error));
+    } finally {
+        document.getElementById('gdmlPartFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
+async function handleImportJsonPart(file) {
+    if (!file) return;
+    UIManager.showLoading("Importing JSON Part...");
+    try {
+        const result = await APIService.importJsonPart(file);
+        syncUIWithState(result);
+    } catch (error) { 
+        UIManager.showError("Failed to import JSON Part: " + (error.message || error));
+    } finally {
+        document.getElementById('jsonPartFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
 // Handler for the "New Project" button
 async function handleNewProject() {
     if (!UIManager.confirmAction("This will clear the current session. Are you sure?")) return;
@@ -218,34 +291,6 @@ async function handleNewProject() {
         syncUIWithState(result); // No selection to restore
     } catch (error) { UIManager.showError("Failed to create new project: " + error.message); }
     finally { UIManager.hideLoading(); }
-}
-
-async function handleLoadGdml(file) {
-    if (!file) return;
-    UIManager.showLoading("Processing GDML...");
-    try {
-        const result = await APIService.loadGdmlFile(file);
-        syncUIWithState(result); // No selection to restore
-    } catch (error) { UIManager.showError("Failed to load GDML: " + error.message); }
-    finally { 
-        // Reset the file input so the same file can be loaded again.
-        document.getElementById('gdmlFile').value = null;
-        UIManager.hideLoading(); 
-    }
-}
-
-async function handleLoadProject(file) {
-    if (!file) return;
-    UIManager.showLoading("Loading project...");
-    try {
-        const result = await APIService.loadProjectFile(file);
-        syncUIWithState(result); // No selection to restore
-    } catch (error) { UIManager.showError("Failed to load project: " + error.message); }
-    finally { 
-        // Reset the file input so the same file can be loaded again.
-        document.getElementById('projectFile').value = null;
-        UIManager.hideLoading(); 
-    }
 }
 
 async function handleSaveProject() {
@@ -453,26 +498,6 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     // And finally, call the central handler to update the rest of the app
     handleHierarchySelection(newSelection);
 
-    //--
-    // Let the SceneManager handle the 3D visual state (highlighting, gizmo)
-    // SceneManager.updateSelectionState(selectedThreeObject, isCtrlHeld);
-
-    // // Now, update the application's logical state (what's shown in the hierarchy/inspector)
-    // AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
-
-    // // Clear the inspector and hierarchy selection if we have more than one object selected
-    // if (AppState.selectedThreeObjects.length > 1) {
-    //     UIManager.clearInspector();
-    //     UIManager.setInspectorTitle(`${AppState.selectedThreeObjects.length} items selected`); // New UIManager function
-    //     UIManager.clearHierarchySelection(); // We can enhance this to show multiple selections later
-    // } else if (AppState.selectedThreeObjects.length === 1) {
-    //     const pvId = AppState.selectedThreeObjects[0].userData.id;
-    //     UIManager.selectHierarchyItemByTypeAndId('physical_volume', pvId);
-    // } else {
-    //     UIManager.clearInspector();
-    //     UIManager.clearHierarchySelection();
-    //     AppState.selectedHierarchyItem = null;
-    // }
 }
 
 function handleTransformLive(liveObject) {

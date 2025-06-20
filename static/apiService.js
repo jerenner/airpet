@@ -57,15 +57,9 @@ export async function newProject() {
     return handleResponse(response);
 }
 
-/**
- * Loads a GDML file by sending it to the backend for processing.
- * @param {File} gdmlFile The GDML file object from a file input.
- * @returns {Promise<Array>} A promise that resolves to the Three.js scene description array.
- */
-export async function loadGdmlFile(gdmlFile) {
+export async function openGdmlProject(gdmlFile) {
     const formData = new FormData();
     formData.append('gdmlFile', gdmlFile);
-
     const response = await fetch(`${API_BASE_URL}/process_gdml`, {
         method: 'POST',
         body: formData,
@@ -73,16 +67,30 @@ export async function loadGdmlFile(gdmlFile) {
     return handleResponse(response);
 }
 
-/**
- * Loads a project JSON file by sending it to the backend.
- * @param {File} projectFile The project JSON file object from a file input.
- * @returns {Promise<Array>} A promise that resolves to the Three.js scene description array.
- */
-export async function loadProjectFile(projectFile) {
+export async function openJsonProject(projectFile) {
     const formData = new FormData();
     formData.append('projectFile', projectFile);
-
     const response = await fetch(`${API_BASE_URL}/load_project_json`, {
+        method: 'POST',
+        body: formData,
+    });
+    return handleResponse(response);
+}
+
+export async function importGdmlPart(partFile) {
+    const formData = new FormData();
+    formData.append('partFile', partFile);
+    const response = await fetch(`${API_BASE_URL}/import_gdml_part`, {
+        method: 'POST',
+        body: formData,
+    });
+    return handleResponse(response);
+}
+
+export async function importJsonPart(partFile) {
+    const formData = new FormData();
+    formData.append('partFile', partFile);
+    const response = await fetch(`${API_BASE_URL}/import_json_part`, {
         method: 'POST',
         body: formData,
     });

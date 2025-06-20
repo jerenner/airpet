@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
 
 // --- Module-level variables for DOM elements ---
-let gdmlFileInput, newProjectButton, loadGdmlButton, exportGdmlButton,
-    saveProjectButton, loadProjectButton, projectFileInput,
+let newProjectButton, saveProjectButton, exportGdmlButton,
+    openGdmlButton, openProjectButton, importGdmlButton, importProjectButton,
+    gdmlFileInput, projectFileInput, gdmlPartFileInput, jsonPartFileInput,
     deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, //modeScaleButton,
     toggleWireframeButton, toggleGridButton,
@@ -28,10 +29,15 @@ let selectedParentContext = null;
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
+    
+    onOpenGdmlClicked: (file) => {},
+    onOpenProjectClicked: (file) => {},
+    onImportGdmlClicked: (file) => {},
+    onImportProjectClicked: (file) => {},
     onNewProjectClicked: () => {},
-    onLoadGdmlClicked: () => {},
-    onLoadProjectClicked: () => {},
-    onGdmlFileSelected: (file) => {},
+    onSaveProjectClicked: () => {},
+    onExportGdmlClicked: () => {},
+
     onEditSolidClicked: (solidData) => {},
     onAddDefineClicked: () => {},
     onEditDefineClicked: (defineData) => {},
@@ -39,9 +45,6 @@ let callbacks = {
     onEditMaterialClicked: (d)=>{},
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
-    onProjectFileSelected: (file) => {},
-    onSaveProjectClicked: () => {},
-    onExportGdmlClicked: () => {},
     onAddObjectClicked: () => {}, // To show modal
     onConfirmAddObject: (type, name, params) => {},
     onDeleteSelectedClicked: () => {},
@@ -62,13 +65,25 @@ export function initUI(cb) {
     callbacks = {...callbacks, ...cb}; // Merge provided callbacks
 
     // Get Menu Buttons
+    // Open Project
+    openGdmlButton = document.getElementById('openGdmlButton')
+    gdmlFileInput = document.getElementById('gdmlFile')
+    
+    openProjectButton = document.getElementById('openProjectButton')
+    projectFileInput = document.getElementById('projectFile')
+
+    // Import Parts
+    importGdmlButton = document.getElementById('importGdmlButton')
+    gdmlPartFileInput = document.getElementById('gdmlPartFile')
+
+    importProjectButton = document.getElementById('importProjectButton')
+    jsonPartFileInput = document.getElementById('jsonPartFile')
+
+    // Other File menu options
     newProjectButton = document.getElementById('newProjectButton');
-    loadGdmlButton = document.getElementById('loadGdmlButton');
-    gdmlFileInput = document.getElementById('gdmlFile');
-    exportGdmlButton = document.getElementById('exportGdmlButton');
     saveProjectButton = document.getElementById('saveProjectButton');
-    loadProjectButton = document.getElementById('loadProjectButton');
-    projectFileInput = document.getElementById('projectFile');
+    exportGdmlButton = document.getElementById('exportGdmlButton');
+
     deleteSelectedObjectButton = document.getElementById('deleteSelectedObjectButton');
 
     // Add buttons
@@ -117,13 +132,19 @@ export function initUI(cb) {
     callbacks.onSnapSettingsChanged(initialTransSnap, initialAngleSnap);
 
     // Attach Event Listeners
+    openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
+    openProjectButton.addEventListener('click', () => triggerFileInput('projectFile'));
+    importGdmlButton.addEventListener('click', () => triggerFileInput('gdmlPartFile'));
+    importProjectButton.addEventListener('click', () => triggerFileInput('jsonPartFile'));
+
+    gdmlFileInput.addEventListener('change', (e) => callbacks.onOpenGdmlClicked(e.target.files[0]));
+    projectFileInput.addEventListener('change', (e) => callbacks.onOpenProjectClicked(e.target.files[0]));
+    gdmlPartFileInput.addEventListener('change', (e) => callbacks.onImportGdmlClicked(e.target.files[0]));
+    jsonPartFileInput.addEventListener('change', (e) => callbacks.onImportProjectClicked(e.target.files[0]));
+
     newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
-    loadGdmlButton.addEventListener('click', callbacks.onLoadGdmlClicked);
-    gdmlFileInput.addEventListener('change', (event) => callbacks.onGdmlFileSelected(event.target.files[0]));
-    exportGdmlButton.addEventListener('click', callbacks.onExportGdmlClicked);
     saveProjectButton.addEventListener('click', callbacks.onSaveProjectClicked);
-    loadProjectButton.addEventListener('click', callbacks.onLoadProjectClicked);
-    projectFileInput.addEventListener('change', (event) => callbacks.onProjectFileSelected(event.target.files[0]));
+    exportGdmlButton.addEventListener('click', callbacks.onExportGdmlClicked);
 
     deleteSelectedObjectButton.addEventListener('click', callbacks.onDeleteSelectedClicked);
 

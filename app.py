@@ -8,6 +8,7 @@ from flask_cors import CORS
 from src.project_manager import ProjectManager
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
+from src.geometry_types import GeometryState
 
 app = Flask(__name__)
 CORS(app)
@@ -68,6 +69,56 @@ def new_project_route():
     create_empty_project()
 
     return create_success_response("New project created.")
+
+@app.route('/import_gdml_part', methods=['POST'])
+def import_gdml_part_route():
+    if 'partFile' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['partFile']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    
+    try:
+        gdml_content_str = file.read().decode('utf-8')
+        # Parse into a temporary state object
+        temp_state = project_manager.gdml_parser.parse_gdml_string(gdml_content_str)
+        # Call the new merge method
+        success, error_msg = project_manager.merge_from_state(temp_state)
+        if success:
+            return create_success_response("GDML part(s) imported successfully.")
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to merge GDML part."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred during GDML part import: {e}")
+        traceback.print_exc()
+        return jsonify({"error": "An unexpected error occurred on the server while importing GDML."}), 500
+
+
+@app.route('/import_json_part', methods=['POST'])
+def import_json_part_route():
+    if 'partFile' not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files['partFile']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    try:
+        json_string = file.read().decode('utf-8')
+        data = json.loads(json_string)
+        # Create a temporary GeometryState object from the JSON data
+        temp_state = GeometryState.from_dict(data)
+        # Call the new merge method
+        success, error_msg = project_manager.merge_from_state(temp_state)
+        if success:
+            return create_success_response("JSON part(s) imported successfully.")
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to merge JSON part."}), 500
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON file format"}), 400
+    except Exception as e:
+        print(f"An unexpected error occurred during JSON part import: {e}")
+        traceback.print_exc()
+        return jsonify({"error": f"An unexpected error occurred on the server while importing JSON: {str(e)}"}), 500
 
 @app.route('/process_gdml', methods=['POST'])
 def process_gdml_route():
