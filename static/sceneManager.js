@@ -1,20 +1,22 @@
 // static/sceneManager.js
 import * as THREE from 'three';
+import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { FlyControls } from 'three/addons/controls/FlyControls.js';
+
+import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 
 import { getCurrentMode as getInteractionManagerMode } from './interactionManager.js';
 
-// --- Module-level variables (private to this module) ---
-let scene;
-let camera;
-let renderer;
-let viewerContainer;
-let orbitControls;
-let transformControls;
-let flyControls;
+// --- Module-level variables ---
+let scene, camera, renderer, viewerContainer;
+let orbitControls, transformControls, flyControls;
 let clock; // For FlyControls delta time
 
 const geometryGroup = new THREE.Group(); // Parent for all loaded GDML geometry
@@ -25,6 +27,12 @@ let isWireframeMode = false;
 let isGridVisible = true;
 let currentCameraMode = 'orbit';
 
+// Selection box
+let selectionBox;
+const selectionBoxElement = document.getElementById('selection_box');
+let isBoxSelecting = false;
+let startPoint = new THREE.Vector2();
+
 // Set to remember visibility state
 const hiddenPvIds = new Set();
 
@@ -33,6 +41,7 @@ let onObjectSelectedCallback = null; // Called when an object is selected in 3D 
 let onObjectTransformEndCallback = null; // Called after a TransformControls operation completes -> (transformedMesh)
 let getSnapSettingsCallback = null; // Function to get current snap settings -> {snapEnabled, translationSnap, rotationSnap}
 let onObjectTransformLiveCallback = null; // callback for live updates
+let onMultiObjectSelectedCallback = null;
 
 // --- Initialization ---
 export function initScene(callbacks) {
@@ -40,12 +49,13 @@ export function initScene(callbacks) {
     onObjectTransformEndCallback = callbacks.onObjectTransformEnd;
     onObjectTransformLiveCallback = callbacks.onObjectTransformLive;
     getSnapSettingsCallback = callbacks.getInspectorSnapSettings;
+    onMultiObjectSelectedCallback = callbacks.onMultiObjectSelected;
 
     // Basic Scene Setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xdddddd);
 
-    viewerContainer = document.getElementById('viewer_container'); // Assumes this ID exists
+    viewerContainer = document.getElementById('viewer_container');
 
     // Camera
     const aspectRatio = viewerContainer.clientWidth / viewerContainer.clientHeight;
@@ -111,6 +121,9 @@ export function initScene(callbacks) {
 
     clock = new THREE.Clock();
 
+    // Selection box
+    selectionBox = new SelectionBox(camera, geometryGroup);
+
     // Helpers
     axesHelper = new THREE.AxesHelper(300);
     scene.add(axesHelper);
@@ -145,7 +158,87 @@ let mouse; // Normalized device coordinates
 function initRaycaster(containerElement) {
     raycaster = new THREE.Raycaster();
     mouse = new THREE.Vector2();
-    containerElement.addEventListener('pointerdown', handlePointerDownForSelection, false);
+    
+    // Add event listeners
+    containerElement.addEventListener('pointerdown', onPointerDown);
+    containerElement.addEventListener('pointermove', onPointerMove);
+    containerElement.addEventListener('pointerup', onPointerUp);
+    
+    // Prevent the default browser context menu on right-click
+    containerElement.addEventListener('contextmenu', event => event.preventDefault());
+}
+
+function onPointerDown(event) {
+
+    // Check for Shift + Left-Click to start box selection
+    if (event.shiftKey && event.button === 0) {
+        isBoxSelecting = true;
+        // Disable orbit controls to prevent camera movement
+        orbitControls.enabled = false;
+
+        selectionBoxElement.style.display = 'block';
+        
+        // Get coordinates relative to the viewer container
+        const rect = viewerContainer.getBoundingClientRect();
+        startPoint.set(event.clientX - rect.left, event.clientY - rect.top);
+        
+        selectionBoxElement.style.left = `${startPoint.x}px`;
+        selectionBoxElement.style.top = `${startPoint.y}px`;
+        selectionBoxElement.style.width = '0px';
+        selectionBoxElement.style.height = '0px';
+
+    } else {
+        // If not box-selecting, use our existing single-click logic
+        handlePointerDownForSelection(event);
+    }
+}
+
+function onPointerMove(event) {
+    if (!isBoxSelecting) return;
+
+    const rect = viewerContainer.getBoundingClientRect();
+    const currentX = event.clientX - rect.left;
+    const currentY = event.clientY - rect.top;
+
+    // Update the 2D box's dimensions
+    selectionBoxElement.style.left = `${Math.min(currentX, startPoint.x)}px`;
+    selectionBoxElement.style.top = `${Math.min(currentY, startPoint.y)}px`;
+    selectionBoxElement.style.width = `${Math.abs(currentX - startPoint.x)}px`;
+    selectionBoxElement.style.height = `${Math.abs(currentY - startPoint.y)}px`;
+}
+
+function onPointerUp(event) {
+    if (!isBoxSelecting) return;
+    
+    const rect = viewerContainer.getBoundingClientRect();
+    const endPoint = new THREE.Vector2();
+    endPoint.x = event.clientX - rect.left;
+    endPoint.y = event.clientY - rect.top;
+
+    // Don't select if the box is just a point (a click, not a drag)
+    if (startPoint.distanceTo(endPoint) < 5) return;
+
+    // --- Perform the 3D Selection ---
+    // Convert 2D screen coordinates to normalized device coordinates (-1 to +1)
+    const startNDC = new THREE.Vector3( (startPoint.x / rect.width) * 2 - 1, -(startPoint.y / rect.height) * 2 + 1, 0.5);
+    const endNDC = new THREE.Vector3( (endPoint.x / rect.width) * 2 - 1, -(endPoint.y / rect.height) * 2 + 1, 0.5);
+
+    // The SelectionBox helper does the hard work of finding meshes inside the frustum
+    const allSelectedMeshes = selectionBox.select(startNDC, endNDC);
+    const visibleSelectedMeshes = allSelectedMeshes.filter(mesh => mesh.visible);
+
+    // Find the actual top-level mesh for each part found
+    const finalSelection = visibleSelectedMeshes.map(mesh => findActualMesh(mesh));
+    
+    // Pass the array of selected meshes to the main controller
+    if (onMultiObjectSelectedCallback) {
+        onMultiObjectSelectedCallback(finalSelection, event.ctrlKey);
+    }
+
+    // Cleanup
+    isBoxSelecting = false;
+    selectionBoxElement.style.display = 'none';
+    orbitControls.enabled = true; // Re-enable orbit controls
 }
 
 function handlePointerDownForSelection(event) {

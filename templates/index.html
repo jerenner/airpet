@@ -528,6 +528,14 @@
             font-family: monospace;
         }
 
+        /* Selection box */
+        .selection-box {
+            position: absolute;
+            border: 1px solid #007bff;
+            background-color: rgba(0, 123, 255, 0.2);
+            pointer-events: none; /* Allows mouse events to pass through to the canvas */
+        }
+
     </style>
 </head>
 <body>
@@ -663,6 +671,8 @@
             </ul>
         </div>
         <div id="viewer_container"></div>
+        <!-- The selection box element -->
+        <div id="selection_box" class="selection-box" style="display:none;"></div>
         <!-- Old floating info panel -->
         <!--<div id="info_panel">
             <h3>Object Information</h3>

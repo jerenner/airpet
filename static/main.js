@@ -78,6 +78,7 @@ async function initializeApp() {
         onObjectSelectedIn3D: handle3DSelection,          // Callback when object clicked in 3D scene
         onObjectTransformEnd: handleTransformEnd,          // Callback when TransformControls drag/rotate/scale ends
         onObjectTransformLive: handleTransformLive,       // Live transformations
+        onMultiObjectSelected: handle3DMultiSelection, // Selector box
         getInspectorSnapSettings: () => { // Provide snap settings to SceneManager/TransformControls
             return { 
                 snapEnabled: InteractionManager.isSnapEnabled(), 
@@ -217,6 +218,30 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 }
 
 // --- Handler Functions (Act as Controllers/Mediators) ---
+
+function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
+    let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
+    const currentIds = new Set(currentSelection.map(item => item.id));
+
+    // Add new items from the box selection, avoiding duplicates
+    selectedMeshes.forEach(mesh => {
+        if (!currentIds.has(mesh.userData.id)) {
+            currentSelection.push({
+                type: 'physical_volume',
+                id: mesh.userData.id,
+                name: mesh.userData.name,
+                data: mesh.userData
+            });
+        }
+    });
+
+    // Sync the hierarchy list UI
+    const newSelectedIds = currentSelection.map(item => item.id);
+    UIManager.setHierarchySelection(newSelectedIds);
+
+    // Call the main handler to update the rest of the app state
+    handleHierarchySelection(currentSelection);
+}
 
 async function handleOpenGdmlProject(file) {
     if (!file) return;
