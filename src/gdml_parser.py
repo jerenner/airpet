@@ -273,8 +273,69 @@ class GDMLParser:
         
         return {"position": pos, "rotation": rot}
 
+    def _build_boolean_recipe(self, top_level_boolean, all_solids):
+        """
+        Traces a nested GDML boolean structure back to its base primitive
+        and then builds a flat recipe list.
+        """
+        lineage = [top_level_boolean]
+        consumed_names = {top_level_boolean.name}
+        current_boolean = top_level_boolean
+
+        # 1. Trace back to the base solid by following 'first_ref'
+        while True:
+            first_ref = current_boolean.parameters.get('first_ref')
+            if not first_ref:
+                raise ValueError(f"Boolean solid '{current_boolean.name}' is missing 'first_ref'.")
+                
+            first_solid = all_solids.get(first_ref)
+            if not first_solid:
+                 raise ValueError(f"Could not find solid '{first_ref}' referenced by '{current_boolean.name}'.")
+
+            if first_solid.type in ['union', 'subtraction', 'intersection']:
+                lineage.insert(0, first_solid)
+                consumed_names.add(first_solid.name)
+                current_boolean = first_solid
+            else:
+                # It's a primitive, so we found the base
+                base_solid_ref = first_solid.name
+                break
+        
+        # 2. Build the recipe forward from the discovered lineage
+        recipe = []
+        
+        # The first operation in the chain defines the transform for the base solid
+        first_op_in_chain = lineage[0]
+        base_transform = first_op_in_chain.parameters.get('transform_first')
+        
+        recipe.append({
+            'op': 'base',
+            'solid_ref': base_solid_ref,
+            'transform': base_transform
+        })
+        
+        # Add the subsequent operations from the chain
+        for boolean_op in lineage:
+            second_ref = boolean_op.parameters.get('second_ref')
+            if not second_ref:
+                 raise ValueError(f"Boolean solid '{boolean_op.name}' is missing 'second_ref'.")
+
+            op_name = boolean_op.type
+            transform = boolean_op.parameters.get('transform_second')
+            
+            recipe.append({
+                'op': op_name,
+                'solid_ref': second_ref,
+                'transform': transform
+            })
+
+        return recipe, consumed_names
+
     def _parse_solids(self, solids_element):
         if solids_element is None: return
+
+        temp_solids = {} # Store all parsed solids here first
+
         for solid_el in solids_element:
             name_attr = solid_el.get('name')
             if not name_attr: continue
@@ -607,6 +668,45 @@ class GDMLParser:
                     if facet_data['vertex_refs']:
                         facets.append(facet_data)
                 params['facets'] = facets
+            # Parsing of booleans
+            elif solid_type in ['union', 'subtraction', 'intersection']:
+                first_ref = solid_el.find('first').get('ref')
+                second_ref = solid_el.find('second').get('ref')
+                transform = self._resolve_transform(solid_el)
+                
+                first_transform = {"position": {'x':0,'y':0,'z':0}, "rotation": {'x':0,'y':0,'z':0}}
+                fp_el = solid_el.find('firstposition')
+                fp_ref_el = solid_el.find('firstpositionref')
+                fr_el = solid_el.find('firstrotation')
+                fr_ref_el = solid_el.find('firstrotationref')
+
+                if fp_el is not None:
+                     unit = fp_el.get('unit', 'mm')
+                     first_transform['position'] = {
+                        'x': self._evaluate_expression(fp_el.get('x'), get_unit_value(unit, "length")),
+                        'y': self._evaluate_expression(fp_el.get('y'), get_unit_value(unit, "length")),
+                        'z': self._evaluate_expression(fp_el.get('z'), get_unit_value(unit, "length"))
+                     }
+                elif fp_ref_el is not None:
+                    pos_def = self.geometry_state.get_define(fp_ref_el.get('ref'))
+                    if pos_def and pos_def.type == 'position': first_transform['position'] = pos_def.value
+
+                if fr_el is not None:
+                    unit = fr_el.get('unit', 'rad')
+                    first_transform['rotation'] = {
+                        'x': self._evaluate_expression(fr_el.get('x'), get_unit_value(unit, "angle")),
+                        'y': self._evaluate_expression(fr_el.get('y'), get_unit_value(unit, "angle")),
+                        'z': self._evaluate_expression(fr_el.get('z'), get_unit_value(unit, "angle"))
+                    }
+                elif fr_ref_el is not None:
+                    rot_def = self.geometry_state.get_define(fr_ref_el.get('ref'))
+                    if rot_def and rot_def.type == 'rotation': first_transform['rotation'] = rot_def.value
+
+                params = {
+                    'first_ref': first_ref, 'second_ref': second_ref,
+                    'transform_second': transform,
+                    'transform_first': first_transform
+                }
 
             # TODO: Add other solids: reflectedSolid, scaledSolid
             # For reflectedSolid and scaledSolid, store ref to original solid and the transformation params.
@@ -617,7 +717,36 @@ class GDMLParser:
                 params['attributes_raw'] = {k: v for k, v in solid_el.attrib.items() if k != 'name'}
 
             if params or solid_type == 'tessellated': # Tessellated might have empty params dict if facets are complex
-                self.geometry_state.add_solid(Solid(name, solid_type, params))
+                temp_solids[name] = Solid(name, solid_type, params)
+                #self.geometry_state.add_solid(Solid(name, solid_type, params))
+        
+        # --- Post-processing step for booleans ---
+        final_solids = {}
+        consumed_solids = set()
+
+        for name, solid_obj in temp_solids.items():
+            if name in consumed_solids:
+                continue
+
+            if solid_obj.type in ['union', 'subtraction', 'intersection']:
+                try:
+                    recipe, consumed_names = self._build_boolean_recipe(solid_obj, temp_solids)
+                    
+                    # Create the new "virtual" boolean solid
+                    virtual_boolean = Solid(name, "boolean", {"recipe": recipe})
+                    final_solids[name] = virtual_boolean
+                    
+                    consumed_solids.update(consumed_names)
+                except (ValueError, KeyError) as e:
+                    print(f"Warning: Could not process boolean solid '{name}'. It may be malformed or reference a missing solid. Error: {e}")
+                    # As a fallback, add the unprocessed boolean so it doesn't break other references.
+                    if name not in final_solids:
+                        final_solids[name] = solid_obj
+            else: # It's a primitive or other non-boolean solid
+                final_solids[name] = solid_obj
+
+        # Replace the solids in the state with the processed ones
+        self.geometry_state.solids = final_solids
 
     def _parse_structure(self, structure_element):
         if structure_element is None: return
