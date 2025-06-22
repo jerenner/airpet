@@ -17,6 +17,7 @@ app = Flask(__name__)
 CORS(app)
 
 ai_model = "gemma3:27b"
+ai_timeout = 3000 # in seconds
 project_manager = ProjectManager()
 
 # --- Helper Functions ---
@@ -519,7 +520,7 @@ def ai_process_prompt_route():
                 "stream": False,
                 "format": "json" # Ollama's format parameter is very helpful here!
             },
-            timeout=120 # 2 minute timeout
+            timeout=ai_timeout
         )
         ollama_response.raise_for_status() # Raise an exception for bad status codes
 

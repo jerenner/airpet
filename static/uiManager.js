@@ -812,6 +812,37 @@ export function setAiButtonState(isEnabled, title = null) {
     }
 }
 
+/**
+ * Sets the state of the AI interaction elements.
+ * @param {string} state Can be 'idle', 'loading', or 'disabled'.
+ * @param {string|null} title Optional tooltip to set on the button.
+ */
+export function setAiPanelState(state, title = null) {
+    if (!aiPromptInput || !aiGenerateButton) return;
+
+    switch (state) {
+        case 'loading':
+            aiPromptInput.disabled = true;
+            aiGenerateButton.disabled = true;
+            aiGenerateButton.classList.add('loading');
+            aiGenerateButton.title = "Processing...";
+            break;
+        case 'disabled':
+            aiPromptInput.disabled = true;
+            aiGenerateButton.disabled = true;
+            aiGenerateButton.classList.remove('loading');
+            aiGenerateButton.title = title || "AI service is unavailable.";
+            break;
+        case 'idle':
+        default:
+            aiPromptInput.disabled = false;
+            aiGenerateButton.disabled = false;
+            aiGenerateButton.classList.remove('loading');
+            aiGenerateButton.title = title || "Generate with AI";
+            break;
+    }
+}
+
 // --- Add Object Modal ---
 // export function showAddObjectModal(preselectedType = 'define_position') {
 //     if(newObjectNameInput) newObjectNameInput.value = '';

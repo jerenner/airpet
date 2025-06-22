@@ -270,14 +270,49 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: background-color 0.2s;
+            position: relative;
+            transition: background-color 0.2s, color 0.2s;
         }
         #ai_generate_button:hover {
             background-color: #2563eb;
         }
         #ai_generate_button:disabled {
-            background-color: #a0aec0; /* A muted gray */
+            background-color: #a0aec0;
             cursor: not-allowed;
+        }
+        #ai_prompt_input:disabled {
+            background-color: #e2e8f0; /* Lighter gray for disabled input */
+            color: #718096;
+            cursor: not-allowed;
+        }
+
+        /* AI loader */
+        .loader {
+            border: 3px solid #f3f3f3; /* Light grey */
+            border-top: 3px solid #ffffff; /* White */
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #ai_generate_button.loading .button-text {
+            visibility: hidden; /* Hide the '➤' text when loading */
+        }
+        
+        #ai_generate_button .loader {
+            display: none; /* Hide loader by default */
+            position: absolute; /* Position it in the center of the button */
+            left: 50%;
+            top: 50%;
+            margin-left: -10px; /* (width / 2) */
+            margin-top: -10px; /* (height / 2) */
+        }
+        #ai_generate_button.loading .loader {
+            display: block; /* Show loader when button has .loading class */
         }
 
         /* Solid editor */
@@ -739,7 +774,10 @@
         <!-- AI PANEL --- -->
         <div id="ai_panel">
             <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
-            <button id="ai_generate_button" title="Generate with AI">➤</button>
+            <button id="ai_generate_button" title="Generate with AI">
+                <span class="button-text">➤</span>
+                <div class="loader"></div>
+            </button>
         </div>
     </div>
     <!-- Old floating info panel -->

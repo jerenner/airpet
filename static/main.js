@@ -865,37 +865,39 @@ function handleShowAll() {
  * Checks the AI service status and updates the UI accordingly.
  */
 async function checkAndSetAiStatus() {
-    // Disable the button by default while checking
-    UIManager.setAiButtonState(false, "Checking AI service connection...");
+    // Disable the panel by default while checking
+    UIManager.setAiPanelState('disabled', "Checking AI service connection...");
     console.log("Checking AI service status...");
 
     try {
         const status = await APIService.checkAiServiceStatus();
         if (status.success) {
-            UIManager.setAiButtonState(true, "Generate with AI");
+            UIManager.setAiPanelState('idle', "Generate with AI");
             console.log("AI service is online.");
         } else {
-            UIManager.setAiButtonState(false, `AI service is offline: ${status.error}`);
+            UIManager.setAiPanelState('disabled', `AI service is offline: ${status.error}`);
             console.error("AI service check failed:", status.error);
         }
     } catch (error) {
-        UIManager.setAiButtonState(false, `AI service is offline: ${error.message}`);
+        UIManager.setAiPanelState('disabled', `AI service is offline: ${error.message}`);
         console.error("Failed to check AI service status:", error.message);
     }
 }
 
 async function handleAiGenerate(promptText) {
     UIManager.showLoading("Sending prompt to AI Assistant...");
+    UIManager.setAiPanelState('loading'); // Set loading state
+    
     try {
         const result = await APIService.processAiPrompt(promptText);
-        // The existing sync function is perfect for this!
         syncUIWithState(result); 
-        // Clear the prompt on success
         UIManager.clearAiPrompt();
         UIManager.showNotification("AI command processed successfully!");
     } catch (error) {
         UIManager.showError("AI Assistant Error: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
+        // Set state back to idle, regardless of success or failure
+        UIManager.setAiPanelState('idle'); 
     }
 }
