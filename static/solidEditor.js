@@ -306,12 +306,12 @@ function renderParamsUI(params = {}) {
         if (!isBoolean) {
             const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
             const r2d = (rad) => THREE.MathUtils.radToDeg(rad);
-            
+
             if (type === 'box') {
                 p_in('p_x', params.x); p_in('p_y', params.y); p_in('p_z', params.z);
             } else if (type === 'tube') {
                 p_in('p_rmin', params.rmin); p_in('p_rmax', params.rmax);
-                p_in('p_dz', params.dz * 2.0); // Convert half-length back to full-length
+                p_in('p_dz', params.dz); // Convert half-length back to full-length
                 p_in('p_startphi', THREE.MathUtils.radToDeg(params.startphi)); // rad to deg
                 p_in('p_deltaphi', THREE.MathUtils.radToDeg(params.deltaphi)); // rad to deg
             } else if (type === 'cone') {

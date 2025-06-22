@@ -16,7 +16,7 @@ from src.geometry_types import GeometryState
 app = Flask(__name__)
 CORS(app)
 
-ai_model = "gemma3:27b"
+ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
 project_manager = ProjectManager()
 
