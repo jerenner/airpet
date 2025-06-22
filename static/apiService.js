@@ -314,3 +314,30 @@ export async function getDefinesByType(type) {
     const response = await fetch(`${API_BASE_URL}/get_defines_by_type?type=${type}`);
     return handleResponse(response);
 }
+
+/**
+ * Checks if the backend AI service (Ollama) is reachable.
+ * @returns {Promise<Object>} A promise that resolves to the health status.
+ */
+export async function checkAiServiceStatus() {
+    const response = await fetch(`${API_BASE_URL}/ai_health_check`);
+    // We don't use handleResponse here because we want to handle the 503 error gracefully
+    if (!response.ok) {
+        return { success: false, error: `Service unavailable (status: ${response.status})` };
+    }
+    return response.json();
+}
+
+/**
+ * Sends a prompt to the AI assistant for processing.
+ * @param {string} prompt The user's text prompt.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function processAiPrompt(prompt) {
+    const response = await fetch(`${API_BASE_URL}/ai_process_prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+    });
+    return handleResponse(response);
+}

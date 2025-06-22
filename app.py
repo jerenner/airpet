@@ -2,6 +2,9 @@
 
 import json
 import math
+import os
+import requests
+import traceback
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
 
@@ -13,9 +16,22 @@ from src.geometry_types import GeometryState
 app = Flask(__name__)
 CORS(app)
 
+ai_model = "gemma3:27b"
 project_manager = ProjectManager()
 
 # --- Helper Functions ---
+
+# Helper to load the AI system prompt
+def load_system_prompt():
+    """Loads the AI system prompt from an external file."""
+    # Construct a path relative to this file's location
+    prompt_path = os.path.join(os.path.dirname(__file__), 'prompts', 'ai_system_prompt.md')
+    try:
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except FileNotFoundError:
+        print(f"Error: AI prompt file not found at {prompt_path}")
+        return "You are a helpful assistant." # Fallback prompt
 
 # Function for Consistent API Responses
 def create_success_response(message="Success"):
@@ -456,6 +472,76 @@ def get_defines_by_type_route():
     }
     
     return jsonify(filtered_defines)
+
+@app.route('/ai_health_check', methods=['GET'])
+def ai_health_check_route():
+    try:
+        # The '/api/tags' endpoint is a good, lightweight way to see if Ollama is running.
+        response = requests.get('http://localhost:11434/api/tags', timeout=3)
+        response.raise_for_status()
+        # You could even check if your desired model exists
+        models = response.json().get('models', [])
+        model_exists = any(m['name'].startswith(ai_model) for m in models)
+        if(model_exists):
+            return jsonify({"success": True, "message": "AI service is reachable."})
+        else:
+            return jsonify({"success": False, "message": f"AI service is reachable but AI model {ai_model} does not exist."})
+    except requests.exceptions.RequestException as e:
+        # This catches connection errors, timeouts, etc.
+        return jsonify({"success": False, "error": f"AI service is unreachable: {e}"}), 503
+
+@app.route('/ai_process_prompt', methods=['POST'])
+def ai_process_prompt_route():
+    data = request.get_json()
+    user_prompt = data.get('prompt')
+    if not user_prompt:
+        return jsonify({"success": False, "error": "No prompt provided."}), 400
+
+    try:
+        # Step 1: Construct the full prompt
+        system_prompt = load_system_prompt()
+        current_geometry_json = project_manager.save_project_to_json_string()
+
+        full_prompt = (f"{system_prompt}\n\n"
+                       f"## Current Geometry State\n\n"
+                       f"```json\n{current_geometry_json}\n```\n\n"
+                       f"## User Request\n\n"
+                       f'"{user_prompt}"\n\n'
+                       f"## Your JSON Response:\n")
+
+        # Step 2: Call Ollama API
+        # NOTE: Assumes Ollama is running on localhost:11434 and has a model like 'llama3'
+        ollama_response = requests.post(
+            'http://localhost:11434/api/generate',
+            json={
+                "model": ai_model,
+                "prompt": full_prompt,
+                "stream": False,
+                "format": "json" # Ollama's format parameter is very helpful here!
+            },
+            timeout=120 # 2 minute timeout
+        )
+        ollama_response.raise_for_status() # Raise an exception for bad status codes
+
+        ai_json_string = ollama_response.json().get('response')
+        
+        # Step 3: Parse and process the response using a new ProjectManager method
+        ai_data = json.loads(ai_json_string)
+        success, error_msg = project_manager.process_ai_response(ai_data)
+        
+        if success:
+            return create_success_response("AI command processed successfully.")
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to process AI response."}), 500
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"success": False, "error": f"Could not connect to AI service: {e}"}), 500
+    except json.JSONDecodeError:
+        return jsonify({"success": False, "error": "AI returned invalid JSON."}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

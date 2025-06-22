@@ -676,3 +676,57 @@ class ProjectManager:
             self.current_geometry_state.add_logical_volume(lv)
             
         return True, None
+
+    def process_ai_response(self, ai_data: dict):
+        """
+        Processes a structured dictionary from the AI, adding new objects and placements.
+        """
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+
+        # 1. Create a temporary GeometryState from the AI's creation definitions
+        #    (excluding placements, which we'll handle separately).
+        creation_data = {
+            "defines": ai_data.get("defines", {}),
+            "materials": ai_data.get("materials", {}),
+            "solids": ai_data.get("solids", {}),
+            "logical_volumes": ai_data.get("logical_volumes", {}),
+        }
+        
+        if any(creation_data.values()): # If there's anything to create
+            temp_state = GeometryState.from_dict(creation_data)
+            
+            # 2. Use the existing merge logic to add new definitions.
+            #    This handles name conflicts gracefully.
+            success, error_msg = self.merge_from_state(temp_state)
+            if not success:
+                return False, f"Failed to merge AI-defined objects: {error_msg}"
+
+        # 3. Process the new placements
+        placements = ai_data.get("placements", [])
+        if not isinstance(placements, list):
+            return False, "AI response had an invalid 'placements' format (must be a list)."
+
+        for pv_data in placements:
+            try:
+                # Extract placement details from the AI response
+                parent_lv = pv_data['parent_lv_name']
+                volume_ref = pv_data['volume_ref']
+                pv_name = pv_data.get('pv_name', f"{volume_ref}_pv")
+                position = pv_data.get('position', {'x':0, 'y':0, 'z':0})
+                rotation = pv_data.get('rotation', {'x':0, 'y':0, 'z':0})
+                
+                # Use the existing 'add_physical_volume' method.
+                # This method will find the parent, find the child LV, and create the PV.
+                _, pv_error = self.add_physical_volume(parent_lv, pv_name, volume_ref, position, rotation)
+                
+                if pv_error:
+                    # If one placement fails, we stop and report the error.
+                    # A more robust system could try to continue, but this is safer.
+                    return False, f"Failed to place '{volume_ref}' in '{parent_lv}': {pv_error}"
+            except KeyError as e:
+                return False, f"AI placement data is missing a required key: {e}"
+            except Exception as e:
+                return False, f"An error occurred during object placement: {e}"
+
+        return True, None

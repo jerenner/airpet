@@ -126,19 +126,18 @@
             border-top: 1px solid #ccc;
             background-color: #fdfdfd; /* Lighter inspector */
         }
-        /* ... (inspector_panel h3, .property_item styles remain the same) ... */
         #inspector_panel h3 { margin-top: 0; font-size: 14px; border-bottom: 1px solid #bbb; padding-bottom: 5px;}
         #inspector_panel .property_item { margin-bottom: 8px; }
         #inspector_panel .property_item label {
             display: inline-block;
-            width: 90px; /* Adjust as needed */
+            width: 90px; 
             font-weight: bold;
             font-size: 12px;
             vertical-align: top;
         }
         #inspector_panel .property_item input[type="text"],
         #inspector_panel .property_item input[type="number"] {
-            width: calc(100% - 100px); /* Adjust based on label width */
+            width: calc(100% - 100px); 
             padding: 3px;
             border: 1px solid #ccc;
             border-radius: 3px;
@@ -159,9 +158,18 @@
             flex-grow: 1; /* Takes remaining width */
             height: 100vh;
             position: relative; /* For positioning menu bar and viewer */
+            display: flex; /* Use flexbox for vertical layout */
+            flex-direction: column; /* Stack children vertically */
         }
-        #menu_bar { /* Now inside main_content_area */
-            position: absolute; top: 0; left: 0; width: 100%;
+        #top_section { /* A wrapper for the menu and viewer */
+            flex-grow: 1; /* This section will take up most of the space */
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        #menu_bar {
+            flex-shrink: 0; /* Prevent the menu bar from shrinking */
             background-color: #333; color: white; padding: 0; z-index: 1000; display: flex;
         }
         #menu_bar ul { list-style-type: none; margin: 0; padding: 0; display: flex; }
@@ -213,11 +221,64 @@
         }
 
         #viewer_container { /* Now relative within main_content_area */
-            width: 100%; height: 100%;
-            padding-top: 35px; /* Account for menu bar height */
-            box-sizing: border-box;
+            width: 100%;
+            flex-grow: 1; /* Will fill available space in #top_section */
+            position: relative; /* For positioning selection box */
+            overflow: hidden;
         }
         canvas { display: block; width: 100% !important; height: 100% !important; }
+
+        /* --- AI PANEL --- */
+        #ai_panel {
+            flex-shrink: 0; 
+            padding: 8px 12px; /* A bit tighter */
+            background-color: #f0f2f5;
+            border-top: 1px solid #ccc; /* Thinner border */
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        #ai_prompt_input {
+            flex-grow: 1;
+            height: 38px; /* Two lines of text + padding */
+            min-height: 38px; /* Prevent resizing smaller */
+            max-height: 150px; /* Allow resizing up to a certain point */
+            resize: vertical;
+            padding: 8px 12px; /* More padding inside */
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 24px; /* Rounded corners */
+            background-color: #ffffff;
+            outline: none; /* Remove default browser outline */
+            transition: box-shadow 0.2s;
+        }
+        #ai_prompt_input:focus {
+            border-color: #a0c3ff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+        }
+        #ai_generate_button {
+            height: 40px; /* Match input height */
+            width: 40px; /* Make it a circle */
+            padding: 0;
+            font-size: 20px; /* Larger icon/text */
+            cursor: pointer;
+            border: none;
+            background-color: #3b82f6;
+            color: white;
+            border-radius: 50%; /* Make it a circle */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s;
+        }
+        #ai_generate_button:hover {
+            background-color: #2563eb;
+        }
+        #ai_generate_button:disabled {
+            background-color: #a0aec0; /* A muted gray */
+            cursor: not-allowed;
+        }
 
         /* Solid editor */
         .editor-modal {
@@ -542,7 +603,7 @@
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Structure</button>
-            <button class="tab_button" data-tab="tab_lvolumes">L. Volumes</button>
+            <button class="tab_button" data-tab="tab_lvolumes">LVs</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_materials">Materials</button>
             <button class="tab_button" data-tab="tab_solids">Solids</button>
@@ -595,121 +656,126 @@
         </div>
     </div>
     <div id="main_content_area">
-        <div id="menu_bar">
-            <ul>
-                <!-- File Menu -->
-                <li>
-                    <button>File</button>
-                    <div class="dropdown_content">
-                        <button id="newProjectButton">New Project</button>
-                        <hr>
-                        <!-- Open entire projects -->
-                        <button id="openGdmlButton">Open Project (GDML)...</button>
-                        <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
-                        <button id="openProjectButton">Open Project (JSON)...</button>
-                        <input type="file" id="projectFile" accept=".json" style="display: none;">
-                        <hr>
-                        <!-- Import functionality -->
-                        <button id="importGdmlButton">Import Part(s) (GDML)...</button>
-                        <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
-                        <button id="importProjectButton">Import Part(s) (JSON)...</button>
-                        <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
-                        <hr>
-                        <button id="saveProjectButton">Save Project (JSON)...</button>
-                        <button id="exportGdmlButton">Export GDML...</button>
-                    </div>
-                </li>
-                <!-- Edit Menu -->
-                <li>
-                    <button>Edit</button>
-                    <div class="dropdown_content">
-                        <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
-                        <div class="snap-settings-container">
-                            <div class="snap-input-row">
-                                <label for="gridSnapSizeInput">Translate (mm):</label>
-                                <input type="number" id="gridSnapSizeInput" value="10" step="any">
-                            </div>
-                            <div class="snap-input-row">
-                                <label for="angleSnapSizeInput">Rotate (deg):</label>
-                                <input type="number" id="angleSnapSizeInput" value="45" step="5">
+        <div id="top_section">
+            <div id="menu_bar">
+                <ul>
+                    <!-- File Menu -->
+                    <li>
+                        <button>File</button>
+                        <div class="dropdown_content">
+                            <button id="newProjectButton">New Project</button>
+                            <hr>
+                            <!-- Open entire projects -->
+                            <button id="openGdmlButton">Open Project (GDML)...</button>
+                            <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
+                            <button id="openProjectButton">Open Project (JSON)...</button>
+                            <input type="file" id="projectFile" accept=".json" style="display: none;">
+                            <hr>
+                            <!-- Import functionality -->
+                            <button id="importGdmlButton">Import Part(s) (GDML)...</button>
+                            <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
+                            <button id="importProjectButton">Import Part(s) (JSON)...</button>
+                            <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
+                            <hr>
+                            <button id="saveProjectButton">Save Project (JSON)...</button>
+                            <button id="exportGdmlButton">Export GDML...</button>
+                        </div>
+                    </li>
+                    <!-- Edit Menu -->
+                    <li>
+                        <button>Edit</button>
+                        <div class="dropdown_content">
+                            <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
+                            <div class="snap-settings-container">
+                                <div class="snap-input-row">
+                                    <label for="gridSnapSizeInput">Translate (mm):</label>
+                                    <input type="number" id="gridSnapSizeInput" value="10" step="any">
+                                </div>
+                                <div class="snap-input-row">
+                                    <label for="angleSnapSizeInput">Rotate (deg):</label>
+                                    <input type="number" id="angleSnapSizeInput" value="45" step="5">
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </li>
-                <!-- View Menu -->
-                <li>
-                    <button>View</button>
-                    <div class="dropdown_content">
-                        <button id="toggleWireframeButton">Toggle Wireframe</button>
-                        <button id="toggleGridButton">Toggle Grid</button>
-                        <hr style="margin: 5px 0;"> <!-- Separator -->
-                        <button id="cameraModeOrbitButton">Camera: Orbit</button>
-                        <button id="cameraModeFlyButton">Camera: Fly</button>
-                    </div>
-                </li>
-                <!-- Object Menu -->
-                <li>
-                    <button>Object</button>
-                    <div class="dropdown_content">
-                        <!--<button id="addObjectButton">Add...</button>-->
-                        <button id="deleteSelectedObjectButton">Delete Selected</button>
-                        <button id="hideSelectedBtn">Hide Selected</button>
-                        <button id="showAllBtn">Show All</button>
-                    </div>
-                </li>
-                <!-- Mode Menu -->
-                <li>
-                    <button>Mode</button>
-                    <div class="dropdown_content">
-                        <button id="modeObserveButton" class="active_mode">Observe</button>
-                        <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
-                        <button id="modeRotateButton">Rotate</button>
-                        <!-- <button id="modeScaleButton">Scale</button>--> <!-- Optional for future -->
-                    </div>
-                </li>
-                <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
-            </ul>
+                    </li>
+                    <!-- View Menu -->
+                    <li>
+                        <button>View</button>
+                        <div class="dropdown_content">
+                            <button id="toggleWireframeButton">Toggle Wireframe</button>
+                            <button id="toggleGridButton">Toggle Grid</button>
+                            <hr style="margin: 5px 0;"> <!-- Separator -->
+                            <button id="cameraModeOrbitButton">Camera: Orbit</button>
+                            <button id="cameraModeFlyButton">Camera: Fly</button>
+                        </div>
+                    </li>
+                    <!-- Object Menu -->
+                    <li>
+                        <button>Object</button>
+                        <div class="dropdown_content">
+                            <!--<button id="addObjectButton">Add...</button>-->
+                            <button id="deleteSelectedObjectButton">Delete Selected</button>
+                            <button id="hideSelectedBtn">Hide Selected</button>
+                            <button id="showAllBtn">Show All</button>
+                        </div>
+                    </li>
+                    <!-- Mode Menu -->
+                    <li>
+                        <button>Mode</button>
+                        <div class="dropdown_content">
+                            <button id="modeObserveButton" class="active_mode">Observe</button>
+                            <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
+                            <button id="modeRotateButton">Rotate</button>
+                            <!-- <button id="modeScaleButton">Scale</button>--> <!-- Optional for future -->
+                        </div>
+                    </li>
+                    <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
+                </ul>
+            </div>
+            <div id="viewer_container"></div>
+            <!-- The selection box element -->
+            <div id="selection_box" class="selection-box" style="display:none;"></div>
         </div>
-        <div id="viewer_container"></div>
-        <!-- The selection box element -->
-        <div id="selection_box" class="selection-box" style="display:none;"></div>
-        <!-- Old floating info panel -->
-        <!--<div id="info_panel">
-            <h3>Object Information</h3>
-            <p><strong>Name:</strong> <span id="info_name">-</span></p>
-            <p><strong>Type:</strong> <span id="info_type">-</span></p>
-            <p><strong>Parameters:</strong></p>
-            <div id="info_parameters" style="padding-left: 10px;">-</div>
-            <p><strong>Position (mm):</strong></p>
-            <div id="info_position" style="padding-left: 10px;">-</div>
-            <p><strong>Rotation (rad, ZYX):</strong></p>
-            <div id="info_rotation" style="padding-left: 10px;">-</div>
-        </div>-->
-        <div id="addObjectModal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; padding:20px; border:1px solid #ccc; z-index:1001;">
-            <h4>Add New Object</h4>
-            <label for="newObjectType">Type:</label>
-            <select id="newObjectType">
-                <option value="define_position">Define: Position</option>
-                <option value="define_rotation">Define: Rotation</option>
-                <option value="material">Material</option>
-                <option value="solid_box">Solid: Box</option>
-                <option value="solid_tube">Solid: Tube</option>
-                <!-- Add more solid types -->
-                <option value="logical_volume" disabled>Logical Volume (select solid/mat)</option> <!-- Disabled for now -->
-                <option value="physical_volume" disabled>Physical Volume (select LV/parent)</option> <!-- Disabled for now -->
-            </select>
-            <br><br>
-            <label for="newObjectName">Name:</label>
-            <input type="text" id="newObjectName" placeholder="e.g., MyNewBox">
-            <br><br>
-            <!-- Fields for parameters will be added dynamically by JS -->
-            <div id="newObjectParams"></div>
-            <br>
-            <button id="confirmAddObject">Add</button>
-            <button id="cancelAddObject">Cancel</button>
+        <!-- AI PANEL --- -->
+        <div id="ai_panel">
+            <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
+            <button id="ai_generate_button" title="Generate with AI">➤</button>
         </div>
-        <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>
     </div>
+    <!-- Old floating info panel -->
+    <!--<div id="info_panel">
+        <h3>Object Information</h3>
+        <p><strong>Name:</strong> <span id="info_name">-</span></p>
+        <p><strong>Type:</strong> <span id="info_type">-</span></p>
+        <p><strong>Parameters:</strong></p>
+        <div id="info_parameters" style="padding-left: 10px;">-</div>
+        <p><strong>Position (mm):</strong></p>
+        <div id="info_position" style="padding-left: 10px;">-</div>
+        <p><strong>Rotation (rad, ZYX):</strong></p>
+        <div id="info_rotation" style="padding-left: 10px;">-</div>
+    </div>-->
+    <!--<div id="addObjectModal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; padding:20px; border:1px solid #ccc; z-index:1001;">
+        <h4>Add New Object</h4>
+        <label for="newObjectType">Type:</label>
+        <select id="newObjectType">
+            <option value="define_position">Define: Position</option>
+            <option value="define_rotation">Define: Rotation</option>
+            <option value="material">Material</option>
+            <option value="solid_box">Solid: Box</option>
+            <option value="solid_tube">Solid: Tube</option>
+            <option value="logical_volume" disabled>Logical Volume (select solid/mat)</option>
+            <option value="physical_volume" disabled>Physical Volume (select LV/parent)</option>
+        </select>
+        <br><br>
+        <label for="newObjectName">Name:</label>
+        <input type="text" id="newObjectName" placeholder="e.g., MyNewBox">
+        <br><br>
+        <div id="newObjectParams"></div>
+        <br>
+        <button id="confirmAddObject">Add</button>
+        <button id="cancelAddObject">Cancel</button>
+    </div>
+    <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>-->
     <!-- Editor for defines -->
     <div id="defineEditorModal" class="editor-modal">
         <div class="modal-content" style="width: 400px; height: auto;">

@@ -71,6 +71,7 @@ async function initializeApp() {
         onHierarchySelectionChanged: handleHierarchySelection,
         onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
+        onAiGenerateClicked: handleAiGenerate 
     });
 
     // Initialize the 3D scene and its controls
@@ -123,6 +124,9 @@ async function initializeApp() {
     // Add menu listeners
     document.getElementById('hideSelectedBtn').addEventListener('click', handleHideSelected);
     document.getElementById('showAllBtn').addEventListener('click', handleShowAll);
+
+    // --- Check AI service status on startup ---
+    checkAndSetAiStatus();
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -855,4 +859,43 @@ function handleShowAll() {
     SceneManager.setAllPVVisibility(true);
     // Update all UI elements
     UIManager.setAllTreeItemVisibility(true); // Need to add this helper to uiManager
+}
+
+/**
+ * Checks the AI service status and updates the UI accordingly.
+ */
+async function checkAndSetAiStatus() {
+    // Disable the button by default while checking
+    UIManager.setAiButtonState(false, "Checking AI service connection...");
+    console.log("Checking AI service status...");
+
+    try {
+        const status = await APIService.checkAiServiceStatus();
+        if (status.success) {
+            UIManager.setAiButtonState(true, "Generate with AI");
+            console.log("AI service is online.");
+        } else {
+            UIManager.setAiButtonState(false, `AI service is offline: ${status.error}`);
+            console.error("AI service check failed:", status.error);
+        }
+    } catch (error) {
+        UIManager.setAiButtonState(false, `AI service is offline: ${error.message}`);
+        console.error("Failed to check AI service status:", error.message);
+    }
+}
+
+async function handleAiGenerate(promptText) {
+    UIManager.showLoading("Sending prompt to AI Assistant...");
+    try {
+        const result = await APIService.processAiPrompt(promptText);
+        // The existing sync function is perfect for this!
+        syncUIWithState(result); 
+        // Clear the prompt on success
+        UIManager.clearAiPrompt();
+        UIManager.showNotification("AI command processed successfully!");
+    } catch (error) {
+        UIManager.showError("AI Assistant Error: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
 }

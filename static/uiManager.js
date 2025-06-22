@@ -11,6 +11,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     toggleWireframeButton, toggleGridButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
+    aiPromptInput, aiGenerateButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
@@ -19,7 +20,7 @@ let inspectorContentDiv;
 let currentlyInspectedUIItem = null; // { type, id, name, element (DOM in hierarchy) }
 
 // Add Object Modal
-let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newObjectParamsDiv, confirmAddObjectButton, cancelAddObjectButton;
+//let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newObjectParamsDiv, confirmAddObjectButton, cancelAddObjectButton;
 
 // Buttons for adding logical and physical volumes
 let addLVButton, addPVButton;
@@ -57,7 +58,8 @@ let callbacks = {
     onGridToggleClicked: () => {},
     onHierarchyItemSelected: (itemContext) => {}, // {type, id, name, data}
     onInspectorPropertyChanged: (type, id, path, value) => {},
-    onPVVisibilityToggle: (pvId, isVisible) => {}
+    onPVVisibilityToggle: (pvId, isVisible) => {},
+    onAiGenerateClicked: (promptText) => {}
 };
 
 // --- Initialization ---
@@ -117,14 +119,18 @@ export function initUI(cb) {
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
 
+    // AI Panel elements
+    aiPromptInput = document.getElementById('ai_prompt_input');
+    aiGenerateButton = document.getElementById('ai_generate_button');
+
     // Add Object Modal Elements
-    addObjectModal = document.getElementById('addObjectModal');
-    modalBackdrop = document.getElementById('modalBackdrop');
-    newObjectTypeSelect = document.getElementById('newObjectType');
-    newObjectNameInput = document.getElementById('newObjectName');
-    newObjectParamsDiv = document.getElementById('newObjectParams');
-    confirmAddObjectButton = document.getElementById('confirmAddObject');
-    cancelAddObjectButton = document.getElementById('cancelAddObject');
+    // addObjectModal = document.getElementById('addObjectModal');
+    // modalBackdrop = document.getElementById('modalBackdrop');
+    // newObjectTypeSelect = document.getElementById('newObjectType');
+    // newObjectNameInput = document.getElementById('newObjectName');
+    // newObjectParamsDiv = document.getElementById('newObjectParams');
+    // confirmAddObjectButton = document.getElementById('confirmAddObject');
+    // cancelAddObjectButton = document.getElementById('cancelAddObject');
 
     // --- Initialize snap settings from UI values on startup ---
     const initialTransSnap = document.getElementById('gridSnapSizeInput').value;
@@ -176,8 +182,7 @@ export function initUI(cb) {
             } else if (type.startsWith('material')) {
                 callbacks.onAddMaterialClicked();
             } else {
-                // For defines and materials, we can keep the old simple modal for now
-                showAddObjectModal(type);
+                console.log("ERROR: module does not exist")
             }
         });
     });
@@ -188,11 +193,21 @@ export function initUI(cb) {
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
 
+    // AI Panel Listener
+    aiGenerateButton.addEventListener('click', () => {
+        const promptText = aiPromptInput.value.trim();
+        if (promptText) {
+            callbacks.onAiGenerateClicked(promptText);
+        } else {
+            showError("Please enter a prompt for the AI assistant.");
+        }
+    });
+
     // Add Object Modal Listeners
-    confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
-    cancelAddObjectButton.addEventListener('click', hideAddObjectModal);
-    modalBackdrop.addEventListener('click', hideAddObjectModal);
-    newObjectTypeSelect.addEventListener('change', populateAddObjectModalParams); // Renamed for clarity
+    //confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
+    //cancelAddObjectButton.addEventListener('click', hideAddObjectModal);
+    //modalBackdrop.addEventListener('click', hideAddObjectModal);
+    //newObjectTypeSelect.addEventListener('change', populateAddObjectModalParams); // Renamed for clarity
 
     // Tab Navigation
     const tabNavButtons = document.querySelectorAll('.tab_button');
@@ -783,94 +798,108 @@ export function clearInspector() {
     if(inspectorContentDiv) inspectorContentDiv.innerHTML = '<p>Select an item.</p>';
 }
 
+/**
+ * Sets the enabled or disabled state of the AI generate button.
+ * @param {boolean} isEnabled True to enable, false to disable.
+ * @param {string|null} title Optional tooltip to set on the button.
+ */
+export function setAiButtonState(isEnabled, title = null) {
+    if (aiGenerateButton) {
+        aiGenerateButton.disabled = !isEnabled;
+        if (title) {
+            aiGenerateButton.title = title;
+        }
+    }
+}
+
 // --- Add Object Modal ---
-export function showAddObjectModal(preselectedType = 'define_position') {
-    if(newObjectNameInput) newObjectNameInput.value = '';
+// export function showAddObjectModal(preselectedType = 'define_position') {
+//     if(newObjectNameInput) newObjectNameInput.value = '';
     
-    // Set the dropdown to the correct value passed from the button
-    if(newObjectTypeSelect) {
-        newObjectTypeSelect.value = preselectedType;
-    }
+//     // Set the dropdown to the correct value passed from the button
+//     if(newObjectTypeSelect) {
+//         newObjectTypeSelect.value = preselectedType;
+//     }
 
-    // Populate the parameters for the pre-selected type
-    populateAddObjectModalParams();
+//     // Populate the parameters for the pre-selected type
+//     populateAddObjectModalParams();
 
-    // Show the modal
-    if(addObjectModal) addObjectModal.style.display = 'block';
-    if(modalBackdrop) modalBackdrop.style.display = 'block';
-}
+//     // Show the modal
+//     if(addObjectModal) addObjectModal.style.display = 'block';
+//     //if(modalBackdrop) modalBackdrop.style.display = 'block';
+// }
 
-export function hideAddObjectModal() {
-    if(addObjectModal) addObjectModal.style.display = 'none';
-    if(modalBackdrop) modalBackdrop.style.display = 'none';
-}
+// export function hideAddObjectModal() {
+//     if(addObjectModal) addObjectModal.style.display = 'none';
+//     //if(modalBackdrop) modalBackdrop.style.display = 'none';
+// }
 
-function populateAddObjectModalParams() {
-    if(!newObjectParamsDiv || !newObjectTypeSelect) return;
-    newObjectParamsDiv.innerHTML = '';
-    const type = newObjectTypeSelect.value;
-     if (type === 'define_position') {
-        newObjectParamsDiv.innerHTML = `
-            <label>X:</label><input type="number" id="add_define_pos_x" value="0"><br>
-            <label>Y:</label><input type="number" id="add_define_pos_y" value="0"><br>
-            <label>Z:</label><input type="number" id="add_define_pos_z" value="0"><br>
-            <label>Unit:</label><input type="text" id="add_define_pos_unit" value="mm">`;
-    } else if (type === 'material') {
-        newObjectParamsDiv.innerHTML = `
-            <label>Density (g/cm3):</label><input type="number" id="add_mat_density" value="1.0" step="any"><br>
-            <label>State (optional):</label><input type="text" id="add_mat_state" placeholder="solid/liquid/gas">`;
-    } else if (type === 'solid_box') {
-        newObjectParamsDiv.innerHTML = `
-            <label>X (mm):</label><input type="number" id="add_box_x" value="100" step="any"><br>
-            <label>Y (mm):</label><input type="number" id="add_box_y" value="100" step="any"><br>
-            <label>Z (mm):</label><input type="number" id="add_box_z" value="100" step="any">`;
-    } else if (type === 'solid_tube') {
-        newObjectParamsDiv.innerHTML = `
-            <label>RMin (mm):</label><input type="number" id="add_tube_rmin" value="0" step="any"><br>
-            <label>RMax (mm):</label><input type="number" id="add_tube_rmax" value="50" step="any"><br>
-            <label>Full Length Z (mm):</label><input type="number" id="add_tube_z_fulllength" value="200" step="any"><br>
-            <label>StartPhi (rad):</label><input type="number" step="any" id="add_tube_startphi" value="0"><br>
-            <label>DeltaPhi (rad):</label><input type="number" step="any" id="add_tube_deltaphi" value="${(2 * Math.PI).toFixed(4)}">`;
-    }
-}
+// function populateAddObjectModalParams() {
+//     if(!newObjectParamsDiv || !newObjectTypeSelect) return;
+//     newObjectParamsDiv.innerHTML = '';
+//     const type = newObjectTypeSelect.value;
+//      if (type === 'define_position') {
+//         newObjectParamsDiv.innerHTML = `
+//             <label>X:</label><input type="number" id="add_define_pos_x" value="0"><br>
+//             <label>Y:</label><input type="number" id="add_define_pos_y" value="0"><br>
+//             <label>Z:</label><input type="number" id="add_define_pos_z" value="0"><br>
+//             <label>Unit:</label><input type="text" id="add_define_pos_unit" value="mm">`;
+//     } else if (type === 'material') {
+//         newObjectParamsDiv.innerHTML = `
+//             <label>Density (g/cm3):</label><input type="number" id="add_mat_density" value="1.0" step="any"><br>
+//             <label>State (optional):</label><input type="text" id="add_mat_state" placeholder="solid/liquid/gas">`;
+//     } else if (type === 'solid_box') {
+//         newObjectParamsDiv.innerHTML = `
+//             <label>X (mm):</label><input type="number" id="add_box_x" value="100" step="any"><br>
+//             <label>Y (mm):</label><input type="number" id="add_box_y" value="100" step="any"><br>
+//             <label>Z (mm):</label><input type="number" id="add_box_z" value="100" step="any">`;
+//     } else if (type === 'solid_tube') {
+//         newObjectParamsDiv.innerHTML = `
+//             <label>RMin (mm):</label><input type="number" id="add_tube_rmin" value="0" step="any"><br>
+//             <label>RMax (mm):</label><input type="number" id="add_tube_rmax" value="50" step="any"><br>
+//             <label>Full Length Z (mm):</label><input type="number" id="add_tube_z_fulllength" value="200" step="any"><br>
+//             <label>StartPhi (rad):</label><input type="number" step="any" id="add_tube_startphi" value="0"><br>
+//             <label>DeltaPhi (rad):</label><input type="number" step="any" id="add_tube_deltaphi" value="${(2 * Math.PI).toFixed(4)}">`;
+//     }
+// }
 
-function collectAndConfirmAddObject() {
-    const objectType = newObjectTypeSelect.value;
-    const nameSuggestion = newObjectNameInput.value.trim();
-    if (!nameSuggestion) {
-        showError("Please enter a name for the new object.");
-        return;
-    }
-    let params = {};
-    if (objectType === 'define_position') {
-        params = {
-            x: document.getElementById('add_define_pos_x').value,
-            y: document.getElementById('add_define_pos_y').value,
-            z: document.getElementById('add_define_pos_z').value,
-            unit: document.getElementById('add_define_pos_unit').value
-        };
-    } else if (objectType === 'material') {
-        params = {
-            density: parseFloat(document.getElementById('add_mat_density').value),
-            state: document.getElementById('add_mat_state').value || null
-        };
-    } else if (objectType === 'solid_box') {
-        params = {
-            x: parseFloat(document.getElementById('add_box_x').value),
-            y: parseFloat(document.getElementById('add_box_y').value),
-            z: parseFloat(document.getElementById('add_box_z').value)
-        };
-    } else if (objectType === 'solid_tube') {
-        params = {
-            rmin: parseFloat(document.getElementById('add_tube_rmin').value),
-            rmax: parseFloat(document.getElementById('add_tube_rmax').value),
-            dz: parseFloat(document.getElementById('add_tube_z_fulllength').value), 
-            startphi: parseFloat(document.getElementById('add_tube_startphi').value),
-            deltaphi: parseFloat(document.getElementById('add_tube_deltaphi').value),
-        };
-    }
-    callbacks.onConfirmAddObject(objectType, nameSuggestion, params);
-}
+// function collectAndConfirmAddObject() {
+//     const objectType = newObjectTypeSelect.value;
+//     const nameSuggestion = newObjectNameInput.value.trim();
+//     if (!nameSuggestion) {
+//         showError("Please enter a name for the new object.");
+//         return;
+//     }
+//     let params = {};
+//     if (objectType === 'define_position') {
+//         params = {
+//             x: document.getElementById('add_define_pos_x').value,
+//             y: document.getElementById('add_define_pos_y').value,
+//             z: document.getElementById('add_define_pos_z').value,
+//             unit: document.getElementById('add_define_pos_unit').value
+//         };
+//     } else if (objectType === 'material') {
+//         params = {
+//             density: parseFloat(document.getElementById('add_mat_density').value),
+//             state: document.getElementById('add_mat_state').value || null
+//         };
+//     } else if (objectType === 'solid_box') {
+//         params = {
+//             x: parseFloat(document.getElementById('add_box_x').value),
+//             y: parseFloat(document.getElementById('add_box_y').value),
+//             z: parseFloat(document.getElementById('add_box_z').value)
+//         };
+//     } else if (objectType === 'solid_tube') {
+//         params = {
+//             rmin: parseFloat(document.getElementById('add_tube_rmin').value),
+//             rmax: parseFloat(document.getElementById('add_tube_rmax').value),
+//             dz: parseFloat(document.getElementById('add_tube_z_fulllength').value), 
+//             startphi: parseFloat(document.getElementById('add_tube_startphi').value),
+//             deltaphi: parseFloat(document.getElementById('add_tube_deltaphi').value),
+//         };
+//     }
+//     callbacks.onConfirmAddObject(objectType, nameSuggestion, params);
+// }
 
 // --- Tab Management ---
 function activateTab(tabId) {
@@ -924,4 +953,13 @@ export function setAllTreeItemVisibility(isVisible) {
         item.classList.toggle('item-hidden', !isVisible);
         if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
     });
+}
+
+/**
+ * Clears the AI prompt input textarea.
+ */
+export function clearAiPrompt() {
+    if (aiPromptInput) {
+        aiPromptInput.value = '';
+    }
 }
