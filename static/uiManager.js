@@ -11,7 +11,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     toggleWireframeButton, toggleGridButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
-    aiPromptInput, aiGenerateButton,
+    aiPromptInput, aiGenerateButton, aiModelSelect,
     currentModeDisplay;
 
 // Hierarchy and Inspector
@@ -122,6 +122,7 @@ export function initUI(cb) {
     // AI Panel elements
     aiPromptInput = document.getElementById('ai_prompt_input');
     aiGenerateButton = document.getElementById('ai_generate_button');
+    aiModelSelect = document.getElementById('ai_model_select');
 
     // Add Object Modal Elements
     // addObjectModal = document.getElementById('addObjectModal');
@@ -824,12 +825,14 @@ export function setAiPanelState(state, title = null) {
         case 'loading':
             aiPromptInput.disabled = true;
             aiGenerateButton.disabled = true;
+            aiModelSelect.disabled = true;
             aiGenerateButton.classList.add('loading');
             aiGenerateButton.title = "Processing...";
             break;
         case 'disabled':
             aiPromptInput.disabled = true;
             aiGenerateButton.disabled = true;
+            aiModelSelect.disabled = true;
             aiGenerateButton.classList.remove('loading');
             aiGenerateButton.title = title || "AI service is unavailable.";
             break;
@@ -837,100 +840,12 @@ export function setAiPanelState(state, title = null) {
         default:
             aiPromptInput.disabled = false;
             aiGenerateButton.disabled = false;
+            aiModelSelect.disabled = false;
             aiGenerateButton.classList.remove('loading');
             aiGenerateButton.title = title || "Generate with AI";
             break;
     }
 }
-
-// --- Add Object Modal ---
-// export function showAddObjectModal(preselectedType = 'define_position') {
-//     if(newObjectNameInput) newObjectNameInput.value = '';
-    
-//     // Set the dropdown to the correct value passed from the button
-//     if(newObjectTypeSelect) {
-//         newObjectTypeSelect.value = preselectedType;
-//     }
-
-//     // Populate the parameters for the pre-selected type
-//     populateAddObjectModalParams();
-
-//     // Show the modal
-//     if(addObjectModal) addObjectModal.style.display = 'block';
-//     //if(modalBackdrop) modalBackdrop.style.display = 'block';
-// }
-
-// export function hideAddObjectModal() {
-//     if(addObjectModal) addObjectModal.style.display = 'none';
-//     //if(modalBackdrop) modalBackdrop.style.display = 'none';
-// }
-
-// function populateAddObjectModalParams() {
-//     if(!newObjectParamsDiv || !newObjectTypeSelect) return;
-//     newObjectParamsDiv.innerHTML = '';
-//     const type = newObjectTypeSelect.value;
-//      if (type === 'define_position') {
-//         newObjectParamsDiv.innerHTML = `
-//             <label>X:</label><input type="number" id="add_define_pos_x" value="0"><br>
-//             <label>Y:</label><input type="number" id="add_define_pos_y" value="0"><br>
-//             <label>Z:</label><input type="number" id="add_define_pos_z" value="0"><br>
-//             <label>Unit:</label><input type="text" id="add_define_pos_unit" value="mm">`;
-//     } else if (type === 'material') {
-//         newObjectParamsDiv.innerHTML = `
-//             <label>Density (g/cm3):</label><input type="number" id="add_mat_density" value="1.0" step="any"><br>
-//             <label>State (optional):</label><input type="text" id="add_mat_state" placeholder="solid/liquid/gas">`;
-//     } else if (type === 'solid_box') {
-//         newObjectParamsDiv.innerHTML = `
-//             <label>X (mm):</label><input type="number" id="add_box_x" value="100" step="any"><br>
-//             <label>Y (mm):</label><input type="number" id="add_box_y" value="100" step="any"><br>
-//             <label>Z (mm):</label><input type="number" id="add_box_z" value="100" step="any">`;
-//     } else if (type === 'solid_tube') {
-//         newObjectParamsDiv.innerHTML = `
-//             <label>RMin (mm):</label><input type="number" id="add_tube_rmin" value="0" step="any"><br>
-//             <label>RMax (mm):</label><input type="number" id="add_tube_rmax" value="50" step="any"><br>
-//             <label>Full Length Z (mm):</label><input type="number" id="add_tube_z_fulllength" value="200" step="any"><br>
-//             <label>StartPhi (rad):</label><input type="number" step="any" id="add_tube_startphi" value="0"><br>
-//             <label>DeltaPhi (rad):</label><input type="number" step="any" id="add_tube_deltaphi" value="${(2 * Math.PI).toFixed(4)}">`;
-//     }
-// }
-
-// function collectAndConfirmAddObject() {
-//     const objectType = newObjectTypeSelect.value;
-//     const nameSuggestion = newObjectNameInput.value.trim();
-//     if (!nameSuggestion) {
-//         showError("Please enter a name for the new object.");
-//         return;
-//     }
-//     let params = {};
-//     if (objectType === 'define_position') {
-//         params = {
-//             x: document.getElementById('add_define_pos_x').value,
-//             y: document.getElementById('add_define_pos_y').value,
-//             z: document.getElementById('add_define_pos_z').value,
-//             unit: document.getElementById('add_define_pos_unit').value
-//         };
-//     } else if (objectType === 'material') {
-//         params = {
-//             density: parseFloat(document.getElementById('add_mat_density').value),
-//             state: document.getElementById('add_mat_state').value || null
-//         };
-//     } else if (objectType === 'solid_box') {
-//         params = {
-//             x: parseFloat(document.getElementById('add_box_x').value),
-//             y: parseFloat(document.getElementById('add_box_y').value),
-//             z: parseFloat(document.getElementById('add_box_z').value)
-//         };
-//     } else if (objectType === 'solid_tube') {
-//         params = {
-//             rmin: parseFloat(document.getElementById('add_tube_rmin').value),
-//             rmax: parseFloat(document.getElementById('add_tube_rmax').value),
-//             dz: parseFloat(document.getElementById('add_tube_z_fulllength').value), 
-//             startphi: parseFloat(document.getElementById('add_tube_startphi').value),
-//             deltaphi: parseFloat(document.getElementById('add_tube_deltaphi').value),
-//         };
-//     }
-//     callbacks.onConfirmAddObject(objectType, nameSuggestion, params);
-// }
 
 // --- Tab Management ---
 function activateTab(tabId) {
@@ -993,4 +908,35 @@ export function clearAiPrompt() {
     if (aiPromptInput) {
         aiPromptInput.value = '';
     }
+}
+
+/**
+ * Populates the AI model selector dropdown.
+ * @param {string[]} models - An array of model names.
+ */
+export function populateAiModelSelector(models) {
+    if (!aiModelSelect) return;
+    aiModelSelect.innerHTML = ''; // Clear existing options
+
+    if (models.length === 0) {
+        const option = document.createElement('option');
+        option.textContent = "No models found";
+        aiModelSelect.appendChild(option);
+        return;
+    }
+
+    models.forEach(modelName => {
+        const option = document.createElement('option');
+        option.value = modelName;
+        option.textContent = modelName;
+        aiModelSelect.appendChild(option);
+    });
+}
+
+/**
+ * Gets the currently selected AI model from the dropdown.
+ * @returns {string|null}
+ */
+export function getAiSelectedModel() {
+    return aiModelSelect ? aiModelSelect.value : null;
 }

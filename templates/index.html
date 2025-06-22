@@ -257,6 +257,21 @@
             border-color: #a0c3ff;
             box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
         }
+        #ai_model_select {
+            height: 40px;
+            padding: 0 10px;
+            border-radius: 20px;
+            border: 1px solid #ddd;
+            background-color: #ffffff;
+            font-size: 13px;
+            flex-shrink: 0; /* Prevent it from shrinking */
+            outline: none;
+        }
+        #ai_model_select:disabled {
+            background-color: #e2e8f0;
+            color: #718096;
+            cursor: not-allowed;
+        }
         #ai_generate_button {
             height: 40px; /* Match input height */
             width: 40px; /* Make it a circle */
@@ -772,6 +787,7 @@
         <!-- AI PANEL --- -->
         <div id="ai_panel">
             <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
+            <select id="ai_model_select" title="Select AI Model"></select>
             <button id="ai_generate_button" title="Generate with AI">
                 <span class="button-text">➤</span>
                 <div class="loader"></div>

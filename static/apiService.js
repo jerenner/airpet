@@ -331,13 +331,14 @@ export async function checkAiServiceStatus() {
 /**
  * Sends a prompt to the AI assistant for processing.
  * @param {string} prompt The user's text prompt.
+ * @param {string} model The name of the Ollama model to use.
  * @returns {Promise<Object>} A promise that resolves to the backend's response.
  */
-export async function processAiPrompt(prompt) {
+export async function processAiPrompt(prompt, model) {
     const response = await fetch(`${API_BASE_URL}/ai_process_prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
+        body: JSON.stringify({ prompt, model }) // <-- MODIFIED
     });
     return handleResponse(response);
 }

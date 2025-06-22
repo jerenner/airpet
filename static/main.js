@@ -872,6 +872,7 @@ async function checkAndSetAiStatus() {
     try {
         const status = await APIService.checkAiServiceStatus();
         if (status.success) {
+            UIManager.populateAiModelSelector(status.models);
             UIManager.setAiPanelState('idle', "Generate with AI");
             console.log("AI service is online.");
         } else {
@@ -885,11 +886,19 @@ async function checkAndSetAiStatus() {
 }
 
 async function handleAiGenerate(promptText) {
+
+    // Get selected model.
+    const selectedModel = UIManager.getAiSelectedModel();
+    if (!selectedModel || selectedModel === "No models found") {
+        UIManager.showError("No AI model is selected or available.");
+        return;
+    }
+
     UIManager.showLoading("Sending prompt to AI Assistant...");
     UIManager.setAiPanelState('loading'); // Set loading state
     
     try {
-        const result = await APIService.processAiPrompt(promptText);
+        const result = await APIService.processAiPrompt(promptText, selectedModel);
         syncUIWithState(result); 
         UIManager.clearAiPrompt();
         UIManager.showNotification("AI command processed successfully!");

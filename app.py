@@ -477,24 +477,27 @@ def get_defines_by_type_route():
 @app.route('/ai_health_check', methods=['GET'])
 def ai_health_check_route():
     try:
-        # The '/api/tags' endpoint is a good, lightweight way to see if Ollama is running.
         response = requests.get('http://localhost:11434/api/tags', timeout=3)
         response.raise_for_status()
-        # You could even check if your desired model exists
-        models = response.json().get('models', [])
-        model_exists = any(m['name'].startswith(ai_model) for m in models)
-        if(model_exists):
-            return jsonify({"success": True, "message": "AI service is reachable."})
-        else:
-            return jsonify({"success": False, "message": f"AI service is reachable but AI model {ai_model} does not exist."})
+        
+        # Extract the model names from the response
+        ollama_data = response.json()
+        models = ollama_data.get('models', [])
+        # We only want the name, e.g., "llama3:latest"
+        model_names = [m['name'] for m in models]
+        
+        return jsonify({"success": True, "models": model_names})
     except requests.exceptions.RequestException as e:
-        # This catches connection errors, timeouts, etc.
         return jsonify({"success": False, "error": f"AI service is unreachable: {e}"}), 503
 
 @app.route('/ai_process_prompt', methods=['POST'])
 def ai_process_prompt_route():
     data = request.get_json()
     user_prompt = data.get('prompt')
+
+    # Get the selected model, with a sensible fallback
+    model_name = data.get('model', 'gemma3:12b')
+
     if not user_prompt:
         return jsonify({"success": False, "error": "No prompt provided."}), 400
 
@@ -515,10 +518,10 @@ def ai_process_prompt_route():
         ollama_response = requests.post(
             'http://localhost:11434/api/generate',
             json={
-                "model": ai_model,
+                "model": model_name,
                 "prompt": full_prompt,
                 "stream": False,
-                "format": "json" # Ollama's format parameter is very helpful here!
+                "format": "json"
             },
             timeout=ai_timeout
         )
