@@ -37,81 +37,64 @@ class GDMLParser:
             print(f"Warning: Got None for an expression, returning 0.0. This might indicate a missing attribute in the GDML file.")
             return 0.0
 
-        # Ensure it's a string and strip whitespace
         expr_str = str(expr_str).strip() 
-        if not expr_str: return 0.0      # Handle empty string after strip
+        if not expr_str: return 0.0
 
-        # Try to evaluate using asteval, which uses our context
-        # This will handle 'pi/2.', 'customangle' if customangle is defined, etc.
-        # asteval doesn't directly handle "10*cm" style string concat, so we'd need more logic for that.
-        # For now, we assume units are handled by the caller or on the GDML tag attribute.
-        
-        # Check if it's a direct reference to a pre-evaluated constant/quantity
+        eval_result = None
+
+        # First, check for direct reference, but DON'T return.
+        # Just get the numerical value and let it fall through to the
+        # unit multiplication step at the end.
         if expr_str in self.evaluator_context:
             val_from_context = self.evaluator_context[expr_str]
             if isinstance(val_from_context, (int, float)):
-                return val_from_context # Assumed to be in internal units
+                eval_result = val_from_context  # This is the value, e.g., 360.0
             elif isinstance(val_from_context, dict) and 'value' in val_from_context and isinstance(val_from_context['value'], (int, float)):
-                # This case is for when we store Define objects as dicts in context
-                return val_from_context['value']
-
-        # Attempt evaluation with asteval
-        # Strip common units that might be part of the string for asteval,
-        # as asteval won't understand "10*cm" directly.
-        # A more robust solution would be a proper tokenizer/parser.
-        cleaned_expr_str = expr_str
-        parsed_unit_val = default_unit_val_for_bare_numbers
-
-        # Basic unit stripping
-        found_unit_in_expr = False
-        for unit_cat_map_name, unit_cat_map in UNIT_FACTORS.items(): # Iterate through length, angle
-            for unit_symbol, factor in unit_cat_map.items():
-                # Check for patterns like "val*unit" or "val * unit"
-                if cleaned_expr_str.endswith(f"*{unit_symbol}"):
-                    cleaned_expr_str = cleaned_expr_str[:-len(f"*{unit_symbol}")].strip()
-                    parsed_unit_val = factor
-                    found_unit_in_expr = True
-                    break
-                elif cleaned_expr_str.endswith(f" * {unit_symbol}"):
-                    cleaned_expr_str = cleaned_expr_str[:-len(f" * {unit_symbol}")].strip()
-                    parsed_unit_val = factor
-                    found_unit_in_expr = True
-                    break
-            if found_unit_in_expr:
-                break
-
-        # Reset asteval errors before each evaluation
-        self.aeval.error = [] # Re-initialize the error list
-        self.aeval.error_msg = None
-
-        eval_result = self.aeval(cleaned_expr_str)
-
-        if self.aeval.error: # Check if errors occurred
-            # Log the errors from asteval
-            for err in self.aeval.error:
-                print(f"asteval error processing expression='{expr_str}' (cleaned='{cleaned_expr_str}'): {err.msg} at line {err.lineno}, col {err.col_offset}")
-            # self.aeval.error = [] # Clear for next time - already done at the start
-            
-            # Fallback for simple float conversion if asteval fails and it looks like a number
-            try:
-                # If unit was stripped, use that, otherwise use default_unit_val_for_bare_numbers
-                # But asteval should handle bare numbers directly.
-                return float(cleaned_expr_str) * (parsed_unit_val if found_unit_in_expr else default_unit_val_for_bare_numbers)
-            except ValueError:
-                print(f"Warning: Cannot evaluate expression '{expr_str}' (cleaned '{cleaned_expr_str}'). Returning 0.")
-                return 0.0
+                eval_result = val_from_context['value']
         
+        # If it was not a direct lookup, use asteval for complex expressions
+        if eval_result is None:
+            cleaned_expr_str = expr_str
+            parsed_unit_val = 1.0  # Reset for this block
+            found_unit_in_expr = False
+
+            # This basic unit stripping is for expressions like "10*cm"
+            for unit_cat_map_name, unit_cat_map in UNIT_FACTORS.items():
+                for unit_symbol, factor in unit_cat_map.items():
+                    if cleaned_expr_str.endswith(f"*{unit_symbol}"):
+                        cleaned_expr_str = cleaned_expr_str[:-len(f"*{unit_symbol}")].strip()
+                        parsed_unit_val = factor
+                        found_unit_in_expr = True
+                        break
+                    elif cleaned_expr_str.endswith(f" * {unit_symbol}"):
+                        cleaned_expr_str = cleaned_expr_str[:-len(f" * {unit_symbol}")].strip()
+                        parsed_unit_val = factor
+                        found_unit_in_expr = True
+                        break
+                if found_unit_in_expr: break
+
+            self.aeval.error = []
+            self.aeval.error_msg = None
+            
+            temp_result = self.aeval(cleaned_expr_str)
+
+            if self.aeval.error:
+                for err in self.aeval.error:
+                    print(f"asteval error processing expression='{expr_str}' (cleaned='{cleaned_expr_str}'): {err.msg} at line {err.lineno}, col {err.col_offset}")
+                try:
+                    eval_result = float(cleaned_expr_str) * (parsed_unit_val if found_unit_in_expr else 1.0)
+                except ValueError:
+                    print(f"Warning: Cannot evaluate expression '{expr_str}'. Returning 0.")
+                    return 0.0
+            else:
+                 eval_result = temp_result * (parsed_unit_val if found_unit_in_expr else 1.0)
+        
+        # Apply the unit factor from the GDML tag (like aunit="deg") to the result.
+        # This now works for both direct constants and complex expressions.
         if isinstance(eval_result, (int, float)):
-            # If a unit was parsed from the expression string, parsed_unit_val will hold its factor.
-            # If no unit in expr string, parsed_unit_val is default_unit_val_for_bare_numbers (usually 1.0 for expressions).
-            # The default_unit_val_for_bare_numbers is more for when the *tag* specifies a unit (e.g. <position x="10" unit="cm">)
-            # and the value "10" itself doesn't have a unit.
-            if found_unit_in_expr:
-                return eval_result * parsed_unit_val
-            else: # Bare number or expression result, apply the default_unit_val (which comes from the XML tag's unit attribute)
-                return eval_result * default_unit_val_for_bare_numbers
+            return eval_result * default_unit_val_for_bare_numbers
         else:
-            print(f"Warning: Expression '{expr_str}' (cleaned '{cleaned_expr_str}') evaluated to non-numeric type '{type(eval_result)}'. Returning 0.")
+            print(f"Warning: Expression '{expr_str}' evaluated to non-numeric type '{type(eval_result)}'. Returning 0.")
             return 0.0
 
     def parse_gdml_string(self, gdml_content_string):

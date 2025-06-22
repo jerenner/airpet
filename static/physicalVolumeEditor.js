@@ -223,26 +223,34 @@ function handleDefineSelectionChange(event) {
 }
 
 function setupTransformUI(type, value, select, inputs, defines) {
-    if (typeof value === 'string') { // It's a define reference
+    if (typeof value === 'string' && defines[value]) { // It's a define reference that exists
         select.value = value;
         Object.values(inputs).forEach(input => input.disabled = true);
         const define = defines[value];
-        if (define) {
-            const val = define.value;
+        if (define) { // Double check, but should be true
+            const val = define.value || { x: 0, y: 0, z: 0 }; // safety default
             if (type === 'rotation') {
-                inputs.x.value = THREE.MathUtils.radToDeg(val.x); /*...*/
-            } else {
-                inputs.x.value = val.x; /*...*/
+                inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0);
+                inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0);
+                inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0);
+            } else { // position
+                inputs.x.value = val.x || 0;
+                inputs.y.value = val.y || 0;
+                inputs.z.value = val.z || 0;
             }
         }
-    } else { // It's an absolute value object
+    } else { // It's an absolute value object (or a missing define, treat as absolute)
         select.value = '[Absolute]';
         Object.values(inputs).forEach(input => input.disabled = false);
-        const val = value || {x:0,y:0,z:0};
+        const val = (typeof value === 'object' && value !== null) ? value : { x: 0, y: 0, z: 0 }; // safety default
         if (type === 'rotation') {
-            inputs.x.value = THREE.MathUtils.radToDeg(val.x); /*...*/
-        } else {
-            inputs.x.value = val.x; /*...*/
+            inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0);
+            inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0);
+            inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0);
+        } else { // position
+            inputs.x.value = val.x || 0;
+            inputs.y.value = val.y || 0;
+            inputs.z.value = val.z || 0;
         }
     }
 }
