@@ -2,7 +2,7 @@
 
 virtual-pet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries without needing to write XML by hand. The integrated AI assistant allows users to generate and place objects using natural language prompts.
 
-![virtual-pet screenshot]()
+![virtual-pet screenshot](static/virtual_pet_screenshot.png)
 
 ## Features
 
