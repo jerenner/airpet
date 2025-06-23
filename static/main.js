@@ -38,6 +38,7 @@ async function initializeApp() {
         // Import Part Handlers
         onImportGdmlClicked: handleImportGdmlPart,
         onImportProjectClicked: handleImportJsonPart,
+        onImportAiResponseClicked: handleImportAiResponse,
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -68,6 +69,7 @@ async function initializeApp() {
         onCameraModeChangeClicked: SceneManager.setCameraMode,
         onWireframeToggleClicked: SceneManager.toggleGlobalWireframe,
         onGridToggleClicked: SceneManager.toggleGridVisibility,
+        onAxesToggleClicked: SceneManager.toggleAxesVisibility,
         onHierarchySelectionChanged: handleHierarchySelection,
         onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
@@ -161,6 +163,23 @@ async function initializeApp() {
 
 // --- State Synchronization and Selection Management ---
 
+/**
+ * Triggers a browser download for a given text content.
+ * @param {string} filename - The name of the file to be downloaded.
+ * @param {string} text - The content of the file.
+ */
+function downloadTextFile(filename, text) {
+    const element = document.createElement('a');
+    element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+    element.setAttribute('download', filename);
+
+    element.style.display = 'none';
+    document.body.appendChild(element);
+
+    element.click();
+
+    document.body.removeChild(element);
+}
 /**
  * Gets the context of the currently selected item(s).
  */
@@ -307,6 +326,22 @@ async function handleImportJsonPart(file) {
         UIManager.showError("Failed to import JSON Part: " + (error.message || error));
     } finally {
         document.getElementById('jsonPartFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
+async function handleImportAiResponse(file) {
+    if (!file) return;
+    UIManager.showLoading("Importing AI Response...");
+    try {
+        const result = await APIService.importAiResponse(file);
+        syncUIWithState(result); // The sync function handles the refresh
+        UIManager.showNotification("AI Response imported successfully!");
+    } catch (error) { 
+        UIManager.showError("Failed to import AI Response: " + (error.message || error));
+    } finally {
+        // Reset the file input so the user can upload the same file again if they want
+        document.getElementById('aiResponseFile').value = null;
         UIManager.hideLoading();
     }
 }
@@ -893,7 +928,23 @@ async function handleAiGenerate(promptText) {
         UIManager.showError("No AI model is selected or available.");
         return;
     }
+    
+    if (selectedModel === '--export--') {
+        // --- NEW: Call backend to get the prompt ---
+        UIManager.showLoading("Building prompt for export...");
+        try {
+            const fullPromptText = await APIService.getFullAiPrompt(promptText);
+            downloadTextFile('ai_prompt.md', fullPromptText);
+            UIManager.showNotification("Prompt exported to ai_prompt.md!");
+        } catch (error) {
+            UIManager.showError("Failed to build prompt: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+        return; // Stop execution here
+    }
 
+    // If not exporting, proceed with the API call
     UIManager.showLoading("Sending prompt to AI Assistant...");
     UIManager.setAiPanelState('loading'); // Set loading state
     

@@ -540,27 +540,6 @@ class ProjectManager:
             return True, None
         else:
             return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
-
-    # --- Placeholder for Command Pattern / Undo-Redo ---
-    # def execute_command(self, command):
-    #     command.execute(self.current_geometry_state)
-    #     self.undo_stack.append(command)
-    #     self.redo_stack.clear() # Any new action clears the redo stack
-
-    # def undo(self):
-    #     if not self.undo_stack: return False
-    #     command = self.undo_stack.pop()
-    #     command.undo(self.current_geometry_state)
-    #     self.redo_stack.append(command)
-    #     return True
-
-    # def redo(self):
-    #     if not self.redo_stack: return False
-    #     command = self.redo_stack.pop()
-    #     command.execute(self.current_geometry_state)
-    #     self.undo_stack.append(command)
-    #     return True
-
           
     def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
@@ -686,6 +665,24 @@ class ProjectManager:
 
         # 1. Create a temporary GeometryState from the AI's creation definitions
         #    (excluding placements, which we'll handle separately).
+        if "defines" in ai_data:
+            for define_name, define_data in ai_data["defines"].items():
+                if define_data.get("type") == "rotation":
+                    rot_val = define_data.get("value", {})
+                    if isinstance(rot_val, dict):
+                        rot_val['x'] = math.radians(rot_val.get('x', 0))
+                        rot_val['y'] = math.radians(rot_val.get('y', 0))
+                        rot_val['z'] = math.radians(rot_val.get('z', 0))
+
+        if "placements" in ai_data:
+            for placement_data in ai_data["placements"]:
+                rot_val = placement_data.get("rotation")
+                # Only convert if it's an absolute value dict, not a string reference
+                if isinstance(rot_val, dict):
+                    rot_val['x'] = math.radians(rot_val.get('x', 0))
+                    rot_val['y'] = math.radians(rot_val.get('y', 0))
+                    rot_val['z'] = math.radians(rot_val.get('z', 0))
+
         creation_data = {
             "defines": ai_data.get("defines", {}),
             "materials": ai_data.get("materials", {}),

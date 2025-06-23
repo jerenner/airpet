@@ -21,6 +21,7 @@ let axesHelper;
 
 let isWireframeMode = false;
 let isGridVisible = true;
+let isAxesVisible = true;
 let currentCameraMode = 'orbit';
 
 // Selection box
@@ -123,6 +124,7 @@ export function initScene(callbacks) {
     // Helpers
     axesHelper = new THREE.AxesHelper(300);
     scene.add(axesHelper);
+    isAxesVisible = true;
 
     const gridSize = 2000;
     const gridDivisions = 40;
@@ -1289,6 +1291,16 @@ export function toggleGlobalWireframe() {
 export function toggleGridVisibility() {
     isGridVisible = !isGridVisible;
     if (gridHelper) gridHelper.visible = isGridVisible;
+}
+
+/**
+ * Toggles the visibility of the main XYZ axes helper in the scene.
+ */
+export function toggleAxesVisibility() {
+    isAxesVisible = !isAxesVisible;
+    if (axesHelper) {
+        axesHelper.visible = isAxesVisible;
+    }
 }
 
 export function setCameraMode(mode) { // mode is 'orbit' or 'fly'

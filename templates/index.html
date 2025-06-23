@@ -724,6 +724,8 @@
                             <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
                             <button id="importProjectButton">Import Part(s) (JSON)...</button>
                             <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
+                            <button id="importAiResponseButton">Import AI Response (JSON)...</button>
+                            <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
                             <hr>
                             <button id="saveProjectButton">Save Project (JSON)...</button>
                             <button id="exportGdmlButton">Export GDML...</button>
@@ -752,6 +754,7 @@
                         <div class="dropdown_content">
                             <button id="toggleWireframeButton">Toggle Wireframe</button>
                             <button id="toggleGridButton">Toggle Grid</button>
+                            <button id="toggleAxesButton">Toggle Axes</button>
                             <hr style="margin: 5px 0;"> <!-- Separator -->
                             <button id="cameraModeOrbitButton">Camera: Orbit</button>
                             <button id="cameraModeFlyButton">Camera: Fly</button>
@@ -787,47 +790,18 @@
         <!-- AI PANEL --- -->
         <div id="ai_panel">
             <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
-            <select id="ai_model_select" title="Select AI Model"></select>
+            <select id="ai_model_select" title="Select AI Model">
+                <!-- Add a static option for exporting -->
+                <option value="--export--">[ Export Prompt ]</option>
+                <option disabled>──────────</option> <!-- Visual separator -->
+                <!-- Dynamic options will be added here by JS -->
+            </select>
             <button id="ai_generate_button" title="Generate with AI">
                 <span class="button-text">➤</span>
                 <div class="loader"></div>
             </button>
         </div>
     </div>
-    <!-- Old floating info panel -->
-    <!--<div id="info_panel">
-        <h3>Object Information</h3>
-        <p><strong>Name:</strong> <span id="info_name">-</span></p>
-        <p><strong>Type:</strong> <span id="info_type">-</span></p>
-        <p><strong>Parameters:</strong></p>
-        <div id="info_parameters" style="padding-left: 10px;">-</div>
-        <p><strong>Position (mm):</strong></p>
-        <div id="info_position" style="padding-left: 10px;">-</div>
-        <p><strong>Rotation (rad, ZYX):</strong></p>
-        <div id="info_rotation" style="padding-left: 10px;">-</div>
-    </div>-->
-    <!--<div id="addObjectModal" style="display:none; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; padding:20px; border:1px solid #ccc; z-index:1001;">
-        <h4>Add New Object</h4>
-        <label for="newObjectType">Type:</label>
-        <select id="newObjectType">
-            <option value="define_position">Define: Position</option>
-            <option value="define_rotation">Define: Rotation</option>
-            <option value="material">Material</option>
-            <option value="solid_box">Solid: Box</option>
-            <option value="solid_tube">Solid: Tube</option>
-            <option value="logical_volume" disabled>Logical Volume (select solid/mat)</option>
-            <option value="physical_volume" disabled>Physical Volume (select LV/parent)</option>
-        </select>
-        <br><br>
-        <label for="newObjectName">Name:</label>
-        <input type="text" id="newObjectName" placeholder="e.g., MyNewBox">
-        <br><br>
-        <div id="newObjectParams"></div>
-        <br>
-        <button id="confirmAddObject">Add</button>
-        <button id="cancelAddObject">Cancel</button>
-    </div>
-    <div id="modalBackdrop" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;"></div>-->
     <!-- Editor for defines -->
     <div id="defineEditorModal" class="editor-modal">
         <div class="modal-content" style="width: 400px; height: auto;">

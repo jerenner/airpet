@@ -342,3 +342,45 @@ export async function processAiPrompt(prompt, model) {
     });
     return handleResponse(response);
 }
+
+/**
+ * Sends a pre-generated AI response JSON file to the backend for processing.
+ * @param {File} aiFile The JSON file to upload.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function importAiResponse(aiFile) {
+    const formData = new FormData();
+    formData.append('aiFile', aiFile);
+    const response = await fetch(`${API_BASE_URL}/import_ai_json`, {
+        method: 'POST',
+        body: formData,
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Fetches the fully constructed prompt string from the backend for exporting.
+ * @param {string} userPrompt The user's text prompt.
+ * @returns {Promise<string>} A promise that resolves to the full prompt text.
+ */
+export async function getFullAiPrompt(userPrompt) {
+    const response = await fetch(`${API_BASE_URL}/ai_get_full_prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: userPrompt })
+    });
+    
+    // Handle text response instead of JSON
+    if (!response.ok) {
+        // Try to parse error from JSON, else use status text
+        let errorData;
+        try {
+            errorData = await response.json();
+        } catch (e) {
+            throw new Error(`Network error: ${response.status} ${response.statusText}`);
+        }
+        throw new Error(errorData.error || `Request failed with status ${response.status}`);
+    }
+    
+    return response.text(); // Return the response body as a string
+}

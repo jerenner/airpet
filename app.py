@@ -72,6 +72,21 @@ def create_empty_project():
     # Set this logical volume as the world volume
     project_manager.current_geometry_state.world_volume_ref = "World"
 
+# Function to construct full AI prompt
+def construct_full_ai_prompt(user_prompt):
+
+    system_prompt = load_system_prompt()
+    current_geometry_json = project_manager.save_project_to_json_string()
+
+    full_prompt = (f"{system_prompt}\n\n"
+                    f"## Current Geometry State\n\n"
+                    f"```json\n{current_geometry_json}\n```\n\n"
+                    f"## User Request\n\n"
+                    f'"{user_prompt}"\n\n'
+                    f"## Your JSON Response:\n")
+
+    return full_prompt
+
 # --- Main Application Routes ---
 
 @app.route('/')
@@ -503,15 +518,7 @@ def ai_process_prompt_route():
 
     try:
         # Step 1: Construct the full prompt
-        system_prompt = load_system_prompt()
-        current_geometry_json = project_manager.save_project_to_json_string()
-
-        full_prompt = (f"{system_prompt}\n\n"
-                       f"## Current Geometry State\n\n"
-                       f"```json\n{current_geometry_json}\n```\n\n"
-                       f"## User Request\n\n"
-                       f'"{user_prompt}"\n\n'
-                       f"## Your JSON Response:\n")
+        full_prompt = construct_full_ai_prompt(user_prompt)
 
         # Step 2: Call Ollama API
         # NOTE: Assumes Ollama is running on localhost:11434 and has a model like 'llama3'
@@ -546,6 +553,51 @@ def ai_process_prompt_route():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
+
+@app.route('/ai_get_full_prompt', methods=['POST'])
+def ai_get_full_prompt_route():
+    data = request.get_json()
+    user_prompt = data.get('prompt')
+    if not user_prompt:
+        return jsonify({"success": False, "error": "No prompt provided."}), 400
+
+    try:
+        # Construct the prompt
+        full_prompt = construct_full_ai_prompt(user_prompt)
+
+        # Return the constructed prompt as plain text
+        return Response(full_prompt, mimetype="text/markdown")
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
+
+@app.route('/import_ai_json', methods=['POST'])
+def import_ai_json_route():
+    if 'aiFile' not in request.files:
+        return jsonify({"success": False, "error": "No AI file part"}), 400
+    file = request.files['aiFile']
+    if file.filename == '':
+        return jsonify({"success": False, "error": "No selected file"}), 400
+
+    print("Importing AI Response...");
+    try:
+        json_string = file.read().decode('utf-8')
+        ai_data = json.loads(json_string)
+
+        # Use the existing AI processing logic!
+        success, error_msg = project_manager.process_ai_response(ai_data)
+        
+        if success:
+            return create_success_response("AI-generated JSON imported successfully.")
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to process AI JSON file."}), 500
+
+    except json.JSONDecodeError:
+        return jsonify({"success": False, "error": "Invalid JSON file format"}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"An unexpected error occurred while importing: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

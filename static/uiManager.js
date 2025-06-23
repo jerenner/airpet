@@ -5,10 +5,12 @@ import * as SceneManager from './sceneManager.js';
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
     openGdmlButton, openProjectButton, importGdmlButton, importProjectButton,
+    importAiResponseButton,
     gdmlFileInput, projectFileInput, gdmlPartFileInput, jsonPartFileInput,
+    aiResponseFileInput,
     deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, //modeScaleButton,
-    toggleWireframeButton, toggleGridButton,
+    toggleWireframeButton, toggleGridButton, toggleAxesButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
     aiPromptInput, aiGenerateButton, aiModelSelect,
@@ -35,10 +37,10 @@ let callbacks = {
     onOpenProjectClicked: (file) => {},
     onImportGdmlClicked: (file) => {},
     onImportProjectClicked: (file) => {},
+    onImportAiResponseClicked: (file) => {},
     onNewProjectClicked: () => {},
     onSaveProjectClicked: () => {},
     onExportGdmlClicked: () => {},
-
     onEditSolidClicked: (solidData) => {},
     onAddDefineClicked: () => {},
     onEditDefineClicked: (defineData) => {},
@@ -56,6 +58,7 @@ let callbacks = {
     onCameraModeChangeClicked: (mode) => {},
     onWireframeToggleClicked: () => {},
     onGridToggleClicked: () => {},
+    onAxesToggleClicked: () => {},
     onHierarchyItemSelected: (itemContext) => {}, // {type, id, name, data}
     onInspectorPropertyChanged: (type, id, path, value) => {},
     onPVVisibilityToggle: (pvId, isVisible) => {},
@@ -81,6 +84,9 @@ export function initUI(cb) {
     importProjectButton = document.getElementById('importProjectButton')
     jsonPartFileInput = document.getElementById('jsonPartFile')
 
+    importAiResponseButton = document.getElementById('importAiResponseButton');
+    aiResponseFileInput = document.getElementById('aiResponseFile');
+
     // Other File menu options
     newProjectButton = document.getElementById('newProjectButton');
     saveProjectButton = document.getElementById('saveProjectButton');
@@ -103,6 +109,7 @@ export function initUI(cb) {
     // View Menu Buttons
     toggleWireframeButton = document.getElementById('toggleWireframeButton');
     toggleGridButton = document.getElementById('toggleGridButton');
+    toggleAxesButton = document.getElementById('toggleAxesButton');
     cameraModeOrbitButton = document.getElementById('cameraModeOrbitButton');
     cameraModeFlyButton = document.getElementById('cameraModeFlyButton');
 
@@ -143,11 +150,13 @@ export function initUI(cb) {
     openProjectButton.addEventListener('click', () => triggerFileInput('projectFile'));
     importGdmlButton.addEventListener('click', () => triggerFileInput('gdmlPartFile'));
     importProjectButton.addEventListener('click', () => triggerFileInput('jsonPartFile'));
+    importAiResponseButton.addEventListener('click', () => triggerFileInput('aiResponseFile'));
 
     gdmlFileInput.addEventListener('change', (e) => callbacks.onOpenGdmlClicked(e.target.files[0]));
     projectFileInput.addEventListener('change', (e) => callbacks.onOpenProjectClicked(e.target.files[0]));
     gdmlPartFileInput.addEventListener('change', (e) => callbacks.onImportGdmlClicked(e.target.files[0]));
     jsonPartFileInput.addEventListener('change', (e) => callbacks.onImportProjectClicked(e.target.files[0]));
+    aiResponseFile.addEventListener('change', (e) => callbacks.onImportAiResponseClicked(e.target.files[0]));
 
     newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
     saveProjectButton.addEventListener('click', callbacks.onSaveProjectClicked);
@@ -162,6 +171,7 @@ export function initUI(cb) {
 
     toggleWireframeButton.addEventListener('click', callbacks.onWireframeToggleClicked);
     toggleGridButton.addEventListener('click', callbacks.onGridToggleClicked);
+    toggleAxesButton.addEventListener('click', callbacks.onAxesToggleClicked);
     cameraModeOrbitButton.addEventListener('click', () => { setActiveCameraModeButton('orbit'); callbacks.onCameraModeChangeClicked('orbit');});
     cameraModeFlyButton.addEventListener('click', () => { setActiveCameraModeButton('fly'); callbacks.onCameraModeChangeClicked('fly');});
     
@@ -911,12 +921,16 @@ export function clearAiPrompt() {
 }
 
 /**
- * Populates the AI model selector dropdown.
+ * Populates the AI model selector dropdown, preserving the static export option.
  * @param {string[]} models - An array of model names.
  */
 export function populateAiModelSelector(models) {
     if (!aiModelSelect) return;
-    aiModelSelect.innerHTML = ''; // Clear existing options
+
+    // Clear only dynamically added options, not the first two (export and separator)
+    while (aiModelSelect.options.length > 2) {
+        aiModelSelect.remove(2);
+    }
 
     if (models.length === 0) {
         const option = document.createElement('option');
