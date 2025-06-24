@@ -4,23 +4,6 @@ virtual-pet is a tool intended to assist users in creating and comparing geometr
 
 ![virtual-pet screenshot](static/virtual_pet_screenshot.png)
 
-## Features
-
--   **3D Visualization:** Real-time, interactive 3D rendering of the geometry using three.js.
--   **Visual Editing:** Manipulate objects in the 3D view with translate and rotate gizmos.
--   **Hierarchical View:** Browse the geometry structure, materials, solids, and defines in a clear, tabbed interface.
--   **Core Geometry Components:** Add/modify/delete core geometry components:
-    -   Defines (positions, rotations)
-    -   Materials (simple and composite)
-    -   Solids (primitives and complex booleans)
-    -   Logical and Physical Volumes
--   **File Operations:**
-    -   Import/Export full projects in an internal JSON format.
-    -   Import full GDML files to start a project.
-    -   Import GDML or JSON "parts" to merge into an existing geometry.
-    -   Export the final geometry to a standard GDML file for use in Geant4.
--   **AI Assistant:** Leverage a local LLM (via Ollama) and/or Google Gemini to generate geometry from natural language prompts.
-
 ## Installation
 
 To run virtual-pet, you need a Python environment and a local instance of the Ollama AI service.
