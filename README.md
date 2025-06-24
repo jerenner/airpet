@@ -39,11 +39,7 @@ First, set up the Python server which handles all the geometry logic.
 git clone https://github.com/your-username/virtual-pet.git
 cd virtual-pet
 
-# 2. (Recommended) Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-
-# 3. Install the required Python packages
+# 2. Install the required Python packages
 pip install -r requirements.txt
 ```
 
