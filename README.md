@@ -28,9 +28,7 @@ pip install -r requirements.txt
 
 Virtual PET can connect to two types of AI services simultaneously:
 -   **Ollama:** For running open-source models locally on your machine.
--   **Google Gemini:** For using Google's powerful cloud-based models.
-
-You can set up one or both.
+-   **Google Gemini:** For using Google's cloud-based models.
 
 #### Google Gemini (recommended)
 
