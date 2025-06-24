@@ -76,17 +76,3 @@ With your Python environment and at least one AI service (Ollama or Gemini) conf
 3.  Open your web browser and navigate to: [http://localhost:5003](http://localhost:5003)
 
 The web application should now be running. The AI model dropdown at the bottom-right will be populated with any available Ollama and/or Gemini models based on your setup.
-
-## Usage
-
--   **File Menu:** Use the `File` menu to create a new project, open existing GDML/JSON projects, or save/export your work.
--   **Hierarchy Panels:** Use the tabs on the left to browse and select different components of your geometry. Double-click an item to open its editor.
--   **Inspector:** When an item is selected, its properties will appear in the Inspector panel on the bottom-left. For physical volumes, you can edit transforms directly or link them to defines.
--   **3D View:**
-    -   **Observe Mode:** Left-click and drag to rotate, right-click and drag to pan, scroll wheel to zoom.
-    -   **Translate/Rotate Modes:** Select a physical volume and use the gizmo to modify its position or rotation.
--   **AI Assistant:**
-    1.  Type a descriptive prompt into the text box at the bottom right. For example: *"Create a detector made of a 20cm long tube of scintillator with a 5cm radius, and place with its axis along the z-axis at x=100,y=0."*
-    2.  Click the "➤" (Generate) button.
-    3.  The UI will show a loading state while the AI processes the request. Once complete, the new geometry will appear in the 3D view and hierarchy.
-    Note that the accuracy and reliability of the AI will depend on what model you are using. It's likely that current
