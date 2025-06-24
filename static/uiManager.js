@@ -921,30 +921,42 @@ export function clearAiPrompt() {
 }
 
 /**
- * Populates the AI model selector dropdown, preserving the static export option.
- * @param {string[]} models - An array of model names.
+ * Populates the AI model selector dropdown with grouped options.
+ * @param {object} models - An object like {ollama: [...], gemini: [...]}.
  */
 export function populateAiModelSelector(models) {
     if (!aiModelSelect) return;
-
-    // Clear only dynamically added options, not the first two (export and separator)
+    
+    // Clear only dynamically added options
     while (aiModelSelect.options.length > 2) {
         aiModelSelect.remove(2);
     }
 
-    if (models.length === 0) {
-        const option = document.createElement('option');
-        option.textContent = "No models found";
-        aiModelSelect.appendChild(option);
-        return;
-    }
+    const createGroup = (label, modelList) => {
+        if (modelList && modelList.length > 0) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = label;
+            modelList.forEach(modelName => {
+                const option = document.createElement('option');
+                option.value = modelName;
+                // Display a friendlier name for Gemini models
+                option.textContent = modelName.startsWith('models/') ? `${modelName.split('/')[1]}` : modelName;
+                optgroup.appendChild(option);
+            });
+            aiModelSelect.appendChild(optgroup);
+        }
+    };
+    
+    createGroup("Gemini Models", models.gemini);
+    createGroup("Ollama Models", models.ollama);
 
-    models.forEach(modelName => {
+    // If no models were added at all
+    if (aiModelSelect.options.length <= 2) {
         const option = document.createElement('option');
-        option.value = modelName;
-        option.textContent = modelName;
+        option.textContent = "No AI models found";
+        option.disabled = true;
         aiModelSelect.appendChild(option);
-    });
+    }
 }
 
 /**

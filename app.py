@@ -8,10 +8,18 @@ import traceback
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
 
+from dotenv import load_dotenv
+from google import genai  # Correct top-level import
+from google.genai import types # Often useful for advanced features
+from google.genai import client # For type hinting
+
 from src.project_manager import ProjectManager
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -19,6 +27,21 @@ CORS(app)
 ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
 project_manager = ProjectManager()
+
+# Configure Gemini client
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+gemini_client: client.Client | None = None # Use a global client instance
+
+if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
+    try:
+        # The correct way to configure is to instantiate the Client
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("Google Gemini client configured successfully.")
+    except Exception as e:
+        print(f"Warning: Failed to configure Google Gemini client: {e}")
+        # In this case, gemini_client will remain None
+else:
+    print("Warning: GEMINI_API_KEY not found or not set in .env file. Gemini models will be unavailable.")
 
 # --- Helper Functions ---
 
@@ -491,50 +514,77 @@ def get_defines_by_type_route():
 
 @app.route('/ai_health_check', methods=['GET'])
 def ai_health_check_route():
+    response_data = {"success": True, "models": {"ollama": [], "gemini": []}}
+    
+    # 1. Check for Ollama models
     try:
-        response = requests.get('http://localhost:11434/api/tags', timeout=3)
-        response.raise_for_status()
-        
-        # Extract the model names from the response
-        ollama_data = response.json()
-        models = ollama_data.get('models', [])
-        # We only want the name, e.g., "llama3:latest"
-        model_names = [m['name'] for m in models]
-        
-        return jsonify({"success": True, "models": model_names})
-    except requests.exceptions.RequestException as e:
-        return jsonify({"success": False, "error": f"AI service is unreachable: {e}"}), 503
+        ollama_response = requests.get('http://localhost:11434/api/tags', timeout=3)
+        if ollama_response.ok:
+            ollama_data = ollama_response.json()
+            response_data["models"]["ollama"] = [m['name'] for m in ollama_data.get('models', [])]
+    except requests.exceptions.RequestException:
+        print("Ollama service is unreachable.")
+        # We don't fail the whole request, just show no Ollama models
+
+    # 2. Check for Gemini models if the client was initialized
+    if gemini_client:
+        try:
+            gemini_models = []
+            # Use the initialized client to list models
+            for model in gemini_client.models.list():
+                if 'generateContent' in model.supported_actions:
+                    # Temporary filter for 2.5 Flash only
+                    if(model.name == "models/gemini-2.5-flash"):
+                        gemini_models.append(model.name)
+            response_data["models"]["gemini"] = gemini_models
+        except Exception as e:
+            print(f"Error fetching Gemini models: {e}")
+            response_data["error_gemini"] = str(e)
+
+    return jsonify(response_data)
 
 @app.route('/ai_process_prompt', methods=['POST'])
 def ai_process_prompt_route():
     data = request.get_json()
     user_prompt = data.get('prompt')
+    model_name = data.get('model')
 
-    # Get the selected model, with a sensible fallback
-    model_name = data.get('model', 'gemma3:12b')
-
-    if not user_prompt:
-        return jsonify({"success": False, "error": "No prompt provided."}), 400
+    # Ensure we have a prompt and model name
+    if not all([user_prompt, model_name]):
+        return jsonify({"success": False, "error": "Prompt or model name missing."}), 400
 
     try:
         # Step 1: Construct the full prompt
         full_prompt = construct_full_ai_prompt(user_prompt)
 
-        # Step 2: Call Ollama API
-        # NOTE: Assumes Ollama is running on localhost:11434 and has a model like 'llama3'
-        ollama_response = requests.post(
-            'http://localhost:11434/api/generate',
-            json={
-                "model": model_name,
-                "prompt": full_prompt,
-                "stream": False,
-                "format": "json"
-            },
-            timeout=ai_timeout
-        )
-        ollama_response.raise_for_status() # Raise an exception for bad status codes
+        ai_json_string = ""
 
-        ai_json_string = ollama_response.json().get('response')
+        # --- Routing logic ---
+        if model_name.startswith("models/"): # Gemini models
+            if not gemini_client:
+                return jsonify({"success": False, "error": "Gemini client is not configured on the server."}), 500
+            
+            print(f"Sending prompt to Gemini model: {model_name}")
+            # Use the global client instance to generate content
+            gemini_response = gemini_client.models.generate_content(
+                model=model_name,
+                contents=full_prompt,
+                # To ensure JSON output, we can add a config
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            )
+            ai_json_string = gemini_response.text
+
+        else: # Assume it's an Ollama model
+            print(f"Sending prompt to Ollama model: {model_name}")
+            ollama_response = requests.post(
+                'http://localhost:11434/api/generate',
+                json={ "model": model_name, "prompt": full_prompt, "stream": False, "format": "json"},
+                timeout=ai_timeout
+            )
+            ollama_response.raise_for_status()
+            ai_json_string = ollama_response.json().get('response')
         
         # Step 3: Parse and process the response using a new ProjectManager method
         ai_data = json.loads(ai_json_string)
