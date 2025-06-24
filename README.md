@@ -19,7 +19,7 @@ virtual-pet is a tool intended to assist users in creating and comparing geometr
     -   Import full GDML files to start a project.
     -   Import GDML or JSON "parts" to merge into an existing geometry.
     -   Export the final geometry to a standard GDML file for use in Geant4.
--   **AI Assistant:** Leverage a local LLM (via Ollama) to generate geometry from natural language prompts.
+-   **AI Assistant:** Leverage a local LLM (via Ollama) and/or Google Gemini to generate geometry from natural language prompts.
 
 ## Installation
 
