@@ -131,7 +131,7 @@ class ProjectManager:
         final_key = path_parts[-1]
 
         # --- Type Coercion ---
-        old_value = getattr(current_level_obj, final_key, None) if not isinstance(current_level_obj, dict) else current_level_obj.get(final_key)    
+        old_value = current_level_obj.get(final_key) if isinstance(current_level_obj, dict) else getattr(current_level_obj, final_key, None)
         converted_value = new_value
 
         # --- SPECIAL CASE for PV transform properties ---
@@ -147,24 +147,22 @@ class ProjectManager:
         elif old_value is not None and not isinstance(new_value, type(old_value)):
             target_type = type(old_value)
             try:
-                if target_type == float:
+                # If the target is a numeric type (int or float), always
+                # convert the new value to float to avoid integer truncation.
+                if target_type in [int, float]:
                     converted_value = float(new_value)
-                elif target_type == int:
-                    converted_value = int(float(new_value))
                 elif target_type == dict:
-                    # This logic is for when a dict is expected, but might be passed as a string
-                    # It's less relevant now but good to keep for other potential dict properties.
                     if isinstance(new_value, str):
                         import ast
                         converted_value = ast.literal_eval(new_value)
-                    else: # It's already a dict, which is fine
+                    else:
                         converted_value = new_value
-                # Add other type checks as needed
+                # Add other specific type checks here if needed
             except (ValueError, TypeError, SyntaxError) as e:
                 print(f"Update failed: Could not convert new value '{new_value}' to target type '{target_type}'. Error: {e}")
                 return False, f"Invalid value format for property '{final_key}'."
 
-        # --- SET THE VALUE ---
+        # Set the value
         if isinstance(current_level_obj, dict):
             current_level_obj[final_key] = converted_value
         else:
@@ -254,8 +252,8 @@ class ProjectManager:
                     'rmin': float(p.get('rmin', 0)),
                     'rmax': float(p.get('rmax', 50)),
                     'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                    'startphi': math.radians(float(p.get('startphi', 0))),
+                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
                 }
             elif solid_type == "cone":
                 internal_params = {
@@ -264,18 +262,18 @@ class ProjectManager:
                     'rmin2': float(p.get('rmin2', 0)),
                     'rmax2': float(p.get('rmax2', 75)),
                     'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                    'startphi': math.radians(float(p.get('startphi', 0))),
+                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
                 }
             elif solid_type == "sphere":
                 # Backend directly uses the parameters from the UI
                 internal_params = {
                     'rmin': float(p.get('rmin', 0)),
                     'rmax': float(p.get('rmax', 100)),
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 2 * math.pi)),
-                    'starttheta': float(p.get('starttheta', 0)),
-                    'deltatheta': float(p.get('deltatheta', math.pi))
+                    'startphi': math.radians(float(p.get('startphi', 0))),
+                    'deltaphi': math.radians(float(p.get('deltaphi', 360))),
+                    'starttheta': math.radians(float(p.get('starttheta', 0))),
+                    'deltatheta': math.radians(float(p.get('deltatheta', 180)))
                 }
             elif solid_type == "orb":
                 internal_params = {'r': float(p.get('r', 100))}
@@ -284,8 +282,8 @@ class ProjectManager:
                     'rmin': float(p.get('rmin', 20)),
                     'rmax': float(p.get('rmax', 30)),
                     'rtor': float(p.get('rtor', 100)),
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 2 * math.pi))
+                    'startphi': math.radians(float(p.get('startphi', 0))),
+                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
                 }
             elif solid_type == "trd":
                 internal_params = {
@@ -300,9 +298,9 @@ class ProjectManager:
                     'dx': float(p.get('dx', 50)), # UI sends half-length
                     'dy': float(p.get('dy', 60)),
                     'dz': float(p.get('dz', 70)),
-                    'alpha': float(p.get('alpha', 0)),
-                    'theta': float(p.get('theta', 0)),
-                    'phi': float(p.get('phi', 0))
+                    'alpha': math.radians(float(p.get('alpha', 0))),
+                    'theta': math.radians(float(p.get('theta', 0))),
+                    'phi': math.radians(float(p.get('phi', 0)))
                 }
             elif solid_type == "eltube":
                 internal_params = {
@@ -658,30 +656,64 @@ class ProjectManager:
 
     def process_ai_response(self, ai_data: dict):
         """
-        Processes a structured dictionary from the AI, adding new objects and placements.
+        Processes a structured dictionary from the AI, converting units
+        and adding new objects and placements.
         """
         if not self.current_geometry_state:
             return False, "No project loaded."
 
-        # 1. Create a temporary GeometryState from the AI's creation definitions
-        #    (excluding placements, which we'll handle separately).
+        # --- Centralized Unit Conversion ---
+        # A set of all solid parameter keys that represent angles and need conversion
+        angle_param_keys = {
+            'startphi', 'deltaphi', 'starttheta', 'deltatheta',
+            'alpha', 'theta', 'phi', 'inst', 'outst', 'phi_twist', 'twistedangle',
+            'alpha1', 'alpha2'
+        }
+
+        # 1. Convert rotation 'defines' from degrees to radians
         if "defines" in ai_data:
-            for define_name, define_data in ai_data["defines"].items():
+            for define_data in ai_data.get("defines", {}).values():
                 if define_data.get("type") == "rotation":
                     rot_val = define_data.get("value", {})
                     if isinstance(rot_val, dict):
-                        rot_val['x'] = math.radians(rot_val.get('x', 0))
-                        rot_val['y'] = math.radians(rot_val.get('y', 0))
-                        rot_val['z'] = math.radians(rot_val.get('z', 0))
+                        for axis in ['x', 'y', 'z']:
+                            rot_val[axis] = math.radians(rot_val.get(axis, 0))
 
+        # 2. Convert solid angular parameters from degrees to radians
+        if "solids" in ai_data:
+            for solid_data in ai_data.get("solids", {}).values():
+                params = solid_data.get("parameters", {})
+                if not isinstance(params, dict): continue
+
+                for key, value in params.items():
+                    if key in angle_param_keys:
+                        try:
+                            params[key] = math.radians(float(value))
+                        except (ValueError, TypeError):
+                            # Handle cases where value might not be a number, though it should be.
+                            print(f"Warning: Could not convert angle parameter '{key}' with value '{value}' to radians.")
+                            pass
+
+                # Special handling for boolean solid recipes
+                if solid_data.get("type") == "boolean":
+                    recipe = params.get("recipe", [])
+                    for item in recipe:
+                        transform = item.get("transform")
+                        if transform and isinstance(transform.get("rotation"), dict):
+                            rot_val = transform["rotation"]
+                            for axis in ['x', 'y', 'z']:
+                                rot_val[axis] = math.radians(rot_val.get(axis, 0))
+
+        # 3. Convert placement rotations from degrees to radians
         if "placements" in ai_data:
-            for placement_data in ai_data["placements"]:
+            for placement_data in ai_data.get("placements", []):
                 rot_val = placement_data.get("rotation")
                 # Only convert if it's an absolute value dict, not a string reference
                 if isinstance(rot_val, dict):
-                    rot_val['x'] = math.radians(rot_val.get('x', 0))
-                    rot_val['y'] = math.radians(rot_val.get('y', 0))
-                    rot_val['z'] = math.radians(rot_val.get('z', 0))
+                    for axis in ['x', 'y', 'z']:
+                        rot_val[axis] = math.radians(rot_val.get(axis, 0))
+        
+        # --- End of Unit Conversion ---
 
         creation_data = {
             "defines": ai_data.get("defines", {}),
@@ -690,36 +722,27 @@ class ProjectManager:
             "logical_volumes": ai_data.get("logical_volumes", {}),
         }
         
-        if any(creation_data.values()): # If there's anything to create
+        if any(creation_data.values()):
             temp_state = GeometryState.from_dict(creation_data)
-            
-            # 2. Use the existing merge logic to add new definitions.
-            #    This handles name conflicts gracefully.
             success, error_msg = self.merge_from_state(temp_state)
             if not success:
                 return False, f"Failed to merge AI-defined objects: {error_msg}"
 
-        # 3. Process the new placements
         placements = ai_data.get("placements", [])
         if not isinstance(placements, list):
             return False, "AI response had an invalid 'placements' format (must be a list)."
 
         for pv_data in placements:
             try:
-                # Extract placement details from the AI response
                 parent_lv = pv_data['parent_lv_name']
                 volume_ref = pv_data['volume_ref']
                 pv_name = pv_data.get('pv_name', f"{volume_ref}_pv")
                 position = pv_data.get('position', {'x':0, 'y':0, 'z':0})
                 rotation = pv_data.get('rotation', {'x':0, 'y':0, 'z':0})
                 
-                # Use the existing 'add_physical_volume' method.
-                # This method will find the parent, find the child LV, and create the PV.
                 _, pv_error = self.add_physical_volume(parent_lv, pv_name, volume_ref, position, rotation)
                 
                 if pv_error:
-                    # If one placement fails, we stop and report the error.
-                    # A more robust system could try to continue, but this is safer.
                     return False, f"Failed to place '{volume_ref}' in '{parent_lv}': {pv_error}"
             except KeyError as e:
                 return False, f"AI placement data is missing a required key: {e}"
