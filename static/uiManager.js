@@ -14,6 +14,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
     aiPromptInput, aiGenerateButton, aiModelSelect,
+    setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
@@ -62,7 +63,9 @@ let callbacks = {
     onHierarchyItemSelected: (itemContext) => {}, // {type, id, name, data}
     onInspectorPropertyChanged: (type, id, path, value) => {},
     onPVVisibilityToggle: (pvId, isVisible) => {},
-    onAiGenerateClicked: (promptText) => {}
+    onAiGenerateClicked: (promptText) => {},
+    onSetApiKeyClicked: () => {},
+    onSaveApiKeyClicked: (apiKey) => {}
 };
 
 // --- Initialization ---
@@ -91,6 +94,7 @@ export function initUI(cb) {
     newProjectButton = document.getElementById('newProjectButton');
     saveProjectButton = document.getElementById('saveProjectButton');
     exportGdmlButton = document.getElementById('exportGdmlButton');
+    setApiKeyButton = document.getElementById('setApiKeyButton');
 
     deleteSelectedObjectButton = document.getElementById('deleteSelectedObjectButton');
 
@@ -130,6 +134,12 @@ export function initUI(cb) {
     aiPromptInput = document.getElementById('ai_prompt_input');
     aiGenerateButton = document.getElementById('ai_generate_button');
     aiModelSelect = document.getElementById('ai_model_select');
+
+    // API key modal elements
+    apiKeyModal = document.getElementById('apiKeyModal');
+    apiKeyInput = document.getElementById('apiKeyInput');
+    saveApiKeyButton = document.getElementById('saveApiKey');
+    cancelApiKeyButton = document.getElementById('cancelApiKey');
 
     // Add Object Modal Elements
     // addObjectModal = document.getElementById('addObjectModal');
@@ -214,11 +224,12 @@ export function initUI(cb) {
         }
     });
 
-    // Add Object Modal Listeners
-    //confirmAddObjectButton.addEventListener('click', collectAndConfirmAddObject);
-    //cancelAddObjectButton.addEventListener('click', hideAddObjectModal);
-    //modalBackdrop.addEventListener('click', hideAddObjectModal);
-    //newObjectTypeSelect.addEventListener('change', populateAddObjectModalParams); // Renamed for clarity
+    // API key modal listeners
+    setApiKeyButton.addEventListener('click', callbacks.onSetApiKeyClicked);
+    saveApiKeyButton.addEventListener('click', () => {
+        callbacks.onSaveApiKeyClicked(apiKeyInput.value);
+    });
+    cancelApiKeyButton.addEventListener('click', hideApiKeyModal);
 
     // Tab Navigation
     const tabNavButtons = document.querySelectorAll('.tab_button');
@@ -927,15 +938,16 @@ export function clearAiPrompt() {
 export function populateAiModelSelector(models) {
     if (!aiModelSelect) return;
     
-    // Clear only dynamically added options
-    while (aiModelSelect.options.length > 2) {
-        aiModelSelect.remove(2);
-    }
+    // Remove all existing model groups before adding new ones.
+    const existingGroups = aiModelSelect.querySelectorAll('.model-group, .no-models-option');
+    existingGroups.forEach(group => group.remove());
 
     const createGroup = (label, modelList) => {
         if (modelList && modelList.length > 0) {
             const optgroup = document.createElement('optgroup');
             optgroup.label = label;
+            optgroup.classList.add('model-group'); // <-- Add a class for easy removal
+            
             modelList.forEach(modelName => {
                 const option = document.createElement('option');
                 option.value = modelName;
@@ -950,11 +962,15 @@ export function populateAiModelSelector(models) {
     createGroup("Gemini Models", models.gemini);
     createGroup("Ollama Models", models.ollama);
 
-    // If no models were added at all
-    if (aiModelSelect.options.length <= 2) {
+    // If no models were added at all (check both lists)
+    const hasGemini = models.gemini && models.gemini.length > 0;
+    const hasOllama = models.ollama && models.ollama.length > 0;
+
+    if (!hasGemini && !hasOllama) {
         const option = document.createElement('option');
         option.textContent = "No AI models found";
         option.disabled = true;
+        option.classList.add('no-models-option'); // <-- Add class for removal
         aiModelSelect.appendChild(option);
     }
 }
@@ -965,4 +981,15 @@ export function populateAiModelSelector(models) {
  */
 export function getAiSelectedModel() {
     return aiModelSelect ? aiModelSelect.value : null;
+}
+
+// --- Functions for API Key Modal ---
+export function showApiKeyModal() {
+    if (apiKeyModal) apiKeyModal.style.display = 'block';
+}
+export function hideApiKeyModal() {
+    if (apiKeyModal) apiKeyModal.style.display = 'none';
+}
+export function setApiKeyInputValue(key) {
+    if (apiKeyInput) apiKeyInput.value = key;
 }

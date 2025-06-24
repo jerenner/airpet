@@ -181,7 +181,7 @@
         }
         #menu_bar li > button:hover, #menu_bar li .dropdown_content button:hover { background-color: #555; }
         #menu_bar .dropdown_content {
-            display: none; position: absolute; background-color: #f9f9f9; min-width: 160px;
+            display: none; position: absolute; background-color: #f9f9f9; min-width: 210px;
             box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 1;
         }
         #menu_bar .dropdown_content button {
@@ -729,6 +729,8 @@
                             <hr>
                             <button id="saveProjectButton">Save Project (JSON)...</button>
                             <button id="exportGdmlButton">Export GDML...</button>
+                            <hr>
+                            <button id="setApiKeyButton">Set Gemini API Key...</button>
                         </div>
                     </li>
                     <!-- Edit Menu -->
@@ -1011,6 +1013,26 @@
                 <!-- Add a close button -->
                 <button id="cancelPVEditor">Cancel</button>
                 <button id="confirmPVEditor" class="confirm-button">Place Volume</button>
+            </div>
+        </div>
+    </div>
+    <div id="apiKeyModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4>Set Google Gemini API Key</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column; padding: 20px;">
+                <p style="font-size: 13px; color: #555; margin-top: 0;">
+                    Your API key will be stored locally in a <code>.env</code> file.
+                </p>
+                <div class="property_item">
+                    <label for="apiKeyInput" style="width: 80px;">API Key:</label>
+                    <input type="password" id="apiKeyInput" style="width: calc(100% - 90px);" placeholder="Enter your key here...">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelApiKey">Cancel</button>
+                <button id="saveApiKey" class="confirm-button">Save and Apply</button>
             </div>
         </div>
     </div>

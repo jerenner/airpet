@@ -42,6 +42,8 @@ async function initializeApp() {
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
+        onSetApiKeyClicked: handleSetApiKey,
+        onSaveApiKeyClicked: handleSaveApiKey,
         // Add/edit solids
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
@@ -241,6 +243,40 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 }
 
 // --- Handler Functions (Act as Controllers/Mediators) ---
+
+async function handleSetApiKey() {
+    // Fetch the current key to pre-fill the input
+    try {
+        const response = await APIService.getGeminiApiKey();
+        if (response.api_key) {
+            UIManager.setApiKeyInputValue(response.api_key);
+        } else {
+            UIManager.setApiKeyInputValue("");
+        }
+        UIManager.showApiKeyModal();
+    } catch (error) {
+        UIManager.showError("Could not fetch current API key: " + error.message);
+    }
+}
+
+async function handleSaveApiKey(apiKey) {
+    UIManager.showLoading("Saving API Key...");
+    try {
+        const result = await APIService.setGeminiApiKey(apiKey);
+        if (result.success) {
+            UIManager.hideApiKeyModal();
+            UIManager.showNotification(result.message);
+            // After saving, refresh the AI status to get the new model list
+            checkAndSetAiStatus();
+        } else {
+            UIManager.showError(result.error);
+        }
+    } catch (error) {
+        UIManager.showError("Failed to save API key: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
 
 function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];

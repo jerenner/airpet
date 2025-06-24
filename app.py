@@ -8,7 +8,7 @@ import traceback
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
 from google.genai import client # For type hinting
@@ -30,18 +30,28 @@ project_manager = ProjectManager()
 
 # Configure Gemini client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client: client.Client | None = None # Use a global client instance
+gemini_client: client.Client | None = None
 
-if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
-    try:
-        # The correct way to configure is to instantiate the Client
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        print("Google Gemini client configured successfully.")
-    except Exception as e:
-        print(f"Warning: Failed to configure Google Gemini client: {e}")
-        # In this case, gemini_client will remain None
-else:
-    print("Warning: GEMINI_API_KEY not found or not set in .env file. Gemini models will be unavailable.")
+def configure_gemini_client():
+    """Initializes or re-initializes the Gemini client with the current API key."""
+    global GEMINI_API_KEY, gemini_client
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
+        try:
+            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+            print("Google Gemini client configured successfully.")
+            return True
+        except Exception as e:
+            print(f"Warning: Failed to configure Google Gemini client: {e}")
+            gemini_client = None
+            return False
+    else:
+        print("Warning: GEMINI_API_KEY not found or not set. Gemini models will be unavailable.")
+        gemini_client = None
+        return False
+
+# Initial configuration on startup
+configure_gemini_client()
 
 # --- Helper Functions ---
 
@@ -648,6 +658,46 @@ def import_ai_json_route():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": f"An unexpected error occurred while importing: {str(e)}"}), 500
+
+# --- Route to get the current API key ---
+@app.route('/api/get_gemini_key', methods=['GET'])
+def get_gemini_key():
+    # Reread the key from the .env file in case it was changed manually
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if api_key == "YOUR_API_KEY_HERE":
+        api_key = "" # Don't show the placeholder text
+    return jsonify({"api_key": api_key})
+
+# --- Route to set a new API key ---
+@app.route('/api/set_gemini_key', methods=['POST'])
+def set_gemini_key():
+    data = request.get_json()
+    new_key = data.get('api_key', '')
+
+    try:
+        # Find the .env file path
+        dotenv_path = find_dotenv()
+        if not dotenv_path:
+            # If .env doesn't exist, create it in the current directory
+            dotenv_path = os.path.join(os.getcwd(), '.env')
+            with open(dotenv_path, 'w') as f:
+                pass # Create an empty file
+        
+        # Write the key to the .env file
+        set_key(dotenv_path, "GEMINI_API_KEY", new_key)
+        
+        # Reload environment variables and re-initialize the client
+        load_dotenv(override=True)
+        success = configure_gemini_client()
+
+        if success:
+            return jsonify({"success": True, "message": "API Key updated successfully."})
+        else:
+            return jsonify({"success": False, "error": "API Key was saved, but failed to configure the client. Key might be invalid."})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to save API key: {e}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

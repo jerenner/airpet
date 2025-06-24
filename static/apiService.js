@@ -384,3 +384,26 @@ export async function getFullAiPrompt(userPrompt) {
     
     return response.text(); // Return the response body as a string
 }
+
+/**
+ * Fetches the currently configured Gemini API key from the server.
+ * @returns {Promise<Object>}
+ */
+export async function getGeminiApiKey() {
+    const response = await fetch(`${API_BASE_URL}/api/get_gemini_key`);
+    return handleResponse(response);
+}
+
+/**
+ * Sends a new Gemini API key to the server to be saved.
+ * @param {string} apiKey The new API key.
+ * @returns {Promise<Object>}
+ */
+export async function setGeminiApiKey(apiKey) {
+    const response = await fetch(`${API_BASE_URL}/api/set_gemini_key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey })
+    });
+    return handleResponse(response);
+}
