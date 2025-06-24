@@ -6,8 +6,6 @@ virtual-pet is a tool intended to assist users in creating and comparing geometr
 
 ## Installation
 
-To run virtual-pet, you need a Python environment and a local instance of the Ollama AI service.
-
 ### 1. Prerequisites
 
 -   [Python](https://www.python.org/downloads/) 3.9+
