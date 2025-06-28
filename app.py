@@ -543,8 +543,8 @@ def ai_health_check_route():
             # Use the initialized client to list models
             for model in gemini_client.models.list():
                 if 'generateContent' in model.supported_actions:
-                    # Temporary filter for 2.5 Flash only
-                    if(model.name == "models/gemini-2.5-flash"):
+                    # Filter for 2.5 Flash and 2.5 Pro only
+                    if(model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
                         gemini_models.append(model.name)
             response_data["models"]["gemini"] = gemini_models
         except Exception as e:
