@@ -5,9 +5,9 @@ import * as SceneManager from './sceneManager.js';
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
     openGdmlButton, openProjectButton, importGdmlButton, importProjectButton,
-    importAiResponseButton,
+    importAiResponseButton, importStepButton,
     gdmlFileInput, projectFileInput, gdmlPartFileInput, jsonPartFileInput,
-    aiResponseFileInput,
+    aiResponseFileInput, stepFileInput,
     deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, //modeScaleButton,
     toggleWireframeButton, toggleGridButton, toggleAxesButton,
@@ -18,18 +18,17 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
-let structureTreeRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot;
+let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot;
 let inspectorContentDiv;
-let currentlyInspectedUIItem = null; // { type, id, name, element (DOM in hierarchy) }
 
-// Add Object Modal
-//let addObjectModal, modalBackdrop, newObjectTypeSelect, newObjectNameInput, newObjectParamsDiv, confirmAddObjectButton, cancelAddObjectButton;
-
-// Buttons for adding logical and physical volumes
-let addLVButton, addPVButton;
+// Buttons for adding LVs, PVs, and assemblies
+let addAssemblyButton, addLVButton, addPVButton;
 
 // Keep track of selected parent LV in structure hierarchy.
 let selectedParentContext = null;
+
+// Number of items per group for lists
+const ITEMS_PER_GROUP = 100;
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
@@ -39,6 +38,7 @@ let callbacks = {
     onImportGdmlClicked: (file) => {},
     onImportProjectClicked: (file) => {},
     onImportAiResponseClicked: (file) => {},
+    onImportStepClicked: (file) => {},
     onNewProjectClicked: () => {},
     onSaveProjectClicked: () => {},
     onExportGdmlClicked: () => {},
@@ -90,6 +90,9 @@ export function initUI(cb) {
     importAiResponseButton = document.getElementById('importAiResponseButton');
     aiResponseFileInput = document.getElementById('aiResponseFile');
 
+    importStepButton = document.getElementById('importStepButton');
+    stepFileInput = document.getElementById('stepFile');
+
     // Other File menu options
     newProjectButton = document.getElementById('newProjectButton');
     saveProjectButton = document.getElementById('saveProjectButton');
@@ -100,6 +103,7 @@ export function initUI(cb) {
 
     // Add buttons
     const addButtons = document.querySelectorAll('.add_button');
+    addAssemblyButton = document.getElementById('addAssemblyButton');
     addLVButton = document.getElementById('addLVButton');
     addPVButton = document.getElementById('addPVButton');
 
@@ -124,6 +128,7 @@ export function initUI(cb) {
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
+    assembliesListRoot = document.getElementById('assemblies_list_root');
     lvolumesListRoot = document.getElementById('lvolumes_list_root');
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
@@ -161,12 +166,14 @@ export function initUI(cb) {
     importGdmlButton.addEventListener('click', () => triggerFileInput('gdmlPartFile'));
     importProjectButton.addEventListener('click', () => triggerFileInput('jsonPartFile'));
     importAiResponseButton.addEventListener('click', () => triggerFileInput('aiResponseFile'));
+    importStepButton.addEventListener('click', () => triggerFileInput('stepFile'));
 
     gdmlFileInput.addEventListener('change', (e) => callbacks.onOpenGdmlClicked(e.target.files[0]));
     projectFileInput.addEventListener('change', (e) => callbacks.onOpenProjectClicked(e.target.files[0]));
     gdmlPartFileInput.addEventListener('change', (e) => callbacks.onImportGdmlClicked(e.target.files[0]));
     jsonPartFileInput.addEventListener('change', (e) => callbacks.onImportProjectClicked(e.target.files[0]));
-    aiResponseFile.addEventListener('change', (e) => callbacks.onImportAiResponseClicked(e.target.files[0]));
+    aiResponseFileInput.addEventListener('change', (e) => callbacks.onImportAiResponseClicked(e.target.files[0]));
+    stepFileInput.addEventListener('change', (e) => callbacks.onImportStepClicked(e.target.files[0]));
 
     newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
     saveProjectButton.addEventListener('click', callbacks.onSaveProjectClicked);
@@ -209,6 +216,8 @@ export function initUI(cb) {
     });
 
     // Add listeners for add logical and physical volume buttons
+    addAssemblyButton.addEventListener('click', callbacks.onAddAssemblyClicked);
+    addAssemblyButton.disabled = false;
     addLVButton.addEventListener('click', callbacks.onAddLVClicked);
     addLVButton.disabled = false;
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
@@ -542,23 +551,31 @@ export function updateHierarchy(projectState) {
         return;
     }
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if(assembliesListRoot) assembliesListRoot.innerHTML = '';
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
 
-    for (const name in projectState.logical_volumes) {
-        if(lvolumesListRoot) lvolumesListRoot.appendChild(createTreeItem(name, 'logical_volume', name, projectState.logical_volumes[name]));
-    }
-    for (const name in projectState.defines) {
-        if(definesListRoot) definesListRoot.appendChild(createTreeItem(name, 'define', name, projectState.defines[name]));
-    }
-    for (const name in projectState.materials) {
-        if(materialsListRoot) materialsListRoot.appendChild(createTreeItem(name, 'material', name, projectState.materials[name]));
-    }
-    for (const name in projectState.solids) {
-        if(solidsListRoot) solidsListRoot.appendChild(createTreeItem(name, 'solid', name, projectState.solids[name]));
-    }
+    // --- Grouped Population ---
+    populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies), 'assembly');
+    populateListWithGrouping(lvolumesListRoot, Object.values(projectState.logical_volumes), 'logical_volume');
+    populateListWithGrouping(definesListRoot, Object.values(projectState.defines), 'define');
+    populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
+    populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
+
+    // for (const name in projectState.logical_volumes) {
+    //     if(lvolumesListRoot) lvolumesListRoot.appendChild(createTreeItem(name, 'logical_volume', name, projectState.logical_volumes[name]));
+    // }
+    // for (const name in projectState.defines) {
+    //     if(definesListRoot) definesListRoot.appendChild(createTreeItem(name, 'define', name, projectState.defines[name]));
+    // }
+    // for (const name in projectState.materials) {
+    //     if(materialsListRoot) materialsListRoot.appendChild(createTreeItem(name, 'material', name, projectState.materials[name]));
+    // }
+    // for (const name in projectState.solids) {
+    //     if(solidsListRoot) solidsListRoot.appendChild(createTreeItem(name, 'solid', name, projectState.solids[name]));
+    // }
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot) { // Make sure the element exists
@@ -587,6 +604,64 @@ export function updateHierarchy(projectState) {
             }
         } else {
              structureTreeRoot.innerHTML = '<li>No world volume defined in project.</li>';
+        }
+    }
+}
+
+function populateListWithGrouping(listElement, itemsArray, itemType) {
+    if (!listElement) return;
+    listElement.innerHTML = ''; // Clear previous content
+
+    if (itemsArray.length <= ITEMS_PER_GROUP) {
+        // If there are few enough items, just render them all directly
+        itemsArray.forEach(itemData => {
+            listElement.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
+        });
+    } else {
+        // Otherwise, create collapsable folders/groups
+        for (let i = 0; i < itemsArray.length; i += ITEMS_PER_GROUP) {
+            const group = itemsArray.slice(i, i + ITEMS_PER_GROUP);
+            const groupName = `${itemType.charAt(0).toUpperCase() + itemType.slice(1)}s ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, itemsArray.length)}`;
+
+            const folderLi = document.createElement('li');
+            folderLi.classList.add('hierarchy-folder');
+            
+            const folderToggle = document.createElement('span');
+            folderToggle.classList.add('toggle');
+            folderToggle.textContent = '[+] ';
+            
+            const folderNameSpan = document.createElement('span');
+            folderNameSpan.classList.add('item-name');
+            folderNameSpan.textContent = groupName;
+
+            const folderContentDiv = document.createElement('div');
+            folderContentDiv.className = 'tree-item-content';
+            folderContentDiv.appendChild(folderToggle);
+            folderContentDiv.appendChild(folderNameSpan);
+            
+            const childrenUl = document.createElement('ul');
+            childrenUl.style.display = 'none'; // Initially collapsed
+
+            // Populate the group on-demand when the folder is first opened
+            let isPopulated = false;
+            folderToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isCollapsed = childrenUl.style.display === 'none';
+                childrenUl.style.display = isCollapsed ? 'block' : 'none';
+                folderToggle.textContent = isCollapsed ? '[-] ' : '[+] ';
+
+                // Lazy-load the content
+                if (isCollapsed && !isPopulated) {
+                    group.forEach(itemData => {
+                        childrenUl.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
+                    });
+                    isPopulated = true;
+                }
+            });
+            
+            folderLi.appendChild(folderContentDiv);
+            folderLi.appendChild(childrenUl);
+            listElement.appendChild(folderLi);
         }
     }
 }
@@ -810,6 +885,7 @@ export function clearHierarchySelection() {
 
 export function clearHierarchy() {
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if(assembliesListRoot) assembliesListRoot.innerHTML = '';
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';

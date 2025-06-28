@@ -374,48 +374,68 @@ class GDMLWriter:
             
 
     def _add_structure(self):
-        # ... (same as before, ensure it uses convert_from_internal_units for pos/rot) ...
         if not self.geometry_state.logical_volumes: return
         structure_el = ET.SubElement(self.root, "structure")
+
+        # --- Write Assemblies First ---
+        if self.geometry_state.assemblies:
+            for asm_name, asm_obj in self.geometry_state.assemblies.items():
+                asm_el = ET.SubElement(structure_el, "assembly", {"name": asm_name})
+                for pv_obj in asm_obj.placements:
+                    # Write a physvol tag inside the assembly
+                    self._write_physvol_element(asm_el, pv_obj)
+
+        # --- Write Volumes ---
         for lv_name, lv_obj in self.geometry_state.logical_volumes.items():
             lv_el = ET.SubElement(structure_el, "volume", {"name": lv_name})
             ET.SubElement(lv_el, "materialref", {"ref": lv_obj.material_ref})
             ET.SubElement(lv_el, "solidref", {"ref": lv_obj.solid_ref})
 
             for pv_obj in lv_obj.phys_children:
-                pv_el = ET.SubElement(lv_el, "physvol", {"name": pv_obj.name})
-                if pv_obj.copy_number != 0: # Default is 0, so only write if non-zero
-                    pv_el.set("copynumber", str(pv_obj.copy_number))
+                # Here, a child could be a reference to an assembly
+                if self.geometry_state.get_assembly(pv_obj.volume_ref):
+                    # This is an assembly placement
+                    self._write_physvol_element(lv_el, pv_obj, is_assembly_ref=True)
+                else:
+                    # This is a regular LV placement
+                    self._write_physvol_element(lv_el, pv_obj)
 
-                ET.SubElement(pv_el, "volumeref", {"ref": pv_obj.volume_ref})
+    def _write_physvol_element(self, parent_el, pv_obj, is_assembly_ref=False):
+        """Helper to write a physvol or assembly placement tag."""
+        pv_el = ET.SubElement(parent_el, "physvol", {"name": pv_obj.name})
+        if pv_obj.copy_number != 0:
+            pv_el.set("copynumber", str(pv_obj.copy_number))
+        
+        # The reference tag is different for assemblies vs. volumes
+        ref_tag = "assemblyref" if is_assembly_ref else "volumeref"
+        ET.SubElement(pv_el, ref_tag, {"ref": pv_obj.volume_ref})
 
-                position_data = pv_obj.position
-                if isinstance(position_data, str): # It's a ref
-                    ET.SubElement(pv_el, "positionref", {"ref": position_data})
-                elif isinstance(position_data, dict) and any(abs(v) > 1e-9 for v in position_data.values()):
-                    pos_attrs = {"unit": DEFAULT_OUTPUT_LUNIT}
-                    for axis, val in position_data.items():
-                        pos_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_LUNIT, "length"))
-                    ET.SubElement(pv_el, "position", pos_attrs)
-                
-                rotation_data = pv_obj.rotation
-                if isinstance(rotation_data, str): # It's a ref
-                    ET.SubElement(pv_el, "rotationref", {"ref": rotation_data})
-                elif isinstance(rotation_data, dict) and any(abs(v) > 1e-9 for v in rotation_data.values()):
-                    rot_attrs = {"unit": DEFAULT_OUTPUT_AUNIT}
-                    for axis, val in rotation_data.items(): # Assuming ZYX Euler
-                        rot_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_AUNIT, "angle"))
-                    ET.SubElement(pv_el, "rotation", rot_attrs)
-                
-                scale_data = pv_obj.scale
-                if isinstance(scale_data, str): # It's a ref
-                    ET.SubElement(pv_el, "scaleref", {"ref": scale_data})
-                elif isinstance(scale_data, dict) and not all(abs(v - 1.0) < 1e-9 for v in scale_data.values()): # Non-identity scale
-                    scale_attrs = {} # Scale has no unit attribute in GDML
-                    for axis, val in scale_data.items():
-                        scale_attrs[axis] = str(val) # Scale factors are unitless
-                    ET.SubElement(pv_el, "scale", scale_attrs)
+        position_data = pv_obj.position
+        if isinstance(position_data, str):
+            ET.SubElement(pv_el, "positionref", {"ref": position_data})
+        elif isinstance(position_data, dict) and any(abs(v) > 1e-9 for v in position_data.values()):
+            pos_attrs = {"unit": DEFAULT_OUTPUT_LUNIT}
+            for axis, val in position_data.items():
+                pos_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_LUNIT, "length"))
+            ET.SubElement(pv_el, "position", pos_attrs)
+        
+        rotation_data = pv_obj.rotation
+        if isinstance(rotation_data, str):
+            ET.SubElement(pv_el, "rotationref", {"ref": rotation_data})
+        elif isinstance(rotation_data, dict) and any(abs(v) > 1e-9 for v in rotation_data.values()):
+            rot_attrs = {"unit": DEFAULT_OUTPUT_AUNIT}
+            for axis, val in rotation_data.items():
+                rot_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_AUNIT, "angle"))
+            ET.SubElement(pv_el, "rotation", rot_attrs)
 
+        scale_data = pv_obj.scale
+        if isinstance(scale_data, str): # It's a ref
+            ET.SubElement(pv_el, "scaleref", {"ref": scale_data})
+        elif isinstance(scale_data, dict) and not all(abs(v - 1.0) < 1e-9 for v in scale_data.values()): # Non-identity scale
+            scale_attrs = {} # Scale has no unit attribute in GDML
+            for axis, val in scale_data.items():
+                scale_attrs[axis] = str(val) # Scale factors are unitless
+            ET.SubElement(pv_el, "scale", scale_attrs)
 
     def _add_setup(self):
         # ... (same as before) ...

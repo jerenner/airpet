@@ -1,5 +1,6 @@
 flask
 flask_cors
 asteval
-google-genai
+numpy
 python-dotenv
+google-genai

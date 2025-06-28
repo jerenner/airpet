@@ -1,9 +1,12 @@
 # src/project_manager.py
 import json
 import math
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement
+import tempfile
+import os
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
+from .step_parser import parse_step_file
 
 class ProjectManager:
     def __init__(self):
@@ -19,6 +22,16 @@ class ProjectManager:
         while f"{base_name}_{i}" in existing_names_dict:
             i += 1
         return f"{base_name}_{i}"
+
+    def _get_next_copy_number(self, parent_lv: LogicalVolume):
+        """Finds the highest copy number among children and returns the next one."""
+        if not parent_lv.phys_children:
+            return 1
+        max_copy_no = 0
+        for pv in parent_lv.phys_children:
+            if pv.copy_number > max_copy_no:
+                max_copy_no = pv.copy_number
+        return max_copy_no + 1
 
     def load_gdml_from_string(self, gdml_string):
         self.current_geometry_state = self.gdml_parser.parse_gdml_string(gdml_string)
@@ -493,6 +506,58 @@ class ProjectManager:
             
         return True, None
 
+    def add_assembly_placement(self, parent_lv_name, assembly_name, placement_name_suggestion, position, rotation):
+        """
+        'Imprints' an assembly into a parent logical volume.
+        This iterates through all placements within the assembly and adds them as
+        physical volumes to the parent, applying the given transform.
+        """
+        if not self.current_geometry_state:
+            return None, "No project loaded."
+
+        parent_lv = self.current_geometry_state.get_logical_volume(parent_lv_name)
+        if not parent_lv:
+            return None, f"Parent Logical Volume '{parent_lv_name}' not found."
+
+        assembly = self.current_geometry_state.get_assembly(assembly_name)
+        if not assembly:
+            return None, f"Assembly '{assembly_name}' not found."
+
+        # Create the root transformation for the entire assembly placement
+        assembly_transform = PhysicalVolumePlacement("temp", "temp", 0, position, rotation).get_transform_matrix()
+
+        # Get a starting copy number for this group of placements
+        start_copy_no = self._get_next_copy_number(parent_lv)
+
+        placed_pvs = []
+
+        for i, pv_in_assembly in enumerate(assembly.placements):
+            # Get the transformation of the part within the assembly
+            part_transform = pv_in_assembly.get_transform_matrix()
+
+            # Combine it with the overall assembly placement transform
+            # Final Transform = Assembly Placement Transform * Part's Local Transform
+            final_transform_matrix = assembly_transform @ part_transform
+            
+            # Decompose the final matrix back into position and rotation dicts
+            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(final_transform_matrix)
+
+            # Create a new physical volume placement inside the parent LV
+            # We use a unique name for each imprinted part
+            unique_pv_name = f"{placement_name_suggestion}_{i}"
+            
+            new_pv = PhysicalVolumePlacement(
+                name=unique_pv_name,
+                volume_ref=pv_in_assembly.volume_ref,
+                copy_number=start_copy_no + i,
+                position_val_or_ref=final_pos,
+                rotation_val_or_ref=final_rot_rad
+            )
+            parent_lv.add_child(new_pv)
+            placed_pvs.append(new_pv.to_dict())
+
+        return placed_pvs, None
+
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"
 
@@ -651,7 +716,24 @@ class ProjectManager:
             lv.name = new_name
             lv.phys_children = [] # Clear any placements, as they are not merged
             self.current_geometry_state.add_logical_volume(lv)
+        
+        # --- Merge Assemblies ---
+        for name, assembly in incoming_state.assemblies.items():
+            # Update all references within the assembly's placements
+            for pv in assembly.placements:
+                if pv.volume_ref in rename_map:
+                    pv.volume_ref = rename_map[pv.volume_ref]
+                if isinstance(pv.position, str) and pv.position in rename_map:
+                    pv.position = rename_map[pv.position]
+                if isinstance(pv.rotation, str) and pv.rotation in rename_map:
+                    pv.rotation = rename_map[pv.rotation]
             
+            new_name = self._generate_unique_name(name, self.current_geometry_state.assemblies)
+            if new_name != name:
+                rename_map[name] = new_name
+            assembly.name = new_name
+            self.current_geometry_state.add_assembly(assembly)
+
         return True, None
 
     def process_ai_response(self, ai_data: dict):
@@ -750,3 +832,32 @@ class ProjectManager:
                 return False, f"An error occurred during object placement: {e}"
 
         return True, None
+
+    def import_step_file(self, step_file_stream):
+        """
+        Processes an uploaded STEP file stream, imports the geometry,
+        and merges it into the current project.
+        """
+        # The parser needs a file path, not a stream. So we save to a temp file.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".step") as temp_f:
+            step_file_stream.save(temp_f.name)
+            temp_path = temp_f.name
+
+        try:
+            # Call the new parser to get a GeometryState object
+            imported_state = parse_step_file(temp_path)
+            
+            # Use the existing merge logic to add the new objects to the project
+            success, error_msg = self.merge_from_state(imported_state)
+            
+            if not success:
+                return False, f"Failed to merge STEP geometry: {error_msg}"
+                
+            return True, None
+            
+        except Exception as e:
+            # Ensure we re-raise the error so the API can catch it
+            raise e
+        finally:
+            # Clean up the temporary file
+            os.unlink(temp_path)

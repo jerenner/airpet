@@ -1,6 +1,7 @@
 # src/geometry_types.py
 import uuid # For unique IDs
 import math
+import numpy as np
 
 # --- Helper for Units (can be expanded) ---
 # Geant4 internal units are mm for length, rad for angle
@@ -163,13 +164,68 @@ class PhysicalVolumePlacement:
                  position_val_or_ref=None, rotation_val_or_ref=None, scale_val_or_ref=None):
         self.id = str(uuid.uuid4())
         self.name = name
-        self.volume_ref = volume_ref # Name/ID of the LogicalVolume being placed
+        self.volume_ref = volume_ref
         self.copy_number = copy_number
-
-        # These can store direct values (dict) or a ref_name (str) to a Define object
         self.position = position_val_or_ref if position_val_or_ref else {'x': 0, 'y': 0, 'z': 0}
-        self.rotation = rotation_val_or_ref if rotation_val_or_ref else {'x': 0, 'y': 0, 'z': 0} # Euler ZYX in radians
+        self.rotation = rotation_val_or_ref if rotation_val_or_ref else {'x': 0, 'y': 0, 'z': 0}
         self.scale = scale_val_or_ref if scale_val_or_ref else {'x': 1, 'y': 1, 'z': 1}
+
+    def get_transform_matrix(self):
+        """Returns a 4x4 numpy transformation matrix for this placement."""
+        # Note: Assumes position and rotation are resolved value dicts, not refs
+        pos = self.position
+        rot = self.rotation # Assumed ZYX Euler in radians
+        
+        # Create rotation matrices for each axis
+        Rx = np.array([[1, 0, 0], [0, math.cos(rot['x']), -math.sin(rot['x'])], [0, math.sin(rot['x']), math.cos(rot['x'])]])
+        Ry = np.array([[math.cos(rot['y']), 0, math.sin(rot['y'])], [0, 1, 0], [-math.sin(rot['y']), 0, math.cos(rot['y'])]])
+        Rz = np.array([[math.cos(rot['z']), -math.sin(rot['z']), 0], [math.sin(rot['z']), math.cos(rot['z']), 0], [0, 0, 1]])
+        
+        # Combine rotations (ZYX order)
+        R = Rz @ Ry @ Rx
+        
+        # Create 4x4 transformation matrix
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = [pos['x'], pos['y'], pos['z']]
+        
+        return T
+    
+    @staticmethod
+    def decompose_matrix(matrix):
+        """Decomposes a 4x4 numpy matrix into position, rotation (rad), and scale dicts."""
+        # Position is straightforward
+        position = {'x': matrix[0, 3], 'y': matrix[1, 3], 'z': matrix[2, 3]}
+
+        # Extract rotation matrix part
+        R = matrix[:3, :3]
+        
+        # Decompose scale and rotation
+        # Note: This simple method assumes no shear.
+        sx = np.linalg.norm(R[:, 0])
+        sy = np.linalg.norm(R[:, 1])
+        sz = np.linalg.norm(R[:, 2])
+        scale = {'x': sx, 'y': sy, 'z': sz}
+
+        # Normalize rotation matrix to remove scaling
+        Rs = np.array([R[:, 0]/sx, R[:, 1]/sy, R[:, 2]/sz]).T
+
+        # Calculate Euler angles (ZYX order)
+        sy_val = math.sqrt(Rs[0,0] * Rs[0,0] +  Rs[1,0] * Rs[1,0])
+        singular = sy_val < 1e-6
+
+        if not singular:
+            x = math.atan2(Rs[2,1] , Rs[2,2])
+            y = math.atan2(-Rs[2,0], sy_val)
+            z = math.atan2(Rs[1,0], Rs[0,0])
+        else:
+            x = math.atan2(-Rs[1,2], Rs[1,1])
+            y = math.atan2(-Rs[2,0], sy_val)
+            z = 0
+            
+        rotation = {'x': x, 'y': y, 'z': z}
+
+        return position, rotation, scale
 
     def to_dict(self):
         return {
@@ -187,6 +243,29 @@ class PhysicalVolumePlacement:
         instance.id = data.get('id', str(uuid.uuid4()))
         return instance
 
+class Assembly:
+    """Represents a collection of placed logical volumes."""
+    def __init__(self, name):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.placements = [] # List of PhysicalVolumePlacement objects
+
+    def add_placement(self, placement):
+        self.placements.append(placement)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "placements": [p.to_dict() for p in self.placements]
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'])
+        instance.id = data.get('id', str(uuid.uuid4()))
+        instance.placements = [PhysicalVolumePlacement.from_dict(p) for p in data.get('placements', [])]
+        return instance
 
 class GeometryState:
     """Holds the entire geometry definition."""
@@ -195,6 +274,7 @@ class GeometryState:
         self.materials = {} # name: Material object
         self.solids = {}    # name: Solid object
         self.logical_volumes = {} # name: LogicalVolume object
+        self.assemblies = {} # name: Assembly object
         self.world_volume_ref = world_volume_ref # Name of the world LogicalVolume
 
     def add_define(self, define_obj):
@@ -205,11 +285,14 @@ class GeometryState:
         self.solids[solid_obj.name] = solid_obj
     def add_logical_volume(self, lv_obj):
         self.logical_volumes[lv_obj.name] = lv_obj
+    def add_assembly(self, assembly_obj):
+        self.assemblies[assembly_obj.name] = assembly_obj
     
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
     def get_solid(self, name): return self.solids.get(name)
     def get_logical_volume(self, name): return self.logical_volumes.get(name)
+    def get_assembly(self, name): return self.assemblies.get(name)
 
     def to_dict(self):
         return {
@@ -217,6 +300,7 @@ class GeometryState:
             "materials": {name: material.to_dict() for name, material in self.materials.items()},
             "solids": {name: solid.to_dict() for name, solid in self.solids.items()},
             "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
+            "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
             "world_volume_ref": self.world_volume_ref
         }
 
@@ -232,6 +316,8 @@ class GeometryState:
             name: LogicalVolume.from_dict(lv_data, instance)
             for name, lv_data in data.get('logical_volumes', {}).items()
         }
+        instance.assemblies = {name: Assembly.from_dict(d) for name, d in data.get('assemblies', {}).items()}
+
         return instance
 
     def get_threejs_scene_description(self):

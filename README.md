@@ -20,7 +20,11 @@ First, set up the Python server which handles all the geometry logic.
 git clone https://github.com/your-username/virtual-pet.git
 cd virtual-pet
 
-# 2. Install the required Python packages
+# 2. Set up a Python 3.10 environment and install OpenCascade bindings
+conda create --name virtualpet python=3.10
+conda install -c conda-forge pythonocc-core
+
+# 3. Install the required Python packages
 pip install -r requirements.txt
 ```
 

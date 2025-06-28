@@ -39,6 +39,7 @@ async function initializeApp() {
         onImportGdmlClicked: handleImportGdmlPart,
         onImportProjectClicked: handleImportJsonPart,
         onImportAiResponseClicked: handleImportAiResponse,
+        onImportStepClicked: handleImportStep,
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -59,6 +60,8 @@ async function initializeApp() {
         // Add/edit PVs
         onAddPVClicked: handleAddPV,
         onEditPVClicked: handleEditPV,
+        // Add assembly
+        onAddAssemblyClicked: handleAddAssembly,
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
         onDeleteSpecificItemClicked: handleDeleteSpecificItem,
@@ -509,16 +512,21 @@ async function handleHierarchySelection(newSelection) {
     if (newSelection.length === 1) {
         
         const singleItem = newSelection[0];
-        const { type, id, data } = singleItem;
+        const { type, id } = singleItem;
 
-        // Fetch fresh details for the inspector
-        const details = await APIService.getObjectDetails(type, id);
+        // The 'data' in the context object is now considered the source of truth for the inspector.
+        // We only fetch fresh details if they are missing, which shouldn't happen with the new logic.
+        let details = singleItem.data;
         if (!details) {
-            UIManager.showError(`Could not fetch details for ${type} ${id}`);
-            UIManager.clearInspector();
-            return;
+            console.warn("Fetching details for inspector as they were missing from context.");
+            details = await APIService.getObjectDetails(type, id);
+            if (!details) {
+                UIManager.showError(`Could not fetch details for ${type} ${id}`);
+                UIManager.clearInspector();
+                return;
+            }
+            singleItem.data = details;
         }
-        singleItem.data = details; // Ensure context has the latest data
 
         // If one item is selected, populate the inspector as before
         UIManager.populateInspector(singleItem, AppState.currentProjectState);
@@ -536,12 +544,13 @@ async function handleHierarchySelection(newSelection) {
                 if(selectedMesh) SceneManager.attachTransformControls(selectedMesh);
             }
         } else {
-            // Clear PV context and 3D selection if something else is selected
+            // Clear PV context and detach gizmo if something other than a PV is selected
             AppState.selectedPVContext.pvId = null;
             AppState.selectedPVContext.positionDefineName = null;
             AppState.selectedPVContext.rotationDefineName = null;
-            SceneManager.unselectAllInScene();
-            AppState.selectedThreeObjects = [];
+            if (InteractionManager.getCurrentMode() !== 'observe') {
+                SceneManager.getTransformControls().detach();
+            }
         }
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
@@ -552,6 +561,7 @@ async function handleHierarchySelection(newSelection) {
         UIManager.clearInspector();
         // Clear PV context
         AppState.selectedPVContext.pvId = null;
+        SceneManager.getTransformControls().detach(); // Detach gizmo on empty selection
     }
 }
 
@@ -995,5 +1005,57 @@ async function handleAiGenerate(promptText) {
         UIManager.hideLoading();
         // Set state back to idle, regardless of success or failure
         UIManager.setAiPanelState('idle'); 
+    }
+}
+
+// Handler for STEP file import
+async function handleImportStep(file) {
+    if (!file) return;
+    UIManager.showLoading("Importing and Tessellating STEP file...");
+    try {
+        const result = await APIService.importStepFile(file);
+        // The backend returns a full state update, so we can just sync
+        syncUIWithState(result);
+        UIManager.showNotification("STEP geometry imported successfully as new solids and logical volumes. You can now place them in the world.");
+    } catch (error) {
+        UIManager.showError("Failed to import STEP file: " + (error.message || error));
+    } finally {
+        // Reset the file input so the user can upload the same file again if they want
+        document.getElementById('stepFile').value = null;
+        UIManager.hideLoading();
+    }
+}
+
+async function handleAddAssembly() {
+    const selectionContexts = getSelectionContext();
+    if (!selectionContexts || selectionContexts.length !== 1 || selectionContexts[0].type !== 'assembly') {
+        UIManager.showError("Please select a single Assembly to place.");
+        return;
+    }
+    const assemblyName = selectionContexts[0].name;
+
+    let parentContext = UIManager.getSelectedParentContext();
+    if (!parentContext) {
+        parentContext = { name: AppState.currentProjectState.world_volume_ref };
+    }
+    const parentLVName = parentContext.name;
+
+    const placementName = prompt(`Enter a base name for this placement of '${assemblyName}':`, `${assemblyName}_placement`);
+    if (!placementName) return;
+
+    UIManager.showLoading(`Placing assembly '${assemblyName}' into '${parentLVName}'...`);
+    try {
+        const result = await APIService.addAssemblyPlacement(
+            parentLVName,
+            assemblyName,
+            placementName,
+            { x: 0, y: 0, z: 0 }, // Default placement at origin
+            { x: 0, y: 0, z: 0 }
+        );
+        syncUIWithState(result, [{ type: 'logical_volume', id: parentLVName }]); // Reselect parent
+    } catch (error) {
+        UIManager.showError("Failed to place assembly: " + error.message);
+    } finally {
+        UIManager.hideLoading();
     }
 }

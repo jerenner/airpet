@@ -407,3 +407,22 @@ export async function setGeminiApiKey(apiKey) {
     });
     return handleResponse(response);
 }
+
+export async function importStepFile(stepFile) {
+    const formData = new FormData();
+    formData.append('stepFile', stepFile);
+    const response = await fetch(`${API_BASE_URL}/import_step`, {
+        method: 'POST',
+        body: formData,
+    });
+    return handleResponse(response);
+}
+
+export async function addAssemblyPlacement(parent_lv_name, assembly_name, placement_name, position, rotation) {
+    const response = await fetch(`${API_BASE_URL}/add_assembly_placement`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent_lv_name, assembly_name, placement_name, position, rotation })
+    });
+    return handleResponse(response);
+}

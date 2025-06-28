@@ -733,58 +733,95 @@ class GDMLParser:
 
     def _parse_structure(self, structure_element):
         if structure_element is None: return
-        for vol_el in structure_element.findall('volume'):
-            lv_name = vol_el.get('name')
-            solid_ref_el = vol_el.find('solidref')
-            mat_ref_el = vol_el.find('materialref')
 
-            if not lv_name or solid_ref_el is None or mat_ref_el is None:
-                print(f"Skipping incomplete logical volume: {lv_name}")
-                continue
-            
-            solid_ref_name = solid_ref_el.get('ref')
-            mat_ref_name = mat_ref_el.get('ref')
-            
-            lv = LogicalVolume(lv_name, solid_ref_name, mat_ref_name)
-            
-            for physvol_el in vol_el.findall('physvol'):
-                pv_name = physvol_el.get('name', f"{lv_name}_pv_default")
-                child_vol_ref_el = physvol_el.find('volumeref')
-                if child_vol_ref_el is None: continue
-                child_lv_ref_name = child_vol_ref_el.get('ref')
+        # --- First Pass: Parse all LV and Assembly definitions ---
+        for element in structure_element:
+            if element.tag == 'volume':
+                self._parse_single_lv(element)
+            elif element.tag == 'assembly':
+                self._parse_single_assembly(element)
+        
+        # --- Second Pass: Add children to LVs (now that all LVs/Assemblies exist) ---
+        for element in structure_element:
+            if element.tag == 'volume':
+                lv_name = element.get('name')
+                lv = self.geometry_state.get_logical_volume(lv_name)
+                if lv:
+                    self._parse_lv_children(element, lv)
+    
+    def _parse_single_lv(self, vol_el):
+        lv_name = vol_el.get('name')
+        solid_ref_el = vol_el.find('solidref')
+        mat_ref_el = vol_el.find('materialref')
+        if not all([lv_name, solid_ref_el, mat_ref_el]): return
 
-                pos_val_or_ref = None
-                pos_el = physvol_el.find('position')
-                pos_ref_el = physvol_el.find('positionref')
-                if pos_el is not None:
-                    unit = pos_el.get('unit', 'mm')
-                    # Values are already evaluated and converted by _parse_defines or by _evaluate_expression if direct
-                    pos_val_or_ref = {
-                        'x': self._evaluate_expression(pos_el.get('x'), get_unit_value(unit, "length")),
-                        'y': self._evaluate_expression(pos_el.get('y'), get_unit_value(unit, "length")),
-                        'z': self._evaluate_expression(pos_el.get('z'), get_unit_value(unit, "length")),
-                    }
-                elif pos_ref_el is not None:
-                    pos_val_or_ref = pos_ref_el.get('ref') # Store ref name
+        solid_ref = solid_ref_el.get('ref')
+        mat_ref = mat_ref_el.get('ref')
+        lv = LogicalVolume(lv_name, solid_ref, mat_ref)
+        self.geometry_state.add_logical_volume(lv)
 
-                rot_val_or_ref = None
-                rot_el = physvol_el.find('rotation')
-                rot_ref_el = physvol_el.find('rotationref')
-                if rot_el is not None:
-                    unit = rot_el.get('unit', 'rad')
-                    rot_val_or_ref = { # ZYX Euler
-                        'x': self._evaluate_expression(rot_el.get('x'), get_unit_value(unit, "angle")),
-                        'y': self._evaluate_expression(rot_el.get('y'), get_unit_value(unit, "angle")),
-                        'z': self._evaluate_expression(rot_el.get('z'), get_unit_value(unit, "angle")),
-                    }
-                elif rot_ref_el is not None:
-                    rot_val_or_ref = rot_ref_el.get('ref')
-                
-                pv = PhysicalVolumePlacement(pv_name, child_lv_ref_name,
-                                             position_val_or_ref=pos_val_or_ref,
-                                             rotation_val_or_ref=rot_val_or_ref)
-                lv.add_child(pv)
-            self.geometry_state.add_logical_volume(lv)
+    def _parse_single_assembly(self, asm_el):
+        asm_name = asm_el.get('name')
+        if not asm_name: return
+
+        assembly = Assembly(asm_name)
+        # In an assembly, all children are physvols (no assembly refs)
+        for pv_el in asm_el.findall('physvol'):
+            pv = self._parse_pv_element(pv_el)
+            if pv:
+                assembly.add_placement(pv)
+        self.geometry_state.add_assembly(assembly)
+        
+    def _parse_lv_children(self, vol_el, parent_lv: LogicalVolume):
+        for pv_el in vol_el.findall('physvol'):
+            pv = self._parse_pv_element(pv_el)
+            if pv:
+                parent_lv.add_child(pv)
+
+    def _parse_pv_element(self, pv_el):
+        """Helper to parse a physvol tag and return a PhysicalVolumePlacement object."""
+        name = pv_el.get('name', f"pv_{uuid.uuid4().hex[:8]}")
+        copy_number = int(self._evaluate_expression(pv_el.get('copynumber', '0'), 1.0, "dimensionless"))
+        
+        vol_ref_el = pv_el.find('volumeref')
+        asm_ref_el = pv_el.find('assemblyref')
+        
+        if vol_ref_el is None and asm_ref_el is None: return None
+        
+        volume_ref = vol_ref_el.get('ref') if vol_ref_el is not None else asm_ref_el.get('ref')
+        
+        # ... (The rest of the position/rotation parsing logic is the same as your old _parse_structure) ...
+        pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = None, None, None
+        # Position
+        pos_el = pv_el.find('position')
+        pos_ref_el = pv_el.find('positionref')
+        if pos_el is not None:
+            unit = pos_el.get('unit', 'mm')
+            pos_val_or_ref = {
+                'x': self._evaluate_expression(pos_el.get('x'), get_unit_value(unit, "length")),
+                'y': self._evaluate_expression(pos_el.get('y'), get_unit_value(unit, "length")),
+                'z': self._evaluate_expression(pos_el.get('z'), get_unit_value(unit, "length")),
+            }
+        elif pos_ref_el is not None:
+            pos_val_or_ref = pos_ref_el.get('ref')
+        
+        # Rotation
+        rot_el = pv_el.find('rotation')
+        rot_ref_el = pv_el.find('rotationref')
+        if rot_el is not None:
+            unit = rot_el.get('unit', 'rad')
+            rot_val_or_ref = { # ZYX Euler
+                'x': self._evaluate_expression(rot_el.get('x'), get_unit_value(unit, "angle")),
+                'y': self._evaluate_expression(rot_el.get('y'), get_unit_value(unit, "angle")),
+                'z': self._evaluate_expression(rot_el.get('z'), get_unit_value(unit, "angle")),
+            }
+        elif rot_ref_el is not None:
+            rot_val_or_ref = rot_ref_el.get('ref')
+
+        # Scale
+        # ... (add scale parsing if needed) ...
+
+        return PhysicalVolumePlacement(name, volume_ref, copy_number, pos_val_or_ref, rot_val_or_ref, scale_val_or_ref)
 
     def _parse_setup(self, setup_element):
         if setup_element is None: return

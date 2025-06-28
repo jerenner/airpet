@@ -699,5 +699,46 @@ def set_gemini_key():
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to save API key: {e}"}), 500
 
+@app.route('/import_step', methods=['POST'])
+def import_step_route():
+    if 'stepFile' not in request.files:
+        return jsonify({"error": "No STEP file part"}), 400
+    file = request.files['stepFile']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    try:
+        # Pass the file stream directly to the project manager
+        success, error_msg = project_manager.import_step_file(file)
+        if success:
+            return create_success_response("STEP file imported successfully.")
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to process STEP file."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred during STEP import: {e}")
+        traceback.print_exc()
+        return jsonify({"error": "An unexpected error occurred on the server while importing the STEP file."}), 500
+
+@app.route('/add_assembly_placement', methods=['POST'])
+def add_assembly_placement_route():
+    data = request.get_json()
+    parent_lv_name = data.get('parent_lv_name')
+    assembly_name = data.get('assembly_name')
+    placement_name = data.get('placement_name')
+    position = data.get('position')
+    rotation = data.get('rotation')
+    
+    if not all([parent_lv_name, assembly_name]):
+        return jsonify({"success": False, "error": "Missing parent LV or assembly name."}), 400
+
+    new_pvs, error_msg = project_manager.add_assembly_placement(
+        parent_lv_name, assembly_name, placement_name, position, rotation
+    )
+    
+    if error_msg:
+        return jsonify({"success": False, "error": error_msg}), 500
+    else:
+        return create_success_response(f"Assembly '{assembly_name}' placed successfully.")
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

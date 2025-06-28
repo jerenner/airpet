@@ -651,6 +651,7 @@
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Structure</button>
+            <button class="tab_button" data-tab="tab_assemblies">Assemblies</button>
             <button class="tab_button" data-tab="tab_lvolumes">LVs</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_materials">Materials</button>
@@ -666,6 +667,13 @@
                     </div>
                 </div>
                 <ul id="structure_tree_root"></ul>
+            </div>
+            <div id="tab_assemblies" class="tab_pane">
+                <div class="tab_header">
+                    <span>Assemblies</span>
+                    <button id="addAssemblyButton" title="Place selected assembly" disabled>+ Place</button>
+                </div>
+                <ul id="assemblies_list_root"></ul>
             </div>
             <div id="tab_lvolumes" class="tab_pane">
                 <div class="tab_header">
@@ -726,6 +734,8 @@
                             <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
                             <button id="importAiResponseButton">Import AI Response (JSON)...</button>
                             <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
+                            <button id="importStepButton">Import CAD (STEP)...</button>
+                            <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
                             <hr>
                             <button id="saveProjectButton">Save Project (JSON)...</button>
                             <button id="exportGdmlButton">Export GDML...</button>
