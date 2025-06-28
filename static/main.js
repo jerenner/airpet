@@ -1011,7 +1011,7 @@ async function handleAiGenerate(promptText) {
 // Handler for STEP file import
 async function handleImportStep(file) {
     if (!file) return;
-    UIManager.showLoading("Importing and Tessellating STEP file...");
+    UIManager.showLoading("Importing and Tessellating STEP file... This may take some time for large files. Please do not navigate away from this tab.");
     try {
         const result = await APIService.importStepFile(file);
         // The backend returns a full state update, so we can just sync

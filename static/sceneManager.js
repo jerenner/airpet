@@ -275,14 +275,22 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    // --- Filter the results to only include visible objects ---
-    const intersects = raycaster.intersectObjects(geometryGroup.children, true)
-                                .filter(intersection => intersection.object.visible);
+    raycaster.setFromCamera(mouse, camera);
+    
+    // 1. Create a list of only the visible objects to be considered for intersection.
+    const visibleObjects = geometryGroup.children.filter(child => child.visible);
+
+    // 2. Set the raycaster to only check for the first hit, for maximum speed.
+    raycaster.firstHitOnly = true;
+
+    // 3. Intersect ONLY the visible objects.
+    const intersects = raycaster.intersectObjects(visibleObjects, true); // `true` for recursive check if objects are groups
 
     if (intersects.length > 0) {
+        // We found an intersection with a visible object.
+        // The rest of the logic remains the same.
         const firstIntersected = findActualMesh(intersects[0].object);
         
-        // --- Pass the event modifier keys to the callback ---
         if (onObjectSelectedCallback) {
             onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
         }

@@ -679,29 +679,96 @@ function buildVolumeNode(pvData, projectState) {
     
     // Check if the placed LV has children of its own
     if (childLVData.phys_children && childLVData.phys_children.length > 0) {
-        const toggle = document.createElement('span');
-        toggle.classList.add('toggle');
-        toggle.textContent = '[-] ';
-        toggle.onclick = (e) => { e.stopPropagation();
-            const childrenUl = pvItem.querySelector('ul');
-            if (childrenUl) {
-                childrenUl.style.display = childrenUl.style.display === 'none' ? 'block' : 'none';
-                toggle.textContent = childrenUl.style.display === 'none' ? '[+] ' : '[-] ';
+        // --- GROUPING LOGIC ---
+        if (childLVData.phys_children.length <= ITEMS_PER_GROUP) {
+            // If few enough children, render them directly
+            const childrenUl = document.createElement('ul');
+            childLVData.phys_children.forEach(nestedPvData => {
+                const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                if (nestedNode) childrenUl.appendChild(nestedNode);
+            });
+            if (childrenUl.hasChildNodes()) {
+                addToggle(pvItem, childrenUl); // Helper to add expand/collapse
+                pvItem.appendChild(childrenUl);
             }
-        };
-        // Insert toggle at the beginning of the li content
-        const firstSpan = pvItem.querySelector('span');
-        if (firstSpan) firstSpan.before(toggle);
-        
-        const childrenUl = document.createElement('ul');
-        childLVData.phys_children.forEach(nestedPvData => {
-            const nestedNode = buildVolumeNode(nestedPvData, projectState);
-            if (nestedNode) childrenUl.appendChild(nestedNode);
-        });
-        if (childrenUl.hasChildNodes()) pvItem.appendChild(childrenUl);
+        } else {
+            // If too many children, create grouped folders
+            const childrenUl = document.createElement('ul');
+            for (let i = 0; i < childLVData.phys_children.length; i += ITEMS_PER_GROUP) {
+                const group = childLVData.phys_children.slice(i, i + ITEMS_PER_GROUP);
+                const groupName = `Placements ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, childLVData.phys_children.length)}`;
+                
+                const folderLi = document.createElement('li');
+                folderLi.classList.add('hierarchy-folder');
+                
+                const subChildrenUl = document.createElement('ul');
+                subChildrenUl.style.display = 'none'; // Initially collapsed
+                
+                // Lazy-load the group's content
+                let isPopulated = false;
+                const folderToggleCallback = () => {
+                    if (!isPopulated) {
+                        group.forEach(nestedPvData => {
+                            const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                            if (nestedNode) subChildrenUl.appendChild(nestedNode);
+                        });
+                        isPopulated = true;
+                    }
+                };
+
+                const folderContent = createFolderElement(groupName, subChildrenUl, folderToggleCallback);
+                folderLi.appendChild(folderContent);
+                folderLi.appendChild(subChildrenUl);
+                childrenUl.appendChild(folderLi);
+            }
+            addToggle(pvItem, childrenUl); // Add toggle to the parent pvItem
+            pvItem.appendChild(childrenUl);
+        }
     }
 
     return pvItem;
+}
+
+function createFolderElement(name, childrenUl, onFirstOpenCallback) {
+    const folderContentDiv = document.createElement('div');
+    folderContentDiv.className = 'tree-item-content'; // So it gets the same styling
+
+    const toggle = document.createElement('span');
+    toggle.classList.add('toggle');
+    toggle.textContent = '[+] ';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.classList.add('item-name');
+    nameSpan.textContent = name;
+
+    folderContentDiv.appendChild(toggle);
+    folderContentDiv.appendChild(nameSpan);
+
+    toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isCollapsed = childrenUl.style.display === 'none';
+        childrenUl.style.display = isCollapsed ? 'block' : 'none';
+        toggle.textContent = isCollapsed ? '[-] ' : '[+] ';
+        if (isCollapsed && onFirstOpenCallback) {
+            onFirstOpenCallback();
+        }
+    });
+
+    return folderContentDiv;
+}
+
+function addToggle(parentLi, childrenUl) {
+    const toggle = document.createElement('span');
+    toggle.classList.add('toggle');
+    toggle.textContent = '[-] ';
+    toggle.onclick = (e) => {
+        e.stopPropagation();
+        const isHidden = childrenUl.style.display === 'none';
+        childrenUl.style.display = isHidden ? 'block' : 'none';
+        toggle.textContent = isHidden ? '[-] ' : '[+] ';
+    };
+    const firstSpan = parentLi.querySelector('.item-name');
+    if (firstSpan) firstSpan.before(toggle);
 }
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {

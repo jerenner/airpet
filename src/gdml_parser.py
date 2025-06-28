@@ -4,7 +4,7 @@ import io
 import math
 import asteval
 from .geometry_types import (
-    GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
+    GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, Assembly,
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
 )
 
@@ -651,45 +651,6 @@ class GDMLParser:
                     if facet_data['vertex_refs']:
                         facets.append(facet_data)
                 params['facets'] = facets
-            # Parsing of booleans
-            elif solid_type in ['union', 'subtraction', 'intersection']:
-                first_ref = solid_el.find('first').get('ref')
-                second_ref = solid_el.find('second').get('ref')
-                transform = self._resolve_transform(solid_el)
-                
-                first_transform = {"position": {'x':0,'y':0,'z':0}, "rotation": {'x':0,'y':0,'z':0}}
-                fp_el = solid_el.find('firstposition')
-                fp_ref_el = solid_el.find('firstpositionref')
-                fr_el = solid_el.find('firstrotation')
-                fr_ref_el = solid_el.find('firstrotationref')
-
-                if fp_el is not None:
-                     unit = fp_el.get('unit', 'mm')
-                     first_transform['position'] = {
-                        'x': self._evaluate_expression(fp_el.get('x'), get_unit_value(unit, "length")),
-                        'y': self._evaluate_expression(fp_el.get('y'), get_unit_value(unit, "length")),
-                        'z': self._evaluate_expression(fp_el.get('z'), get_unit_value(unit, "length"))
-                     }
-                elif fp_ref_el is not None:
-                    pos_def = self.geometry_state.get_define(fp_ref_el.get('ref'))
-                    if pos_def and pos_def.type == 'position': first_transform['position'] = pos_def.value
-
-                if fr_el is not None:
-                    unit = fr_el.get('unit', 'rad')
-                    first_transform['rotation'] = {
-                        'x': self._evaluate_expression(fr_el.get('x'), get_unit_value(unit, "angle")),
-                        'y': self._evaluate_expression(fr_el.get('y'), get_unit_value(unit, "angle")),
-                        'z': self._evaluate_expression(fr_el.get('z'), get_unit_value(unit, "angle"))
-                    }
-                elif fr_ref_el is not None:
-                    rot_def = self.geometry_state.get_define(fr_ref_el.get('ref'))
-                    if rot_def and rot_def.type == 'rotation': first_transform['rotation'] = rot_def.value
-
-                params = {
-                    'first_ref': first_ref, 'second_ref': second_ref,
-                    'transform_second': transform,
-                    'transform_first': first_transform
-                }
 
             # TODO: Add other solids: reflectedSolid, scaledSolid
             # For reflectedSolid and scaledSolid, store ref to original solid and the transformation params.
@@ -737,6 +698,7 @@ class GDMLParser:
         # --- First Pass: Parse all LV and Assembly definitions ---
         for element in structure_element:
             if element.tag == 'volume':
+                print(f"Parsing lv {element.get('name')}")
                 self._parse_single_lv(element)
             elif element.tag == 'assembly':
                 self._parse_single_assembly(element)
@@ -753,7 +715,9 @@ class GDMLParser:
         lv_name = vol_el.get('name')
         solid_ref_el = vol_el.find('solidref')
         mat_ref_el = vol_el.find('materialref')
-        if not all([lv_name, solid_ref_el, mat_ref_el]): return
+        if not lv_name or solid_ref_el is None or mat_ref_el is None:
+            print(f"Skipping incomplete logical volume: {lv_name}")
+            return
 
         solid_ref = solid_ref_el.get('ref')
         mat_ref = mat_ref_el.get('ref')
@@ -780,7 +744,7 @@ class GDMLParser:
 
     def _parse_pv_element(self, pv_el):
         """Helper to parse a physvol tag and return a PhysicalVolumePlacement object."""
-        name = pv_el.get('name', f"pv_{uuid.uuid4().hex[:8]}")
+        name = pv_el.get('name', f"pv_default")
         copy_number = int(self._evaluate_expression(pv_el.get('copynumber', '0'), 1.0, "dimensionless"))
         
         vol_ref_el = pv_el.find('volumeref')
