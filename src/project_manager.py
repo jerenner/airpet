@@ -265,8 +265,8 @@ class ProjectManager:
                     'rmin': float(p.get('rmin', 0)),
                     'rmax': float(p.get('rmax', 50)),
                     'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': math.radians(float(p.get('startphi', 0))),
-                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 360))
                 }
             elif solid_type == "cone":
                 internal_params = {
@@ -275,18 +275,18 @@ class ProjectManager:
                     'rmin2': float(p.get('rmin2', 0)),
                     'rmax2': float(p.get('rmax2', 75)),
                     'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': math.radians(float(p.get('startphi', 0))),
-                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 360))
                 }
             elif solid_type == "sphere":
                 # Backend directly uses the parameters from the UI
                 internal_params = {
                     'rmin': float(p.get('rmin', 0)),
                     'rmax': float(p.get('rmax', 100)),
-                    'startphi': math.radians(float(p.get('startphi', 0))),
-                    'deltaphi': math.radians(float(p.get('deltaphi', 360))),
-                    'starttheta': math.radians(float(p.get('starttheta', 0))),
-                    'deltatheta': math.radians(float(p.get('deltatheta', 180)))
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 360)),
+                    'starttheta': float(p.get('starttheta', 0)),
+                    'deltatheta': float(p.get('deltatheta', 180))
                 }
             elif solid_type == "orb":
                 internal_params = {'r': float(p.get('r', 100))}
@@ -295,8 +295,8 @@ class ProjectManager:
                     'rmin': float(p.get('rmin', 20)),
                     'rmax': float(p.get('rmax', 30)),
                     'rtor': float(p.get('rtor', 100)),
-                    'startphi': math.radians(float(p.get('startphi', 0))),
-                    'deltaphi': math.radians(float(p.get('deltaphi', 360)))
+                    'startphi': float(p.get('startphi', 0)),
+                    'deltaphi': float(p.get('deltaphi', 360))
                 }
             elif solid_type == "trd":
                 internal_params = {
@@ -311,9 +311,9 @@ class ProjectManager:
                     'dx': float(p.get('dx', 50)), # UI sends half-length
                     'dy': float(p.get('dy', 60)),
                     'dz': float(p.get('dz', 70)),
-                    'alpha': math.radians(float(p.get('alpha', 0))),
-                    'theta': math.radians(float(p.get('theta', 0))),
-                    'phi': math.radians(float(p.get('phi', 0)))
+                    'alpha': float(p.get('alpha', 0)),
+                    'theta': float(p.get('theta', 0)),
+                    'phi': float(p.get('phi', 0))
                 }
             elif solid_type == "eltube":
                 internal_params = {

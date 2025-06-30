@@ -221,6 +221,16 @@ function renderParamsUI(params = {}) {
     const type = typeSelect.value;
     const isBoolean = type === 'boolean';
 
+    // --- Initialize recipe if we just switched to boolean mode ---
+    if (isBoolean && booleanRecipe.length === 0) {
+        // This is the first time we're rendering the boolean UI for a new solid.
+        // Start it with an empty base slot.
+        booleanRecipe.push({ op: 'base', solid: null, transform: null });
+    } else if (!isBoolean) {
+        // If we switch away from boolean, clear the recipe.
+        booleanRecipe = [];
+    }
+
     // 2. Show/Hide the ingredients panel based on type
     document.getElementById('solid-ingredients-panel').style.display = isBoolean ? 'flex' : 'none';
 
@@ -662,8 +672,12 @@ function handleConfirm() {
         };
 
         if (isBoolean) {
-            if (booleanRecipe.length < 2 || !booleanRecipe.every(item => item.solid)) {
-                alert("All boolean operation slots must be filled.");
+            if (booleanRecipe.length < 1 || !booleanRecipe[0].solid) {
+                alert("The base solid for the boolean operation must be filled.");
+                return;
+            }
+            if (booleanRecipe.length > 1 && !booleanRecipe.slice(1).every(item => item.solid)) {
+                alert("All subsequent boolean operation slots must be filled.");
                 return;
             }
             data.recipe = booleanRecipe.map(item => ({
@@ -682,8 +696,12 @@ function handleConfirm() {
         if (!name) { alert("Please enter a name for the solid."); return; }
         
         if (isBoolean) {
-            if (booleanRecipe.length < 2 || !booleanRecipe.every(item => item.solid)) {
-                alert("All boolean operation slots must be filled.");
+            if (booleanRecipe.length < 1 || !booleanRecipe[0].solid) {
+                alert("The base solid for the boolean operation must be filled.");
+                return;
+            }
+            if (booleanRecipe.length > 1 && !booleanRecipe.slice(1).every(item => item.solid)) {
+                alert("All subsequent boolean operation slots must be filled.");
                 return;
             }
             const recipeForBackend = booleanRecipe.map(item => ({

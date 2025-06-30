@@ -251,7 +251,7 @@ function handlePointerDownForSelection(event) {
 
     let clickedOnGizmo = false;
     if (transformControls.object && transformControls.visible) {
-        // --- THE FIX: Use the internal '_gizmo' property ---
+        // --- Use the internal '_gizmo' property ---
         // Accessing _gizmo is necessary to raycast against only the visible handles.
         if (transformControls._gizmo) {
             const gizmoIntersects = raycaster.intersectObjects(transformControls._gizmo.children, true);
@@ -275,7 +275,7 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    raycaster.setFromCamera(mouse, camera);
+    //raycaster.setFromCamera(mouse, camera);
     
     // 1. Create a list of only the visible objects to be considered for intersection.
     const visibleObjects = geometryGroup.children.filter(child => child.visible);
