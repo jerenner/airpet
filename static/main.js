@@ -514,19 +514,14 @@ async function handleHierarchySelection(newSelection) {
         const singleItem = newSelection[0];
         const { type, id } = singleItem;
 
-        // The 'data' in the context object is now considered the source of truth for the inspector.
-        // We only fetch fresh details if they are missing, which shouldn't happen with the new logic.
-        let details = singleItem.data;
+        // Fetch object details from backend on new selection.
+        let details = await APIService.getObjectDetails(type, id);
         if (!details) {
-            console.warn("Fetching details for inspector as they were missing from context.");
-            details = await APIService.getObjectDetails(type, id);
-            if (!details) {
-                UIManager.showError(`Could not fetch details for ${type} ${id}`);
-                UIManager.clearInspector();
-                return;
-            }
-            singleItem.data = details;
+            UIManager.showError(`Could not fetch details for ${type} ${id}`);
+            UIManager.clearInspector();
+            return;
         }
+        singleItem.data = details;
 
         // If one item is selected, populate the inspector as before
         UIManager.populateInspector(singleItem, AppState.currentProjectState);
