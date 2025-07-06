@@ -26,6 +26,10 @@
             font-weight: bold;
         }
 
+        .tab_header .tab-title {
+            flex-grow: 1; /* This makes the title take up all available space */
+        }
+
         .tab_header button {
             padding: 2px 6px;
             font-size: 12px;
@@ -631,10 +635,11 @@
         /* Toggle for expanding/collapsing */
         .toggle { 
             display: inline-block; 
-            width: 20px; 
-            text-align: center;
-            margin-right: 0px; /* Adjust spacing */
+            width: 15px; /* Slightly reduce width to make room for margin */
+            text-align: left; /* Align to the left of its box */
             font-family: monospace;
+            cursor: pointer; /* Indicate it's clickable */
+            margin-right: 10px; 
         }
 
         /* Selection box */
@@ -711,7 +716,7 @@
             <div id="tab_structure" class="tab_pane active">
                 <!-- Structure (Volumes) Hierarchy will be built here -->
                 <div class="tab_header">
-                    <span>World Structure</span>
+                    <span class="tab-title">World Structure</span>
                     <div>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
@@ -720,40 +725,40 @@
             </div>
             <div id="tab_assemblies" class="tab_pane">
                 <div class="tab_header">
-                    <span>Assemblies</span>
-                    <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁+</button>
+                    <span class="tab-title">Assemblies</span>
+                    <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
                     <button id="addAssemblyButton" title="Place selected assembly" disabled>+ Place</button>
                 </div>
                 <ul id="assemblies_list_root"></ul>
             </div>
             <div id="tab_lvolumes" class="tab_pane">
                 <div class="tab_header">
-                    <span>Logical Volumes</span>
-                    <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁+</button>
+                    <span class="tab-title">Logical Volumes</span>
+                    <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
                     <button id="addLVButton" title="Create a new Logical Volume">+ Add LV</button>
                 </div>
                 <ul id="lvolumes_list_root"></ul>
             </div>
             <div id="tab_defines" class="tab_pane">
                 <div class="tab_header">
-                    <span>Defines</span>
-                    <button class="add-group-btn" data-group-type="define" title="Add new Group">📁+</button>
+                    <span class="tab-title">Defines</span>
+                    <button class="add-group-btn" data-group-type="define" title="Add new Group">📁</button>
                     <button class="add_button" data-add-type="define" title="Add new Define">+ Add</button>
                 </div>
                 <ul id="defines_list_root"></ul>
             </div>
             <div id="tab_materials" class="tab_pane">
                 <div class="tab_header">
-                    <span>Materials</span>
-                    <button class="add-group-btn" data-group-type="material" title="Add new Group">📁+</button>
+                    <span class="tab-title">Materials</span>
+                    <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
                     <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
                 </div>
                 <ul id="materials_list_root"></ul>
             </div>
             <div id="tab_solids" class="tab_pane">
                 <div class="tab_header">
-                    <span>Solids</span>
-                    <button class="add-group-btn" data-group-type="solid" title="Add new Group">📁+</button>
+                    <span class="tab-title">Solids</span>
+                    <button class="add-group-btn" data-group-type="solid" title="Add new Group">📁</button>
                     <button class="add_button" data-add-type="solid" title="Add new Solid">+ Add</button>
                 </div>
                 <ul id="solids_list_root"></ul>

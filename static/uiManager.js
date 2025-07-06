@@ -664,7 +664,7 @@ function createFolderElement(name, itemType, isDroppable) {
     
     const toggle = document.createElement('span');
     toggle.className = 'toggle';
-    toggle.textContent = '[-] ';
+    toggle.textContent = '[-]  ';
     
     const nameSpan = document.createElement('span');
     nameSpan.className = 'item-name';
@@ -689,7 +689,7 @@ function createFolderElement(name, itemType, isDroppable) {
         e.stopPropagation();
         const isHidden = childrenUl.style.display === 'none';
         childrenUl.style.display = isHidden ? '' : 'none';
-        toggle.textContent = isHidden ? '[-] ' : '[+] ';
+        toggle.textContent = isHidden ? '[-]  ' : '[+]  ';
     });
 
     controlsDiv.querySelector('.rename-group-btn').addEventListener('click', (e) => {
