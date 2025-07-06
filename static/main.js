@@ -556,8 +556,10 @@ async function handleHierarchySelection(newSelection) {
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
         UIManager.setInspectorTitle(`${newSelection.length} items selected`);
-        // Clear PV context since we can't edit transforms of multiple items yet
+        // Clear PV context since we can't edit transforms of multiple items at once
         AppState.selectedPVContext.pvId = null;
+        // Detach gizmo if multiple things are selected
+        SceneManager.getTransformControls().detach();
     } else {
         UIManager.clearInspector();
         // Clear PV context

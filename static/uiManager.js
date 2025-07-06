@@ -24,8 +24,9 @@ let inspectorContentDiv;
 // Buttons for adding LVs, PVs, and assemblies
 let addAssemblyButton, addLVButton, addPVButton;
 
-// Keep track of selected parent LV in structure hierarchy.
+// Keep track of selected parent LV in structure hierarchy and last selected item
 let selectedParentContext = null;
+let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 
 // Number of items per group for lists
 const ITEMS_PER_GROUP = 100;
@@ -664,7 +665,7 @@ function createFolderElement(name, itemType, isDroppable) {
     
     const toggle = document.createElement('span');
     toggle.className = 'toggle';
-    toggle.textContent = '[-]  ';
+    toggle.textContent = '[-] ';
     
     const nameSpan = document.createElement('span');
     nameSpan.className = 'item-name';
@@ -689,7 +690,7 @@ function createFolderElement(name, itemType, isDroppable) {
         e.stopPropagation();
         const isHidden = childrenUl.style.display === 'none';
         childrenUl.style.display = isHidden ? '' : 'none';
-        toggle.textContent = isHidden ? '[-]  ' : '[+]  ';
+        toggle.textContent = isHidden ? '[-] ' : '[+] ';
     });
 
     controlsDiv.querySelector('.rename-group-btn').addEventListener('click', (e) => {
@@ -804,8 +805,9 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
         // Check if the item being dragged is part of the current selection
         const isDraggingSelectedItem = Array.from(selectedItems).some(el => el.dataset.id === itemIdForBackend);
+        const isMultiDrag = selectedItems.length > 1 && isDraggingSelectedItem;
 
-        if (selectedItems.length > 1 && isDraggingSelectedItem) {
+        if (isMultiDrag) {
             // Dragging a part of a multi-selection
             const itemsToDrag = Array.from(selectedItems)
                 // IMPORTANT: Only drag items of the same type!
@@ -813,6 +815,20 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
                 .map(el => ({ id: el.dataset.id, type: el.dataset.type }));
             
             dragData = { type: 'multi-selection', items: itemsToDrag };
+
+            // --- CUSTOM DRAG IMAGE LOGIC ---
+            if (itemsToDrag.length > 0) {
+                const dragHelper = document.getElementById('drag-image-helper');
+                // Create a simple but effective visual: a stack icon and a count
+                dragHelper.innerHTML = `
+                    <span style="font-size: 18px;">📋</span>
+                    <span>${itemsToDrag.length} ${itemType}(s)</span>
+                `;
+                // Use setDragImage to replace the default browser ghost image.
+                // The (0, 0) coordinates mean the cursor will be at the top-left of our custom image.
+                // You can adjust these to center it, e.g., (dragHelper.offsetWidth / 2, dragHelper.offsetHeight / 2)
+                event.dataTransfer.setDragImage(dragHelper, 10, 10);
+            }
         } else {
             // Dragging a single item (even if others are selected)
             dragData = { type: 'single-item', id: itemIdForBackend, itemType: itemType };
@@ -820,7 +836,15 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         
         event.dataTransfer.setData('application/json', JSON.stringify(dragData));
         event.dataTransfer.effectAllowed = 'move';
-        item.classList.add('dragging'); // Optional: for styling
+        
+        // Add a class to all dragged items for styling
+        if (isMultiDrag) {
+            selectedItems.forEach(el => {
+                if(el.dataset.type === itemType) el.classList.add('dragging');
+            });
+        } else {
+            item.classList.add('dragging');
+        }
     });
 
     item.addEventListener('dragend', (event) => {
@@ -847,35 +871,61 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     //const contentDiv = item.querySelector('.tree-item-content');
     item.addEventListener('click', (event) => {
         event.stopPropagation();
+
+        const parentList = item.closest('ul');
+        if (!parentList) return;
         
         const isCtrlHeld = event.ctrlKey;
         const isShiftHeld = event.shiftKey; // We'll handle shift-click later, for now just pass it.
 
-        if (!isCtrlHeld) {
-            // If Ctrl is not held, clear all other selections first.
-            const allSelected = document.querySelectorAll('#left_panel_container .selected_item');
-            allSelected.forEach(sel => {
-                if (sel !== item) { // Don't deselect the item we are about to select
-                    sel.classList.remove('selected_item');
-                }
+        if (isShiftHeld && lastSelectedItem && lastSelectedItem.parentElement === parentList) {
+            // --- SHIFT-CLICK LOGIC ---
+            // Don't deselect others. Find the range between lastSelectedItem and current item.
+            const allItems = Array.from(parentList.children);
+            const startIndex = allItems.indexOf(lastSelectedItem);
+            const endIndex = allItems.indexOf(item);
+            
+            // Clear previous selections IN THIS LIST ONLY before applying the new range
+            allItems.forEach(li => li.classList.remove('selected_item'));
+
+            const minIndex = Math.min(startIndex, endIndex);
+            const maxIndex = Math.max(startIndex, endIndex);
+
+            for (let i = minIndex; i <= maxIndex; i++) {
+                allItems[i].classList.add('selected_item');
+            }
+            // Do not update lastSelectedItem on shift-click, so the anchor remains the same.
+        } else if (isCtrlHeld) {
+            // --- CTRL-CLICK LOGIC ---
+            // Toggle the current item's selection state
+            item.classList.toggle('selected_item');
+            lastSelectedItem = item; // A ctrl-click also sets the anchor
+        } else {
+            // --- NORMAL CLICK LOGIC ---
+            // Deselect everything in all lists first
+            document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
+                sel.classList.remove('selected_item');
             });
+            // Select only the current item
+            item.classList.add('selected_item');
+            lastSelectedItem = item; // This is the new anchor for future shift-clicks
         }
         
-        // Toggle the selection state of the currently clicked item
-        item.classList.toggle('selected_item');
-        
-        // Gather all currently selected items from the DOM
+        // --- UNIFIED NOTIFICATION ---
+        // After any selection change, gather all selected items across all lists and notify main.js
         const selectedItemContexts = [];
         document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
-            selectedItemContexts.push({
-                type: sel.dataset.type,
-                id: sel.dataset.id,
-                name: sel.dataset.name,
-                data: sel.appData // The full data object we stored earlier
-            });
+            // We need to ensure we don't select the folder 'li' itself, only item 'li's
+            if (sel.dataset.id) { 
+                selectedItemContexts.push({
+                    type: sel.dataset.type,
+                    id: sel.dataset.id,
+                    name: sel.dataset.name,
+                    data: sel.appData
+                });
+            }
         });
         
-        // Notify the main controller about the new selection state
         callbacks.onHierarchySelectionChanged(selectedItemContexts);
     });
 
