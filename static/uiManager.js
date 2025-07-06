@@ -615,7 +615,6 @@ function populateListWithGrouping(listElement, itemsArray, itemType) {
     const projectState = callbacks.getProjectState?.();
     const groups = (projectState?.ui_groups?.[itemType]) || [];
     const groupedItemIds = new Set();
-    console.log("Looking at groups",groups)
 
     // 1. Render all the folders first
     groups.forEach(group => {

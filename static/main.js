@@ -111,7 +111,8 @@ async function initializeApp() {
 
     // Initialize define editor
     DefineEditor.initDefineEditor({ 
-        onConfirm: handleDefineEditorConfirm 
+        onConfirm: handleDefineEditorConfirm,
+        getProjectState: () => AppState.currentProjectState // Provide access to state
     });
 
     // Initialize logical volume editor

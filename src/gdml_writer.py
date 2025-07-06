@@ -1,6 +1,6 @@
 # src/gdml_writer.py
 import xml.etree.ElementTree as ET
-from xml.dom import minidom # For pretty printing
+from xml.dom import minidom
 import math
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement,
@@ -20,30 +20,35 @@ class GDMLWriter:
         if not self.geometry_state.defines: return
         define_el = ET.SubElement(self.root, "define")
         for name, define_obj in self.geometry_state.defines.items():
-            if define_obj.type == 'position':
-                attrs = {"name": name, "unit": DEFAULT_OUTPUT_LUNIT}
-                for axis in ['x', 'y', 'z']:
-                    attrs[axis] = str(convert_from_internal_units(define_obj.value[axis], DEFAULT_OUTPUT_LUNIT, "length"))
-                ET.SubElement(define_el, "position", attrs)
-            elif define_obj.type == 'rotation':
-                attrs = {"name": name, "unit": DEFAULT_OUTPUT_AUNIT}
-                for axis in ['x', 'y', 'z']: # Assuming ZYX Euler
-                    attrs[axis] = str(convert_from_internal_units(define_obj.value[axis], DEFAULT_OUTPUT_AUNIT, "angle"))
-                ET.SubElement(define_el, "rotation", attrs)
+            if define_obj.type in ['position', 'rotation', 'scale']:
+                # Compound defines
+                attrs = {"name": name}
+                if define_obj.unit: attrs["unit"] = define_obj.unit
+                
+                # raw_expression is a dict here
+                for axis, raw_val_str in define_obj.raw_expression.items():
+                    attrs[axis] = raw_val_str
+                ET.SubElement(define_el, define_obj.type, attrs)
+
+            elif define_obj.type == 'expression':
+                # Explicit expression tag
+                expr_el = ET.SubElement(define_el, "expression", {"name": name})
+                expr_el.text = str(define_obj.raw_expression)
+
             elif define_obj.type == 'constant':
-                 # Constants might not have intrinsic units in our simple Define, or they might.
-                 # If they do, we'd need to store their original category to write them out correctly.
-                 # For now, assume dimensionless or handle based on known use.
-                attrs = {"name": name, "value": str(define_obj.value)}
-                # If define_obj had a unit and category, we could convert back:
-                # if define_obj.unit and define_obj.category:
-                #     attrs["value"] = str(convert_from_internal_units(define_obj.value, define_obj.unit, define_obj.category))
-                #     attrs["unit"] = define_obj.unit
+                # Standard constant with a numeric value
+                attrs = {"name": name, "value": str(define_obj.raw_expression)}
                 ET.SubElement(define_el, "constant", attrs)
+
+            elif define_obj.type == 'quantity':
+                # Quantity with an explicit unit
+                attrs = {"name": name, "value": str(define_obj.raw_expression)}
+                if define_obj.unit:
+                    attrs["unit"] = define_obj.unit
+                ET.SubElement(define_el, "quantity", attrs)
 
 
     def _add_materials(self):
-        # ... (same as before or enhance as needed) ...
         if not self.geometry_state.materials: return
         materials_el = ET.SubElement(self.root, "materials")
         for name, mat_obj in self.geometry_state.materials.items():
@@ -438,11 +443,9 @@ class GDMLWriter:
             ET.SubElement(pv_el, "scale", scale_attrs)
 
     def _add_setup(self):
-        # ... (same as before) ...
         if not self.geometry_state.world_volume_ref: return
         setup_el = ET.SubElement(self.root, "setup", {"name": "Default", "version": "1.0"})
         ET.SubElement(setup_el, "world", {"ref": self.geometry_state.world_volume_ref})
-
 
     def get_gdml_string(self):
         self._add_defines()

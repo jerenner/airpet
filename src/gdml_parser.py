@@ -105,6 +105,19 @@ class GDMLParser:
             print(f"Warning: Final evaluation failed for '{expr_str}': {e}. Returning 0.")
             return 0.0
 
+    def _is_expression(self, value_str):
+        """
+        A simple heuristic to determine if a string is a numeric literal
+        or a mathematical/variable expression.
+        """
+        if not isinstance(value_str, str):
+            return False
+        try:
+            float(value_str)
+            return False # It's just a number
+        except ValueError:
+            return True # It contains non-numeric characters, likely an expression
+
     def _parse_defines(self, define_element):
         if define_element is None: return
         
@@ -117,19 +130,29 @@ class GDMLParser:
             unit = None
             category = None
 
-            if tag in ['constant', 'quantity']:
+            if tag == 'constant':
                 raw_expression = element.get('value')
-                if tag == 'quantity':
-                    unit = element.get('unit')
-                    # Determine category from unit
-                    if unit:
-                        for cat_name, u_map in UNIT_FACTORS.items():
-                            if unit in u_map:
-                                category = cat_name
-                                break
+                # If the value looks like an expression, let's treat it as such
+                if self._is_expression(raw_expression):
+                    tag = 'expression' # Upgrade to our internal 'expression' type
+                # category remains dimensionless for constants
+                category = "dimensionless"
+
+            elif tag == 'quantity':
+                raw_expression = element.get('value')
+                unit = element.get('unit')
+                # Determine category from unit
+                if unit:
+                    for cat_name, u_map in UNIT_FACTORS.items():
+                        if unit in u_map:
+                            category = cat_name
+                            break
+            
             elif tag == 'expression':
-                raw_expression = element.text
-                tag = 'constant' # Treat evaluated expressions as constants
+                raw_expression = element.text.strip()
+                # The tag is already 'expression', which is what we want.
+                category = "dimensionless"
+
             elif tag in ['position', 'rotation', 'scale']:
                 # For compound defines, the raw_expression is the dict of its attributes
                 raw_expression = {k: v for k, v in element.attrib.items() if k not in ['name', 'unit']}
@@ -137,6 +160,7 @@ class GDMLParser:
                 if tag == 'rotation': category = 'angle'
                 elif tag == 'position': category = 'length'
                 elif tag == 'scale': category = 'dimensionless'
+            
             if raw_expression is not None:
                 # Create the Define object with the raw string/dict, evaluation is deferred
                 define_obj = Define(name, tag, raw_expression, unit, category)
