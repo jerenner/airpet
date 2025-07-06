@@ -466,3 +466,22 @@ export async function moveItemsToGroup(groupType, itemIds, targetGroupName) {
     });
     return handleResponse(response);
 }
+
+/**
+ * Sends an expression to the backend for safe evaluation.
+ * @param {string} expression - The mathematical/variable expression string.
+ * @param {Object} projectState - The current full project state to provide context.
+ * @returns {Promise<Object>} A promise resolving to the backend's response {success, result} or {success, error}.
+ */
+export async function evaluateExpression(expression, projectState) {
+    const response = await fetch(`${API_BASE_URL}/api/evaluate_expression`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            expression: expression,
+            project_state: projectState // Send the full context
+        })
+    });
+    // This uses handleResponse, which will throw an error on non-OK responses
+    return handleResponse(response);
+}

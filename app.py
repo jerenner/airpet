@@ -7,6 +7,7 @@ import requests
 import traceback
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
+import asteval
 
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
@@ -801,6 +802,45 @@ def move_items_to_group_route():
         return create_success_response("Items moved successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+
+# --- NEW API ROUTE FOR SAFE EVALUATION ---
+@app.route('/api/evaluate_expression', methods=['POST'])
+def evaluate_expression_route():
+    data = request.get_json()
+    expression = data.get('expression')
+    current_state_dict = data.get('project_state') # The full project state
+
+    if not expression or not current_state_dict:
+        return jsonify({"success": False, "error": "Missing expression or project state."}), 400
+
+    try:
+        # We will create a temporary evaluator with the context from the provided state
+        aeval = asteval.Interpreter(symtable={}, minimal=True)
+        aeval.symtable.update({
+            'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
+            'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
+        })
+        
+        # Populate context with evaluated values of existing defines from the project state
+        if 'defines' in current_state_dict:
+            for name, define_data in current_state_dict['defines'].items():
+                # Important: Only add defines that have a valid numeric value
+                if isinstance(define_data.get('value'), (int, float)):
+                    aeval.symtable[name] = define_data['value']
+
+        # Safely evaluate the user's expression
+        result = aeval.eval(expression)
+
+        if aeval.error:
+             # asteval provides detailed error messages
+             err = aeval.error[0]
+             return jsonify({"success": False, "error": err.get_error()}), 400
+
+        return jsonify({"success": True, "result": result})
+
+    except Exception as e:
+        # Catch any other unexpected errors during evaluation
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

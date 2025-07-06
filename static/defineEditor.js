@@ -1,11 +1,12 @@
 import * as THREE from 'three';
+import * as APIService from './apiService.js';
 
 let modalElement, titleElement, nameInput, typeSelect, confirmButton, cancelButton, dynamicParamsDiv;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingDefineId = null;
 
-let currentExpression = '';
+// --- State for expression editing ---
 let recomputeButton;
 let valueDisplay;
 let getProjectStateCallback = null; // To get the current state for evaluation
@@ -26,7 +27,13 @@ export function initDefineEditor(callbacks) {
     const expressionOption = document.createElement('option');
     expressionOption.value = "expression";
     expressionOption.textContent = "Expression";
-    typeSelect.add(expressionOption, typeSelect.options[3]); // Add after Constant
+    // Place it after "Constant" if it exists, otherwise just add it.
+    const constantOption = typeSelect.querySelector('option[value="constant"]');
+    if (constantOption && constantOption.nextSibling) {
+        constantOption.parentNode.insertBefore(expressionOption, constantOption.nextSibling);
+    } else {
+        typeSelect.appendChild(expressionOption);
+    }
     
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -37,7 +44,7 @@ export function initDefineEditor(callbacks) {
 
 export function show(defineData = null) {
     if (defineData && defineData.name) {
-        // --- EDIT MODE ---
+        // EDIT MODE
         isEditMode = true;
         editingDefineId = defineData.name;
         titleElement.textContent = `Edit Define: ${defineData.name}`;
@@ -46,21 +53,18 @@ export function show(defineData = null) {
         typeSelect.value = defineData.type;
         typeSelect.disabled = true;
         confirmButton.textContent = "Update Define";
-        
-        // Pass the raw expression or value object to populate the fields
         renderParamsUI(defineData.raw_expression, defineData.value);
-
     } else {
-        // --- CREATE MODE ---
+        // CREATE MODE
         isEditMode = false;
         editingDefineId = null;
         titleElement.textContent = "Create New Define";
         nameInput.value = '';
         nameInput.disabled = false;
-        typeSelect.value = 'constant'; // Default to constant now
+        typeSelect.value = 'constant';
         typeSelect.disabled = false;
         confirmButton.textContent = "Create Define";
-        renderParamsUI(); // Render with default values
+        renderParamsUI();
     }
     modalElement.style.display = 'block';
 }
@@ -73,8 +77,9 @@ function renderParamsUI(rawExpr = null, evaluatedValue = null) {
     dynamicParamsDiv.innerHTML = '';
     const type = typeSelect.value;
     const p_in = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    const raw = rawExpr || {};
+    const raw = (rawExpr && typeof rawExpr === 'object') ? rawExpr : {};
 
+    // For position, rotation, we show text inputs to allow expressions per-axis
     if (type === 'position' || type === 'scale') {
         dynamicParamsDiv.innerHTML = `
             <div class="property_item"><label for="def_x">X:</label><input type="text" id="def_x"></div>
@@ -83,8 +88,9 @@ function renderParamsUI(rawExpr = null, evaluatedValue = null) {
             <div class="property_item"><label>Unit:</label><input type="text" value="mm" disabled></div>
         `;
         const defaultVal = (type === 'scale') ? '1' : '0';
-        p_in('def_x', raw.x ?? defaultVal); p_in('def_y', raw.y ?? defaultVal); p_in('def_z', raw.z ?? defaultVal);
-
+        p_in('def_x', raw.x ?? (isEditMode ? rawExpr : defaultVal)); 
+        p_in('def_y', raw.y ?? defaultVal); 
+        p_in('def_z', raw.z ?? defaultVal);
     } else if (type === 'rotation') {
         dynamicParamsDiv.innerHTML = `
             <div class="property_item"><label for="def_x">X:</label><input type="text" id="def_x"></div>
@@ -93,16 +99,14 @@ function renderParamsUI(rawExpr = null, evaluatedValue = null) {
             <div class="property_item"><label>Unit:</label><input type="text" value="deg" disabled></div>
         `;
         p_in('def_x', raw.x ?? '0'); p_in('def_y', raw.y ?? '0'); p_in('def_z', raw.z ?? '0');
-
     } else if (type === 'constant') {
-        dynamicParamsDiv.innerHTML = `<div class="property_item"><label>Value:</label><input type="number" id="def_const_val" step="any"></div>`;
-        p_in('def_const_val', rawExpr || 0);
-
+        dynamicParamsDiv.innerHTML = `<div class="property_item"><label>Value:</label><input type="text" id="def_const_val"></div>`;
+        p_in('def_const_val', rawExpr !== null ? rawExpr : '0');
     } else if (type === 'expression') {
         dynamicParamsDiv.innerHTML = `
             <div class="property_item" style="flex-direction: column; align-items: flex-start;">
                 <label for="def_expr_input">Expression:</label>
-                <textarea id="def_expr_input" style="width: 95%; height: 60px;"></textarea>
+                <textarea id="def_expr_input" style="width: 95%; height: 60px; font-family: monospace;"></textarea>
             </div>
             <div class="property_item">
                  <button id="recompute_expr_btn">Recompute</button>
@@ -112,15 +116,11 @@ function renderParamsUI(rawExpr = null, evaluatedValue = null) {
         `;
         document.getElementById('def_expr_input').value = rawExpr || '';
         document.getElementById('def_expr_value').value = evaluatedValue !== null ? evaluatedValue : 'N/A';
-
-        recomputeButton = document.getElementById('recompute_expr_btn');
-        valueDisplay = document.getElementById('def_expr_value');
-        
-        recomputeButton.addEventListener('click', handleRecompute);
+        document.getElementById('recompute_expr_btn').addEventListener('click', handleRecompute);
     }
 }
 
-function handleConfirm() {
+async function handleConfirm() {
     const name = nameInput.value.trim();
     if (!name && !isEditMode) { alert("Please provide a name."); return; }
     
@@ -130,7 +130,8 @@ function handleConfirm() {
     if (type === 'position' || type === 'scale') {
         const p = (id) => document.getElementById(id).value;
         rawExpression = { x: p('def_x'), y: p('def_y'), z: p('def_z') };
-        unit = 'mm'; category = 'length';
+        unit = type === 'position' ? 'mm' : null;
+        category = type === 'position' ? 'length' : 'dimensionless';
     } else if (type === 'rotation') {
         const p = (id) => document.getElementById(id).value;
         rawExpression = { x: p('def_x'), y: p('def_y'), z: p('def_z') };
@@ -142,7 +143,8 @@ function handleConfirm() {
         rawExpression = document.getElementById('def_expr_input').value;
         unit = null; category = 'dimensionless';
         // Final validation before confirming
-        if (!handleRecompute()) { // handleRecompute returns false on error
+        const isValid = await handleRecompute();
+        if (!isValid) {
             alert("Cannot save an invalid expression. Please correct it.");
             return;
         }
@@ -160,18 +162,28 @@ function handleConfirm() {
     hide();
 }
 
-function handleRecompute() {
+async function handleRecompute() {
     const exprInput = document.getElementById('def_expr_input');
+    const valueDisplay = document.getElementById('def_expr_value');
     const expression = exprInput.value;
     
-    // Use an external evaluator (like math.js or a custom one)
-    // For now, we'll simulate it, assuming we have a function to call
-    // that safely evaluates the expression.
+    if (!expression) {
+        valueDisplay.value = 'N/A';
+        return true; // Empty is valid
+    }
+
     try {
-        const result = evaluateInContext(expression);
-        valueDisplay.value = result;
-        valueDisplay.style.color = 'black';
-        return true; // Success
+        const currentState = getProjectStateCallback();
+        const response = await APIService.evaluateExpression(expression, currentState);
+        if (response.success) {
+            valueDisplay.value = response.result;
+            valueDisplay.style.color = 'black';
+            return true; // Success
+        } else {
+            valueDisplay.value = `Error: ${response.error}`;
+            valueDisplay.style.color = 'red';
+            return false; // Failure
+        }
     } catch (error) {
         valueDisplay.value = `Error: ${error.message}`;
         valueDisplay.style.color = 'red';
