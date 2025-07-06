@@ -740,5 +740,67 @@ def add_assembly_placement_route():
     else:
         return create_success_response(f"Assembly '{assembly_name}' placed successfully.")
 
+@app.route('/create_group', methods=['POST'])
+def create_group_route():
+    data = request.get_json()
+    group_type = data.get('group_type')
+    group_name = data.get('group_name')
+
+    if not all([group_type, group_name]):
+        return jsonify({"success": False, "error": "Missing group type or name."}), 400
+    
+    success, error_msg = project_manager.create_group(group_type, group_name)
+    if success:
+        return create_success_response(f"Group '{group_name}' created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/rename_group', methods=['POST'])
+def rename_group_route():
+    data = request.get_json()
+    group_type = data.get('group_type')
+    old_name = data.get('old_name')
+    new_name = data.get('new_name')
+
+    if not all([group_type, old_name, new_name]):
+        return jsonify({"success": False, "error": "Missing data for group rename."}), 400
+        
+    success, error_msg = project_manager.rename_group(group_type, old_name, new_name)
+    if success:
+        return create_success_response("Group renamed.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/delete_group', methods=['POST'])
+def delete_group_route():
+    data = request.get_json()
+    group_type = data.get('group_type')
+    group_name = data.get('group_name')
+    
+    if not all([group_type, group_name]):
+        return jsonify({"success": False, "error": "Missing data for group deletion."}), 400
+
+    success, error_msg = project_manager.delete_group(group_type, group_name)
+    if success:
+        return create_success_response("Group deleted.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/move_items_to_group', methods=['POST'])
+def move_items_to_group_route():
+    data = request.get_json()
+    group_type = data.get('group_type')
+    item_ids = data.get('item_ids')
+    target_group_name = data.get('target_group_name') # Can be null to ungroup
+
+    if not all([group_type, item_ids]):
+        return jsonify({"success": False, "error": "Missing group type or item IDs."}), 400
+        
+    success, error_msg = project_manager.move_items_to_group(group_type, item_ids, target_group_name)
+    if success:
+        return create_success_response("Items moved successfully.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

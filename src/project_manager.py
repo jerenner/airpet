@@ -861,3 +861,84 @@ class ProjectManager:
         finally:
             # Clean up the temporary file
             os.unlink(temp_path)
+
+    def create_group(self, group_type, group_name):
+        """Creates a new, empty group for a specific object type."""
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        if group_type not in self.current_geometry_state.ui_groups:
+            return False, f"Invalid group type: {group_type}"
+        
+        # Check for name collision
+        if any(g['name'] == group_name for g in self.current_geometry_state.ui_groups[group_type]):
+            return False, f"A group named '{group_name}' already exists for {group_type}."
+            
+        self.current_geometry_state.ui_groups[group_type].append({
+            "name": group_name,
+            "members": []
+        })
+        return True, None
+
+    def rename_group(self, group_type, old_name, new_name):
+        """Renames an existing group."""
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        if group_type not in self.current_geometry_state.ui_groups:
+            return False, f"Invalid group type: {group_type}"
+        
+        groups = self.current_geometry_state.ui_groups[group_type]
+        
+        # Check if the new name is already taken (by a different group)
+        if any(g['name'] == new_name for g in groups if g['name'] != old_name):
+            return False, f"A group named '{new_name}' already exists."
+
+        target_group = next((g for g in groups if g['name'] == old_name), None)
+        if not target_group:
+            return False, f"Group '{old_name}' not found."
+            
+        target_group['name'] = new_name
+        return True, None
+
+    def delete_group(self, group_type, group_name):
+        """Deletes a group. Its members become ungrouped."""
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        if group_type not in self.current_geometry_state.ui_groups:
+            return False, f"Invalid group type: {group_type}"
+
+        groups = self.current_geometry_state.ui_groups[group_type]
+        
+        group_to_delete = next((g for g in groups if g['name'] == group_name), None)
+        if not group_to_delete:
+            return False, f"Group '{group_name}' not found."
+            
+        self.current_geometry_state.ui_groups[group_type] = [g for g in groups if g['name'] != group_name]
+        return True, None
+
+    def move_items_to_group(self, group_type, item_ids, target_group_name):
+        """Moves a list of items to a target group, removing them from any previous group."""
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        if group_type not in self.current_geometry_state.ui_groups:
+            return False, f"Invalid group type: {group_type}"
+
+        groups = self.current_geometry_state.ui_groups[group_type]
+        item_ids_set = set(item_ids)
+
+        # 1. Remove items from their old groups
+        for group in groups:
+            group['members'] = [member_id for member_id in group['members'] if member_id not in item_ids_set]
+
+        # 2. Add items to the new group (if a target group is specified)
+        if target_group_name:
+            target_group = next((g for g in groups if g['name'] == target_group_name), None)
+            if not target_group:
+                return False, f"Target group '{target_group_name}' not found."
+            
+            # Add only items that aren't already there to prevent duplicates
+            for item_id in item_ids:
+                if item_id not in target_group['members']:
+                    target_group['members'].append(item_id)
+        
+        # If target_group_name is None, the items are effectively moved to "ungrouped".
+        return True, None

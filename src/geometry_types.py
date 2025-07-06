@@ -277,6 +277,16 @@ class GeometryState:
         self.assemblies = {} # name: Assembly object
         self.world_volume_ref = world_volume_ref # Name of the world LogicalVolume
 
+        # --- Dictionary to hold UI grouping information ---
+        # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
+        self.ui_groups = {
+            'define': [],
+            'material': [],
+            'solid': [],
+            'logical_volume': [],
+            'assembly': []
+        }
+
     def add_define(self, define_obj):
         self.defines[define_obj.name] = define_obj
     def add_material(self, material_obj):
@@ -301,7 +311,8 @@ class GeometryState:
             "solids": {name: solid.to_dict() for name, solid in self.solids.items()},
             "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
             "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
-            "world_volume_ref": self.world_volume_ref
+            "world_volume_ref": self.world_volume_ref,
+            "ui_groups": self.ui_groups 
         }
 
     @classmethod
@@ -317,6 +328,11 @@ class GeometryState:
             for name, lv_data in data.get('logical_volumes', {}).items()
         }
         instance.assemblies = {name: Assembly.from_dict(d) for name, d in data.get('assemblies', {}).items()}
+
+        # --- Deserialize the groups ---
+        # Use data.get to provide a default empty dict for older project files
+        default_groups = {'define': [], 'material': [], 'solid': [], 'logical_volume': [], 'assembly': []}
+        instance.ui_groups = data.get('ui_groups', default_groups)
 
         return instance
 

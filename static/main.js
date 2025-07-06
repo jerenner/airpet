@@ -78,7 +78,13 @@ async function initializeApp() {
         onHierarchySelectionChanged: handleHierarchySelection,
         onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
-        onAiGenerateClicked: handleAiGenerate 
+        onAiGenerateClicked: handleAiGenerate,
+        // Group organization
+        getProjectState: () => AppState.currentProjectState, // Give UI manager access to state
+        onAddGroup: handleAddGroup,
+        onRenameGroup: handleRenameGroup,
+        onDeleteGroup: handleDeleteGroup,
+        onMoveItemsToGroup: handleMoveItemsToGroup
     });
 
     // Initialize the 3D scene and its controls
@@ -1050,6 +1056,55 @@ async function handleAddAssembly() {
         syncUIWithState(result, [{ type: 'logical_volume', id: parentLVName }]); // Reselect parent
     } catch (error) {
         UIManager.showError("Failed to place assembly: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleAddGroup(groupType, groupName) {
+    UIManager.showLoading(`Creating group '${groupName}' of type '${groupType}'...`);
+    try {
+        const result = await APIService.createGroup(groupType, groupName);
+        syncUIWithState(result); // This will now correctly redraw the hierarchy
+    } catch (error) {
+        UIManager.showError("Failed to create group: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleRenameGroup(groupType, oldName, newName) {
+    UIManager.showLoading(`Renaming group...`);
+    try {
+        const result = await APIService.renameGroup(groupType, oldName, newName);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to rename group: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleDeleteGroup(groupType, groupName) {
+    UIManager.showLoading(`Deleting group '${groupName}'...`);
+    try {
+        const result = await APIService.deleteGroup(groupType, groupName);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to delete group: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleMoveItemsToGroup(groupType, itemIds, targetGroupName) {
+    const selectionContext = getSelectionContext();
+    UIManager.showLoading(`Moving ${itemIds.length} item(s)...`);
+    try {
+        const result = await APIService.moveItemsToGroup(groupType, itemIds, targetGroupName);
+        syncUIWithState(result, selectionContext); // Restore selection after move
+    } catch (error) {
+        UIManager.showError("Failed to move items: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }

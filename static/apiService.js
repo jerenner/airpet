@@ -426,3 +426,43 @@ export async function addAssemblyPlacement(parent_lv_name, assembly_name, placem
     });
     return handleResponse(response);
 }
+
+export async function createGroup(groupType, groupName) {
+    const response = await fetch(`${API_BASE_URL}/create_group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_type: groupType, group_name: groupName })
+    });
+    return handleResponse(response);
+}
+
+export async function renameGroup(groupType, oldName, newName) {
+    const response = await fetch(`${API_BASE_URL}/rename_group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_type: groupType, old_name: oldName, new_name: newName })
+    });
+    return handleResponse(response);
+}
+
+export async function deleteGroup(groupType, groupName) {
+    const response = await fetch(`${API_BASE_URL}/delete_group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_type: groupType, group_name: groupName })
+    });
+    return handleResponse(response);
+}
+
+export async function moveItemsToGroup(groupType, itemIds, targetGroupName) {
+    const response = await fetch(`${API_BASE_URL}/move_items_to_group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            group_type: groupType,
+            item_ids: itemIds,
+            target_group_name: targetGroupName
+        })
+    });
+    return handleResponse(response);
+}

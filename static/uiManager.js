@@ -261,6 +261,17 @@ export function initUI(cb) {
         }
     });
 
+    // Add listeners for the new "+ Group" buttons
+    document.querySelectorAll('.add-group-btn').forEach(button => {
+        button.addEventListener('click', (event) => {
+            const type = event.target.dataset.groupType;
+            const groupName = prompt(`Enter a name for the new ${type.replace('_',' ')} group:`);
+            if (groupName && groupName.trim()) {
+                callbacks.onAddGroup(type, groupName.trim()); 
+            }
+        });
+    });
+
     console.log("UIManager initialized.");
 }
 
@@ -564,19 +575,6 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
     populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
 
-    // for (const name in projectState.logical_volumes) {
-    //     if(lvolumesListRoot) lvolumesListRoot.appendChild(createTreeItem(name, 'logical_volume', name, projectState.logical_volumes[name]));
-    // }
-    // for (const name in projectState.defines) {
-    //     if(definesListRoot) definesListRoot.appendChild(createTreeItem(name, 'define', name, projectState.defines[name]));
-    // }
-    // for (const name in projectState.materials) {
-    //     if(materialsListRoot) materialsListRoot.appendChild(createTreeItem(name, 'material', name, projectState.materials[name]));
-    // }
-    // for (const name in projectState.solids) {
-    //     if(solidsListRoot) solidsListRoot.appendChild(createTreeItem(name, 'solid', name, projectState.solids[name]));
-    // }
-
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot) { // Make sure the element exists
         if (projectState.world_volume_ref && projectState.logical_volumes) {
@@ -612,58 +610,108 @@ function populateListWithGrouping(listElement, itemsArray, itemType) {
     if (!listElement) return;
     listElement.innerHTML = ''; // Clear previous content
 
-    if (itemsArray.length <= ITEMS_PER_GROUP) {
-        // If there are few enough items, just render them all directly
-        itemsArray.forEach(itemData => {
-            listElement.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
+    // --- Get the most current state using the new callback ---
+    const projectState = callbacks.getProjectState?.();
+    const groups = (projectState?.ui_groups?.[itemType]) || [];
+    const groupedItemIds = new Set();
+    console.log("Looking at groups",groups)
+
+    // 1. Render all the folders first
+    groups.forEach(group => {
+        const folderLi = createFolderElement(group.name, itemType, true);
+        listElement.appendChild(folderLi);
+
+        const childrenUl = folderLi.querySelector('ul');
+        group.members.forEach(memberId => {
+            const itemData = itemsArray.find(item => item.name === memberId);
+            if (itemData) {
+                childrenUl.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
+                groupedItemIds.add(memberId);
+            }
         });
-    } else {
-        // Otherwise, create collapsable folders/groups
-        for (let i = 0; i < itemsArray.length; i += ITEMS_PER_GROUP) {
-            const group = itemsArray.slice(i, i + ITEMS_PER_GROUP);
-            const groupName = `${itemType.charAt(0).toUpperCase() + itemType.slice(1)}s ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, itemsArray.length)}`;
-
-            const folderLi = document.createElement('li');
-            folderLi.classList.add('hierarchy-folder');
-            
-            const folderToggle = document.createElement('span');
-            folderToggle.classList.add('toggle');
-            folderToggle.textContent = '[+] ';
-            
-            const folderNameSpan = document.createElement('span');
-            folderNameSpan.classList.add('item-name');
-            folderNameSpan.textContent = groupName;
-
-            const folderContentDiv = document.createElement('div');
-            folderContentDiv.className = 'tree-item-content';
-            folderContentDiv.appendChild(folderToggle);
-            folderContentDiv.appendChild(folderNameSpan);
-            
-            const childrenUl = document.createElement('ul');
-            childrenUl.style.display = 'none'; // Initially collapsed
-
-            // Populate the group on-demand when the folder is first opened
-            let isPopulated = false;
-            folderToggle.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const isCollapsed = childrenUl.style.display === 'none';
-                childrenUl.style.display = isCollapsed ? 'block' : 'none';
-                folderToggle.textContent = isCollapsed ? '[-] ' : '[+] ';
-
-                // Lazy-load the content
-                if (isCollapsed && !isPopulated) {
-                    group.forEach(itemData => {
-                        childrenUl.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
-                    });
-                    isPopulated = true;
-                }
-            });
-            
-            folderLi.appendChild(folderContentDiv);
-            folderLi.appendChild(childrenUl);
-            listElement.appendChild(folderLi);
+        // If a folder is empty, add a placeholder
+        if (childrenUl.children.length === 0) {
+            const placeholder = document.createElement('li');
+            placeholder.className = 'empty-folder-placeholder';
+            placeholder.textContent = '(empty)';
+            childrenUl.appendChild(placeholder);
         }
+    });
+
+    // 2. Add a drop target for "ungrouped" items
+    const ungroupedDropTarget = document.createElement('div');
+    ungroupedDropTarget.className = 'ungrouped-drop-target';
+    addDropHandling(ungroupedDropTarget, itemType, null); // null target group name means ungroup
+    listElement.appendChild(ungroupedDropTarget);
+
+    // 3. Render all ungrouped items
+    itemsArray.forEach(itemData => {
+        if (!groupedItemIds.has(itemData.name)) {
+            listElement.appendChild(createTreeItem(itemData.name, itemType, itemData.name, itemData));
+        }
+    });
+}
+
+// --- Helper for creating folder elements ---
+function createFolderElement(name, itemType, isDroppable) {
+    const folderLi = document.createElement('li');
+    folderLi.className = 'hierarchy-folder';
+    folderLi.dataset.groupName = name;
+    folderLi.dataset.groupType = itemType;
+
+    const folderContent = document.createElement('div');
+    folderContent.className = 'tree-item-content';
+    
+    const toggle = document.createElement('span');
+    toggle.className = 'toggle';
+    toggle.textContent = '[-] ';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'item-name';
+    nameSpan.textContent = name;
+
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'folder-controls';
+    controlsDiv.innerHTML = `
+        <button class="rename-group-btn" title="Rename Group">✏️</button>
+        <button class="delete-group-btn" title="Delete Group">🗑️</button>
+    `;
+    
+    folderContent.appendChild(toggle);
+    folderContent.appendChild(nameSpan);
+    folderContent.appendChild(controlsDiv);
+    
+    const childrenUl = document.createElement('ul');
+    folderLi.appendChild(folderContent);
+    folderLi.appendChild(childrenUl);
+
+    toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isHidden = childrenUl.style.display === 'none';
+        childrenUl.style.display = isHidden ? '' : 'none';
+        toggle.textContent = isHidden ? '[-] ' : '[+] ';
+    });
+
+    controlsDiv.querySelector('.rename-group-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const newName = prompt(`Rename group "${name}" to:`, name);
+        if (newName && newName.trim() && newName.trim() !== name) {
+            callbacks.onRenameGroup(itemType, name, newName.trim());
+        }
+    });
+
+    controlsDiv.querySelector('.delete-group-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirmAction(`Are you sure you want to delete the group "${name}"? Items inside will become ungrouped.`)) {
+            callbacks.onDeleteGroup(itemType, name);
+        }
+    });
+
+    if (isDroppable) {
+        addDropHandling(folderContent, itemType, name);
     }
+    
+    return folderLi;
 }
 
 function buildVolumeNode(pvData, projectState) {
@@ -729,34 +777,6 @@ function buildVolumeNode(pvData, projectState) {
     return pvItem;
 }
 
-function createFolderElement(name, childrenUl, onFirstOpenCallback) {
-    const folderContentDiv = document.createElement('div');
-    folderContentDiv.className = 'tree-item-content'; // So it gets the same styling
-
-    const toggle = document.createElement('span');
-    toggle.classList.add('toggle');
-    toggle.textContent = '[+] ';
-    
-    const nameSpan = document.createElement('span');
-    nameSpan.classList.add('item-name');
-    nameSpan.textContent = name;
-
-    folderContentDiv.appendChild(toggle);
-    folderContentDiv.appendChild(nameSpan);
-
-    toggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const isCollapsed = childrenUl.style.display === 'none';
-        childrenUl.style.display = isCollapsed ? 'block' : 'none';
-        toggle.textContent = isCollapsed ? '[-] ' : '[+] ';
-        if (isCollapsed && onFirstOpenCallback) {
-            onFirstOpenCallback();
-        }
-    });
-
-    return folderContentDiv;
-}
-
 function addToggle(parentLi, childrenUl) {
     const toggle = document.createElement('span');
     toggle.classList.add('toggle');
@@ -773,6 +793,41 @@ function addToggle(parentLi, childrenUl) {
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
     const item = document.createElement('li');
+    item.draggable = true; // Make the item draggable!
+    
+    // --- Add dragstart listener ---
+    item.addEventListener('dragstart', (event) => {
+        event.stopPropagation();
+        
+        const selectedItems = document.querySelectorAll('#left_panel_container .selected_item');
+        let dragData;
+
+        // Check if the item being dragged is part of the current selection
+        const isDraggingSelectedItem = Array.from(selectedItems).some(el => el.dataset.id === itemIdForBackend);
+
+        if (selectedItems.length > 1 && isDraggingSelectedItem) {
+            // Dragging a part of a multi-selection
+            const itemsToDrag = Array.from(selectedItems)
+                // IMPORTANT: Only drag items of the same type!
+                .filter(el => el.dataset.type === itemType) 
+                .map(el => ({ id: el.dataset.id, type: el.dataset.type }));
+            
+            dragData = { type: 'multi-selection', items: itemsToDrag };
+        } else {
+            // Dragging a single item (even if others are selected)
+            dragData = { type: 'single-item', id: itemIdForBackend, itemType: itemType };
+        }
+        
+        event.dataTransfer.setData('application/json', JSON.stringify(dragData));
+        event.dataTransfer.effectAllowed = 'move';
+        item.classList.add('dragging'); // Optional: for styling
+    });
+
+    item.addEventListener('dragend', (event) => {
+        event.stopPropagation();
+        item.classList.remove('dragging');
+    });
+
     // --- Add a container for the name and buttons ---
     item.innerHTML = `
         <div class="tree-item-content">
@@ -890,6 +945,47 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         });
     }
     return item;
+}
+
+// --- Centralized Drag & Drop Logic ---
+function addDropHandling(element, itemType, targetGroupName) {
+    element.addEventListener('dragover', (event) => {
+        event.preventDefault(); // Necessary to allow a drop
+        element.classList.add('drop-target-hover');
+    });
+    element.addEventListener('dragleave', () => {
+        element.classList.remove('drop-target-hover');
+    });
+    element.addEventListener('drop', (event) => {
+        event.preventDefault();
+        element.classList.remove('drop-target-hover');
+        
+        const data = JSON.parse(event.dataTransfer.getData('application/json'));
+        let itemIdsToMove;
+        let dragItemType;
+
+        if (data.type === 'multi-selection') {
+            if (data.items.length === 0) return;
+            // All items in a multi-drag must be of the same type for this to work
+            dragItemType = data.items[0].type;
+            if (dragItemType !== itemType) {
+                showError(`Cannot move items of type '${dragItemType}' into a '${itemType}' group.`);
+                return;
+            }
+            itemIdsToMove = data.items.map(item => item.id);
+        } else if (data.type === 'single-item') {
+            dragItemType = data.itemType;
+            if (dragItemType !== itemType) {
+                showError(`Cannot move a '${dragItemType}' into a '${itemType}' group.`);
+                return;
+            }
+            itemIdsToMove = [data.id];
+        }
+
+        if (itemIdsToMove && itemIdsToMove.length > 0) {
+            callbacks.onMoveItemsToGroup(itemType, itemIdsToMove, targetGroupName);
+        }
+    });
 }
 
 // This function is called by main.js to sync 3D selection TO the hierarchy
