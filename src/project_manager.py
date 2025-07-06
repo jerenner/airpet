@@ -3,7 +3,8 @@ import json
 import math
 import tempfile
 import os
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly
+import asteval
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly, get_unit_value
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -33,10 +34,72 @@ class ProjectManager:
                 max_copy_no = pv.copy_number
         return max_copy_no + 1
 
+    def recalculate_all_defines(self):
+        """
+        This is the central method for re-evaluating the entire set of defines.
+        It's called after parsing is complete or after a user edits a define.
+        """
+        if not self.current_geometry_state:
+            return False, "No project state to calculate."
+
+        aeval = asteval.Interpreter(symtable={}, minimal=True)
+        aeval.symtable.update({
+            'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
+            'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
+        })
+        
+        all_defines = list(self.current_geometry_state.defines.values())
+        unresolved_defines = list(all_defines)
+        
+        max_passes = len(unresolved_defines) + 2
+        for pass_num in range(max_passes):
+            if not unresolved_defines:
+                break 
+
+            resolved_this_pass = []
+            still_unresolved = []
+
+            for define_obj in unresolved_defines:
+                try:
+                    # Evaluate the expression based on its type
+                    if define_obj.type in ['position', 'rotation', 'scale']:
+                        val_dict = {}
+                        raw_dict = define_obj.raw_expression
+                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
+                        for axis in ['x', 'y', 'z']:
+                            if axis in raw_dict:
+                                val_dict[axis] = aeval.eval(str(raw_dict[axis])) * unit_factor
+                        define_obj.value = val_dict
+                    else: # constant, quantity
+                        raw_expr = str(define_obj.raw_expression)
+                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
+                        define_obj.value = aeval.eval(raw_expr) * unit_factor
+                    
+                    # If successful, add to context and mark for removal from unresolved list
+                    aeval.symtable[define_obj.name] = define_obj.value
+                    resolved_this_pass.append(define_obj)
+
+                except (NameError, KeyError):
+                    still_unresolved.append(define_obj)
+                except Exception as e:
+                    print(f"Error evaluating define '{define_obj.name}': {e}. Setting value to None.")
+                    define_obj.value = None
+                    resolved_this_pass.append(define_obj)
+
+            if not resolved_this_pass and still_unresolved:
+                unresolved_names = [d.name for d in still_unresolved]
+                return False, f"Could not resolve defines (circular dependency or missing variable): {unresolved_names}"
+
+            unresolved_defines = still_unresolved
+            
+        if unresolved_defines:
+            unresolved_names = [d.name for d in unresolved_defines]
+            return False, f"Could not resolve all defines. Unresolved: {unresolved_names}"
+
+        return True, None
+
     def load_gdml_from_string(self, gdml_string):
         self.current_geometry_state = self.gdml_parser.parse_gdml_string(gdml_string)
-        # self.undo_stack.clear()
-        # self.redo_stack.clear()
         return self.current_geometry_state
 
     def get_threejs_description(self):
@@ -52,8 +115,9 @@ class ProjectManager:
     def load_project_from_json_string(self, json_string):
         data = json.loads(json_string)
         self.current_geometry_state = GeometryState.from_dict(data)
-        # self.undo_stack.clear()
-        # self.redo_stack.clear()
+        # Recalculate everything after loading to ensure consistency
+        success, error_msg = self.recalculate_all_defines()
+        if not success: print(f"Warning after loading JSON: {error_msg}")
         return self.current_geometry_state
 
     def export_to_gdml_string(self):
@@ -103,7 +167,31 @@ class ProjectManager:
         print(f"Attempting to update: Type='{object_type}', ID/Name='{object_name_or_id_from_frontend}', Path='{property_path}', NewValue='{new_value}'")
 
         target_obj = None
-        # Find the object (this needs to be robust)
+
+        # Handle defines
+        if object_type == "define":
+            target_obj = self.current_geometry_state.defines.get(object_id)
+            if target_obj:
+                # When the UI edits a define, it's always changing the raw expression.
+                if property_path == 'raw_expression':
+                     target_obj.raw_expression = new_value
+                elif property_path.startswith('value.'): # e.g., value.x for a position
+                    axis = property_path.split('.')[1]
+                    if isinstance(target_obj.raw_expression, dict):
+                        target_obj.raw_expression[axis] = str(new_value)
+                    else:
+                        return False, "Cannot set axis on a non-vector define."
+                else: # Fallback for simple constant, path is 'value'
+                    target_obj.raw_expression = str(new_value)
+
+                # After any change, we must recalculate everything.
+                success, error_msg = self.recalculate_all_defines()
+                if not success:
+                    # TODO: Implement undo/revert of the change before returning error.
+                    return False, f"Update failed, defines could not be resolved: {error_msg}"
+                return True, None
+
+        # Other types
         if object_type == "physical_volume":
             for lv_name_key in self.current_geometry_state.logical_volumes: # Iterate through LVs
                 lv = self.current_geometry_state.logical_volumes[lv_name_key]
@@ -118,8 +206,6 @@ class ProjectManager:
                  print(f"Solid '{object_name_or_id_from_frontend}' not found by name in project_manager.solids.")
              print(f"Target is {target_obj}")
              print(f"All objects are {self.current_geometry_state.solids}")
-        elif object_type == "define":
-            target_obj = self.current_geometry_state.defines.get(object_name_or_id_from_frontend)
         elif object_type == "material":
             target_obj = self.current_geometry_state.materials.get(object_name_or_id_from_frontend)
         elif object_type == "logical_volume":
@@ -140,7 +226,6 @@ class ProjectManager:
                 current_level_obj = current_level_obj[part_key]
             else: # If it's an object
                 current_level_obj = getattr(current_level_obj, part_key)
-        
         final_key = path_parts[-1]
 
         # --- Type Coercion ---
@@ -193,6 +278,7 @@ class ProjectManager:
         # or that Define constructor handles necessary conversions based on unit/category
         new_define = Define(name, define_type, value_dict, unit, category)
         self.current_geometry_state.add_define(new_define)
+        self.recalculate_all_defines()
         return new_define.to_dict(), None
 
     def update_define(self, define_name, new_value, new_unit=None, new_category=None):
@@ -209,7 +295,8 @@ class ProjectManager:
         if new_category:
             target_define.category = new_category
 
-        return True, None
+        success, error_msg = self.recalculate_all_defines()
+        return success, error_msg
 
     def add_material(self, name_suggestion, properties_dict):
         if not self.current_geometry_state: return None, "No project loaded"

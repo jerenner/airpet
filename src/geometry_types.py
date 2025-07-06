@@ -1,4 +1,5 @@
-# src/geometry_types.py
+# FILE: virtual-pet/src/geometry_types.py
+
 import uuid # For unique IDs
 import math
 import numpy as np
@@ -55,30 +56,37 @@ def get_unit_value(unit_str, category="length"):
 
 class Define:
     """Represents a defined entity like position, rotation, or constant."""
-    def __init__(self, name, type, value, unit=None, category=None):
+    def __init__(self, name, type, raw_expression, unit=None, category=None):
         self.id = str(uuid.uuid4())
         self.name = name
-        self.type = type # 'position', 'rotation', 'constant', 'matrix'
+        self.type = type # 'position', 'rotation', 'constant', 'quantity'
+        self.raw_expression = raw_expression # The original string value from GDML
         self.unit = unit
         self.category = category
-        # Value can be a dict for position/rotation, a float for constant, etc.
-        if type in ['position', 'rotation'] and isinstance(value, dict):
-            self.value = {
-                k: convert_to_internal_units(v, unit, category) for k, v in value.items()
-            }
-        elif type == 'constant':
-             self.value = convert_to_internal_units(value, unit, category if category else "dimensionless")
-        else:
-            self.value = value # For matrices or other complex types
+        self.value = None # This will hold the evaluated result.
 
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "type": self.type, "value": self.value, "unit": self.unit, "category": self.category}
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "raw_expression": self.raw_expression,
+            "value": self.value, # The evaluated value
+            "unit": self.unit, "category": self.category
+        }
 
     @classmethod
     def from_dict(cls, data):
-        # Note: Direct value assignment assumes units are already internal in the dict
-        instance = cls(data['name'], data['type'], data['value'], data.get('unit'), data.get('category'))
+        # In new projects, raw_expression might be missing, so we create it from value
+        raw_expr = data.get('raw_expression')
+        if raw_expr is None:
+            val = data.get('value')
+            if isinstance(val, dict):
+                 raw_expr = {k: str(v) for k, v in val.items()}
+            else:
+                 raw_expr = str(val)
+
+        instance = cls(data['name'], data['type'], raw_expr, data.get('unit'), data.get('category'))
         instance.id = data.get('id', str(uuid.uuid4()))
+        instance.value = data.get('value') # Restore evaluated value too
         return instance
 
 

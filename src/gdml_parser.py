@@ -11,19 +11,7 @@ from .geometry_types import (
 class GDMLParser:
     def __init__(self):
         self.geometry_state = GeometryState()
-        self.evaluator_context = { # Pre-define common constants
-            'pi': math.pi,
-            'PI': math.pi, # Common GDML usage
-            'HALFPI': math.pi / 2.0,
-            'TWOPI': 2.0 * math.pi,
-            # Geant4 system_of_units can be added if expressions use them directly
-            'mm': 1.0,
-            'cm': 10.0,
-            'm': 1000.0,
-            'rad': 1.0,
-            'deg': math.pi / 180.0,
-        }
-        self.aeval = asteval.Interpreter(symtable=self.evaluator_context, minimal=True, no_ifexp=True, no_for=True, no_while=True, no_try=True, no_functiondef=True)
+        self.aeval = asteval.Interpreter(symtable={}, minimal=True)
 
     def _strip_namespace(self, gdml_content_string):
         it = ET.iterparse(io.StringIO(gdml_content_string))
@@ -31,78 +19,17 @@ class GDMLParser:
             if '}' in el.tag:
                 el.tag = el.tag.split('}', 1)[1]
         return it.root
-    
-    def _evaluate_expression(self, expr_str, default_unit_val_for_bare_numbers=1.0, category="length"):
-        if expr_str is None:
-            print(f"Warning: Got None for an expression, returning 0.0. This might indicate a missing attribute in the GDML file.")
-            return 0.0
-
-        expr_str = str(expr_str).strip() 
-        if not expr_str: return 0.0
-
-        eval_result = None
-
-        # First, check for direct reference, but DON'T return.
-        # Just get the numerical value and let it fall through to the
-        # unit multiplication step at the end.
-        if expr_str in self.evaluator_context:
-            val_from_context = self.evaluator_context[expr_str]
-            if isinstance(val_from_context, (int, float)):
-                eval_result = val_from_context  # This is the value, e.g., 360.0
-            elif isinstance(val_from_context, dict) and 'value' in val_from_context and isinstance(val_from_context['value'], (int, float)):
-                eval_result = val_from_context['value']
-        
-        # If it was not a direct lookup, use asteval for complex expressions
-        if eval_result is None:
-            cleaned_expr_str = expr_str
-            parsed_unit_val = 1.0  # Reset for this block
-            found_unit_in_expr = False
-
-            # This basic unit stripping is for expressions like "10*cm"
-            for unit_cat_map_name, unit_cat_map in UNIT_FACTORS.items():
-                for unit_symbol, factor in unit_cat_map.items():
-                    if cleaned_expr_str.endswith(f"*{unit_symbol}"):
-                        cleaned_expr_str = cleaned_expr_str[:-len(f"*{unit_symbol}")].strip()
-                        parsed_unit_val = factor
-                        found_unit_in_expr = True
-                        break
-                    elif cleaned_expr_str.endswith(f" * {unit_symbol}"):
-                        cleaned_expr_str = cleaned_expr_str[:-len(f" * {unit_symbol}")].strip()
-                        parsed_unit_val = factor
-                        found_unit_in_expr = True
-                        break
-                if found_unit_in_expr: break
-
-            self.aeval.error = []
-            self.aeval.error_msg = None
-            
-            temp_result = self.aeval(cleaned_expr_str)
-
-            if self.aeval.error:
-                for err in self.aeval.error:
-                    print(f"asteval error processing expression='{expr_str}' (cleaned='{cleaned_expr_str}'): {err.msg} at line {err.lineno}, col {err.col_offset}")
-                try:
-                    eval_result = float(cleaned_expr_str) * (parsed_unit_val if found_unit_in_expr else 1.0)
-                except ValueError:
-                    print(f"Warning: Cannot evaluate expression '{expr_str}'. Returning 0.")
-                    return 0.0
-            else:
-                 eval_result = temp_result * (parsed_unit_val if found_unit_in_expr else 1.0)
-        
-        # Apply the unit factor from the GDML tag (like aunit="deg") to the result.
-        # This now works for both direct constants and complex expressions.
-        if isinstance(eval_result, (int, float)):
-            return eval_result * default_unit_val_for_bare_numbers
-        else:
-            print(f"Warning: Expression '{expr_str}' evaluated to non-numeric type '{type(eval_result)}'. Returning 0.")
-            return 0.0
 
     def parse_gdml_string(self, gdml_content_string):
         self.geometry_state = GeometryState() # Reset for new parse
-        self.evaluator_context = {}           # Reset context for each parse
         root = self._strip_namespace(gdml_content_string)
 
+        # Parse sections in order, but evaluation is deferred
         self._parse_defines(root.find('define'))
+
+        # Evaluate all parsed defines iteratively before proceeding.
+        self._evaluate_all_defines()
+
         self._parse_materials(root.find('materials'))
         self._parse_solids(root.find('solids'))
         self._parse_structure(root.find('structure'))
@@ -110,99 +37,110 @@ class GDMLParser:
         
         return self.geometry_state
 
+    def _evaluate_all_defines(self):
+        """
+        Iteratively evaluates all defines, respecting dependencies. This is now
+        part of the parsing process itself.
+        """
+        # Reset and prime the evaluator
+        self.aeval.symtable.clear()
+        self.aeval.symtable.update({
+            'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
+            'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
+        })
+        
+        all_defines = list(self.geometry_state.defines.values())
+        unresolved_defines = list(all_defines)
+        
+        max_passes = len(unresolved_defines) + 2
+        for _ in range(max_passes):
+            if not unresolved_defines:
+                break # All done
+
+            resolved_this_pass = []
+            still_unresolved = []
+
+            for define_obj in unresolved_defines:
+                try:
+                    if define_obj.type in ['position', 'rotation', 'scale']:
+                        val_dict = {}
+                        raw_dict = define_obj.raw_expression
+                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
+                        
+                        for axis in ['x', 'y', 'z']:
+                            if axis in raw_dict:
+                                val_dict[axis] = self.aeval.eval(raw_dict[axis]) * unit_factor
+                        define_obj.value = val_dict
+                    else: # constant, quantity
+                        raw_expr = str(define_obj.raw_expression)
+                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
+                        define_obj.value = self.aeval.eval(raw_expr) * unit_factor
+                    
+                    self.aeval.symtable[define_obj.name] = define_obj.value
+                    resolved_this_pass.append(define_obj)
+
+                except (NameError, KeyError):
+                    still_unresolved.append(define_obj)
+                except Exception as e:
+                    print(f"Error evaluating define '{define_obj.name}' with expression '{define_obj.raw_expression}': {e}. Skipping.")
+                    define_obj.value = None
+                    resolved_this_pass.append(define_obj)
+
+            if not resolved_this_pass:
+                unresolved_names = [d.name for d in unresolved_defines]
+                print(f"Warning: Could not resolve defines (circular dependency or missing variable): {unresolved_names}")
+                break
+
+            unresolved_defines = still_unresolved
+    
+    def _evaluate_expression(self, expr_str, default_unit_val=1.0):
+        """Now this is a simple wrapper around the already-populated evaluator."""
+        if expr_str is None: return 0.0
+        expr_str = str(expr_str).strip()
+        if not expr_str: return 0.0
+        try:
+            val = self.aeval.eval(expr_str)
+            return val * default_unit_val
+        except Exception as e:
+            print(f"Warning: Final evaluation failed for '{expr_str}': {e}. Returning 0.")
+            return 0.0
+
     def _parse_defines(self, define_element):
         if define_element is None: return
         
-        # First pass for constants and quantities that might be used in expressions
-        constants_and_quantities = []
-        expressions = []
-        positions_rotations_etc = []
-
         for element in define_element:
-            if element.tag in ['constant', 'quantity']:
-                constants_and_quantities.append(element)
-            elif element.tag == 'expression':
-                expressions.append(element)
-            else:
-                positions_rotations_etc.append(element)
-
-        # Process constants and quantities first
-        for element in constants_and_quantities:
             name = element.get('name')
             if not name: continue
             
-            val_str = element.get('value')
-            if element.tag == 'constant':
-                # Evaluate the constant's value string. Constants don't have 'unit' attribute in GDML.
-                # Their value is often an expression itself.
-                evaluated_value = self._evaluate_expression(val_str, 1.0, "dimensionless")
-                define_obj = Define(name, 'constant', evaluated_value) # Store already converted value
-                self.geometry_state.add_define(define_obj)
-                self.evaluator_context[name] = evaluated_value # Add to asteval context
-            
-            elif element.tag == 'quantity':
-                unit_attr = element.get('unit') # Quantities usually have explicit units
-                category = "dimensionless"
-                unit_factor_for_internal_conversion = 1.0 # default
+            tag = element.tag
+            raw_expression = None
+            unit = None
+            category = None
 
-                if unit_attr:
-                    for cat_name, u_map in UNIT_FACTORS.items():
-                        if unit_attr in u_map:
-                            category = cat_name
-                            unit_factor_for_internal_conversion = u_map[unit_attr]
-                            break
-                
-                # Evaluate the numerical part of the quantity's value
-                # The expression itself shouldn't contain units if the tag has a unit attribute.
-                # default_unit_val_for_bare_numbers=1.0 because we handle unit conversion *after* evaluation
-                numerical_value_from_expr = self._evaluate_expression(val_str, 1.0, category)
-                
-                # Convert the evaluated numerical value to internal units using the unit_factor
-                value_in_internal_units = numerical_value_from_expr * unit_factor_for_internal_conversion
-
-                define_obj = Define(name, 'quantity', value_in_internal_units, unit_attr, category)
+            if tag in ['constant', 'quantity']:
+                raw_expression = element.get('value')
+                if tag == 'quantity':
+                    unit = element.get('unit')
+                    # Determine category from unit
+                    if unit:
+                        for cat_name, u_map in UNIT_FACTORS.items():
+                            if unit in u_map:
+                                category = cat_name
+                                break
+            elif tag == 'expression':
+                raw_expression = element.text
+                tag = 'constant' # Treat evaluated expressions as constants
+            elif tag in ['position', 'rotation', 'scale']:
+                # For compound defines, the raw_expression is the dict of its attributes
+                raw_expression = {k: v for k, v in element.attrib.items() if k not in ['name', 'unit']}
+                unit = element.get('unit')
+                if tag == 'rotation': category = 'angle'
+                elif tag == 'position': category = 'length'
+                elif tag == 'scale': category = 'dimensionless'
+            if raw_expression is not None:
+                # Create the Define object with the raw string/dict, evaluation is deferred
+                define_obj = Define(name, tag, raw_expression, unit, category)
                 self.geometry_state.add_define(define_obj)
-                self.evaluator_context[name] = value_in_internal_units
-
-        # Second pass for expressions, which might use constants/quantities defined above
-        for element in expressions:
-            name = element.get('name')
-            if not name: continue
-            if element.tag == 'expression':
-                expr_value_str = element.text
-                evaluated_expr = self._evaluate_expression(expr_value_str, 1.0, "dimensionless")
-                define_obj = Define(name, 'expression_evaluated_constant', evaluated_expr)
-                self.geometry_state.add_define(define_obj)
-                print(f"[name {name}] for elem {element}: adding {evaluated_expr} to context from {expr_value_str}")
-                self.evaluator_context[name] = evaluated_expr
-        
-        # Third pass for positions, rotations etc. that might use any of the above
-        for element in positions_rotations_etc:
-            name = element.get('name')
-            if not name: continue
-
-            if element.tag == 'position':
-                unit = element.get('unit', 'mm') # Default to mm for position tag
-                tag_unit_value = get_unit_value(unit, "length")
-                pos_val_dict = {
-                    'x': self._evaluate_expression(element.get('x', '0'), tag_unit_value),
-                    'y': self._evaluate_expression(element.get('y', '0'), tag_unit_value),
-                    'z': self._evaluate_expression(element.get('z', '0'), tag_unit_value)
-                }
-                define_obj = Define(name, 'position', pos_val_dict) # Define stores values in internal units
-                self.geometry_state.add_define(define_obj)
-                # self.evaluator_context[name] = define_obj.to_dict() # No need to add to context, not used in expr
-            elif element.tag == 'rotation':
-                unit = element.get('unit', 'rad') # Default to rad for rotation tag
-                tag_unit_value = get_unit_value(unit, "angle")
-                rot_val_dict = {
-                    'x': self._evaluate_expression(element.get('x', '0'), tag_unit_value),
-                    'y': self._evaluate_expression(element.get('y', '0'), tag_unit_value),
-                    'z': self._evaluate_expression(element.get('z', '0'), tag_unit_value)
-                }
-                define_obj = Define(name, 'rotation', rot_val_dict)
-                self.geometry_state.add_define(define_obj)
-            # Add <matrix>, <scale>, <variable> later
 
     def _parse_materials(self, materials_element):
         if materials_element is None: return
@@ -215,7 +153,7 @@ class GDMLParser:
                 if d_el is not None:
                     # GDML D is g/cm3, our internal units might differ or be unitless if we store as parsed
                     # For now, let's assume density is stored directly as parsed with its GDML unit.
-                    density_val = self._evaluate_expression(d_el.get('value'), default_unit_val_for_bare_numbers=1.0) # Store value
+                    density_val = self._evaluate_expression(d_el.get('value'), default_unit_val=1.0) # Store value
                     # Unit for density is more complex (g/cm3), not simple length/angle
                 mat = Material(name, density=density_val)
                 self.geometry_state.add_material(mat)
@@ -745,7 +683,7 @@ class GDMLParser:
     def _parse_pv_element(self, pv_el):
         """Helper to parse a physvol tag and return a PhysicalVolumePlacement object."""
         name = pv_el.get('name', f"pv_default")
-        copy_number = int(self._evaluate_expression(pv_el.get('copynumber', '0'), 1.0, "dimensionless"))
+        copy_number = int(self._evaluate_expression(pv_el.get('copynumber', '0'), 1.0))
         
         vol_ref_el = pv_el.find('volumeref')
         asm_ref_el = pv_el.find('assemblyref')
