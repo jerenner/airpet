@@ -172,14 +172,32 @@ class GDMLParser:
             if element.tag == 'material':
                 name = element.get('name')
                 if not name: continue
-                density_val = None
+
+                state = element.get('state')
+                Z_expr = element.get('Z') # Can be None
+                
+                density_expr = None
                 d_el = element.find('D')
                 if d_el is not None:
-                    # GDML D is g/cm3, our internal units might differ or be unitless if we store as parsed
-                    # For now, let's assume density is stored directly as parsed with its GDML unit.
-                    density_val = self._evaluate_expression(d_el.get('value'), default_unit_val=1.0) # Store value
-                    # Unit for density is more complex (g/cm3), not simple length/angle
-                mat = Material(name, density=density_val)
+                    density_expr = d_el.get('value')
+                
+                A_expr = None
+                atom_el = element.find('atom')
+                if atom_el is not None:
+                    # Note: GDML atom has unit, but we store it as part of the expression
+                    # for simplicity. This might need refinement if units are complex.
+                    atom_val = atom_el.get('value')
+                    atom_unit = atom_el.get('unit', 'g/mole')
+                    if atom_unit == 'g/mole':
+                        A_expr = atom_val # Store as is
+                    else:
+                        # This would require a more complex unit conversion system
+                        print(f"Warning: Unsupported atom unit '{atom_unit}' for material '{name}'. Storing value only.")
+                        A_expr = atom_val
+                
+                # TODO: Parse material components for mixtures
+                
+                mat = Material(name, Z_expr=Z_expr, A_expr=A_expr, density_expr=density_expr, state=state)
                 self.geometry_state.add_material(mat)
 
     def _resolve_transform(self, solid_el_for_csg):

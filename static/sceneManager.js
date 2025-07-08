@@ -364,7 +364,9 @@ export function findMeshByPvId(pvId) {
  */
 export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     let geometry;
-    const p = solidData.parameters;
+    
+    // Use the _evaluated_parameters for rendering
+    const p = solidData._evaluated_parameters;
 
     // Temporary handling of null project state from solid editor
     const defines = (projectState && projectState.defines) ? projectState.defines : {};
@@ -395,6 +397,13 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'sphere':
             geometry = new THREE.SphereGeometry(p.rmax, 32, 16, p.startphi, p.deltaphi, p.starttheta, p.deltatheta);
+            // To handle the inner radius (hollow sphere), we must use CSG.
+            if (p.rmin > 0) {
+                const outerSphere = new Brush(geometry);
+                const innerSphereGeom = new THREE.SphereGeometry(p.rmin, 32, 16, p.startphi, p.deltaphi, p.starttheta, p.deltatheta);
+                const innerSphere = new Brush(innerSphereGeom);
+                geometry = csgEvaluator.evaluate(outerSphere, innerSphere, SUBTRACTION).geometry;
+            }
             break;
         case 'orb':
             geometry = new THREE.SphereGeometry(p.r, 32, 16);
@@ -1044,16 +1053,31 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
 
     // 2. Build geometry based on type
     if (solidData.type === 'boolean') {
-        const recipe = solidData.parameters.recipe;
+        const recipe = solidData.raw_parameters.recipe;
         if (!recipe || recipe.length < 1 || !recipe[0].solid_ref) {
             console.error(`Boolean solid '${solidName}' has an invalid recipe.`);
             return null;
         }
 
-        // 1. Get the base solid's geometry
-        let resultBrush = new Brush(_getOrBuildGeometry(recipe[0].solid_ref, solidsDict, projectState, geometryCache, csgEvaluator));
+        // Get the base solid's geometry
+        const baseGeom = _getOrBuildGeometry(recipe[0].solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+        if (!baseGeom) {
+             console.error(`Could not build base solid '${recipe[0].solid_ref}' for boolean '${solidName}'.`);
+             return null;
+        }
+        let resultBrush = new Brush(baseGeom);
 
-        // 2. Iteratively apply the operations
+        const baseTransform = recipe[0].transform;
+        if (baseTransform) {
+            // Base transform needs to use evaluated values if they exist
+            const pos = baseTransform._evaluated_position || baseTransform.position || {x:0, y:0, z:0};
+            const rot = baseTransform._evaluated_rotation || baseTransform.rotation || {x:0, y:0, z:0};
+            resultBrush.position.set(pos.x, pos.y, pos.z);
+            resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+            resultBrush.updateMatrixWorld();
+        }
+
+        // Iteratively apply the subsequent operations
         for (let i = 1; i < recipe.length; i++) {
             const item = recipe[i];
             const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
@@ -1061,8 +1085,10 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
 
             const nextBrush = new Brush(nextSolidGeom);
             const transform = item.transform || {};
-            const pos = transform.position || {x:0, y:0, z:0};
-            const rot = transform.rotation || {x:0, y:0, z:0}; // Radians
+            
+            // Use evaluated values for CSG operations
+            const pos = transform._evaluated_position || transform.position || {x:0, y:0, z:0};
+            const rot = transform._evaluated_rotation || transform.rotation || {x:0, y:0, z:0};
 
             nextBrush.position.set(pos.x, pos.y, pos.z);
             nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
@@ -1073,9 +1099,13 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
         }
         
         finalGeometry = resultBrush.geometry;
+        
+        // After a CSG operation, the geometry's bounding box/sphere is often incorrect.
+        // Re-computing it ensures the camera and renderer behave as expected.
+        finalGeometry.computeBoundingSphere();
+        finalGeometry.computeBoundingBox();
 
     } else {
-        // --- PRIMITIVE LOGIC ---
         finalGeometry = createPrimitiveGeometry(solidData, projectState, csgEvaluator);
     }
     
@@ -1086,6 +1116,7 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
 
     return finalGeometry;
 }
+
 
 /**
  * The main rendering function, now refactored.

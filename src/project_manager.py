@@ -13,8 +13,6 @@ class ProjectManager:
     def __init__(self):
         self.current_geometry_state = GeometryState()
         self.gdml_parser = GDMLParser()
-        # self.undo_stack = []
-        # self.redo_stack = []
 
     def _generate_unique_name(self, base_name, existing_names_dict):
         if base_name not in existing_names_dict:
@@ -34,34 +32,33 @@ class ProjectManager:
                 max_copy_no = pv.copy_number
         return max_copy_no + 1
 
-    def recalculate_all_defines(self):
+    def recalculate_geometry_state(self):
         """
-        This is the central method for re-evaluating the entire set of defines.
-        It's called after parsing is complete or after a user edits a define.
+        This is the core evaluation engine for the entire project.
+        Recalculates defines, then material properties, then solid parameters,
+        and finally placement transforms, respecting all dependencies.
         """
         if not self.current_geometry_state:
             return False, "No project state to calculate."
 
+        state = self.current_geometry_state
         aeval = asteval.Interpreter(symtable={}, minimal=True)
         aeval.symtable.update({
             'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
             'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
         })
         
-        all_defines = list(self.current_geometry_state.defines.values())
-        unresolved_defines = list(all_defines)
-        
+        # --- Stage 1: Iteratively resolve all defines ---
+        unresolved_defines = list(state.defines.values())
         max_passes = len(unresolved_defines) + 2
-        for pass_num in range(max_passes):
-            if not unresolved_defines:
-                break 
-
+        for _ in range(max_passes):
+            if not unresolved_defines: break
+            
             resolved_this_pass = []
             still_unresolved = []
-
             for define_obj in unresolved_defines:
                 try:
-                    # Evaluate the expression based on its type
+                    # For compound types, evaluate each axis expression.
                     if define_obj.type in ['position', 'rotation', 'scale']:
                         val_dict = {}
                         raw_dict = define_obj.raw_expression
@@ -70,36 +67,98 @@ class ProjectManager:
                             if axis in raw_dict:
                                 val_dict[axis] = aeval.eval(str(raw_dict[axis])) * unit_factor
                         define_obj.value = val_dict
-                    else: # constant, quantity
+                    else: # constant, quantity, expression
                         raw_expr = str(define_obj.raw_expression)
                         unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
                         define_obj.value = aeval.eval(raw_expr) * unit_factor
                     
-                    # If successful, add to context and mark for removal from unresolved list
+                    # Add successfully evaluated define to the symbol table for the next ones.
                     aeval.symtable[define_obj.name] = define_obj.value
                     resolved_this_pass.append(define_obj)
 
-                except (NameError, KeyError):
-                    still_unresolved.append(define_obj)
+                except (NameError, KeyError, TypeError):
+                    still_unresolved.append(define_obj) # Depends on another define, try again next pass
                 except Exception as e:
                     print(f"Error evaluating define '{define_obj.name}': {e}. Setting value to None.")
                     define_obj.value = None
-                    resolved_this_pass.append(define_obj)
+                    resolved_this_pass.append(define_obj) # Consider it "resolved" to avoid infinite loops
 
             if not resolved_this_pass and still_unresolved:
-                unresolved_names = [d.name for d in still_unresolved]
+                unresolved_names = [d.name for d in unresolved_defines]
                 return False, f"Could not resolve defines (circular dependency or missing variable): {unresolved_names}"
-
             unresolved_defines = still_unresolved
             
         if unresolved_defines:
-            unresolved_names = [d.name for d in unresolved_defines]
-            return False, f"Could not resolve all defines. Unresolved: {unresolved_names}"
+            return False, f"Could not resolve all defines. Unresolved: {[d.name for d in unresolved_defines]}"
+
+        # --- Stage 2: Evaluate Material properties (Z, A, density) ---
+        for material in state.materials.values():
+            try:
+                if material.Z_expr:
+                    material._evaluated_Z = aeval.eval(str(material.Z_expr))
+                if material.A_expr:
+                    material._evaluated_A = aeval.eval(str(material.A_expr))
+                if material.density_expr:
+                    material._evaluated_density = aeval.eval(str(material.density_expr))
+            except Exception as e:
+                print(f"Warning: Could not evaluate material property for '{material.name}': {e}")
+
+
+        # --- Stage 3: Evaluate all solid parameters ---
+        for solid in state.solids.values():
+            solid._evaluated_parameters = {}
+            for key, raw_expr in solid.raw_parameters.items():
+                if isinstance(raw_expr, str):
+                    try:
+                        # Evaluate the expression string
+                        solid._evaluated_parameters[key] = aeval.eval(raw_expr)
+                    except Exception as e:
+                        print(f"Warning: Could not evaluate solid param '{key}' for solid '{solid.name}': {e}")
+                        solid._evaluated_parameters[key] = 0 # Default to 0 on failure
+                else:
+                    # If it's not a string (e.g., a list for a boolean recipe), just copy it.
+                    solid._evaluated_parameters[key] = raw_expr
+
+        # --- Stage 4: Evaluate all placement transforms ---
+        # This includes placements inside LVs and inside Assemblies
+        all_volumes_with_placements = list(state.logical_volumes.values()) + list(state.assemblies.values())
+        for vol in all_volumes_with_placements:
+            placements = getattr(vol, 'placements', getattr(vol, 'phys_children', []))
+            for pv in placements:
+                # Position
+                if isinstance(pv.position, str): # It's a reference to a define
+                    pv._evaluated_position = aeval.symtable.get(pv.position, {'x':0,'y':0,'z':0})
+                elif isinstance(pv.position, dict): # It's a dict of expressions
+                    for axis, raw_expr in pv.position.items():
+                        pv._evaluated_position[axis] = aeval.eval(str(raw_expr))
+                else: # Default case
+                    pv._evaluated_position = {'x':0, 'y':0, 'z':0}
+
+                # Rotation
+                if isinstance(pv.rotation, str):
+                    pv._evaluated_rotation = aeval.symtable.get(pv.rotation, {'x':0,'y':0,'z':0})
+                elif isinstance(pv.rotation, dict):
+                    for axis, raw_expr in pv.rotation.items():
+                        pv._evaluated_rotation[axis] = aeval.eval(str(raw_expr))
+                else:
+                    pv._evaluated_rotation = {'x':0, 'y':0, 'z':0}
+
+                # Scale
+                if isinstance(pv.scale, str):
+                    pv._evaluated_scale = aeval.symtable.get(pv.scale, {'x':1,'y':1,'z':1})
+                elif isinstance(pv.scale, dict):
+                    for axis, raw_expr in pv.scale.items():
+                        pv._evaluated_scale[axis] = aeval.eval(str(raw_expr))
+                else:
+                    pv._evaluated_scale = {'x':1, 'y':1, 'z':1}
 
         return True, None
 
     def load_gdml_from_string(self, gdml_string):
         self.current_geometry_state = self.gdml_parser.parse_gdml_string(gdml_string)
+        success, error_msg = self.recalculate_geometry_state()
+        if not success:
+            print(f"Warning after parsing GDML: {error_msg}")
         return self.current_geometry_state
 
     def get_threejs_description(self):
@@ -115,22 +174,22 @@ class ProjectManager:
     def load_project_from_json_string(self, json_string):
         data = json.loads(json_string)
         self.current_geometry_state = GeometryState.from_dict(data)
-        # Recalculate everything after loading to ensure consistency
-        success, error_msg = self.recalculate_all_defines()
-        if not success: print(f"Warning after loading JSON: {error_msg}")
+        success, error_msg = self.recalculate_geometry_state()
+        if not success:
+            print(f"Warning after loading JSON project: {error_msg}")
         return self.current_geometry_state
 
     def export_to_gdml_string(self):
         if self.current_geometry_state:
             writer = GDMLWriter(self.current_geometry_state)
             return writer.get_gdml_string()
-        return "<?xml version='1.0' encoding='UTF-8'?>\n<gdml />" # Empty GDML
+        return "<?xml version='1.0' encoding='UTF-8'?>\n<gdml />"
     
     def get_full_project_state_dict(self):
         """ Returns the entire current geometry state as a dictionary. """
         if self.current_geometry_state:
             return self.current_geometry_state.to_dict()
-        return {} # Return empty if no state
+        return {}
 
     def get_object_details(self, object_type, object_name_or_id):
         """
@@ -145,164 +204,106 @@ class ProjectManager:
         elif object_type == "material": obj = self.current_geometry_state.materials.get(object_name_or_id)
         elif object_type == "solid": obj = self.current_geometry_state.solids.get(object_name_or_id)
         elif object_type == "logical_volume": obj = self.current_geometry_state.logical_volumes.get(object_name_or_id)
-        elif object_type == "physical_volume": # Requires searching
-            for lv in self.current_geometry_state.logical_volumes.values():
-                for pv in lv.phys_children:
-                    if pv.id == object_name_or_id: # Match by unique ID
+        elif object_type == "physical_volume":
+            # Search all LVs and Assemblies for the PV by its unique ID
+            all_containers = list(self.current_geometry_state.logical_volumes.values()) + list(self.current_geometry_state.assemblies.values())
+            for container in all_containers:
+                placements = getattr(container, 'placements', getattr(container, 'phys_children', []))
+                for pv in placements:
+                    if pv.id == object_name_or_id:
                         obj = pv
                         break
                 if obj: break
         
         return obj.to_dict() if obj else None
 
-    def update_object_property(self, object_type, object_name_or_id_from_frontend, property_path, new_value):
+    def update_object_property(self, object_type, object_id, property_path, new_value):
         """
         Updates a property of an object.
-        object_name_or_id_from_frontend: unique ID for Solids, LVs, PVs. For Defines/Materials, it's their name.
+        object_id: unique ID for Solids, LVs, PVs. For Defines/Materials, it's their name.
         property_path: e.g., "name", "parameters.x", "position.x"
         """
         # This needs careful implementation to find the object and update its property.
         # Example for a physical volume's position.x:
         if not self.current_geometry_state: return False
-        print(f"Attempting to update: Type='{object_type}', ID/Name='{object_name_or_id_from_frontend}', Path='{property_path}', NewValue='{new_value}'")
+        print(f"Attempting to update: Type='{object_type}', ID/Name='{object_id}', Path='{property_path}', NewValue='{new_value}'")
 
         target_obj = None
 
-        # Handle defines
-        if object_type == "define":
-            target_obj = self.current_geometry_state.defines.get(object_id)
-            if target_obj:
-                # When the UI edits a define, it's always changing the raw expression.
-                if property_path == 'raw_expression':
-                     target_obj.raw_expression = new_value
-                elif property_path.startswith('value.'): # e.g., value.x for a position
-                    axis = property_path.split('.')[1]
-                    if isinstance(target_obj.raw_expression, dict):
-                        target_obj.raw_expression[axis] = str(new_value)
-                    else:
-                        return False, "Cannot set axis on a non-vector define."
-                else: # Fallback for simple constant, path is 'value'
-                    target_obj.raw_expression = str(new_value)
-
-                # After any change, we must recalculate everything.
-                success, error_msg = self.recalculate_all_defines()
-                if not success:
-                    # TODO: Implement undo/revert of the change before returning error.
-                    return False, f"Update failed, defines could not be resolved: {error_msg}"
-                return True, None
-
-        # Other types
-        if object_type == "physical_volume":
-            for lv_name_key in self.current_geometry_state.logical_volumes: # Iterate through LVs
-                lv = self.current_geometry_state.logical_volumes[lv_name_key]
-                for pv in lv.phys_children:
-                    if pv.id == object_name_or_id_from_frontend:
+        # Handle all possible object types.
+        if object_type == "define": target_obj = self.current_geometry_state.defines.get(object_id)
+        elif object_type == "material": target_obj = self.current_geometry_state.materials.get(object_id)
+        elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
+        elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
+        elif object_type == "physical_volume":
+            all_containers = list(self.current_geometry_state.logical_volumes.values()) + list(self.current_geometry_state.assemblies.values())
+            for container in all_containers:
+                placements = getattr(container, 'placements', getattr(container, 'phys_children', []))
+                for pv in placements:
+                    if pv.id == object_id:
                         target_obj = pv
                         break
                 if target_obj: break
-        elif object_type == "solid":
-             target_obj = self.current_geometry_state.solids.get(object_name_or_id_from_frontend)
-             if not target_obj:
-                 print(f"Solid '{object_name_or_id_from_frontend}' not found by name in project_manager.solids.")
-             print(f"Target is {target_obj}")
-             print(f"All objects are {self.current_geometry_state.solids}")
-        elif object_type == "material":
-            target_obj = self.current_geometry_state.materials.get(object_name_or_id_from_frontend)
-        elif object_type == "logical_volume":
-            target_obj = self.current_geometry_state.logical_volumes.get(object_name_or_id_from_frontend)
 
         if not target_obj: 
-            print(f"Failed to find target_obj: type='{object_type}', id/name='{object_name_or_id_from_frontend}'")
-            if object_type == "solid":
-                print(f"Available solids: {list(self.current_geometry_state.solids.keys())}")
-            return False
+            return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
 
-        # Simple path update (e.g., "name", "parameters.x")
-        path_parts = property_path.split('.')
-        current_level_obj = target_obj
-    
-        for i, part_key in enumerate(path_parts[:-1]):
-            if isinstance(current_level_obj, dict): # If it's a dict like parameters/position
-                current_level_obj = current_level_obj[part_key]
-            else: # If it's an object
-                current_level_obj = getattr(current_level_obj, part_key)
-        final_key = path_parts[-1]
-
-        # --- Type Coercion ---
-        old_value = current_level_obj.get(final_key) if isinstance(current_level_obj, dict) else getattr(current_level_obj, final_key, None)
-        converted_value = new_value
-
-        # --- SPECIAL CASE for PV transform properties ---
-        # These properties are allowed to be either a string (reference) or a dict (absolute value).
-        # We should not try to coerce a string reference into a dict.
-        if object_type == 'physical_volume' and final_key in ['position', 'rotation', 'scale']:
-            if isinstance(new_value, str) or isinstance(new_value, dict):
-                converted_value = new_value # Accept either type as is
+        try:
+            path_parts = property_path.split('.')
+            current_level_obj = target_obj
+            for part in path_parts[:-1]:
+                if isinstance(current_level_obj, dict):
+                    current_level_obj = current_level_obj[part]
+                else:
+                    current_level_obj = getattr(current_level_obj, part)
+            
+            final_key = path_parts[-1]
+            if isinstance(current_level_obj, dict):
+                current_level_obj[final_key] = new_value
             else:
-                return False, f"Invalid value type for PV transform: {type(new_value)}"
-        
-        # --- GENERAL CASE for other properties ---
-        elif old_value is not None and not isinstance(new_value, type(old_value)):
-            target_type = type(old_value)
-            try:
-                # If the target is a numeric type (int or float), always
-                # convert the new value to float to avoid integer truncation.
-                if target_type in [int, float]:
-                    converted_value = float(new_value)
-                elif target_type == dict:
-                    if isinstance(new_value, str):
-                        import ast
-                        converted_value = ast.literal_eval(new_value)
-                    else:
-                        converted_value = new_value
-                # Add other specific type checks here if needed
-            except (ValueError, TypeError, SyntaxError) as e:
-                print(f"Update failed: Could not convert new value '{new_value}' to target type '{target_type}'. Error: {e}")
-                return False, f"Invalid value format for property '{final_key}'."
+                setattr(current_level_obj, final_key, new_value)
+        except (AttributeError, KeyError) as e:
+            return False, f"Invalid property path '{property_path}': {e}"
 
-        # Set the value
-        if isinstance(current_level_obj, dict):
-            current_level_obj[final_key] = converted_value
-        else:
-            setattr(current_level_obj, final_key, converted_value)
-        
-        print(f"Successfully updated {object_type}:{object_name_or_id_from_frontend} -> {property_path}")
-        return True, None # Return success
+        success, error_msg = self.recalculate_geometry_state()
+        if not success:
+            # Add logic here to revert the change?
+            return False, f"Update failed during recalculation: {error_msg}"
+        return True, None
 
     def add_define(self, name_suggestion, define_type, value_dict, unit=None, category=None):
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.defines)
-        
-        # Value dict for pos/rot needs conversion if units are external
-        # Assuming 'value_dict' comes with values already in a format that Define expects
-        # or that Define constructor handles necessary conversions based on unit/category
-        new_define = Define(name, define_type, value_dict, unit, category)
+        new_define = Define(name, define_type, raw_expression, unit, category)
         self.current_geometry_state.add_define(new_define)
-        self.recalculate_all_defines()
+        self.recalculate_geometry_state()
         return new_define.to_dict(), None
 
-    def update_define(self, define_name, new_value, new_unit=None, new_category=None):
+    def update_define(self, define_name, new_raw_expression, new_unit=None, new_category=None):
         if not self.current_geometry_state:
             return False, "No project loaded."
-        
+
         target_define = self.current_geometry_state.defines.get(define_name)
         if not target_define:
             return False, f"Define '{define_name}' not found."
-
-        target_define.value = new_value
-        if new_unit:
+            
+        target_define.raw_expression = new_raw_expression
+        
+        if new_unit is not None: 
             target_define.unit = new_unit
-        if new_category:
+        if new_category is not None: 
             target_define.category = new_category
 
-        success, error_msg = self.recalculate_all_defines()
+        success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
 
     def add_material(self, name_suggestion, properties_dict):
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.materials)
+        # Assumes properties_dict contains expression strings like Z_expr, A_expr, density_expr
         new_material = Material(name, **properties_dict)
         self.current_geometry_state.add_material(new_material)
+        self.recalculate_geometry_state()
         return new_material.to_dict(), None
 
     def update_material(self, mat_name, new_properties):
@@ -311,115 +312,50 @@ class ProjectManager:
         if not target_mat: return False, f"Material '{mat_name}' not found."
 
         # Update properties from the provided dictionary
-        if 'density' in new_properties: target_mat.density = new_properties['density']
-        if 'Z' in new_properties: target_mat.Z = new_properties['Z']
-        if 'A' in new_properties: target_mat.A = new_properties['A']
-        if 'components' in new_properties: target_mat.components = new_properties['components']
+        # if 'density' in new_properties: target_mat.density = new_properties['density']
+        # if 'Z' in new_properties: target_mat.Z = new_properties['Z']
+        # if 'A' in new_properties: target_mat.A = new_properties['A']
+        # if 'components' in new_properties: target_mat.components = new_properties['components']
+        for key, value in new_properties.items(): setattr(target_mat, key, value)
         
+        self.recalculate_geometry_state()
         return True, None
 
-    def add_solid(self, name_suggestion, solid_type, parameters_dict):
+    def add_solid(self, name_suggestion, solid_type, raw_params_from_ui):
         """
         Adds a new solid to the project.
-        The parameters_dict comes directly from the frontend UI. This method
-        is responsible for any conversions (e.g., full-length to half-length).
+        raw_params_from_ui comes directly from the frontend UI.
         """
         if not self.current_geometry_state:
             return None, "No project loaded"
 
         if solid_type == "boolean":
             return None, f"'{solid_type}' should be created via the boolean editor endpoint."
-
+        
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
         
-        # This will hold the parameters in the internal format (what G4/our renderer expects)
-        internal_params = {}
-        
-        # --- Centralized parameter handling ---
-        p = parameters_dict # for brevity
-        
-        try:
-            if solid_type == "box":
-                # Box params are already 1-to-1 with G4Box half-lengths in the UI for simplicity,
-                # but if the UI sent full lengths, we would divide by 2 here. Let's assume the UI sends full lengths.
-                internal_params = {
-                    'x': float(p.get('x', 100)),
-                    'y': float(p.get('y', 100)),
-                    'z': float(p.get('z', 100))
-                }
-            elif solid_type == "tube":
-                internal_params = {
-                    'rmin': float(p.get('rmin', 0)),
-                    'rmax': float(p.get('rmax', 50)),
-                    'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 360))
-                }
-            elif solid_type == "cone":
-                internal_params = {
-                    'rmin1': float(p.get('rmin1', 0)),
-                    'rmax1': float(p.get('rmax1', 50)),
-                    'rmin2': float(p.get('rmin2', 0)),
-                    'rmax2': float(p.get('rmax2', 75)),
-                    'dz': float(p.get('dz', 200)) / 2.0, # UI sends full length, store half
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 360))
-                }
-            elif solid_type == "sphere":
-                # Backend directly uses the parameters from the UI
-                internal_params = {
-                    'rmin': float(p.get('rmin', 0)),
-                    'rmax': float(p.get('rmax', 100)),
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 360)),
-                    'starttheta': float(p.get('starttheta', 0)),
-                    'deltatheta': float(p.get('deltatheta', 180))
-                }
-            elif solid_type == "orb":
-                internal_params = {'r': float(p.get('r', 100))}
-            elif solid_type == "torus":
-                internal_params = {
-                    'rmin': float(p.get('rmin', 20)),
-                    'rmax': float(p.get('rmax', 30)),
-                    'rtor': float(p.get('rtor', 100)),
-                    'startphi': float(p.get('startphi', 0)),
-                    'deltaphi': float(p.get('deltaphi', 360))
-                }
-            elif solid_type == "trd":
-                internal_params = {
-                    'dx1': float(p.get('dx1', 50)), # UI sends half-length
-                    'dx2': float(p.get('dx2', 75)),
-                    'dy1': float(p.get('dy1', 50)),
-                    'dy2': float(p.get('dy2', 75)),
-                    'dz': float(p.get('dz', 100)),  # UI sends half-length
-                }
-            elif solid_type == "para":
-                 internal_params = {
-                    'dx': float(p.get('dx', 50)), # UI sends half-length
-                    'dy': float(p.get('dy', 60)),
-                    'dz': float(p.get('dz', 70)),
-                    'alpha': float(p.get('alpha', 0)),
-                    'theta': float(p.get('theta', 0)),
-                    'phi': float(p.get('phi', 0))
-                }
-            elif solid_type == "eltube":
-                internal_params = {
-                    'dx': float(p.get('dx', 50)), # semi-axis
-                    'dy': float(p.get('dy', 75)),
-                    'dz': float(p.get('dz', 100))  # half-length
-                }
-            # Add other primitive solids here following the same pattern
-            else:
-                return None, f"Solid type '{solid_type}' is not supported for creation."
-
-        except (ValueError, TypeError) as e:
-            return None, f"Invalid parameter type for solid '{solid_type}': {e}"
-
-        new_solid = Solid(name, solid_type, internal_params)
+        # The raw parameters from the UI are already the expressions we want to store.
+        new_solid = Solid(name, solid_type, raw_params_from_ui)
         self.current_geometry_state.add_solid(new_solid)
-        print(f"Added Solid: {name} with params {internal_params}")
-        
+        self.recalculate_geometry_state()
         return new_solid.to_dict(), None
+
+    def update_solid(self, solid_id, new_raw_parameters):
+        """Updates the raw parameters of an existing primitive solid."""
+        if not self.current_geometry_state:
+            return False, "No project loaded."
+        
+        target_solid = self.current_geometry_state.solids.get(solid_id)
+        if not target_solid:
+            return False, f"Solid '{solid_id}' not found."
+            
+        if target_solid.type == 'boolean':
+            return False, "Boolean solids must be updated via the 'update_boolean_solid' method."
+            
+        target_solid.raw_parameters = new_raw_parameters
+        
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
     def add_boolean_solid(self, name_suggestion, recipe):
         """
@@ -436,10 +372,10 @@ class ProjectManager:
                 return False, f"Solid '{ref}' not found in project."
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
-        params = {"recipe": recipe}
-        new_solid = Solid(name, "boolean", params)
+        new_solid = Solid(name, "boolean", {"recipe": recipe})
         self.current_geometry_state.add_solid(new_solid)
-        
+        self.recalculate_geometry_state()
+
         return True, None
 
     def update_boolean_solid(self, solid_name, new_recipe):
@@ -458,12 +394,14 @@ class ProjectManager:
             if not ref or ref not in self.current_geometry_state.solids:
                 return False, f"Solid '{ref}' not found in project."
 
-        target_solid.parameters['recipe'] = new_recipe
+        target_solid.raw_parameters['recipe'] = new_recipe
+        self.recalculate_geometry_state()
         return True, None
     
     def add_solid_object(self, solid_obj):
         """Helper to add an already-created Solid object."""
         self.current_geometry_state.solids[solid_obj.name] = solid_obj
+        self.recalculate_geometry_state()
 
     def add_solid_and_place(self, solid_params, lv_params, pv_params):
         """
@@ -476,19 +414,34 @@ class ProjectManager:
         # --- 1. Add the Solid ---
         solid_name_sugg = solid_params['name']
         solid_type = solid_params['type']
-        solid_actual_params = solid_params['params']
+        new_solid_dict = None
+        solid_error = None
+
+        # --- 1. Add the Solid (dispatch based on type) ---
+        if solid_type == 'boolean':
+            recipe = solid_params['recipe'] # The frontend now sends the recipe here
+            success, error_msg = self.add_boolean_solid(solid_name_sugg, recipe)
+            if success:
+                # Need to get the full dict of the newly created solid
+                new_solid_dict = self.current_geometry_state.solids[name_suggestion].to_dict() # Assumes add_boolean_solid uses the suggestion directly if available
+            else:
+                solid_error = error_msg
+        else:
+            # It's a primitive solid
+            solid_raw_params = solid_params['params']
+            new_solid_dict, solid_error = self.add_solid(solid_name_sugg, solid_type, solid_raw_params)
         
-        new_solid_dict, solid_error = self.add_solid(solid_name_sugg, solid_type, solid_actual_params)
         if solid_error:
             return False, f"Failed to create solid: {solid_error}"
-        
-        new_solid_name = new_solid_dict['name']
 
+        # After creation, the unique name is in the returned dictionary
+        new_solid_name = new_solid_dict['name']
+        
         # --- 2. Add the Logical Volume (if requested) ---
         if not lv_params:
             # If no LV params, we're done. Just created a solid.
             return True, None
-            
+
         lv_name_sugg = lv_params.get('name', f"{new_solid_name}_lv")
         material_ref = lv_params.get('material_ref')
 
@@ -507,13 +460,14 @@ class ProjectManager:
         parent_lv_name = pv_params.get('parent_lv_name')
         pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
         # For quick-add, we assume placement at the origin of the parent.
-        position = {'x': 0, 'y': 0, 'z': 0} 
-        rotation = {'x': 0, 'y': 0, 'z': 0}
+        position = {'x': '0', 'y': '0', 'z': '0'} 
+        rotation = {'x': '0', 'y': '0', 'z': '0'}
 
         new_pv_dict, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation)
         if pv_error:
             return False, f"Failed to place physical volume: {pv_error}"
         
+        self.recalculate_geometry_state()
         return True, None
 
     def add_logical_volume(self, name_suggestion, solid_ref, material_ref, vis_attributes=None):
@@ -526,7 +480,8 @@ class ProjectManager:
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.logical_volumes)
         new_lv = LogicalVolume(name, solid_ref, material_ref, vis_attributes)
         self.current_geometry_state.add_logical_volume(new_lv)
-        return new_lv.to_dict(), None
+        self.recalculate_geometry_state()
+        return new_lv.to_dict(), None        
 
     def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None):
         if not self.current_geometry_state: return False, "No project loaded"
@@ -546,7 +501,8 @@ class ProjectManager:
             lv.material_ref = new_material_ref
         if new_vis_attributes: 
             lv.vis_attributes = new_vis_attributes
-            
+        
+        self.recalculate_geometry_state()
         return True, None
 
     def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation):
@@ -569,6 +525,8 @@ class ProjectManager:
                                         rotation_val_or_ref=rotation)
         parent_lv.add_child(new_pv)
         print(f"Added Physical Volume: {pv_name} into {parent_lv_name}")
+
+        self.recalculate_geometry_state()
         return new_pv.to_dict(), None
 
     def update_physical_volume(self, pv_id, new_name, new_position, new_rotation):
@@ -590,8 +548,9 @@ class ProjectManager:
         if new_name: pv_to_update.name = new_name
         if new_position: pv_to_update.position = new_position
         if new_rotation: pv_to_update.rotation = new_rotation
-            
-        return True, None
+        
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
     def add_assembly_placement(self, parent_lv_name, assembly_name, placement_name_suggestion, position, rotation):
         """
@@ -643,6 +602,7 @@ class ProjectManager:
             parent_lv.add_child(new_pv)
             placed_pvs.append(new_pv.to_dict())
 
+        self.recalculate_geometry_state()
         return placed_pvs, None
 
     def delete_object(self, object_type, object_id):
@@ -687,9 +647,10 @@ class ProjectManager:
             if not found_pv: error_msg = "Physical Volume not found."
         
         if deleted:
-            return True, None
+            success, error_msg = self.recalculate_geometry_state()
+            return success, error_msg
         else:
-            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
+            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."            
           
     def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
@@ -707,28 +668,15 @@ class ProjectManager:
             return False, f"Physical Volume with ID {pv_id} not found"
 
         if new_position_dict is not None:
-            if isinstance(found_pv_object.position, str):
-                define_name = found_pv_object.position
-                position_define = self.current_geometry_state.defines.get(define_name)
-                if position_define and position_define.type == 'position':
-                    position_define.value = new_position_dict
-                else: # was a ref, but define not found; overwrite with values
-                    found_pv_object.position = new_position_dict
-            else: # was already a dict of values
-                found_pv_object.position = new_position_dict
+            # Directly overwrite the position property with the absolute numeric dictionary.
+            # This "breaks the link" to any previous define reference.
+            found_pv_object.position = new_position_dict
 
         if new_rotation_dict is not None:
-            if isinstance(found_pv_object.rotation, str):
-                define_name = found_pv_object.rotation
-                rotation_define = self.current_geometry_state.defines.get(define_name)
-                if rotation_define and rotation_define.type == 'rotation':
-                    rotation_define.value = new_rotation_dict
-                else:
-                    found_pv_object.rotation = new_rotation_dict
-            else:
-                found_pv_object.rotation = new_rotation_dict
+            found_pv_object.rotation = new_rotation_dict
 
-        return True, None
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
 
     def merge_from_state(self, incoming_state: GeometryState):
@@ -821,7 +769,8 @@ class ProjectManager:
             assembly.name = new_name
             self.current_geometry_state.add_assembly(assembly)
 
-        return True, None
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
     def process_ai_response(self, ai_data: dict):
         """
@@ -918,7 +867,8 @@ class ProjectManager:
             except Exception as e:
                 return False, f"An error occurred during object placement: {e}"
 
-        return True, None
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
     def import_step_file(self, step_file_stream):
         """
@@ -940,6 +890,7 @@ class ProjectManager:
             if not success:
                 return False, f"Failed to merge STEP geometry: {error_msg}"
                 
+            self.recalculate_geometry_state()
             return True, None
             
         except Exception as e:

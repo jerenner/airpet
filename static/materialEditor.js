@@ -1,3 +1,5 @@
+// FILE: virtual-pet/static/materialEditor.js
+
 let modalElement, titleElement, nameInput, confirmButton, cancelButton, paramsDiv;
 let simpleRadio, mixtureRadio;
 let onConfirmCallback = null;
@@ -20,8 +22,8 @@ export function initMaterialEditor(callbacks) {
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
-    simpleRadio.addEventListener('change', renderParamsUI);
-    mixtureRadio.addEventListener('change', renderParamsUI);
+    simpleRadio.addEventListener('change', () => renderParamsUI(null, true)); // Pass a flag to reset
+    mixtureRadio.addEventListener('change', () => renderParamsUI(null, true));
 
     console.log("Material Editor Initialized.");
 }
@@ -39,10 +41,9 @@ export function show(materialData = null, projectState = null) {
         nameInput.disabled = true;
         confirmButton.textContent = "Update Material";
         
-        // Determine if it's simple or mixture
         if (materialData.components && materialData.components.length > 0) {
             mixtureRadio.checked = true;
-            materialComponents = materialData.components; // Load existing components
+            materialComponents = JSON.parse(JSON.stringify(materialData.components)); // Deep copy
         } else {
             simpleRadio.checked = true;
         }
@@ -66,24 +67,98 @@ function hide() {
     modalElement.style.display = 'none';
 }
 
-function renderParamsUI(matData = null) {
+// Helper to create an expression input field with live evaluation
+function createExpressionInput(id, label, initialValue = '0') {
+    return `
+        <div class="property_item" style="flex-direction: column; align-items: flex-start;">
+            <label for="${id}">${label}:</label>
+            <div style="display: flex; width: 100%; align-items: center;">
+                <input type="text" id="${id}" class="expression-input" value="${initialValue}" style="flex-grow: 1; font-family: monospace;">
+                <input type="text" id="${id}-result" class="expression-result" style="width: 80px; margin-left: 5px;" readonly disabled>
+            </div>
+        </div>
+    `;
+}
+
+// Helper to attach live evaluation logic to an input field
+function attachLiveEvaluation(inputId, resultId) {
+    const inputEl = document.getElementById(inputId);
+    const resultEl = document.getElementById(resultId);
+    
+    const evaluate = async () => {
+        const expression = inputEl.value;
+        if (!expression.trim()) {
+            resultEl.value = '';
+            resultEl.style.borderColor = '#ccc';
+            return;
+        }
+        try {
+            // We use the project state passed to the editor
+            const response = await APIService.evaluateExpression(expression, currentProjectState);
+            if (response.success) {
+                resultEl.value = response.result.toPrecision(4);
+                resultEl.style.borderColor = '#ccc';
+                resultEl.title = `Evaluated: ${response.result}`;
+            } else {
+                resultEl.value = 'Error';
+                resultEl.style.borderColor = 'red';
+                resultEl.title = response.error;
+            }
+        } catch (error) {
+            resultEl.value = 'Error';
+            resultEl.style.borderColor = 'red';
+            resultEl.title = error.message;
+        }
+    };
+    
+    inputEl.addEventListener('input', evaluate);
+    inputEl.addEventListener('change', evaluate); // Also on change for blur events
+    evaluate(); // Trigger initial evaluation
+}
+
+function renderParamsUI(matData = null, forceDefaults = false) {
     paramsDiv.innerHTML = '';
     const isSimple = simpleRadio.checked;
     
     if (isSimple) {
-        paramsDiv.innerHTML = `
-            <div class="property_item"><label for="mat_Z">Atomic Number (Z):</label><input type="number" id="mat_Z" value="${matData?.Z || 1}"></div>
-            <div class="property_item"><label for="mat_A">Atomic Mass (g/mole):</label><input type="number" step="any" id="mat_A" value="${matData?.A || 1.008}"></div>
-            <div class="property_item"><label for="mat_density">Density (g/cm³):</label><input type="number" step="any" id="mat_density" value="${matData?.density || 1.0}"></div>
-        `;
+        // Use the new expression input helper
+        paramsDiv.innerHTML = 
+            createExpressionInput('mat_Z', 'Atomic Number (Z)') +
+            createExpressionInput('mat_A', 'Atomic Mass (g/mole)') +
+            createExpressionInput('mat_density', 'Density (g/cm³)');
+
+        if (matData && !forceDefaults) {
+            document.getElementById('mat_Z').value = matData.Z_expr || '';
+            document.getElementById('mat_A').value = matData.A_expr || '';
+            document.getElementById('mat_density').value = matData.density_expr || '0.0';
+        } else {
+            // Set default values for a new simple material
+            document.getElementById('mat_Z').value = '1';
+            document.getElementById('mat_A').value = '1.008';
+            document.getElementById('mat_density').value = '1.0';
+        }
+
+        // Attach live evaluation listeners
+        attachLiveEvaluation('mat_Z', 'mat_Z-result');
+        attachLiveEvaluation('mat_A', 'mat_A-result');
+        attachLiveEvaluation('mat_density', 'mat_density-result');
+
     } else { // Mixture
-        paramsDiv.innerHTML = `
-            <div class="property_item"><label for="mat_density">Density (g/cm³):</label><input type="number" step="any" id="mat_density" value="${matData?.density || 1.0}"></div>
-            <hr>
+        // Use the new expression input helper for density
+        paramsDiv.innerHTML = 
+            createExpressionInput('mat_density', 'Density (g/cm³)') +
+            `<hr>
             <h6>Components (by mass fraction)</h6>
             <div id="material-components-list"></div>
-            <button id="add-mat-comp-btn" class="add_button" style="margin-top: 10px;">+ Add Component</button>
-        `;
+            <button id="add-mat-comp-btn" class="add_button" style="margin-top: 10px;">+ Add Component</button>`;
+
+        if (matData && !forceDefaults) {
+            document.getElementById('mat_density').value = matData.density_expr || '0.0';
+        } else {
+            document.getElementById('mat_density').value = '1.0';
+        }
+        
+        attachLiveEvaluation('mat_density', 'mat_density-result');
         document.getElementById('add-mat-comp-btn').addEventListener('click', addComponentRow);
         rebuildComponentsUI();
     }
@@ -94,16 +169,15 @@ function rebuildComponentsUI() {
     if (!listDiv) return;
     listDiv.innerHTML = '';
 
-    const elements = Object.keys(currentProjectState.elements || {}); // Assumes elements are defined separately - a better model
-    // For now, let's just use other materials
+    // A material mixture can be composed of other materials or elements
+    // For now, we only support mixing other materials for simplicity.
     const materials = Object.keys(currentProjectState.materials || {});
-
 
     materialComponents.forEach((comp, index) => {
         const row = document.createElement('div');
         row.className = 'property_item';
         row.innerHTML = `
-            <label>Element/Mat:</label>
+            <label>Material:</label>
             <select class="comp-ref" data-index="${index}"></select>
             <label>Fraction:</label>
             <input type="number" step="any" class="comp-frac" data-index="${index}" value="${comp.fraction}">
@@ -112,7 +186,6 @@ function rebuildComponentsUI() {
         listDiv.appendChild(row);
 
         const select = row.querySelector('.comp-ref');
-        // TODO: Populate with elements AND materials
         materials.forEach(matName => {
             if (isEditMode && matName === editingMaterialId) return; // Prevent self-reference
             const opt = document.createElement('option');
@@ -120,16 +193,20 @@ function rebuildComponentsUI() {
             opt.textContent = matName;
             select.appendChild(opt);
         });
-        select.value = comp.ref; // Set current value
+        select.value = comp.ref;
     });
 
-    // Attach listeners
     document.querySelectorAll('.comp-ref, .comp-frac').forEach(el => el.addEventListener('change', updateComponentState));
     document.querySelectorAll('.remove-op-btn').forEach(btn => btn.addEventListener('click', removeComponentRow));
 }
 
 function addComponentRow() {
-    materialComponents.push({ ref: '', fraction: 0.0 });
+    const availableMaterials = Object.keys(currentProjectState.materials || {}).filter(m => m !== editingMaterialId);
+    if (availableMaterials.length === 0) {
+        alert("No other materials available to add to the mixture.");
+        return;
+    }
+    materialComponents.push({ ref: availableMaterials[0], fraction: 0.0 });
     rebuildComponentsUI();
 }
 
@@ -144,7 +221,7 @@ function updateComponentState(event) {
     if (event.target.classList.contains('comp-ref')) {
         materialComponents[index].ref = event.target.value;
     } else {
-        materialComponents[index].fraction = parseFloat(event.target.value);
+        materialComponents[index].fraction = parseFloat(event.target.value) || 0;
     }
 }
 
@@ -156,22 +233,24 @@ function handleConfirm() {
     let params = {};
 
     if (isSimple) {
+        // Get the raw expression strings from the inputs
         params = {
-            Z: parseFloat(document.getElementById('mat_Z').value),
-            A: parseFloat(document.getElementById('mat_A').value),
-            density: parseFloat(document.getElementById('mat_density').value),
-            components: []
+            Z_expr: document.getElementById('mat_Z').value,
+            A_expr: document.getElementById('mat_A').value,
+            density_expr: document.getElementById('mat_density').value,
+            components: [] // Empty components for a simple material
         };
     } else {
-        // Validate fractions sum to ~1.0
-        const totalFraction = materialComponents.reduce((sum, comp) => sum + comp.fraction, 0);
+        const totalFraction = materialComponents.reduce((sum, comp) => sum + (comp.fraction || 0), 0);
         if (Math.abs(totalFraction - 1.0) > 0.01) {
             alert(`Mass fractions must sum to 1.0. Current sum: ${totalFraction.toFixed(4)}`);
             return;
         }
         params = {
-            density: parseFloat(document.getElementById('mat_density').value),
-            components: materialComponents
+            density_expr: document.getElementById('mat_density').value,
+            components: materialComponents,
+            Z_expr: null, // Simple materials don't have these
+            A_expr: null
         };
     }
     

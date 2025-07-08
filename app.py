@@ -90,13 +90,20 @@ def create_empty_project():
     # Re-initialize the project manager to clear everything
     project_manager = ProjectManager() 
 
-    # Create a default material for the world (e.g., vacuum)
-    world_mat = Material(name="G4_Galactic", Z=1, A=1.01, density=1.e-25, state="gas")
+    ## Create a G4_Galactic material
+    world_mat = Material(
+        name="G4_Galactic", 
+        Z_expr="1", 
+        A_expr="1.01", 
+        density_expr="1.0e-25", 
+        state="gas"
+    )
     project_manager.current_geometry_state.add_material(world_mat)
     
     # Create a default solid for the world (e.g., a 10m box)
-    world_solid_params = {'x': 10000, 'y': 10000, 'z': 10000} # in mm
-    world_solid = Solid(name="world_solid", solid_type="box", parameters=world_solid_params)
+    # The parameters are now string expressions.
+    world_solid_params = {'x': '10000', 'y': '10000', 'z': '10000'}
+    world_solid = Solid(name="world_solid", solid_type="box", raw_parameters=world_solid_params)
     project_manager.current_geometry_state.add_solid(world_solid)
 
     # Create the logical volume for the world
@@ -105,6 +112,9 @@ def create_empty_project():
 
     # Set this logical volume as the world volume
     project_manager.current_geometry_state.world_volume_ref = "World"
+
+    # Recalculate to populate evaluated fields
+    project_manager.recalculate_geometry_state()
 
 # Function to construct full AI prompt
 def construct_full_ai_prompt(user_prompt):
@@ -318,6 +328,7 @@ def add_solid_and_place_route():
     solid_params = data.get('solid_params') # {name, type, params}
     lv_params = data.get('lv_params')       # {name?, material_ref} or None
     pv_params = data.get('pv_params')       # {name?, parent_lv_name} or None
+    print(solid_params)
 
     if not solid_params:
         return jsonify({"success": False, "error": "Solid parameters are required."}), 400
@@ -345,6 +356,22 @@ def add_primitive_solid_route():
         return create_success_response("Primitive solid created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_solid', methods=['POST'])
+def update_solid_route():
+    data = request.get_json()
+    solid_id = data.get('id')
+    new_raw_params = data.get('raw_parameters')
+    
+    if not solid_id or new_raw_params is None:
+        return jsonify({"success": False, "error": "Missing solid ID or new parameters."}), 400
+
+    success, error_msg = project_manager.update_solid(solid_id, new_raw_params)
+
+    if success:
+        return create_success_response(f"Solid '{solid_id}' updated successfully.")
+    else:
+        return jsonify({"success": False, "error": error_msg or "Failed to update solid."}), 500
 
 @app.route('/add_boolean_solid', methods=['POST'])
 def add_boolean_solid_route():
@@ -803,43 +830,45 @@ def move_items_to_group_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
-# --- NEW API ROUTE FOR SAFE EVALUATION ---
 @app.route('/api/evaluate_expression', methods=['POST'])
 def evaluate_expression_route():
     data = request.get_json()
     expression = data.get('expression')
-    current_state_dict = data.get('project_state') # The full project state
+    # The frontend will send the full current project state
+    current_state_dict = data.get('project_state') 
 
     if not expression or not current_state_dict:
         return jsonify({"success": False, "error": "Missing expression or project state."}), 400
 
     try:
-        # We will create a temporary evaluator with the context from the provided state
+        # Create a temporary evaluator with the context from the provided state
         aeval = asteval.Interpreter(symtable={}, minimal=True)
+        # Prime it with constants
         aeval.symtable.update({
-            'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
-            'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
+            'pi': math.pi, 'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 
+            'rad': 1.0, 'deg': math.pi / 180.0,
         })
         
-        # Populate context with evaluated values of existing defines from the project state
+        # Populate context with the *evaluated values* of existing defines
         if 'defines' in current_state_dict:
             for name, define_data in current_state_dict['defines'].items():
-                # Important: Only add defines that have a valid numeric value
                 if isinstance(define_data.get('value'), (int, float)):
                     aeval.symtable[name] = define_data['value']
+                # Special handling for vectors if needed, e.g., my_pos.x
+                elif isinstance(define_data.get('value'), dict):
+                     aeval.symtable[name] = define_data.get('value')
+
 
         # Safely evaluate the user's expression
         result = aeval.eval(expression)
 
         if aeval.error:
-             # asteval provides detailed error messages
              err = aeval.error[0]
              return jsonify({"success": False, "error": err.get_error()}), 400
 
         return jsonify({"success": True, "result": result})
 
     except Exception as e:
-        # Catch any other unexpected errors during evaluation
         return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':

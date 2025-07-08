@@ -698,22 +698,8 @@ async function handleSolidEditorConfirm(data) {
             // --- Update an existing Primitive Solid ---
             UIManager.showLoading("Updating solid...");
             try {
-                // The loop is still the best approach with our current API
-                let lastResult;
-                for (const key in data.params) {
-                    const value = data.params[key];
-                    // The backend expects radians for angles and full length for dz,
-                    // which getParamsFromUI now correctly provides.
-                    lastResult = await APIService.updateProperty('solid', data.id, `parameters.${key}`, value);
-                    
-                    if (!lastResult.success) {
-                        UIManager.showError(`Failed to update property ${key}: ${lastResult.error}`);
-                        const freshState = await APIService.getProjectState();
-                        syncUIWithState({ ...freshState, success: true, message: "Update failed, state restored." });
-                        return;
-                    }
-                }
-                syncUIWithState(lastResult);
+                const result = await APIService.updateSolid(data.id, data.raw_parameters);
+                syncUIWithState(result, [{ type: 'solid', id: data.id, name: data.name, data: data }]);
             } catch (error) {
                 UIManager.showError("Error updating solid: " + (error.message || error));
             } finally {
@@ -742,7 +728,7 @@ async function handleSolidEditorConfirm(data) {
             try {
                 // If either quick-add checkbox is checked, use the new powerful endpoint
                 if (data.createLV) {
-                    const solidParams = { name: data.name, type: data.type, params: data.params };
+                    const solidParams = { name: data.name, type: data.type, params: data.raw_parameters };
                     
                     const lvParams = { material_ref: data.materialRef };
                     // Let the backend generate the LV name, or use a convention
@@ -764,7 +750,7 @@ async function handleSolidEditorConfirm(data) {
                 } else {
                     // Otherwise, use the original simple "add solid" endpoint
                     const objectType = `solid_${data.type}`;
-                    const result = await APIService.addPrimitiveSolid(data.name, data.type, data.params);
+                    const result = await APIService.addPrimitiveSolid(data.name, data.type, data.raw_parameters);
 
                     // After creation, we want to select the new solid
                     const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).pop();

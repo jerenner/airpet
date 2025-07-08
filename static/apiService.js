@@ -180,6 +180,15 @@ export async function addPrimitiveSolid(name, type, params) {
     return handleResponse(response);
 }
 
+export async function updateSolid(solidId, rawParameters) {
+    const response = await fetch(`${API_BASE_URL}/update_solid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: solidId, raw_parameters: rawParameters })
+    });
+    return handleResponse(response);
+}
+
 /**
  * Deletes an object from the geometry.
  * @param {string} objectType The type of the object to delete.

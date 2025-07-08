@@ -60,10 +60,10 @@ class Define:
         self.id = str(uuid.uuid4())
         self.name = name
         self.type = type # 'position', 'rotation', 'constant', 'quantity'
-        self.raw_expression = raw_expression # The original string value from GDML
+        self.raw_expression = raw_expression # holds the user-entered string or dict of strings
         self.unit = unit
         self.category = category
-        self.value = None # This will hold the evaluated result.
+        self.value = None # holds the final, evaluated numeric result
 
     def to_dict(self):
         return {
@@ -82,7 +82,7 @@ class Define:
             if isinstance(val, dict):
                  raw_expr = {k: str(v) for k, v in val.items()}
             else:
-                 raw_expr = str(val)
+                 raw_expr = str(val) if val is not None else '0'
 
         instance = cls(data['name'], data['type'], raw_expr, data.get('unit'), data.get('category'))
         instance.id = data.get('id', str(uuid.uuid4()))
@@ -92,43 +92,76 @@ class Define:
 
 class Material:
     """Represents a material."""
-    def __init__(self, name, Z=None, A=None, density=None, state=None, components=None):
+    def __init__(self, name, Z_expr=None, A_expr=None, density_expr="0.0", state=None, components=None):
         self.id = str(uuid.uuid4())
         self.name = name
-        self.Z = Z
-        self.A = A # Atomic mass in g/mole
-        self.density = density # Density in g/cm3 typically in GDML, store as some consistent internal unit or as parsed.
-        self.state = state # 'solid', 'liquid', 'gas'
-        self.components = components if components else [] # List of {ref, fraction} dicts
+        
+        # --- Store raw expressions ---
+        self.Z_expr = Z_expr
+        self.A_expr = A_expr 
+        self.density_expr = density_expr
+
+        # --- Store evaluated results ---
+        self._evaluated_Z = None
+        self._evaluated_A = None
+        self._evaluated_density = None
+
+        self.state = state 
+        self.components = components if components else [] 
 
     def to_dict(self):
         return {
-            "id": self.id, "name": self.name, "Z": self.Z, "A": self.A,
-            "density": self.density, "state": self.state, "components": self.components
+            "id": self.id, "name": self.name,
+            "Z_expr": self.Z_expr, 
+            "A_expr": self.A_expr,
+            "density_expr": self.density_expr, 
+            "_evaluated_Z": self._evaluated_Z,
+            "_evaluated_A": self._evaluated_A,
+            "_evaluated_density": self._evaluated_density,
+            "state": self.state, 
+            "components": self.components
         }
+
     @classmethod
     def from_dict(cls, data):
-        instance = cls(data['name'], data.get('Z'), data.get('A'), data.get('density'), data.get('state'), data.get('components'))
-        instance.id = data.get('id', str(uuid.uuid4()))
-        return instance
+        Z_expr = data.get('Z_expr', str(data.get('Z', "")))
+        A_expr = data.get('A_expr', str(data.get('A', "")))
+        density_expr = data.get('density_expr', str(data.get('density', "0.0")))
 
+        instance = cls(data['name'], Z_expr, A_expr, density_expr, data.get('state'), data.get('components'))
+        instance.id = data.get('id', str(uuid.uuid4()))
+        
+        # Restore evaluated values if they exist
+        instance._evaluated_Z = data.get('_evaluated_Z')
+        instance._evaluated_A = data.get('_evaluated_A')
+        instance._evaluated_density = data.get('_evaluated_density')
+        
+        return instance
 
 class Solid:
     """Base class for solids. Parameters should be in internal units (e.g., mm)."""
-    def __init__(self, name, solid_type, parameters):
+    def __init__(self, name, solid_type, raw_parameters):
         self.id = str(uuid.uuid4())
         self.name = name
         self.type = solid_type
-        self.parameters = parameters # dict of parameters, e.g., {'x': 100, 'y': 100, 'z': 100}
+
+        # This dictionary holds the string expressions from the user or GDML file.
+        self.raw_parameters = raw_parameters
+        ## This dictionary will hold the final numeric values for rendering.
+        self._evaluated_parameters = {}
 
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "type": self.type, "parameters": self.parameters}
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "raw_parameters": self.raw_parameters,
+            "_evaluated_parameters": self._evaluated_parameters
+        }
 
     @classmethod
     def from_dict(cls, data):
-        # This might need to dispatch to specific solid subclasses if they exist
-        instance = cls(data['name'], data['type'], data['parameters'])
+        instance = cls(data['name'], data['type'], raw_params)
         instance.id = data.get('id', str(uuid.uuid4()))
+        instance._evaluated_parameters = data.get('_evaluated_parameters', {})
         return instance
 
 # Could have subclasses like BoxSolid(Solid), TubeSolid(Solid) if needed for specific logic
@@ -174,15 +207,21 @@ class PhysicalVolumePlacement:
         self.name = name
         self.volume_ref = volume_ref
         self.copy_number = copy_number
-        self.position = position_val_or_ref if position_val_or_ref else {'x': 0, 'y': 0, 'z': 0}
-        self.rotation = rotation_val_or_ref if rotation_val_or_ref else {'x': 0, 'y': 0, 'z': 0}
-        self.scale = scale_val_or_ref if scale_val_or_ref else {'x': 1, 'y': 1, 'z': 1}
+        # This stores the raw data: either a define name (string) 
+        # or a dictionary of string expressions for absolute values
+        self.position = position_val_or_ref
+        self.rotation = rotation_val_or_ref
+        self.scale = scale_val_or_ref
+        # These will store the final numeric results after evaluation
+        self._evaluated_position = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_scale = {'x': 1, 'y': 1, 'z': 1}
 
     def get_transform_matrix(self):
         """Returns a 4x4 numpy transformation matrix for this placement."""
         # Note: Assumes position and rotation are resolved value dicts, not refs
-        pos = self.position
-        rot = self.rotation # Assumed ZYX Euler in radians
+        pos = self._evaluated_position
+        rot = self._evaluated_rotation # Assumed ZYX Euler in radians
         
         # Create rotation matrices for each axis
         Rx = np.array([[1, 0, 0], [0, math.cos(rot['x']), -math.sin(rot['x'])], [0, math.sin(rot['x']), math.cos(rot['x'])]])
@@ -237,18 +276,20 @@ class PhysicalVolumePlacement:
 
     def to_dict(self):
         return {
-            "id": self.id, "name": self.name, "volume_ref": self.volume_ref,
-            "copy_number": self.copy_number,
-            "position": self.position, "rotation": self.rotation, "scale": self.scale
+            "id": self.id, "name": self.name, "volume_ref": self.volume_ref, "copy_number": self.copy_number,
+            "position": self.position, "rotation": self.rotation, "scale": self.scale,
+            "_evaluated_position": self._evaluated_position, 
+            "_evaluated_rotation": self._evaluated_rotation, 
+            "_evaluated_scale": self._evaluated_scale
         }
 
     @classmethod
     def from_dict(cls, data, all_objects_map=None):
-        instance = cls(
-            data['name'], data['volume_ref'], data.get('copy_number', 0),
-            data.get('position'), data.get('rotation'), data.get('scale')
-        )
+        instance = cls(data['name'], data['volume_ref'], data.get('copy_number', 0), data.get('position'), data.get('rotation'), data.get('scale'))
         instance.id = data.get('id', str(uuid.uuid4()))
+        instance._evaluated_position = data.get('_evaluated_position', {'x':0, 'y':0, 'z':0})
+        instance._evaluated_rotation = data.get('_evaluated_rotation', {'x':0, 'y':0, 'z':0})
+        instance._evaluated_scale = data.get('_evaluated_scale', {'x':1, 'y':1, 'z':1})
         return instance
 
 class Assembly:
@@ -346,68 +387,54 @@ class GeometryState:
 
     def get_threejs_scene_description(self):
         """
-        Translates the internal geometry state into the flat list format
-        expected by the current Three.js frontend.
-        This needs to handle hierarchy and transformations.
+        Translates the internal geometry state into a flat list for Three.js.
+        This function now relies on the `_evaluated_` fields being correctly
+        populated by the ProjectManager before it is called.
         """
-        threejs_objects = []
         if not self.world_volume_ref or self.world_volume_ref not in self.logical_volumes:
             return []
 
-        # This map will prevent processing the same LV multiple times in complex hierarchies
-        processed_lvs = set()
+        threejs_objects = []
         
-        # We start traversal from the world volume
-        volumes_to_process = [self.logical_volumes[self.world_volume_ref]]
+        def traverse(lv_name, parent_transform_matrix):
+            lv = self.get_logical_volume(lv_name)
+            if not lv: return
 
-        while volumes_to_process:
-            lv = volumes_to_process.pop(0)
-            if lv.name in processed_lvs:
-                continue
-            processed_lvs.add(lv.name)
-
-            for pv_placement in lv.phys_children:
-                child_lv_name = pv_placement.volume_ref
-                child_lv = self.logical_volumes.get(child_lv_name)
-                if not child_lv:
-                    continue
-
-                if child_lv.name not in processed_lvs:
-                    volumes_to_process.append(child_lv)
-
-                solid_obj = self.solids.get(child_lv.solid_ref)
-                if not solid_obj:
-                    continue
-
-                # Flag to identify the world volume's placements for the renderer
-                is_world = (child_lv_name == self.world_volume_ref)
+            for pv in lv.phys_children:
+                local_transform_matrix = pv.get_transform_matrix()
+                world_transform_matrix = parent_transform_matrix @ local_transform_matrix
+                final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
                 
-                # Resolve position
-                position_data = pv_placement.position
-                if isinstance(pv_placement.position, str): # It's a ref name
-                    pos_define = self.defines.get(pv_placement.position)
-                    if pos_define and pos_define.type == 'position':
-                        position_data = pos_define.value
-                    else:
-                        position_data = {'x': 0, 'y': 0, 'z': 0}
-                
-                # Resolve rotation
-                rotation_data = pv_placement.rotation
-                if isinstance(pv_placement.rotation, str): # It's a ref name
-                    rot_define = self.defines.get(pv_placement.rotation)
-                    if rot_define and rot_define.type == 'rotation':
-                        rotation_data = rot_define.value
-                    else:
-                        rotation_data = {'x': 0, 'y': 0, 'z': 0}
+                assembly = self.get_assembly(pv.volume_ref)
+                if assembly:
+                    # For assemblies, we don't render the assembly itself.
+                    # Instead, we traverse its children, applying the assembly's
+                    # world transform to them.
+                    for part_pv in assembly.placements:
+                        # The 'parent' transform for the assembly's parts is the
+                        # calculated world transform of the assembly placement itself.
+                        traverse(part_pv.volume_ref, world_transform_matrix)
+                else:
+                    # This is a regular Logical Volume placement.
+                    child_lv = self.get_logical_volume(pv.volume_ref)
+                    if not child_lv: continue
+                    
+                    threejs_objects.append({
+                        "id": pv.id,
+                        "name": pv.name,
+                        "solid_ref_for_threejs": child_lv.solid_ref, 
+                        "position": final_pos,
+                        "rotation": final_rot_rad,
+                        "is_world_volume_placement": (child_lv.name == self.world_volume_ref),
+                        "vis_attributes": child_lv.vis_attributes,
+                        "copy_number": pv.copy_number
+                    })
+                    
+                    # Recurse into the children of this placed volume
+                    traverse(child_lv.name, world_transform_matrix)
 
-                threejs_objects.append({
-                    "id": pv_placement.id,
-                    "name": pv_placement.name,
-                    # This new key directly tells the frontend which solid definition to use
-                    "solid_ref_for_threejs": child_lv.solid_ref, 
-                    "position": position_data,
-                    "rotation": rotation_data,
-                    "is_world_volume_placement": is_world,
-                    "vis_attributes": child_lv.vis_attributes 
-                })
+        # Start the traversal from the world volume with an identity matrix
+        initial_transform = np.identity(4)
+        traverse(self.world_volume_ref, initial_transform)
+        
         return threejs_objects
