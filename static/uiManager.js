@@ -420,16 +420,18 @@ function buildSingleTransformEditor(transformType, labelText, prefix, pvData, de
 
     // --- 2. Create helper to populate inputs from a value object ---
     const updateInputUI = (valueObj) => {
+        // Default to a safe object if valueObj is null/undefined
         const val = valueObj || { x: 0, y: 0, z: 0 };
-        console.log("Value is ", val)
+        
         if (transformType === 'rotation') {
-            inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0).toFixed(3);
-            inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0).toFixed(3);
-            inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0).toFixed(3);
+            // Use parseFloat to handle both numbers and string representations of numbers
+            inputs.x.value = THREE.MathUtils.radToDeg(parseFloat(val.x || 0)).toFixed(3);
+            inputs.y.value = THREE.MathUtils.radToDeg(parseFloat(val.y || 0)).toFixed(3);
+            inputs.z.value = THREE.MathUtils.radToDeg(parseFloat(val.z || 0)).toFixed(3);
         } else {
-            inputs.x.value = (val.x || 0).toFixed(3);
-            inputs.y.value = (val.y || 0).toFixed(3);
-            inputs.z.value = (val.z || 0).toFixed(3);
+            inputs.x.value = parseFloat(val.x || 0).toFixed(3);
+            inputs.y.value = parseFloat(val.y || 0).toFixed(3);
+            inputs.z.value = parseFloat(val.z || 0).toFixed(3);
         }
     };
     

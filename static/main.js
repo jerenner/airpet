@@ -674,31 +674,24 @@ function handleEditSolid(solidData) {
 
 async function handleSolidEditorConfirm(data) {
     console.log("Solid Editor confirmed. Data:", data);
-
-    // --- The data object from solidEditor.js now looks like one of these:
-    // For creating a primitive: { isEdit: false, name, type, params, ... }
-    // For creating a boolean:  { isChainedBoolean: true, name, recipe }
-    // For editing a primitive: { isEdit: true, id, type, params }
-    // For editing a boolean:  { isEdit: true, isChainedBoolean: true, id, recipe }
     
     if (data.isEdit) {
-        // --- HANDLE ALL UPDATES (EDIT MODE) ---
+        // --- EDIT LOGIC ---
         if (data.isChainedBoolean) {
-            // --- Update an existing Boolean Solid ---
             UIManager.showLoading("Updating boolean solid...");
             try {
                 const result = await APIService.updateBooleanSolid(data.id, data.recipe);
-                syncUIWithState(result, [{ type: 'solid', id: data.id }]);
+                syncUIWithState(result, [{ type: 'solid', id: data.id, name: data.name, data: data }]);
             } catch (error) {
                 UIManager.showError("Error updating boolean solid: " + (error.message || error));
             } finally {
                 UIManager.hideLoading();
             }
-        } else {
-            // --- Update an existing Primitive Solid ---
+        } else { // It's a primitive solid
             UIManager.showLoading("Updating solid...");
             try {
-                const result = await APIService.updateSolid(data.id, data.raw_parameters);
+                // ## UPDATED: Use the correct key for the API call
+                const result = await APIService.updateSolid(data.id, data.params);
                 syncUIWithState(result, [{ type: 'solid', id: data.id, name: data.name, data: data }]);
             } catch (error) {
                 UIManager.showError("Error updating solid: " + (error.message || error));
@@ -708,59 +701,42 @@ async function handleSolidEditorConfirm(data) {
         }
 
     } else {
-        // --- HANDLE ALL CREATIONS (CREATE MODE) ---
-        if (data.isChainedBoolean) {
-            // --- Create a new Boolean Solid ---
-            UIManager.showLoading("Creating boolean solid...");
-            try {
-                // We now call the correct new API function
-                const result = await APIService.addBooleanSolid(data.name, data.recipe);
-                syncUIWithState(result);
-            } catch (error) {
-                UIManager.showError("Error creating boolean solid: " + (error.message || error));
-            } finally {
-                UIManager.hideLoading();
+        // --- CREATE LOGIC ---
+        UIManager.showLoading("Adding object...");
+        try {
+            
+            const solidParams = {
+                name: data.name,
+                type: data.type,
+            };
+
+            // Add either 'recipe' or 'params' based on the solid type
+            if (data.isChainedBoolean) {
+                solidParams.recipe = data.recipe;
+            } else {
+                solidParams.params = data.params;
             }
-        } else {
-            // --- Create a new Primitive Solid (with optional LV/PV) ---
-            const objectType = `solid_${data.type}`;
-            UIManager.showLoading("Adding solid...");
-            try {
-                // If either quick-add checkbox is checked, use the new powerful endpoint
-                if (data.createLV) {
-                    const solidParams = { name: data.name, type: data.type, params: data.raw_parameters };
-                    
-                    const lvParams = { material_ref: data.materialRef };
-                    // Let the backend generate the LV name, or use a convention
-                    // lvParams.name = `${data.name}_lv`; 
 
-                    let pvParams = null;
-                    if (data.placePV) {
-                        // Default to placing in the World if nothing else is selected
-                        const parentContext = UIManager.getSelectedParentContext();
-                        const parentName = (parentContext && parentContext.name) 
-                                           ? parentContext.name 
-                                           : AppState.currentProjectState.world_volume_ref;
-                        pvParams = { parent_lv_name: parentName };
-                    }
-                    
-                    const result = await APIService.addSolidAndPlace(solidParams, lvParams, pvParams);
-                    syncUIWithState(result);
-
-                } else {
-                    // Otherwise, use the original simple "add solid" endpoint
-                    const objectType = `solid_${data.type}`;
-                    const result = await APIService.addPrimitiveSolid(data.name, data.type, data.raw_parameters);
-
-                    // After creation, we want to select the new solid
-                    const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).pop();
-                    syncUIWithState(result, [{ type: 'solid', id: newSolidName }]);
-                }
-            } catch (error) { 
-                UIManager.showError("Error adding solid: " + (error.message || error)); 
-            } finally { 
-                UIManager.hideLoading(); 
+            const lvParams = data.createLV ? { material_ref: data.materialRef } : null;
+            let pvParams = null;
+            if (data.createLV && data.placePV) {
+                const parentContext = UIManager.getSelectedParentContext();
+                const parentName = (parentContext && parentContext.name) 
+                                   ? parentContext.name 
+                                   : AppState.currentProjectState.world_volume_ref;
+                pvParams = { parent_lv_name: parentName };
             }
+            
+            const result = await APIService.addSolidAndPlace(solidParams, lvParams, pvParams);
+            
+            // After creation, select the new solid in the hierarchy
+            const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).find(k => k.startsWith(data.name));
+            syncUIWithState(result, [{type: 'solid', id: newSolidName}]);
+
+        } catch (error) { 
+            UIManager.showError("Error adding solid: " + (error.message || error)); 
+        } finally { 
+            UIManager.hideLoading(); 
         }
     }
 }

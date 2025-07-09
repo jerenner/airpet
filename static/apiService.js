@@ -184,7 +184,7 @@ export async function updateSolid(solidId, rawParameters) {
     const response = await fetch(`${API_BASE_URL}/update_solid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: solidId, raw_parameters: rawParameters })
+        body: JSON.stringify({ id: solidId, params: rawParameters })
     });
     return handleResponse(response);
 }

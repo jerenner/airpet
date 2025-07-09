@@ -110,13 +110,15 @@ class ProjectManager:
             for key, raw_expr in solid.raw_parameters.items():
                 if isinstance(raw_expr, str):
                     try:
-                        # Evaluate the expression string
                         solid._evaluated_parameters[key] = aeval.eval(raw_expr)
                     except Exception as e:
-                        print(f"Warning: Could not evaluate solid param '{key}' for solid '{solid.name}': {e}")
-                        solid._evaluated_parameters[key] = 0 # Default to 0 on failure
+                        print(f"Warning: Could not eval solid param '{key}' for solid '{solid.name}': {e}")
+                        solid._evaluated_parameters[key] = 0
+                elif isinstance(raw_expr, (int, float)):
+                    # Handle cases where the value is already a number
+                    solid._evaluated_parameters[key] = raw_expr
                 else:
-                    # If it's not a string (e.g., a list for a boolean recipe), just copy it.
+                    # For other types (like a boolean recipe list), just copy it.
                     solid._evaluated_parameters[key] = raw_expr
 
         # --- Stage 4: Evaluate all placement transforms ---
@@ -321,23 +323,17 @@ class ProjectManager:
         self.recalculate_geometry_state()
         return True, None
 
-    def add_solid(self, name_suggestion, solid_type, raw_params_from_ui):
+    def add_solid(self, name_suggestion, solid_type, raw_parameters):
         """
         Adds a new solid to the project.
-        raw_params_from_ui comes directly from the frontend UI.
         """
         if not self.current_geometry_state:
             return None, "No project loaded"
-
-        if solid_type == "boolean":
-            return None, f"'{solid_type}' should be created via the boolean editor endpoint."
         
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
-        
-        # The raw parameters from the UI are already the expressions we want to store.
-        new_solid = Solid(name, solid_type, raw_params_from_ui)
+        new_solid = Solid(name, solid_type, raw_parameters)
         self.current_geometry_state.add_solid(new_solid)
-        self.recalculate_geometry_state()
+        
         return new_solid.to_dict(), None
 
     def update_solid(self, solid_id, new_raw_parameters):
@@ -365,18 +361,17 @@ class ProjectManager:
         if len(recipe) < 2 or recipe[0].get('op') != 'base':
             return False, "Invalid recipe format."
 
-        # Validate that all referenced solids exist
         for item in recipe:
             ref = item.get('solid_ref')
             if not ref or ref not in self.current_geometry_state.solids:
                 return False, f"Solid '{ref}' not found in project."
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
-        new_solid = Solid(name, "boolean", {"recipe": recipe})
+        params = {"recipe": recipe}
+        new_solid = Solid(name, "boolean", params)
         self.current_geometry_state.add_solid(new_solid)
-        self.recalculate_geometry_state()
-
-        return True, None
+        
+        return new_solid.to_dict(), None
 
     def update_boolean_solid(self, solid_name, new_recipe):
         """
@@ -405,65 +400,56 @@ class ProjectManager:
 
     def add_solid_and_place(self, solid_params, lv_params, pv_params):
         """
-        A high-level method to perform the full Solid -> LV -> PV chain.
-        This makes the operation atomic from the backend's perspective.
+        Handles both primitive and boolean solid creation.
         """
         if not self.current_geometry_state:
             return False, "No project loaded."
 
-        # --- 1. Add the Solid ---
         solid_name_sugg = solid_params['name']
         solid_type = solid_params['type']
+        
         new_solid_dict = None
         solid_error = None
 
         # --- 1. Add the Solid (dispatch based on type) ---
         if solid_type == 'boolean':
-            recipe = solid_params['recipe'] # The frontend now sends the recipe here
-            success, error_msg = self.add_boolean_solid(solid_name_sugg, recipe)
-            if success:
-                # Need to get the full dict of the newly created solid
-                new_solid_dict = self.current_geometry_state.solids[name_suggestion].to_dict() # Assumes add_boolean_solid uses the suggestion directly if available
-            else:
-                solid_error = error_msg
+            recipe = solid_params['recipe']
+            new_solid_dict, solid_error = self.add_boolean_solid(solid_name_sugg, recipe)
         else:
-            # It's a primitive solid
             solid_raw_params = solid_params['params']
             new_solid_dict, solid_error = self.add_solid(solid_name_sugg, solid_type, solid_raw_params)
         
         if solid_error:
             return False, f"Failed to create solid: {solid_error}"
-
-        # After creation, the unique name is in the returned dictionary
-        new_solid_name = new_solid_dict['name']
         
+        new_solid_name = new_solid_dict['name']
+
         # --- 2. Add the Logical Volume (if requested) ---
         if not lv_params:
-            # If no LV params, we're done. Just created a solid.
+            self.recalculate_geometry_state() # Recalculate just before returning
             return True, None
-
+            
         lv_name_sugg = lv_params.get('name', f"{new_solid_name}_lv")
         material_ref = lv_params.get('material_ref')
 
         new_lv_dict, lv_error = self.add_logical_volume(lv_name_sugg, new_solid_name, material_ref)
         if lv_error:
-            # Here you might want to "roll back" the solid creation, but for now we'll leave it.
             return False, f"Failed to create logical volume: {lv_error}"
             
         new_lv_name = new_lv_dict['name']
 
         # --- 3. Add the Physical Volume Placement (if requested) ---
         if not pv_params:
-            # If no PV params, we're done. Created a solid and an LV.
+            self.recalculate_geometry_state()
             return True, None
             
         parent_lv_name = pv_params.get('parent_lv_name')
         pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
-        # For quick-add, we assume placement at the origin of the parent.
+        
         position = {'x': '0', 'y': '0', 'z': '0'} 
         rotation = {'x': '0', 'y': '0', 'z': '0'}
 
-        new_pv_dict, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation)
+        _, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation)
         if pv_error:
             return False, f"Failed to place physical volume: {pv_error}"
         

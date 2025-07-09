@@ -469,12 +469,20 @@ function attachBooleanListeners() {
             const transformType = idPrefix.includes('_pos') ? 'position' : 'rotation';
             
             if (booleanRecipe[index] && booleanRecipe[index].transform && booleanRecipe[index].transform[transformType]) {
-                booleanRecipe[index].transform[transformType][axis] = el.value;
+                let value = el.value;
+                // If it's a rotation, wrap it to indicate degrees for the backend evaluator.
+                if (transformType === 'rotation') {
+                    // Check if it's already a complex expression or just a number
+                    if (!isNaN(parseFloat(value))) {
+                        value = `(${value}) * deg`;
+                    }
+                }
+                booleanRecipe[index].transform[transformType][axis] = value;
                 updatePreview();
             }
         };
         input.addEventListener('change', updateTransformState);
-        input.addEventListener('input', updateTransformState);
+        //input.addEventListener('input', updateTransformState);
     });
 }
 
@@ -489,34 +497,38 @@ function getRawParamsFromUI() {
     } else if (type === 'tube') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); 
         raw_params.dz = p('p_dz');
-        raw_params.startphi = p('p_startphi');
-        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.startphi = `(${p('p_startphi')}) * deg`;
+        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
     } else if (type === 'cone') {
         raw_params.rmin1 = p('p_rmin1'); raw_params.rmax1 = p('p_rmax1');
         raw_params.rmin2 = p('p_rmin2'); raw_params.rmax2 = p('p_rmax2');
         raw_params.dz = p('p_dz');
-        raw_params.startphi = p('p_startphi');
-        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.startphi = `(${p('p_startphi')}) * deg`;
+        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
     } else if (type === 'sphere') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax');
-        raw_params.startphi = p('p_startphi');
-        raw_params.deltaphi = p('p_deltaphi');
-        raw_params.starttheta = p('p_starttheta');
-        raw_params.deltatheta = p('p_deltatheta');
+        raw_params.startphi = `(${p('p_startphi')}) * deg`;
+        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
+        raw_params.starttheta = `(${p('p_starttheta')}) * deg`;
+        raw_params.deltatheta = `(${p('p_deltatheta')}) * deg`;
     } else if (type === 'orb') {
         raw_params.r = p('p_r');
     } else if (type === 'torus') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); raw_params.rtor = p('p_rtor');
-        raw_params.startphi = p('p_startphi'); raw_params.deltaphi = p('p_deltaphi');
+        raw_params.startphi = `(${p('p_startphi')}) * deg`;
+        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
     } else if (type === 'trd') {
         raw_params.dx1 = p('p_dx1'); raw_params.dx2 = p('p_dx2');
         raw_params.dy1 = p('p_dy1'); raw_params.dy2 = p('p_dy2');
         raw_params.dz = p('p_dz');
     } else if (type === 'para') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy'); raw_params.dz = p('p_dz');
-        raw_params.alpha = p('p_alpha'); raw_params.theta = p('p_theta'); raw_params.phi = p('p_phi');
+        raw_params.alpha = `(${p('p_alpha')}) * deg`;
+        raw_params.theta = `(${p('p_theta')}) * deg`;
+        raw_params.phi = `(${p('p_phi')}) * deg`;
     } else if (type === 'eltube') {
-        raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy'); raw_params.dz = p('p_dz');
+        raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
+        raw_params.dz = p('p_dz');
     }
     return raw_params;
 }
@@ -560,16 +572,27 @@ async function updatePreview() {
 
                 const nextBrush = new Brush(nextSolidGeom);
                 
-                const pos = item.transform.position;
-                const rot = item.transform.rotation;
-                const [posX, posY, posZ] = await Promise.all([APIService.evaluateExpression(pos.x, currentProjectState), APIService.evaluateExpression(pos.y, currentProjectState), APIService.evaluateExpression(pos.z, currentProjectState)]);
-                const [rotX, rotY, rotZ] = await Promise.all([APIService.evaluateExpression(rot.x, currentProjectState), APIService.evaluateExpression(rot.y, currentProjectState), APIService.evaluateExpression(rot.z, currentProjectState)]);
+                const pos_expr = item.transform.position;
+                const rot_expr = item.transform.rotation;
+
+                // Evaluate expressions using the API
+                const [posX, posY, posZ] = await Promise.all([
+                    APIService.evaluateExpression(pos_expr.x, currentProjectState),
+                    APIService.evaluateExpression(pos_expr.y, currentProjectState),
+                    APIService.evaluateExpression(pos_expr.z, currentProjectState)
+                ]);
+                const [rotX, rotY, rotZ] = await Promise.all([
+                    APIService.evaluateExpression(rot_expr.x, currentProjectState),
+                    APIService.evaluateExpression(rot_expr.y, currentProjectState),
+                    APIService.evaluateExpression(rot_expr.z, currentProjectState)
+                ]);
 
                 nextBrush.position.set(posX.result || 0, posY.result || 0, posZ.result || 0);
+                // The backend evaluator already handles 'deg', so the result is in radians.
                 nextBrush.quaternion.setFromEuler(new THREE.Euler(
-                    THREE.MathUtils.degToRad(rotX.result || 0), 
-                    THREE.MathUtils.degToRad(rotY.result || 0), 
-                    THREE.MathUtils.degToRad(rotZ.result || 0), 
+                    rotX.result || 0, 
+                    rotY.result || 0, 
+                    rotZ.result || 0, 
                     'ZYX'
                 ));
                 nextBrush.updateMatrixWorld();
@@ -590,21 +613,21 @@ async function updatePreview() {
         const p = Object.fromEntries(evaluatedEntries);
         
         if (p.dz !== undefined) p.dz /= 2.0;
-        if (p.startphi !== undefined) p.startphi = THREE.MathUtils.degToRad(p.startphi);
-        if (p.deltaphi !== undefined) p.deltaphi = THREE.MathUtils.degToRad(p.deltaphi);
-        if (p.starttheta !== undefined) p.starttheta = THREE.MathUtils.degToRad(p.starttheta);
-        if (p.deltatheta !== undefined) p.deltatheta = THREE.MathUtils.degToRad(p.deltatheta);
-        if (p.alpha !== undefined) p.alpha = THREE.MathUtils.degToRad(p.alpha);
-        if (p.theta !== undefined) p.theta = THREE.MathUtils.degToRad(p.theta);
-        if (p.phi !== undefined) p.phi = THREE.MathUtils.degToRad(p.phi);
-        if (p.phi_twist !== undefined) p.phi_twist = THREE.MathUtils.degToRad(p.phi_twist);
+        if (p.startphi !== undefined) p.startphi = p.startphi;
+        if (p.deltaphi !== undefined) p.deltaphi = p.deltaphi;
+        if (p.starttheta !== undefined) p.starttheta = p.starttheta;
+        if (p.deltatheta !== undefined) p.deltatheta = p.deltatheta;
+        if (p.alpha !== undefined) p.alpha = p.alpha;
+        if (p.theta !== undefined) p.theta = p.theta;
+        if (p.phi !== undefined) p.phi = p.phi;
+        if (p.phi_twist !== undefined) p.phi_twist = p.phi_twist;
 
         tempSolidData._evaluated_parameters = p;
         geometry = createPrimitiveGeometry(tempSolidData, null, csgEvaluator);
     }
     
     if (geometry) {
-        const material = new THREE.MeshLambertMaterial({ color: 0x9999ff, wireframe: true, side: THREE.DoubleSide });
+        const material = new THREE.MeshLambertMaterial({ color: 0x9999ff, wireframe: false, side: THREE.DoubleSide });
         currentSolidMesh = new THREE.Mesh(geometry, material);
         scene.add(currentSolidMesh);
     }
@@ -650,7 +673,7 @@ function handleConfirm() {
         id: isEditMode ? editingSolidId : nameInput.value.trim(),
         name: nameInput.value.trim(),
         type: type,
-        isChainedBoolean: isBoolean
+        isChainedBoolean: isBoolean // This flag is still useful for the main controller
     };
 
     if (!data.name && !isEditMode) {
@@ -669,14 +692,14 @@ function handleConfirm() {
         }));
     } else {
         // For primitives, send the raw expressions from the UI.
-        data.raw_parameters = getRawParamsFromUI();
-        
-        // Include quick-add options only when creating a new solid
-        if (!isEditMode) {
-            data.createLV = document.getElementById('createLVCheckbox').checked;
-            data.placePV = document.getElementById('placePVCheckbox').checked;
-            data.materialRef = data.createLV ? document.getElementById('lvMaterialSelect').value : null;
-        }
+        data.params = getRawParamsFromUI(); // The backend expects a 'params' key for primitives
+    }
+    
+    // Checkbox logic
+    if (!isEditMode) {
+        data.createLV = document.getElementById('createLVCheckbox').checked;
+        data.placePV = document.getElementById('placePVCheckbox').checked;
+        data.materialRef = data.createLV ? document.getElementById('lvMaterialSelect').value : null;
     }
     
     onConfirmCallback(data);

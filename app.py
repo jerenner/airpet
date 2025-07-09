@@ -361,7 +361,7 @@ def add_primitive_solid_route():
 def update_solid_route():
     data = request.get_json()
     solid_id = data.get('id')
-    new_raw_params = data.get('raw_parameters')
+    new_raw_params = data.get('params')
     
     if not solid_id or new_raw_params is None:
         return jsonify({"success": False, "error": "Missing solid ID or new parameters."}), 400

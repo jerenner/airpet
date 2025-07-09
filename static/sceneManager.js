@@ -1070,8 +1070,8 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
         const baseTransform = recipe[0].transform;
         if (baseTransform) {
             // Base transform needs to use evaluated values if they exist
-            const pos = baseTransform._evaluated_position || baseTransform.position || {x:0, y:0, z:0};
-            const rot = baseTransform._evaluated_rotation || baseTransform.rotation || {x:0, y:0, z:0};
+            const pos = baseTransform._evaluated_position || {x:0, y:0, z:0};
+            const rot = baseTransform._evaluated_rotation || {x:0, y:0, z:0};
             resultBrush.position.set(pos.x, pos.y, pos.z);
             resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
             resultBrush.updateMatrixWorld();
@@ -1087,8 +1087,8 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
             const transform = item.transform || {};
             
             // Use evaluated values for CSG operations
-            const pos = transform._evaluated_position || transform.position || {x:0, y:0, z:0};
-            const rot = transform._evaluated_rotation || transform.rotation || {x:0, y:0, z:0};
+            const pos = transform._evaluated_position || {x:0, y:0, z:0};
+            const rot = transform._evaluated_rotation || {x:0, y:0, z:0};
 
             nextBrush.position.set(pos.x, pos.y, pos.z);
             nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
