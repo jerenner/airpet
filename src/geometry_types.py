@@ -201,12 +201,15 @@ class LogicalVolume:
 
 class PhysicalVolumePlacement:
     """Represents a physical volume placement (physvol)."""
-    def __init__(self, name, volume_ref, copy_number=0,
+    def __init__(self, name, volume_ref, copy_number_expr="0",
                  position_val_or_ref=None, rotation_val_or_ref=None, scale_val_or_ref=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.volume_ref = volume_ref
-        self.copy_number = copy_number
+        ## Store copy number as a raw string expression
+        self.copy_number_expr = copy_number_expr
+        # This will store the final evaluated integer result
+        self.copy_number = 0 # Default to 0
         # This stores the raw data: either a define name (string) 
         # or a dictionary of string expressions for absolute values
         self.position = position_val_or_ref
@@ -276,7 +279,9 @@ class PhysicalVolumePlacement:
 
     def to_dict(self):
         return {
-            "id": self.id, "name": self.name, "volume_ref": self.volume_ref, "copy_number": self.copy_number,
+            "id": self.id, "name": self.name, "volume_ref": self.volume_ref, 
+            "copy_number_expr": self.copy_number_expr,
+            "copy_number": self.copy_number,
             "position": self.position, "rotation": self.rotation, "scale": self.scale,
             "_evaluated_position": self._evaluated_position, 
             "_evaluated_rotation": self._evaluated_rotation, 
@@ -285,8 +290,10 @@ class PhysicalVolumePlacement:
 
     @classmethod
     def from_dict(cls, data, all_objects_map=None):
+        copy_expr = data.get('copy_number_expr', str(data.get('copy_number', '0')))
         instance = cls(data['name'], data['volume_ref'], data.get('copy_number', 0), data.get('position'), data.get('rotation'), data.get('scale'))
         instance.id = data.get('id', str(uuid.uuid4()))
+        instance.copy_number = data.get('copy_number', 0)
         instance._evaluated_position = data.get('_evaluated_position', {'x':0, 'y':0, 'z':0})
         instance._evaluated_rotation = data.get('_evaluated_rotation', {'x':0, 'y':0, 'z':0})
         instance._evaluated_scale = data.get('_evaluated_scale', {'x':1, 'y':1, 'z':1})

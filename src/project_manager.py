@@ -42,7 +42,15 @@ class ProjectManager:
             return False, "No project state to calculate."
 
         state = self.current_geometry_state
+
+        # Initialize asteval and add math functions
         aeval = asteval.Interpreter(symtable={}, minimal=True)
+        for func_name in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+                          'sqrt', 'exp', 'log', 'log10', 'pow', 'abs']:
+            if hasattr(math, func_name):
+                aeval.symtable[func_name] = getattr(math, func_name)
+        
+        # Add constants and units
         aeval.symtable.update({
             'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
             'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
@@ -62,15 +70,23 @@ class ProjectManager:
                     if define_obj.type in ['position', 'rotation', 'scale']:
                         val_dict = {}
                         raw_dict = define_obj.raw_expression
-                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
+                        # We handle units on the GDML side by multiplying in the expression string now
+                        # but we still need to apply the default unit from the parent tag if it exists.
+                        unit_str = define_obj.unit
                         for axis in ['x', 'y', 'z']:
                             if axis in raw_dict:
-                                val_dict[axis] = aeval.eval(str(raw_dict[axis])) * unit_factor
+                                expr_to_eval = raw_dict[axis]
+                                # If a unit is defined on the parent tag, apply it
+                                if unit_str:
+                                    expr_to_eval = f"({expr_to_eval}) * {unit_str}"
+                                val_dict[axis] = aeval.eval(expr_to_eval)
                         define_obj.value = val_dict
                     else: # constant, quantity, expression
-                        raw_expr = str(define_obj.raw_expression)
-                        unit_factor = get_unit_value(define_obj.unit, define_obj.category) if define_obj.unit else 1.0
-                        define_obj.value = aeval.eval(raw_expr) * unit_factor
+                        expr_to_eval = str(define_obj.raw_expression)
+                        unit_str = define_obj.unit
+                        if unit_str:
+                             expr_to_eval = f"({expr_to_eval}) * {unit_str}"
+                        define_obj.value = aeval.eval(expr_to_eval)
                     
                     # Add successfully evaluated define to the symbol table for the next ones.
                     aeval.symtable[define_obj.name] = define_obj.value
@@ -127,12 +143,23 @@ class ProjectManager:
         for vol in all_volumes_with_placements:
             placements = getattr(vol, 'placements', getattr(vol, 'phys_children', []))
             for pv in placements:
+
+                # Evaluate the copy number.
+                try:
+                    pv.copy_number = int(aeval.eval(str(pv.copy_number_expr)))
+                except Exception as e:
+                    print(f"Warning: Could not evaluate copy number for '{pv.name}': {e}. Defaulting to 0.")
+                    pv.copy_number = 0
+
                 # Position
                 if isinstance(pv.position, str): # It's a reference to a define
                     pv._evaluated_position = aeval.symtable.get(pv.position, {'x':0,'y':0,'z':0})
                 elif isinstance(pv.position, dict): # It's a dict of expressions
                     for axis, raw_expr in pv.position.items():
-                        pv._evaluated_position[axis] = aeval.eval(str(raw_expr))
+                        try:
+                            pv._evaluated_position[axis] = aeval.eval(str(raw_expr))
+                        except Exception:
+                            pv._evaluated_position[axis] = 0
                 else: # Default case
                     pv._evaluated_position = {'x':0, 'y':0, 'z':0}
 
@@ -141,7 +168,10 @@ class ProjectManager:
                     pv._evaluated_rotation = aeval.symtable.get(pv.rotation, {'x':0,'y':0,'z':0})
                 elif isinstance(pv.rotation, dict):
                     for axis, raw_expr in pv.rotation.items():
-                        pv._evaluated_rotation[axis] = aeval.eval(str(raw_expr))
+                        try:
+                            pv._evaluated_rotation[axis] = aeval.eval(str(raw_expr))
+                        except Exception:
+                            pv._evaluated_rotation[axis] = 0
                 else:
                     pv._evaluated_rotation = {'x':0, 'y':0, 'z':0}
 
@@ -150,17 +180,28 @@ class ProjectManager:
                     pv._evaluated_scale = aeval.symtable.get(pv.scale, {'x':1,'y':1,'z':1})
                 elif isinstance(pv.scale, dict):
                     for axis, raw_expr in pv.scale.items():
-                        pv._evaluated_scale[axis] = aeval.eval(str(raw_expr))
+                        try:
+                            pv._evaluated_scale[axis] = aeval.eval(str(raw_expr))
+                        except Exception:
+                             pv._evaluated_scale[axis] = 1
                 else:
                     pv._evaluated_scale = {'x':1, 'y':1, 'z':1}
 
         return True, None
 
     def load_gdml_from_string(self, gdml_string):
+        """
+        Orchestrates GDML parsing AND evaluation.
+        """
+        # Step 1: Parse the GDML into a raw state with expressions.
         self.current_geometry_state = self.gdml_parser.parse_gdml_string(gdml_string)
+        
+        # Step 2: Now that the full raw state is loaded, evaluate everything.
         success, error_msg = self.recalculate_geometry_state()
         if not success:
             print(f"Warning after parsing GDML: {error_msg}")
+            # Even if it fails, we return the partially evaluated state for debugging.
+        
         return self.current_geometry_state
 
     def get_threejs_description(self):
