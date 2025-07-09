@@ -1,5 +1,7 @@
 // FILE: virtual-pet/static/materialEditor.js
 
+import * as ExpressionInput from './expressionInput.js';
+
 let modalElement, titleElement, nameInput, confirmButton, cancelButton, paramsDiv;
 let simpleRadio, mixtureRadio;
 let onConfirmCallback = null;
@@ -67,98 +69,29 @@ function hide() {
     modalElement.style.display = 'none';
 }
 
-// Helper to create an expression input field with live evaluation
-function createExpressionInput(id, label, initialValue = '0') {
-    return `
-        <div class="property_item" style="flex-direction: column; align-items: flex-start;">
-            <label for="${id}">${label}:</label>
-            <div style="display: flex; width: 100%; align-items: center;">
-                <input type="text" id="${id}" class="expression-input" value="${initialValue}" style="flex-grow: 1; font-family: monospace;">
-                <input type="text" id="${id}-result" class="expression-result" style="width: 80px; margin-left: 5px;" readonly disabled>
-            </div>
-        </div>
-    `;
-}
-
-// Helper to attach live evaluation logic to an input field
-function attachLiveEvaluation(inputId, resultId) {
-    const inputEl = document.getElementById(inputId);
-    const resultEl = document.getElementById(resultId);
-    
-    const evaluate = async () => {
-        const expression = inputEl.value;
-        if (!expression.trim()) {
-            resultEl.value = '';
-            resultEl.style.borderColor = '#ccc';
-            return;
-        }
-        try {
-            // We use the project state passed to the editor
-            const response = await APIService.evaluateExpression(expression, currentProjectState);
-            if (response.success) {
-                resultEl.value = response.result.toPrecision(4);
-                resultEl.style.borderColor = '#ccc';
-                resultEl.title = `Evaluated: ${response.result}`;
-            } else {
-                resultEl.value = 'Error';
-                resultEl.style.borderColor = 'red';
-                resultEl.title = response.error;
-            }
-        } catch (error) {
-            resultEl.value = 'Error';
-            resultEl.style.borderColor = 'red';
-            resultEl.title = error.message;
-        }
-    };
-    
-    inputEl.addEventListener('input', evaluate);
-    inputEl.addEventListener('change', evaluate); // Also on change for blur events
-    evaluate(); // Trigger initial evaluation
-}
-
-function renderParamsUI(matData = null, forceDefaults = false) {
+function renderParamsUI(matData = null) {
     paramsDiv.innerHTML = '';
     const isSimple = simpleRadio.checked;
     
     if (isSimple) {
-        // Use the new expression input helper
-        paramsDiv.innerHTML = 
-            createExpressionInput('mat_Z', 'Atomic Number (Z)') +
-            createExpressionInput('mat_A', 'Atomic Mass (g/mole)') +
-            createExpressionInput('mat_density', 'Density (g/cm³)');
-
-        if (matData && !forceDefaults) {
-            document.getElementById('mat_Z').value = matData.Z_expr || '';
-            document.getElementById('mat_A').value = matData.A_expr || '';
-            document.getElementById('mat_density').value = matData.density_expr || '0.0';
-        } else {
-            // Set default values for a new simple material
-            document.getElementById('mat_Z').value = '1';
-            document.getElementById('mat_A').value = '1.008';
-            document.getElementById('mat_density').value = '1.0';
-        }
-
-        // Attach live evaluation listeners
-        attachLiveEvaluation('mat_Z', 'mat_Z-result');
-        attachLiveEvaluation('mat_A', 'mat_A-result');
-        attachLiveEvaluation('mat_density', 'mat_density-result');
-
+        // Use the new component for each parameter
+        paramsDiv.appendChild(ExpressionInput.create('mat_Z', 'Atomic Number (Z)', matData?.Z_expr || '1', currentProjectState));
+        paramsDiv.appendChild(ExpressionInput.create('mat_A', 'Atomic Mass (g/mole)', matData?.A_expr || '1.008', currentProjectState));
+        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
     } else { // Mixture
-        // Use the new expression input helper for density
-        paramsDiv.innerHTML = 
-            createExpressionInput('mat_density', 'Density (g/cm³)') +
-            `<hr>
+        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
+        
+        const hr = document.createElement('hr');
+        const mixtureHtml = `
             <h6>Components (by mass fraction)</h6>
             <div id="material-components-list"></div>
             <button id="add-mat-comp-btn" class="add_button" style="margin-top: 10px;">+ Add Component</button>`;
+        const mixtureDiv = document.createElement('div');
+        mixtureDiv.innerHTML = mixtureHtml;
 
-        if (matData && !forceDefaults) {
-            document.getElementById('mat_density').value = matData.density_expr || '0.0';
-        } else {
-            document.getElementById('mat_density').value = '1.0';
-        }
+        paramsDiv.appendChild(hr);
+        paramsDiv.appendChild(mixtureDiv);
         
-        attachLiveEvaluation('mat_density', 'mat_density-result');
         document.getElementById('add-mat-comp-btn').addEventListener('click', addComponentRow);
         rebuildComponentsUI();
     }
@@ -169,34 +102,60 @@ function rebuildComponentsUI() {
     if (!listDiv) return;
     listDiv.innerHTML = '';
 
-    // A material mixture can be composed of other materials or elements
-    // For now, we only support mixing other materials for simplicity.
     const materials = Object.keys(currentProjectState.materials || {});
 
     materialComponents.forEach((comp, index) => {
         const row = document.createElement('div');
         row.className = 'property_item';
-        row.innerHTML = `
-            <label>Material:</label>
-            <select class="comp-ref" data-index="${index}"></select>
-            <label>Fraction:</label>
-            <input type="number" step="any" class="comp-frac" data-index="${index}" value="${comp.fraction}">
-            <button class="remove-op-btn" data-index="${index}">×</button>
-        `;
-        listDiv.appendChild(row);
-
-        const select = row.querySelector('.comp-ref');
+        
+        // --- Create the select dropdown for material reference ---
+        const selectLabel = document.createElement('label');
+        selectLabel.textContent = "Material:";
+        const select = document.createElement('select');
+        select.className = 'comp-ref';
+        select.dataset.index = index;
         materials.forEach(matName => {
-            if (isEditMode && matName === editingMaterialId) return; // Prevent self-reference
+            if (isEditMode && matName === editingMaterialId) return;
             const opt = document.createElement('option');
             opt.value = matName;
             opt.textContent = matName;
             select.appendChild(opt);
         });
         select.value = comp.ref;
+
+        // --- Create the fraction label and expression input ---
+        const fractionLabel = document.createElement('label');
+        fractionLabel.textContent = "Fraction:";
+        fractionLabel.style.marginLeft = '10px';
+
+        // ## FIX: Use the new inline expression component for the fraction
+        const fractionInputComponent = ExpressionInput.createInline(
+            `mat_comp_frac_${index}`,
+            comp.fraction, // This is now an expression string
+            currentProjectState,
+            (newValue) => { // onChange callback
+                materialComponents[index].fraction = newValue;
+            }
+        );
+        fractionInputComponent.id = `mat-comp-frac-wrapper-${index}`; // Add an ID to the wrapper itself
+
+        // --- Create the remove button ---
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-op-btn';
+        removeBtn.dataset.index = index;
+        removeBtn.textContent = '×';
+        
+        // --- Assemble the row ---
+        row.appendChild(selectLabel);
+        row.appendChild(select);
+        row.appendChild(fractionLabel);
+        row.appendChild(fractionInputComponent);
+        row.appendChild(removeBtn);
+        listDiv.appendChild(row);
     });
 
-    document.querySelectorAll('.comp-ref, .comp-frac').forEach(el => el.addEventListener('change', updateComponentState));
+    // Attach listeners for select and remove buttons
+    document.querySelectorAll('.comp-ref').forEach(el => el.addEventListener('change', updateComponentState));
     document.querySelectorAll('.remove-op-btn').forEach(btn => btn.addEventListener('click', removeComponentRow));
 }
 
@@ -206,7 +165,8 @@ function addComponentRow() {
         alert("No other materials available to add to the mixture.");
         return;
     }
-    materialComponents.push({ ref: availableMaterials[0], fraction: 0.0 });
+    // Initialize fraction as a string expression
+    materialComponents.push({ ref: availableMaterials[0], fraction: '0.0' });
     rebuildComponentsUI();
 }
 
@@ -218,10 +178,10 @@ function removeComponentRow(event) {
 
 function updateComponentState(event) {
     const index = parseInt(event.target.dataset.index, 10);
+    // The fraction is updated live by the component's onChange callback.
+    // We only need to handle the dropdown change here.
     if (event.target.classList.contains('comp-ref')) {
         materialComponents[index].ref = event.target.value;
-    } else {
-        materialComponents[index].fraction = parseFloat(event.target.value) || 0;
     }
 }
 
@@ -233,23 +193,18 @@ function handleConfirm() {
     let params = {};
 
     if (isSimple) {
-        // Get the raw expression strings from the inputs
         params = {
             Z_expr: document.getElementById('mat_Z').value,
             A_expr: document.getElementById('mat_A').value,
             density_expr: document.getElementById('mat_density').value,
-            components: [] // Empty components for a simple material
+            components: []
         };
     } else {
-        const totalFraction = materialComponents.reduce((sum, comp) => sum + (comp.fraction || 0), 0);
-        if (Math.abs(totalFraction - 1.0) > 0.01) {
-            alert(`Mass fractions must sum to 1.0. Current sum: ${totalFraction.toFixed(4)}`);
-            return;
-        }
+        // TODO: NEED TO VALIDATE THE FRACTIONAL COMPONENTS
         params = {
             density_expr: document.getElementById('mat_density').value,
-            components: materialComponents,
-            Z_expr: null, // Simple materials don't have these
+            components: materialComponents, // This now contains string expressions for fractions
+            Z_expr: null,
             A_expr: null
         };
     }

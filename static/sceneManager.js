@@ -376,7 +376,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             geometry = new THREE.BoxGeometry(p.x, p.y, p.z);
             break;
         case 'tube':
-            if (!p.rmin || p.rmin <= 1e-9) { // Solid Cylinder
+            if (p.rmin <= 1e-9) { // Solid Cylinder
                 geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.dz * 2, 32, 1, false, p.startphi, p.deltaphi);
                 geometry.rotateX(Math.PI / 2);
             } else { // Hollow Tube

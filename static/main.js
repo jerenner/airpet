@@ -814,11 +814,11 @@ async function handlePVEditorConfirm(data) {
 }
 
 function handleAddDefine() {
-    DefineEditor.show();
+    DefineEditor.show(null, AppState.currentProjectState);
 }
 
 function handleEditDefine(defineData) {
-    DefineEditor.show(defineData);
+    DefineEditor.show(defineData, AppState.currentProjectState);
 }
 
 async function handleDefineEditorConfirm(data) {
@@ -826,7 +826,7 @@ async function handleDefineEditorConfirm(data) {
     if (data.isEdit) {
         UIManager.showLoading("Updating Define...");
         try {
-            const result = await APIService.updateDefine(data.id, data.value, data.unit, data.category);
+            const result = await APIService.updateDefine(data.id, data.raw_expression, data.unit, data.category);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating define: " + (error.message || error));
@@ -834,10 +834,10 @@ async function handleDefineEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Define...");
         try {
-            const result = await APIService.addDefine(data.name, data.type, data.value, data.unit, data.category);
+            const result = await APIService.addDefine(data.name, data.type, data.raw_expression, data.unit, data.category);
             
-            // After creating, set the selection to the newly created define
-            syncUIWithState(result, [{ type: 'define', id: data.name }]);
+            const newDefineName = result.project_state.defines[data.name] ? data.name : Object.keys(result.project_state.defines).find(k => k.startsWith(data.name));
+            syncUIWithState(result, [{ type: 'define', id: newDefineName, name: newDefineName }]);
         } catch (error) {
             UIManager.showError("Error creating define: " + (error.message || error));
         } finally { UIManager.hideLoading(); }

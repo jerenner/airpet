@@ -1,12 +1,12 @@
 // FILE: virtual-pet/static/defineEditor.js
 
-import * as THREE from 'three';
-import * as APIService from './apiService.js';
+import * as ExpressionInput from './expressionInput.js';
 
 let modalElement, titleElement, nameInput, typeSelect, confirmButton, cancelButton, dynamicParamsDiv;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingDefineId = null;
+let currentProjectState = null;
 
 export function initDefineEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -30,7 +30,9 @@ export function initDefineEditor(callbacks) {
     console.log("Define Editor Initialized.");
 }
 
-export function show(defineData = null) {
+export function show(defineData = null, projectState = null) {
+    currentProjectState = projectState; // Cache the project state for context
+
     if (defineData && defineData.name) {
         // EDIT MODE
         isEditMode = true;
@@ -65,37 +67,41 @@ function renderParamsUI(rawExpr = null) {
     dynamicParamsDiv.innerHTML = '';
     const type = typeSelect.value;
     
-    const createExpressionUI = (label, exprId, initialExpr) => `
-        <div class="property_item" style="flex-direction: column; align-items: flex-start;">
-            <label for="${exprId}">${label}:</label>
-            <input type="text" id="${exprId}" class="expression-input" value="${initialExpr}" style="width: 95%; font-family: monospace;">
-        </div>
-    `;
-
     if (type === 'constant' || type === 'quantity') {
-        dynamicParamsDiv.innerHTML = createExpressionUI('Value / Expression', 'def_expr_input', rawExpr !== null ? rawExpr : '0');
+        // For simple defines, create a single expression input.
+        // If editing, `rawExpr` will be a string. If creating, it's null.
+        const initialValue = rawExpr !== null ? String(rawExpr) : '0';
+        dynamicParamsDiv.appendChild(
+            ExpressionInput.create('def_expr_value', 'Value', initialValue, currentProjectState)
+        );
     } else if (type === 'position' || type === 'rotation' || type === 'scale') {
-        let uiHTML = '';
-        const raw = (rawExpr && typeof rawExpr === 'object') ? rawExpr : {};
-        ['x', 'y', 'z'].forEach(axis => {
-            uiHTML += createExpressionUI(axis.toUpperCase(), `def_expr_${axis}`, raw[axis] !== undefined ? raw[axis] : '0');
-        });
-        uiHTML += `<div class="property_item"><label>Unit:</label><input type="text" value="${type === 'rotation' ? 'deg' : (type === 'position' ? 'mm' : 'N/A')}" disabled></div>`;
-        dynamicParamsDiv.innerHTML = uiHTML;
+        // For compound defines, create an input for each axis.
+        // If editing, `rawExpr` is a dict like {x: 'val_x', ...}. If creating, it's null.
+        const initialX = rawExpr?.x || '0';
+        const initialY = rawExpr?.y || '0';
+        const initialZ = rawExpr?.z || '0';
+
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_x', 'Value X', initialX, currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_y', 'Value Y', initialY, currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_z', 'Value Z', initialZ, currentProjectState));
     }
 }
 
 async function handleConfirm() {
     const name = nameInput.value.trim();
-    if (!name && !isEditMode) { alert("Please provide a name."); return; }
+    if (!name && !isEditMode) {
+        alert("Please provide a name.");
+        return;
+    }
     
     const type = typeSelect.value;
     let rawExpression, unit, category;
 
     if (type === 'constant' || type === 'quantity') {
-        rawExpression = document.getElementById('def_expr_input').value;
-        unit = (type === 'quantity') ? 'mm' : null; // Example, could be made dynamic
-        category = 'dimensionless';
+        rawExpression = document.getElementById('def_expr_value').value;
+        unit = (type === 'quantity') ? 'mm' : null; // This is a simplification; a unit dropdown could be added.
+        category = (type === 'quantity') ? 'length' : 'dimensionless';
+
     } else if (type === 'position' || type === 'rotation' || type === 'scale') {
         rawExpression = {
             x: document.getElementById('def_expr_x').value,
@@ -105,6 +111,9 @@ async function handleConfirm() {
         if (type === 'rotation') { unit = 'deg'; category = 'angle'; }
         else if (type === 'position') { unit = 'mm'; category = 'length'; }
         else { unit = null; category = 'dimensionless'; }
+    } else {
+        alert("Unknown define type selected.");
+        return;
     }
 
     onConfirmCallback({

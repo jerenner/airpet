@@ -273,7 +273,7 @@ class ProjectManager:
             return False, f"Update failed during recalculation: {error_msg}"
         return True, None
 
-    def add_define(self, name_suggestion, define_type, value_dict, unit=None, category=None):
+    def add_define(self, name_suggestion, define_type, raw_expression, unit=None, category=None):
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.defines)
         new_define = Define(name, define_type, raw_expression, unit, category)

@@ -5,6 +5,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createPrimitiveGeometry } from './sceneManager.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 import * as APIService from './apiService.js';
+import * as ExpressionInput from './expressionInput.js';
 
 // --- Module State ---
 let scene, camera, renderer, controls;
@@ -161,16 +162,6 @@ export function show(solidData = null, projectState = null) {
                     solid: solidObject, 
                 };
             });
-            // Reconstruct the recipe with full solid objects, not just refs
-            // booleanRecipe = savedRecipe.map(item => {
-            //     const solidObject = currentProjectState.solids[item.solid_ref];
-            //     return {
-            //         op: item.op,
-            //         solid: solidObject, // Use the full solid object
-            //         transform: item.transform // This is already in the correct format
-            //     };
-            // });
-
         }
         
         // Populate parameters after the UI is rendered
@@ -300,38 +291,80 @@ function renderParamsUI(params = {}) {
         rebuildBooleanUI();
     } else {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
+
+        // Use a helper function `p` to safely get initial values for editing
+        const p = (key, defaultVal) => params[key] || defaultVal;
         
         // Use the expression input helper for all primitives
         const uiBuilders = {
-            box: () => createExpressionInput('p_x', 'Size X (mm)', '100') + createExpressionInput('p_y', 'Size Y (mm)', '100') + createExpressionInput('p_z', 'Size Z (mm)', '100'),
-            tube: () => createExpressionInput('p_rmin', 'Inner Radius (mm)', '0') + createExpressionInput('p_rmax', 'Outer Radius (mm)', '50') + createExpressionInput('p_dz', 'Full Length Z (mm)', '200') + createExpressionInput('p_startphi', 'Start Phi (deg)', '0') + createExpressionInput('p_deltaphi', 'Delta Phi (deg)', '360'),
-            cone: () => createExpressionInput('p_rmin1', 'Inner Radius 1 (mm)', '0') + createExpressionInput('p_rmax1', 'Outer Radius 1 (mm)', '50') + createExpressionInput('p_rmin2', 'Inner Radius 2 (mm)', '0') + createExpressionInput('p_rmax2', 'Outer Radius 2 (mm)', '75') + createExpressionInput('p_dz', 'Full Length Z (mm)', '200') + createExpressionInput('p_startphi', 'Start Phi (deg)', '0') + createExpressionInput('p_deltaphi', 'Delta Phi (deg)', '360'),
-            sphere: () => createExpressionInput('p_rmin', 'Inner Radius (mm)', '0') + createExpressionInput('p_rmax', 'Outer Radius (mm)', '100') + createExpressionInput('p_startphi', 'Start Phi (deg)', '0') + createExpressionInput('p_deltaphi', 'Delta Phi (deg)', '360') + createExpressionInput('p_starttheta', 'Start Theta (deg)', '0') + createExpressionInput('p_deltatheta', 'Delta Theta (deg)', '180'),
-            orb: () => createExpressionInput('p_r', 'Radius (mm)', '100'),
-            torus: () => createExpressionInput('p_rmin', 'Min Radius (mm)', '20') + createExpressionInput('p_rmax', 'Max Radius (mm)', '30') + createExpressionInput('p_rtor', 'Torus Radius (mm)', '100') + createExpressionInput('p_startphi', 'Start Phi (deg)', '0') + createExpressionInput('p_deltaphi', 'Delta Phi (deg)', '360'),
-            trd: () => createExpressionInput('p_dx1', 'X Half-Length 1 (mm)', '50') + createExpressionInput('p_dx2', 'X Half-Length 2 (mm)', '75') + createExpressionInput('p_dy1', 'Y Half-Length 1 (mm)', '50') + createExpressionInput('p_dy2', 'Y Half-Length 2 (mm)', '75') + createExpressionInput('p_dz', 'Z Half-Length (mm)', '100'),
-            para: () => createExpressionInput('p_dx', 'X Half-Length (mm)', '50') + createExpressionInput('p_dy', 'Y Half-Length (mm)', '60') + createExpressionInput('p_dz', 'Z Half-Length (mm)', '70') + createExpressionInput('p_alpha', 'Alpha (deg)', '15') + createExpressionInput('p_theta', 'Theta (deg)', '15') + createExpressionInput('p_phi', 'Phi (deg)', '15'),
-            eltube: () => createExpressionInput('p_dx', 'Semi-axis dx (mm)', '50') + createExpressionInput('p_dy', 'Semi-axis dy (mm)', '75') + createExpressionInput('p_dz', 'Half-length dz (mm)', '100')
+            box: () => [
+                ExpressionInput.create('p_x', 'Size X (mm)', p('x', '100'), currentProjectState),
+                ExpressionInput.create('p_y', 'Size Y (mm)', p('y', '100'), currentProjectState),
+                ExpressionInput.create('p_z', 'Size Z (mm)', p('z', '100'), currentProjectState)
+            ],
+            tube: () => [
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+            ],
+            cone: () => [
+                ExpressionInput.create('p_rmin1', 'Inner Radius 1 (mm)', p('rmin1', '0'), currentProjectState),
+                ExpressionInput.create('p_rmax1', 'Outer Radius 1 (mm)', p('rmax1', '50'), currentProjectState),
+                ExpressionInput.create('p_rmin2', 'Inner Radius 2 (mm)', p('rmin2', '0'), currentProjectState),
+                ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+            ],
+            sphere: () => [
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState),
+                ExpressionInput.create('p_starttheta', 'Start Theta (rad)', p('starttheta', '0'), currentProjectState),
+                ExpressionInput.create('p_deltatheta', 'Delta Theta (rad)', p('deltatheta', 'pi'), currentProjectState)
+            ],
+            orb: () => [
+                ExpressionInput.create('p_r', 'Radius (mm)', p('r', '100'), currentProjectState)
+            ],
+            torus: () => [
+                ExpressionInput.create('p_rmin', 'Min Radius (mm)', p('rmin', '20'), currentProjectState),
+                ExpressionInput.create('p_rmax', 'Max Radius (mm)', p('rmax', '30'), currentProjectState),
+                ExpressionInput.create('p_rtor', 'Torus Radius (mm)', p('rtor', '100'), currentProjectState),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+            ],
+            trd: () => [
+                ExpressionInput.create('p_dx1', 'X Half-Length 1 (mm)', p('dx1', '50'), currentProjectState),
+                ExpressionInput.create('p_dx2', 'X Half-Length 2 (mm)', p('dx2', '75'), currentProjectState),
+                ExpressionInput.create('p_dy1', 'Y Half-Length 1 (mm)', p('dy1', '50'), currentProjectState),
+                ExpressionInput.create('p_dy2', 'Y Half-Length 2 (mm)', p('dy2', '75'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'), currentProjectState)
+            ],
+            para: () => [
+                ExpressionInput.create('p_dx', 'X Half-Length (mm)', p('dx', '50'), currentProjectState),
+                ExpressionInput.create('p_dy', 'Y Half-Length (mm)', p('dy', '60'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '70'), currentProjectState),
+                ExpressionInput.create('p_alpha', 'Alpha (rad)', p('alpha', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'), currentProjectState)
+            ],
+            eltube: () => [
+                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
+                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'), currentProjectState)
+            ]
         };
         
         dynamicParamsDiv.innerHTML = uiBuilders[type] ? uiBuilders[type]() : `<p>Parameters for '${type}' not implemented yet.</p>`;
-
-        if (isEditMode) {
-            // Populate inputs from raw_parameters, not just params
-            for (const key in params) {
-                const inputEl = document.getElementById(`p_${key}`);
-                if (inputEl) {
-                    inputEl.value = params[key]; // This is now a string expression
-                }
-            }
-        }
         
-        // Attach live evaluation to all generated inputs
-        dynamicParamsDiv.querySelectorAll('.expression-input').forEach(input => {
-            attachLiveEvaluation(input.id, `${input.id}-result`);
-            input.addEventListener('input', updatePreview);
-            input.addEventListener('change', updatePreview);
-        });
+        const components = uiBuilders[type] ? uiBuilders[type]() : [document.createElement('p').textContent = `Parameters for '${type}' not implemented yet.`];
+        components.forEach(comp => dynamicParamsDiv.appendChild(comp));
+
+        // The 'change' event listener will call updatePreview, which is what we want.
+        dynamicParamsDiv.addEventListener('change', updatePreview);
     }
     updatePreview();
 }
@@ -487,7 +520,6 @@ function attachBooleanListeners() {
 }
 
 function getRawParamsFromUI() {
-    // This function now correctly gets the raw string expressions.
     const type = typeSelect.value;
     const raw_params = {};
     const p = (id) => document.getElementById(id)?.value.trim() || '0';
@@ -495,37 +527,37 @@ function getRawParamsFromUI() {
     if (type === 'box') {
         raw_params.x = p('p_x'); raw_params.y = p('p_y'); raw_params.z = p('p_z');
     } else if (type === 'tube') {
-        raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); 
+        raw_params.rmin = p('p_rmin');
+        raw_params.rmax = p('p_rmax'); 
         raw_params.dz = p('p_dz');
-        raw_params.startphi = `(${p('p_startphi')}) * deg`;
-        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
     } else if (type === 'cone') {
         raw_params.rmin1 = p('p_rmin1'); raw_params.rmax1 = p('p_rmax1');
         raw_params.rmin2 = p('p_rmin2'); raw_params.rmax2 = p('p_rmax2');
         raw_params.dz = p('p_dz');
-        raw_params.startphi = `(${p('p_startphi')}) * deg`;
-        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
     } else if (type === 'sphere') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax');
-        raw_params.startphi = `(${p('p_startphi')}) * deg`;
-        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
-        raw_params.starttheta = `(${p('p_starttheta')}) * deg`;
-        raw_params.deltatheta = `(${p('p_deltatheta')}) * deg`;
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.starttheta = p('p_starttheta');
+        raw_params.deltatheta = p('p_deltatheta');
     } else if (type === 'orb') {
         raw_params.r = p('p_r');
     } else if (type === 'torus') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); raw_params.rtor = p('p_rtor');
-        raw_params.startphi = `(${p('p_startphi')}) * deg`;
-        raw_params.deltaphi = `(${p('p_deltaphi')}) * deg`;
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
     } else if (type === 'trd') {
         raw_params.dx1 = p('p_dx1'); raw_params.dx2 = p('p_dx2');
         raw_params.dy1 = p('p_dy1'); raw_params.dy2 = p('p_dy2');
         raw_params.dz = p('p_dz');
     } else if (type === 'para') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy'); raw_params.dz = p('p_dz');
-        raw_params.alpha = `(${p('p_alpha')}) * deg`;
-        raw_params.theta = `(${p('p_theta')}) * deg`;
-        raw_params.phi = `(${p('p_phi')}) * deg`;
+        raw_params.alpha = p('p_alpha'); raw_params.theta = p('p_theta');
+        raw_params.phi = p('p_phi');
     } else if (type === 'eltube') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
         raw_params.dz = p('p_dz');
@@ -569,6 +601,7 @@ async function updatePreview() {
 
                 const nextSolidGeom = createPrimitiveGeometry(item.solid, currentProjectState, csgEvaluator);
                 if (!nextSolidGeom) continue;
+                console.log("Next solid geom is ",nextSolidGeom)
 
                 const nextBrush = new Brush(nextSolidGeom);
                 

@@ -379,18 +379,18 @@ async function createPVTransformEditor(parent, pvData, projectState) {
     }
     
     // --- Create Position Editor ---
-    const posEditor = buildSingleTransformEditor('position', 'Position (mm)', 'pos', pvData, posDefines);
+    const posEditor = buildSingleTransformEditor('position', 'Position (mm)', pvData, posDefines);
     transformWrapper.appendChild(posEditor);
 
     // --- Create Rotation Editor ---
-    const rotEditor = buildSingleTransformEditor('rotation', 'Rotation (deg, ZYX)', 'rot', pvData, rotDefines);
+    const rotEditor = buildSingleTransformEditor('rotation', 'Rotation (deg, ZYX)', pvData, rotDefines);
     transformWrapper.appendChild(rotEditor);
 
     parent.appendChild(transformWrapper);
 }
 
 // Helper to build one transform block (e.g., for position or rotation)
-function buildSingleTransformEditor(transformType, labelText, prefix, pvData, defines) {
+function buildSingleTransformEditor(transformType, labelText, pvData, defines) {
     const group = document.createElement('div');
     group.className = 'transform-group';
 

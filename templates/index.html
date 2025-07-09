@@ -700,6 +700,43 @@
             color: white; /* Make icons white on selected folder */
         }
 
+        /* Styles for the Expression Input Component ## */
+        .expression-component {
+            display: flex;
+            flex-direction: column; /* Stack label on top of input wrapper */
+            margin-bottom: 8px; /* Consistent spacing */
+        }
+        .expression-component label {
+            margin-bottom: 4px; /* Space between label and input */
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+        }
+        .expression-component .input-wrapper {
+            display: flex;
+            width: 100%;
+            align-items: center;
+        }
+        .expression-component .expression-input {
+            flex-grow: 1;
+            font-family: monospace;
+            border: 1px solid #ccc;
+            padding: 4px;
+            border-radius: 3px;
+        }
+        .expression-component .expression-result {
+            flex-shrink: 0;
+            width: 70px; /* Fixed width for the result */
+            margin-left: 5px;
+            text-align: right;
+            font-family: monospace;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            color: #555;
+            padding: 4px;
+            border-radius: 3px;
+        }
+
     </style>
 </head>
 <body>

@@ -135,20 +135,20 @@ export async function getObjectDetails(objectType, objectId) {
     return handleResponse(response);
 }
 
-export async function addDefine(name, type, value, unit, category) {
+export async function addDefine(name, type, rawExpression, unit, category) {
     const response = await fetch(`${API_BASE_URL}/add_define`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, type, value, unit, category })
+        body: JSON.stringify({ name, type, value: rawExpression, unit, category }) // Backend expects 'value' key
     });
     return handleResponse(response);
 }
 
-export async function updateDefine(id, value, unit, category) {
+export async function updateDefine(id, rawExpression, unit, category) {
     const response = await fetch(`${API_BASE_URL}/update_define`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, value, unit, category })
+        body: JSON.stringify({ id, value: rawExpression, unit, category }) // Backend expects 'value' key
     });
     return handleResponse(response);
 }
