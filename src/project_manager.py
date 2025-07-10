@@ -120,22 +120,99 @@ class ProjectManager:
                 print(f"Warning: Could not evaluate material property for '{material.name}': {e}")
 
 
-        # --- Stage 3: Evaluate all solid parameters ---
+        # --- Stage 3: Evaluate and NORMALIZE solid parameters ---
         for solid in state.solids.values():
             solid._evaluated_parameters = {}
-            for key, raw_expr in solid.raw_parameters.items():
-                if isinstance(raw_expr, str):
+            raw_params = solid.raw_parameters
+            
+            default_lunit = raw_params.get('lunit')
+            default_aunit = raw_params.get('aunit')
+
+            length_attrs = ['x', 'y', 'z', 'rmin', 'rmax', 'r', 'dx', 'dy', 'dz', 'dx1', 'dx2', 'dy1', 'y2', 'rtor', 'ax', 'by', 'cz', 'zcut1', 'zcut2', 'zmax', 'zcut', 'rlo', 'rhi', 'rmin1', 'rmax1', 'rmin2', 'rmax2', 'x1', 'x2', 'y1', 'x3', 'x4']
+            angle_attrs = ['startphi', 'deltaphi', 'starttheta', 'deltatheta', 'alpha', 'theta', 'phi', 'inst', 'outst', 'PhiTwist', 'alpha1', 'alpha2', 'Alph', 'Theta', 'Phi', 'twistedangle']
+
+            # First, evaluate all expressions into a temporary dictionary
+            temp_eval_params = {}
+            for key, raw_expr in raw_params.items():
+                if key in ['lunit', 'aunit']: continue
+
+                expr_to_eval = str(raw_expr)
+                if key in length_attrs and default_lunit:
+                    expr_to_eval = f"({expr_to_eval}) * {default_lunit}"
+                elif key in angle_attrs and default_aunit:
+                    expr_to_eval = f"({expr_to_eval}) * {default_aunit}"
+                
+                if isinstance(raw_expr, (str, int, float)):
                     try:
-                        solid._evaluated_parameters[key] = aeval.eval(raw_expr)
+                        temp_eval_params[key] = aeval.eval(expr_to_eval)
                     except Exception as e:
-                        print(f"Warning: Could not eval solid param '{key}' for solid '{solid.name}': {e}")
-                        solid._evaluated_parameters[key] = 0
-                elif isinstance(raw_expr, (int, float)):
-                    # Handle cases where the value is already a number
-                    solid._evaluated_parameters[key] = raw_expr
+                        print(f"Warning: Could not eval solid param '{key}' for solid '{solid.name}' with expression '{expr_to_eval}': {e}")
+                        temp_eval_params[key] = float('nan')
                 else:
-                    # For other types (like a boolean recipe list), just copy it.
-                    solid._evaluated_parameters[key] = raw_expr
+                    temp_eval_params[key] = raw_expr
+
+            # ## UPDATED: Second pass for normalization now includes defaults ##
+            p = temp_eval_params
+            ep = solid._evaluated_parameters
+
+            solid_type = solid.type
+            if solid_type == 'box':
+                ep['x'] = p.get('x', 0)
+                ep['y'] = p.get('y', 0)
+                ep['z'] = p.get('z', 0)
+            
+            elif solid_type == 'tube':
+                ep['rmin'] = p.get('rmin', 0)
+                ep['rmax'] = p.get('rmax', 0)
+                ep['dz'] = p.get('z', 0) / 2.0
+                ep['startphi'] = p.get('startphi', 0)
+                ep['deltaphi'] = p.get('deltaphi', 2 * math.pi) # Default is a full circle
+
+            elif solid_type == 'cone':
+                ep['rmin1'] = p.get('rmin1', 0)
+                ep['rmax1'] = p.get('rmax1', 0)
+                ep['rmin2'] = p.get('rmin2', 0)
+                ep['rmax2'] = p.get('rmax2', 0)
+                ep['dz'] = p.get('z', 0) / 2.0
+                ep['startphi'] = p.get('startphi', 0)
+                ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
+
+            elif solid_type == 'sphere':
+                ep['rmin'] = p.get('rmin', 0)
+                ep['rmax'] = p.get('rmax', 0)
+                ep['startphi'] = p.get('startphi', 0)
+                ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
+                ep['starttheta'] = p.get('starttheta', 0)
+                ep['deltatheta'] = p.get('deltatheta', math.pi)
+
+            elif solid_type == 'trd':
+                ep['dx1'] = p.get('x1', 0) / 2.0
+                ep['dx2'] = p.get('x2', 0) / 2.0
+                ep['dy1'] = p.get('y1', 0) / 2.0
+                ep['dy2'] = p.get('y2', 0) / 2.0
+                ep['dz'] = p.get('z', 0) / 2.0
+
+            elif solid.type == 'para':
+                ep['dx'] = p.get('x', 0) / 2.0
+                ep['dy'] = p.get('y', 0) / 2.0
+                ep['dz'] = p.get('z', 0) / 2.0
+                ep['alpha'] = p.get('alpha', 0)
+                ep['theta'] = p.get('theta', 0)
+                ep['phi'] = p.get('phi', 0)
+            
+            elif solid.type == 'hype':
+                 ep['dz'] = p.get('z', 0) / 2.0
+                 ep['rmin'] = p.get('rmin', 0)
+                 ep['rmax'] = p.get('rmax', 0)
+                 ep['inst'] = p.get('inst', 0)
+                 ep['outst'] = p.get('outst', 0)
+
+            # ... etc. for other solid types ...
+            
+            else:
+                # For all other solids, just copy the evaluated params.
+                # This is safe because their parameters are generally all required.
+                solid._evaluated_parameters = p
 
         # --- Stage 4: Evaluate all placement transforms ---
         # This includes placements inside LVs and inside Assemblies

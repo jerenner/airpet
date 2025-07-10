@@ -368,6 +368,51 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     // Use the _evaluated_parameters for rendering
     const p = solidData._evaluated_parameters;
 
+    if (!p) {
+        console.error(`[NaN TRAP] Solid '${solidData.name}' is missing its _evaluated_parameters. Cannot render.`);
+        return new THREE.BoxGeometry(10, 10, 10); // Return a placeholder
+    }
+
+    // NaN Trap and Debugger ##
+    // This block will check all expected parameters for the given solid type.
+    const checkNaN = (paramsToCheck, solidName, solidType) => {
+        for (const key of paramsToCheck) {
+            const value = p[key];
+            if (value === undefined || value === null || isNaN(value)) {
+                console.error(
+                    `[NaN TRAP] Found NaN or undefined parameter for solid:
+                    - Name: ${solidName}
+                    - Type: ${solidType}
+                    - Parameter: '${key}'
+                    - Value: ${value}
+                    - Full Parameters Object:`, p
+                );
+                return true; // Indicates a NaN was found
+            }
+        }
+        return false; // All good
+    };
+    
+    let requiredParams = [];
+    const solidType = solidData.type;
+
+    // Define the required numeric parameters for each solid type
+    if (solidType === 'box') requiredParams = ['x', 'y', 'z'];
+    else if (solidType === 'tube') requiredParams = ['rmin', 'rmax', 'dz', 'startphi', 'deltaphi'];
+    else if (solidType === 'cone') requiredParams = ['rmin1', 'rmax1', 'rmin2', 'rmax2', 'dz', 'startphi', 'deltaphi'];
+    else if (solidType === 'sphere') requiredParams = ['rmin', 'rmax', 'startphi', 'deltaphi', 'starttheta', 'deltatheta'];
+    else if (solidType === 'orb') requiredParams = ['r'];
+    else if (solidType === 'torus') requiredParams = ['rmin', 'rmax', 'rtor', 'startphi', 'deltaphi'];
+    // ... add other primitive types here as needed ...
+
+    if (requiredParams.length > 0 && checkNaN(requiredParams, solidData.name, solidType)) {
+        // If NaN is found, return a small, visible red box as a visual error indicator.
+        const errorMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const errorGeometry = new THREE.BoxGeometry(20, 20, 20);
+        return errorGeometry; // We don't need to assign a material here, just return the geometry
+    }
+    // End of NaN Trap
+
     // Temporary handling of null project state from solid editor
     const defines = (projectState && projectState.defines) ? projectState.defines : {};
 

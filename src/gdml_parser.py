@@ -214,9 +214,30 @@ class GDMLParser:
             params = {}
             solid_type = solid_el.tag
 
-            # For primitives, raw_parameters is just a copy of all XML attributes except 'name'.
-            # The ProjectManager will handle lunit/aunit during evaluation.
-            params = {k: v for k, v in solid_el.attrib.items() if k != 'name'}
+            # Unit-aware parameters
+            params = {}
+            
+            # Get default units from the solid's tag
+            default_lunit = solid_el.get('lunit')
+            default_aunit = solid_el.get('aunit')
+
+            # Define which parameters are lengths and which are angles
+            length_params = ['x', 'y', 'z', 'rmin', 'rmax', 'r', 'dx', 'dy', 'dz', 'dx1', 'dx2', 'dy1', 'dy2', 'rtor', 'ax', 'by', 'cz', 'zcut1', 'zcut2', 'zmax', 'zcut', 'rlo', 'rhi']
+            angle_params = ['startphi', 'deltaphi', 'starttheta', 'deltatheta', 'alpha', 'theta', 'phi', 'inst', 'outst', 'PhiTwist', 'alpha1', 'alpha2', 'Alph', 'Theta', 'Phi', 'twistedangle']
+
+            # Copy all attributes to params, but build expression strings for units
+            for key, val in solid_el.attrib.items():
+                if key == 'name' or key == 'lunit' or key == 'aunit':
+                    continue
+                
+                # If a parameter has a specific default unit, build the expression
+                if key in length_params and default_lunit:
+                    params[key] = f"({val}) * {default_lunit}"
+                elif key in angle_params and default_aunit:
+                    params[key] = f"({val}) * {default_aunit}"
+                else:
+                    # Otherwise, store the raw value/expression
+                    params[key] = val
 
             # For solids with child tags (polycone, xtru, tessellated, etc.),
             # we need to parse them and add them to the params dictionary.
