@@ -151,7 +151,7 @@ class ProjectManager:
                 else:
                     temp_eval_params[key] = raw_expr
 
-            # ## UPDATED: Second pass for normalization now includes defaults ##
+            # Second pass for normalization now includes defaults ##
             p = temp_eval_params
             ep = solid._evaluated_parameters
 
@@ -207,7 +207,39 @@ class ProjectManager:
                  ep['inst'] = p.get('inst', 0)
                  ep['outst'] = p.get('outst', 0)
 
-            # ... etc. for other solid types ...
+            elif solid_type == 'trap':
+                ep['dz'] = p.get('z', 0) / 2.0
+                ep['theta'] = p.get('theta', 0)
+                ep['phi'] = p.get('phi', 0)
+                ep['dy1'] = p.get('y1', 0) / 2.0
+                ep['dx1'] = p.get('x1', 0) / 2.0
+                ep['dx2'] = p.get('x2', 0) / 2.0
+                ep['alpha1'] = p.get('alpha1', 0)
+                ep['dy2'] = p.get('y2', 0) / 2.0
+                ep['dx3'] = p.get('x3', 0) / 2.0
+                ep['dx4'] = p.get('x4', 0) / 2.0
+                ep['alpha2'] = p.get('alpha2', 0)
+                
+            elif solid_type == 'twistedbox':
+                ep['phi_twist'] = p.get('PhiTwist', 0)
+                ep['dx'] = p.get('x', 0) / 2.0
+                ep['dy'] = p.get('y', 0) / 2.0
+                ep['dz'] = p.get('z', 0) / 2.0
+            
+            elif solid_type == 'twistedtrd':
+                ep['phi_twist'] = p.get('PhiTwist', 0)
+                ep['dx1'] = p.get('x1', 0) / 2.0
+                ep['dx2'] = p.get('x2', 0) / 2.0
+                ep['dy1'] = p.get('y1', 0) / 2.0
+                ep['dy2'] = p.get('y2', 0) / 2.0
+                ep['dz'] = p.get('z', 0) / 2.0
+
+            elif solid_type == 'twistedtubs':
+                ep['twistedangle'] = p.get('twistedangle', 0)
+                ep['rmin'] = p.get('endinnerrad', 0)
+                ep['rmax'] = p.get('endouterrad', 0)
+                ep['dz'] = p.get('zlen', 0) / 2.0
+                ep['dphi'] = p.get('phi', p.get('totphi', 2 * math.pi))
             
             else:
                 # For all other solids, just copy the evaluated params.
@@ -215,6 +247,21 @@ class ProjectManager:
                 solid._evaluated_parameters = p
 
         # --- Stage 4: Evaluate all placement transforms ---
+
+        # Helper function for evaluating transforms ##
+        def evaluate_transform_part(part_data, default_val):
+            if isinstance(part_data, str): # It's a reference to a define
+                return aeval.symtable.get(part_data, default_val)
+            elif isinstance(part_data, dict): # It's a dict of expressions
+                evaluated_dict = {}
+                for axis, raw_expr in part_data.items():
+                    try:
+                        evaluated_dict[axis] = aeval.eval(str(raw_expr))
+                    except Exception:
+                        evaluated_dict[axis] = default_val.get(axis, 0)
+                return evaluated_dict
+            return default_val
+
         # This includes placements inside LVs and inside Assemblies
         all_volumes_with_placements = list(state.logical_volumes.values()) + list(state.assemblies.values())
         for vol in all_volumes_with_placements:
@@ -228,41 +275,20 @@ class ProjectManager:
                     print(f"Warning: Could not evaluate copy number for '{pv.name}': {e}. Defaulting to 0.")
                     pv.copy_number = 0
 
-                # Position
-                if isinstance(pv.position, str): # It's a reference to a define
-                    pv._evaluated_position = aeval.symtable.get(pv.position, {'x':0,'y':0,'z':0})
-                elif isinstance(pv.position, dict): # It's a dict of expressions
-                    for axis, raw_expr in pv.position.items():
-                        try:
-                            pv._evaluated_position[axis] = aeval.eval(str(raw_expr))
-                        except Exception:
-                            pv._evaluated_position[axis] = 0
-                else: # Default case
-                    pv._evaluated_position = {'x':0, 'y':0, 'z':0}
+                pv._evaluated_position = evaluate_transform_part(pv.position, {'x':0, 'y':0, 'z':0})
+                pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x':0, 'y':0, 'z':0})
+                pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x':1, 'y':1, 'z':1})
 
-                # Rotation
-                if isinstance(pv.rotation, str):
-                    pv._evaluated_rotation = aeval.symtable.get(pv.rotation, {'x':0,'y':0,'z':0})
-                elif isinstance(pv.rotation, dict):
-                    for axis, raw_expr in pv.rotation.items():
-                        try:
-                            pv._evaluated_rotation[axis] = aeval.eval(str(raw_expr))
-                        except Exception:
-                            pv._evaluated_rotation[axis] = 0
-                else:
-                    pv._evaluated_rotation = {'x':0, 'y':0, 'z':0}
-
-                # Scale
-                if isinstance(pv.scale, str):
-                    pv._evaluated_scale = aeval.symtable.get(pv.scale, {'x':1,'y':1,'z':1})
-                elif isinstance(pv.scale, dict):
-                    for axis, raw_expr in pv.scale.items():
-                        try:
-                            pv._evaluated_scale[axis] = aeval.eval(str(raw_expr))
-                        except Exception:
-                             pv._evaluated_scale[axis] = 1
-                else:
-                    pv._evaluated_scale = {'x':1, 'y':1, 'z':1}
+        ## Stage 5 - Evaluate transforms inside boolean solid recipes ##
+        for solid in state.solids.values():
+            if solid.type == 'boolean':
+                recipe = solid.raw_parameters.get('recipe', [])
+                for item in recipe:
+                    transform = item.get('transform', {})
+                    if transform:
+                         # Use the same helper to evaluate the nested transforms
+                         transform['_evaluated_position'] = evaluate_transform_part(transform.get('position'), {'x':0, 'y':0, 'z':0})
+                         transform['_evaluated_rotation'] = evaluate_transform_part(transform.get('rotation'), {'x':0, 'y':0, 'z':0})
 
         return True, None
 

@@ -424,9 +424,9 @@
 
         /* Boolean specific styles */
         .boolean-slot {
+            flex-grow: 1; /* Let the slot take the remaining space */
             border: 2px dashed #ccc;
             padding: 10px;
-            margin-bottom: 10px;
             background-color: #f9f9f9;
             text-align: center;
             color: #888;
@@ -458,10 +458,20 @@
 
         .boolean-recipe-row {
             display: flex;
+            flex-direction: column;
+            gap: 5px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .boolean-top-part {
+            display: flex;
             align-items: center;
             gap: 10px;
-            padding: 5px;
-            border-bottom: 1px solid #eee;
+        }
+        .op-container {
+            flex-shrink: 0;
         }
         .op-and-slot {
             flex-grow: 1;
@@ -471,13 +481,18 @@
             flex-wrap: wrap; 
             gap: 10px;
             margin-top: 5px;
-            padding-top: 5px;
+            padding-top: 8px;
             border-top: 1px dotted #ccc;
         }
+        .transform-controls-inline .property_item label {
+            flex-basis: 20px;
+            flex-shrink: 0;
+            text-align: right;
+            margin-right: 5px;
+        }
         .transform-controls-inline .transform-group {
-            display: flex;
-            align-items: center;
-            gap: 5px;
+            flex: 1; 
+            min-width: 250px;
         }
         .transform-controls-inline .transform-group label {
             font-size: 11px;

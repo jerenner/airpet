@@ -369,7 +369,92 @@ function renderParamsUI(params = {}) {
     updatePreview();
 }
 
-// Function to build/rebuild the boolean UI from the recipe
+// Copied this helper function from uiManager.js to make it available here.
+function populateDefineSelect(selectElement, definesArray) {
+    selectElement.innerHTML = '<option value="[Absolute]">[Absolute Value]</option>';
+    definesArray.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        selectElement.appendChild(option);
+    });
+}
+
+// This helper creates the UI for one transform type (position or rotation)
+function buildSingleTransformUI(index, type, label, defines, transformData) {
+    const group = document.createElement('div');
+    group.className = 'transform-group';
+
+    const header = document.createElement('div');
+    header.className = 'define-header';
+    header.innerHTML = `<span>${label}</span>`;
+    const select = document.createElement('select');
+    select.className = 'define-select';
+    select.dataset.index = index;
+    select.dataset.transformType = type;
+    populateDefineSelect(select, defines);
+    header.appendChild(select);
+    group.appendChild(header);
+
+    const inputsContainer = document.createElement('div');
+    inputsContainer.className = 'inline-inputs-container';
+    group.appendChild(inputsContainer);
+
+    const isAbsolute = typeof transformData !== 'string';
+    select.value = isAbsolute ? '[Absolute]' : transformData;
+
+    // Get the values to display. If it's a define, look up its evaluated value.
+    let displayValues = {x: '0', y: '0', z: '0'};
+    if (isAbsolute) {
+        displayValues = transformData || {x: '0', y: '0', z: '0'};
+    } else {
+        const define = currentProjectState.defines[transformData];
+        if (define && define.value) {
+            displayValues = define.value; // Use the pre-evaluated value
+        }
+    }
+    
+    // Create inputs for each axis
+    ['x', 'y', 'z'].forEach(axis => {
+        const item = document.createElement('div');
+        item.className = 'property_item';
+        // FIX #4: Add the label
+        item.innerHTML = `<label>${axis.toUpperCase()}:</label>`;
+        
+        // Use the full expression component if absolute, otherwise a simple disabled input
+        if (isAbsolute) {
+            const exprComp = ExpressionInput.createInline(
+                `bool_trans_${index}_${type}_${axis}`,
+                displayValues[axis] || '0',
+                currentProjectState,
+                (newValue) => {
+                    if (booleanRecipe[index] && typeof booleanRecipe[index].transform[type] === 'object') {
+                        booleanRecipe[index].transform[type][axis] = newValue;
+                        updatePreview();
+                    }
+                }
+            );
+            item.appendChild(exprComp);
+        } else {
+            // FIX #3: Show grayed-out evaluated values for defines
+            const disabledInput = document.createElement('input');
+            disabledInput.type = 'text';
+            disabledInput.disabled = true;
+            disabledInput.className = 'expression-result'; // Style like a result box
+            let val = displayValues[axis] || 0;
+            // Convert radians to degrees for rotation display
+            if (type === 'rotation') {
+                val = THREE.MathUtils.radToDeg(val);
+            }
+            disabledInput.value = val.toPrecision(4);
+            item.appendChild(disabledInput);
+        }
+        inputsContainer.appendChild(item);
+    });
+
+    return group;
+}
+
 function rebuildBooleanUI() {
     const recipeListDiv = document.getElementById('boolean-recipe-list');
     const ingredientsPanel = document.getElementById('boolean-ingredients-list');
@@ -384,78 +469,74 @@ function rebuildBooleanUI() {
             div.textContent = solid.name;
             div.draggable = true;
             div.dataset.solidName = solid.name; 
-            div.addEventListener('dragstart', (e) => {
-                e.dataTransfer.setData('text/plain', solid.name);
-            });
+            div.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', solid.name); });
             ingredientsPanel.appendChild(div);
         }
     }
     
     booleanRecipe.forEach((item, index) => {
         const isBase = index === 0;
-        
-        // Correctly determine the operation and content for the slot
-        const opHTML = isBase ? '<h6>Base Solid</h6>' : `
-            <select class="boolean-op-select" data-index="${index}">
-                <option value="subtraction" ${item.op === 'subtraction' ? 'selected' : ''}>Subtract (-)</option>
-                <option value="union" ${item.op === 'union' ? 'selected' : ''}>Union (+)</option>
-                <option value="intersection" ${item.op === 'intersection' ? 'selected' : ''}>Intersect (∩)</option>
-            </select>
-        `;
-
-        const slotClass = item.solid ? 'boolean-slot filled' : 'boolean-slot';
-        // ## FIX: Ensure item.solid.name is accessed safely
-        const slotContent = item.solid ? item.solid.name : 'Drag a solid here';
-        
-        const idPrefixPos = `bool_trans_${index}_pos`;
-        const idPrefixRot = `bool_trans_${index}_rot`;
-
-        const pos = item.transform?.position || {x:'0', y:'0', z:'0'};
-        const rot = item.transform?.rotation || {x:'0', y:'0', z:'0'};
-
-        const transformHTML = isBase ? '' : `
-            <div class="transform-controls-inline">
-                <div class="transform-group">
-                    <label>Pos (mm)</label>
-                    ${createInlineExpressionInput(idPrefixPos, 'x', pos.x)}
-                    ${createInlineExpressionInput(idPrefixPos, 'y', pos.y)}
-                    ${createInlineExpressionInput(idPrefixPos, 'z', pos.z)}
-                </div>
-                <div class="transform-group">
-                    <label>Rot (deg)</label>
-                    ${createInlineExpressionInput(idPrefixRot, 'x', rot.x)}
-                    ${createInlineExpressionInput(idPrefixRot, 'y', rot.y)}
-                    ${createInlineExpressionInput(idPrefixRot, 'z', rot.z)}
-                </div>
-            </div>
-        `;
-        
         const row = document.createElement('div');
         row.className = 'boolean-recipe-row';
-        row.innerHTML = `
-            <div class="op-and-slot">
-                ${opHTML}
-                <div class="${slotClass}" data-index="${index}">${slotContent}</div>
-            </div>
-            ${transformHTML}
-            ${!isBase ? `<button class="remove-op-btn" data-index="${index}" title="Remove Operation">×</button>` : ''}
-        `;
+
+        // Container for the top part (operation and drag slot)
+        const topPart = document.createElement('div');
+        topPart.className = 'boolean-top-part';
+
+        // FIX #1: Operation dropdown
+        const opContainer = document.createElement('div');
+        opContainer.className = 'op-container';
+        if (!isBase) {
+            opContainer.innerHTML = `
+                <select class="boolean-op-select" data-index="${index}">
+                    <option value="subtraction" ${item.op === 'subtraction' ? 'selected' : ''}>Subtract (-)</option>
+                    <option value="union" ${item.op === 'union' ? 'selected' : ''}>Union (+)</option>
+                    <option value="intersection" ${item.op === 'intersection' ? 'selected' : ''}>Intersect (∩)</option>
+                </select>
+            `;
+        } else {
+            opContainer.innerHTML = '<h6>Base Solid</h6>';
+        }
+        topPart.appendChild(opContainer);
+        
+        // Drag slot
+        const slotContent = item.solid ? item.solid.name : 'Drag a solid here';
+        const slotDiv = document.createElement('div');
+        slotDiv.className = `boolean-slot ${item.solid ? 'filled' : ''}`;
+        slotDiv.dataset.index = index;
+        slotDiv.textContent = slotContent;
+        topPart.appendChild(slotDiv);
+
+        row.appendChild(topPart);
+
+        // Container for the bottom part (transforms)
+        if (!isBase) {
+            const transformWrapper = document.createElement('div');
+            transformWrapper.className = 'transform-controls-inline';
+            
+            const posDefines = currentProjectState.defines ? Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'position') : [];
+            const rotDefines = currentProjectState.defines ? Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'rotation') : [];
+            
+            const posEditor = buildSingleTransformUI(index, 'position', 'Position (mm)', posDefines, item.transform.position);
+            const rotEditor = buildSingleTransformUI(index, 'rotation', 'Rotation (deg)', rotDefines, item.transform.rotation);
+
+            transformWrapper.appendChild(posEditor);
+            transformWrapper.appendChild(rotEditor);
+            row.appendChild(transformWrapper);
+            
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-op-btn';
+            removeBtn.dataset.index = index;
+            removeBtn.textContent = '×';
+            removeBtn.title = "Remove Operation";
+            // Add to top part for better alignment
+            topPart.appendChild(removeBtn); 
+        }
+
         recipeListDiv.appendChild(row);
     });
 
     attachBooleanListeners();
-}
-
-function addBooleanOperation() {
-    booleanRecipe.push({
-        op: 'subtraction', 
-        solid: null,
-        transform: { 
-            position: {x:'0', y:'0', z:'0'}, 
-            rotation: {x:'0', y:'0', z:'0'} 
-        }
-    });
-    rebuildBooleanUI();
 }
 
 function attachBooleanListeners() {
@@ -492,31 +573,49 @@ function attachBooleanListeners() {
         });
     });
 
+    // Listener for when a define is selected from the dropdown
+    document.querySelectorAll('.define-select').forEach(select => {
+        select.addEventListener('change', e => {
+            const index = parseInt(e.target.dataset.index, 10);
+            const type = e.target.dataset.transformType;
+            if (e.target.value === '[Absolute]') {
+                booleanRecipe[index].transform[type] = {x:'0', y:'0', z:'0'};
+            } else {
+                booleanRecipe[index].transform[type] = e.target.value;
+            }
+            rebuildBooleanUI(); // Re-render to update the inputs
+            updatePreview();
+        });
+    });
+
+    // Listener for when an absolute value expression is changed
     document.querySelectorAll('.inline-trans').forEach(input => {
         const updateTransformState = (e) => {
             const el = e.target;
-            const idPrefix = el.dataset.idPrefix;
-            const index = parseInt(idPrefix.split('_')[2], 10);
+            const index = parseInt(el.dataset.index, 10);
+            const type = el.dataset.transformType; // 'position' or 'rotation'
             const axis = el.dataset.axis;
             
-            const transformType = idPrefix.includes('_pos') ? 'position' : 'rotation';
-            
-            if (booleanRecipe[index] && booleanRecipe[index].transform && booleanRecipe[index].transform[transformType]) {
-                let value = el.value;
-                // If it's a rotation, wrap it to indicate degrees for the backend evaluator.
-                if (transformType === 'rotation') {
-                    // Check if it's already a complex expression or just a number
-                    if (!isNaN(parseFloat(value))) {
-                        value = `(${value}) * deg`;
-                    }
-                }
-                booleanRecipe[index].transform[transformType][axis] = value;
+            // This should only fire if the inputs are enabled (i.e., in 'Absolute' mode)
+            if (booleanRecipe[index] && typeof booleanRecipe[index].transform[type] === 'object') {
+                booleanRecipe[index].transform[type][axis] = el.value;
                 updatePreview();
             }
         };
         input.addEventListener('change', updateTransformState);
-        //input.addEventListener('input', updateTransformState);
     });
+}
+
+function addBooleanOperation() {
+    booleanRecipe.push({
+        op: 'subtraction', 
+        solid: null,
+        transform: { 
+            position: {x:'0', y:'0', z:'0'}, 
+            rotation: {x:'0', y:'0', z:'0'} 
+        }
+    });
+    rebuildBooleanUI();
 }
 
 function getRawParamsFromUI() {
@@ -580,71 +679,85 @@ async function updatePreview() {
     let geometry = null;
     const csgEvaluator = new Evaluator();
 
-    const tempSolidData = {
-        name: 'preview',
-        type: type,
-        _evaluated_parameters: {}
-    };
-
     if (isBoolean) {
         if (booleanRecipe.length === 0 || !booleanRecipe[0].solid) return;
         
-        let resultBrush;
-        const baseSolidGeom = createPrimitiveGeometry(booleanRecipe[0].solid, currentProjectState, csgEvaluator);
-        if (!baseSolidGeom) return;
-        resultBrush = new Brush(baseSolidGeom);
-        
-        if (booleanRecipe.length > 1) {
-            for (let i = 1; i < booleanRecipe.length; i++) {
-                const item = booleanRecipe[i];
-                if (!item.solid) continue;
-
-                const nextSolidGeom = createPrimitiveGeometry(item.solid, currentProjectState, csgEvaluator);
-                if (!nextSolidGeom) continue;
-                console.log("Next solid geom is ",nextSolidGeom)
-
-                const nextBrush = new Brush(nextSolidGeom);
-                
-                const pos_expr = item.transform.position;
-                const rot_expr = item.transform.rotation;
-
-                // Evaluate expressions using the API
-                const [posX, posY, posZ] = await Promise.all([
-                    APIService.evaluateExpression(pos_expr.x, currentProjectState),
-                    APIService.evaluateExpression(pos_expr.y, currentProjectState),
-                    APIService.evaluateExpression(pos_expr.z, currentProjectState)
-                ]);
-                const [rotX, rotY, rotZ] = await Promise.all([
-                    APIService.evaluateExpression(rot_expr.x, currentProjectState),
-                    APIService.evaluateExpression(rot_expr.y, currentProjectState),
-                    APIService.evaluateExpression(rot_expr.z, currentProjectState)
-                ]);
-
-                nextBrush.position.set(posX.result || 0, posY.result || 0, posZ.result || 0);
-                // The backend evaluator already handles 'deg', so the result is in radians.
-                nextBrush.quaternion.setFromEuler(new THREE.Euler(
-                    rotX.result || 0, 
-                    rotY.result || 0, 
-                    rotZ.result || 0, 
-                    'ZYX'
-                ));
-                nextBrush.updateMatrixWorld();
-
-                const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
-                resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
+        // ## NEW HELPER FUNCTION to resolve defines before evaluation ##
+        const getExpressionsForTransform = (transformPart) => {
+            if (typeof transformPart === 'string') {
+                // It's a define reference, find it in the project state
+                const define = currentProjectState.defines[transformPart];
+                return define ? define.raw_expression : {x:'0', y:'0', z:'0'}; // Return default on failure
             }
-        }
-        if (resultBrush) geometry = resultBrush.geometry;
+            // It's already an object of expressions
+            return transformPart || {x:'0', y:'0', z:'0'};
+        };
 
-    } else {
+        try {
+            const baseGeom = createPrimitiveGeometry(booleanRecipe[0].solid, currentProjectState, csgEvaluator);
+            if (!baseGeom) return;
+            let resultBrush = new Brush(baseGeom);
+
+            if (booleanRecipe.length > 1) {
+                for (let i = 1; i < booleanRecipe.length; i++) {
+                    const item = booleanRecipe[i];
+                    if (!item.solid) continue;
+
+                    const nextSolidGeom = createPrimitiveGeometry(item.solid, currentProjectState, csgEvaluator);
+                    if (!nextSolidGeom) continue;
+
+                    const nextBrush = new Brush(nextSolidGeom);
+                    
+                    const transform = item.transform || {};
+                    
+                    // ## FIX: Use the new helper to get the actual expressions ##
+                    const pos_expr_dict = getExpressionsForTransform(transform.position);
+                    const rot_expr_dict = getExpressionsForTransform(transform.rotation);
+                    
+                    const [posX, posY, posZ] = await Promise.all([
+                        APIService.evaluateExpression(pos_expr_dict.x, currentProjectState),
+                        APIService.evaluateExpression(pos_expr_dict.y, currentProjectState),
+                        APIService.evaluateExpression(pos_expr_dict.z, currentProjectState)
+                    ]);
+                    const [rotX, rotY, rotZ] = await Promise.all([
+                        APIService.evaluateExpression(rot_expr_dict.x, currentProjectState),
+                        APIService.evaluateExpression(rot_expr_dict.y, currentProjectState),
+                        APIService.evaluateExpression(rot_expr_dict.z, currentProjectState)
+                    ]);
+
+                    nextBrush.position.set(posX.result || 0, posY.result || 0, posZ.result || 0);
+                    nextBrush.quaternion.setFromEuler(new THREE.Euler(
+                        rotX.result || 0, 
+                        rotY.result || 0, 
+                        rotZ.result || 0, 
+                        'ZYX'
+                    ));
+                    nextBrush.updateMatrixWorld();
+
+                    const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
+                    resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
+                }
+            }
+            if (resultBrush) geometry = resultBrush.geometry;
+        } catch (error) {
+            console.error("Error building boolean preview:", error);
+        }
+
+    } else { // It's a primitive
         const rawParams = getRawParamsFromUI();
         const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {
             const response = await APIService.evaluateExpression(expr, currentProjectState);
             return [key, response.success ? response.result : 0];
         });
         const evaluatedEntries = await Promise.all(evalPromises);
-        const p = Object.fromEntries(evaluatedEntries);
+        const tempSolidData = {
+            name: 'preview',
+            type: type,
+            _evaluated_parameters: Object.fromEntries(evaluatedEntries)
+        };
         
+        // Normalize values (half-lengths, degrees to rad) for Three.js
+        const p = tempSolidData._evaluated_parameters;
         if (p.dz !== undefined) p.dz /= 2.0;
         if (p.startphi !== undefined) p.startphi = p.startphi;
         if (p.deltaphi !== undefined) p.deltaphi = p.deltaphi;
@@ -653,13 +766,12 @@ async function updatePreview() {
         if (p.alpha !== undefined) p.alpha = p.alpha;
         if (p.theta !== undefined) p.theta = p.theta;
         if (p.phi !== undefined) p.phi = p.phi;
-        if (p.phi_twist !== undefined) p.phi_twist = p.phi_twist;
-
-        tempSolidData._evaluated_parameters = p;
-        geometry = createPrimitiveGeometry(tempSolidData, null, csgEvaluator);
+        
+        geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
     }
     
     if (geometry) {
+        geometry.computeBoundingSphere(); // Important for camera centering
         const material = new THREE.MeshLambertMaterial({ color: 0x9999ff, wireframe: false, side: THREE.DoubleSide });
         currentSolidMesh = new THREE.Mesh(geometry, material);
         scene.add(currentSolidMesh);
