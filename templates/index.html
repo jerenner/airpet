@@ -733,7 +733,7 @@
             align-items: center;
         }
         .expression-component .expression-input {
-            flex-grow: 1;
+            width: 150px;
             font-family: monospace;
             border: 1px solid #ccc;
             padding: 4px;
@@ -1096,7 +1096,7 @@
     </div>
     <!-- Editor modal for physical volumes -->
     <div id="pvEditorModal" class="editor-modal">
-        <div class="modal-content" style="width: 500px; height: auto;">
+        <div class="modal-content" style="width: 600px; height: auto;">
             <div class="modal-header">
                 <h4 id="pvEditorTitle">Place New Physical Volume</h4>
             </div>
@@ -1116,18 +1116,12 @@
                             <span>Position (mm)</span>
                             <select id="pv_pos_define_select" class="define-select"></select>
                         </div>
-                        <div class="property_item"><label for="pv_pos_x">X:</label><input type="number" id="pv_pos_x" class="abs-input" value="0" step="any"></div>
-                        <div class="property_item"><label for="pv_pos_y">Y:</label><input type="number" id="pv_pos_y" class="abs-input" value="0" step="any"></div>
-                        <div class="property_item"><label for="pv_pos_z">Z:</label><input type="number" id="pv_pos_z" class="abs-input" value="0" step="any"></div>
                     </div>
                     <div class="transform-group">
                         <div class="define-header">
                             <span>Rotation (deg, ZYX)</span>
                             <select id="pv_rot_define_select" class="define-select"></select>
                         </div>
-                        <div class="property_item"><label for="pv_rot_x">X:</label><input type="number" id="pv_rot_x" class="abs-input" value="0" step="any"></div>
-                        <div class="property_item"><label for="pv_rot_y">Y:</label><input type="number" id="pv_rot_y" class="abs-input" value="0" step="any"></div>
-                        <div class="property_item"><label for="pv_rot_z">Z:</label><input type="number" id="pv_rot_z" class="abs-input" value="0" step="any"></div>
                     </div>
                 </div>
             </div>

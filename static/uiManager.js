@@ -1,6 +1,7 @@
 // static/uiManager.js
 import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
+import * as ExpressionInput from './expressionInput.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -295,6 +296,82 @@ export function updateDefineInspectorValues(defineName, newValues, isRotation = 
     }
 }
 
+// Helper for building transform UI inside the Inspector
+function buildInspectorTransformEditor(parent, type, label, pvData, defines, projectState) {
+    const group = document.createElement('div');
+    group.className = 'transform-group';
+    
+    const header = document.createElement('div');
+    header.className = 'define-header';
+    header.innerHTML = `<span>${label}</span>`;
+    const select = document.createElement('select');
+    select.className = 'define-select';
+    header.appendChild(select);
+    group.appendChild(header);
+
+    const inputsContainer = document.createElement('div');
+    inputsContainer.className = 'inline-inputs-container';
+    group.appendChild(inputsContainer);
+
+    populateDefineSelect(select, Object.keys(defines));
+
+    const data = pvData[type];
+    const isAbsolute = typeof data !== 'string' || !defines[data];
+    select.value = isAbsolute ? '[Absolute]' : data;
+    
+    // Determine the initial values to display
+    let displayValues = {x: '0', y: '0', z: '0'};
+    if (isAbsolute) {
+        // If it's absolute, the data itself is the dictionary of raw expressions
+        displayValues = data || displayValues;
+    } else {
+        // If it's a define, get the raw expressions from the define object
+        const define = defines[data];
+        if (define) displayValues = define.raw_expression || displayValues;
+    }
+
+    ['x', 'y', 'z'].forEach(axis => {
+        // ## FIX: Create the component using ExpressionInput.create() ##
+        const comp = ExpressionInput.create(
+            `inspector_pv_${type}_${axis}`, // Unique ID
+            axis.toUpperCase(), // Label
+            displayValues[axis] || '0', // Initial value
+            projectState,
+            (newValue) => { // onChange callback
+                if (select.value === '[Absolute]') {
+                    // Read all three values to send a complete object
+                    const newAbsValues = {
+                        x: document.getElementById(`inspector_pv_${type}_x`).value,
+                        y: document.getElementById(`inspector_pv_${type}_y`).value,
+                        z: document.getElementById(`inspector_pv_${type}_z`).value,
+                    };
+                    // Wrap rotation values with *deg for the backend
+                    if (type === 'rotation') {
+                        newAbsValues.x = `(${newAbsValues.x}) * deg`;
+                        newAbsValues.y = `(${newAbsValues.y}) * deg`;
+                        newAbsValues.z = `(${newAbsValues.z}) * deg`;
+                    }
+                    callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newAbsValues);
+                }
+            }
+        );
+        inputsContainer.appendChild(comp);
+        
+        // Disable inputs if a define is selected
+        const inputEl = comp.querySelector('.expression-input');
+        if (inputEl) inputEl.disabled = !isAbsolute;
+    });
+
+    select.addEventListener('change', (e) => {
+        const newValue = e.target.value === '[Absolute]'
+            ? { x: '0', y: '0', z: '0' }
+            : e.target.value;
+        callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newValue);
+    });
+
+    parent.appendChild(group);
+}
+
 // --- Inspector Panel Management ---
 export async function populateInspector(itemContext, projectState) {
     if (!inspectorContentDiv) return;
@@ -306,12 +383,18 @@ export async function populateInspector(itemContext, projectState) {
     title.textContent = `${type}: ${name || id}`;
     inspectorContentDiv.appendChild(title);
 
-    // --- Special handling for Physical Volumes ---
     if (type === 'physical_volume') {
-        // Create the smart transform editor for position and rotation
-        await createPVTransformEditor(inspectorContentDiv, data, projectState);
+        const allDefines = projectState.defines || {};
+        const posDefines = {};
+        const rotDefines = {};
+        for (const defName in allDefines) {
+            if (allDefines[defName].type === 'position') posDefines[defName] = allDefines[defName];
+            if (allDefines[defName].type === 'rotation') rotDefines[defName] = allDefines[defName];
+        }
+
+        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)', data, posDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (deg, ZYX)', data, rotDefines, projectState);
         
-        // Display other PV properties as read-only
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";
         otherPropsLabel.style.marginTop = '15px';
@@ -319,26 +402,20 @@ export async function populateInspector(itemContext, projectState) {
         otherPropsLabel.style.paddingTop = '10px';
         inspectorContentDiv.appendChild(otherPropsLabel);
 
-        // Render other properties as read-only spans
         createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
         createReadOnlyProperty(inspectorContentDiv, "Copy Number:", data.copy_number);
 
     } else {
-        // --- For all other object types, render all properties as read-only ---
         for (const key in data) {
-            // Skip redundant or internal properties
             if (key === 'id' || key === 'name' || key === 'phys_children' || typeof data[key] === 'function') continue;
-
             const value = data[key];
             if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                // Handle nested objects like 'parameters' or 'value'
                 const subDiv = document.createElement('div');
                 subDiv.style.paddingLeft = "10px";
                 const label = document.createElement('label');
                 label.textContent = `${key}:`;
                 label.style.fontWeight = 'bold';
                 subDiv.appendChild(label);
-                
                 for (const subKey in value) {
                     createReadOnlyProperty(subDiv, `${subKey}:`, value[subKey]);
                 }
@@ -503,14 +580,14 @@ function buildSingleTransformEditor(transformType, labelText, pvData, defines) {
     return group;
 }
 
-function populateDefineSelect(selectElement, defines) {
+function populateDefineSelect(selectElement, definesArray) {
     selectElement.innerHTML = '<option value="[Absolute]">[Absolute Value]</option>';
-    for (const name in defines) {
+    definesArray.forEach(name => {
         const option = document.createElement('option');
         option.value = name;
         option.textContent = name;
         selectElement.appendChild(option);
-    }
+    });
 }
 
 // This function provides the live link from the 3D transform to the UI

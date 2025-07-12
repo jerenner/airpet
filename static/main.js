@@ -636,16 +636,66 @@ function handleTransformLive(liveObject) {
 // Called by SceneManager when TransformControls finishes a transformation
 async function handleTransformEnd(transformedObject) {
     if (!transformedObject || !transformedObject.userData) return;
-    const selectionContext = getSelectionContext(); // Get selection BEFORE update
+    
+    const pvId = transformedObject.userData.id;
+    // Get the original state of the PV before the drag started
+    const originalPVData = AppState.selectedHierarchyItems.find(item => item.id === pvId)?.data;
+
+    if (!originalPVData) return;
+
+    const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
+    const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
+    const newRotation = { x: euler.x, y: euler.y, z: euler.z };
+
+    let updatePosition = newPosition;
+    let updateRotation = newRotation;
+    
+    // Check if position was controlled by a define
+    if (typeof originalPVData.position === 'string') {
+        const defineName = originalPVData.position;
+        // const confirmed = confirm(
+        //     `You moved a volume whose position is controlled by the define '${defineName}'.\n\n` +
+        //     `[OK] = Update the define '${defineName}' itself with the new values.\n` +
+        //     `[Cancel] = Break the link and set this volume's position to an absolute value.`
+        // );
+        // if (confirmed) {
+            // User wants to update the define.
+            await APIService.updateDefine(defineName, newPosition);
+            // The PV's reference remains the same.
+            updatePosition = defineName; 
+        // } 
+        // If they cancel, `updatePosition` remains the new absolute numeric dictionary, breaking the link.
+    }
+
+    // Check if rotation was controlled by a define
+    if (typeof originalPVData.rotation === 'string') {
+        const defineName = originalPVData.rotation;
+        // const newRotationDeg = {
+        //      x: `(${THREE.MathUtils.radToDeg(newRotation.x)}) * deg`,
+        //      y: `(${THREE.MathUtils.radToDeg(newRotation.y)}) * deg`,
+        //      z: `(${THREE.MathUtils.radToDeg(newRotation.z)}) * deg`
+        // };
+        // const confirmed = confirm(
+        //     `You rotated a volume whose rotation is controlled by the define '${defineName}'.\n\n` +
+        //     `[OK] = Update the define '${defineName}' itself with the new values.\n` +
+        //     `[Cancel] = Break the link and set this volume's rotation to an absolute value.`
+        // );
+        // if (confirmed) {
+            await APIService.updateDefine(defineName, newRotationDeg);
+            updateRotation = defineName;
+        // }
+    }
+    
     UIManager.showLoading("Updating transform...");
     try {
-        const objData = transformedObject.userData;
-        const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
-        const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
-        const newRotation = { x: euler.x, y: euler.y, z: euler.z };
-        const result = await APIService.updateObjectTransform(objData.id, newPosition, newRotation);
-        syncUIWithState(result, selectionContext); // Restore selection
-    } catch (error) { UIManager.showError("Error saving transform: " + error.message); }
+        const result = await APIService.updatePhysicalVolume(pvId, null, updatePosition, updateRotation);
+        syncUIWithState(result, getSelectionContext());
+    } catch (error) { 
+        UIManager.showError("Error saving transform: " + error.message); 
+        // It might be good to reload the state here to revert the visual change
+        const freshState = await APIService.getProjectState();
+        syncUIWithState(freshState, getSelectionContext());
+    }
     finally { UIManager.hideLoading(); }
 }
 

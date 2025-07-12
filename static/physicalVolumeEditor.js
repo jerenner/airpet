@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import * as APIService from './apiService.js';
+import * as ExpressionInput from './expressionInput.js';
 
 let modalElement, titleElement, nameInput, lvSelect, confirmButton, cancelButton;
-let posInputs, rotInputs;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingPVId = null;
@@ -10,6 +9,7 @@ let parentLVName = null;
 
 let posDefineSelect, rotDefineSelect;
 let positionDefines, rotationDefines;
+let currentProjectState;
 
 export function initPVEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -23,17 +23,6 @@ export function initPVEditor(callbacks) {
 
     posDefineSelect = document.getElementById('pv_pos_define_select');
     rotDefineSelect = document.getElementById('pv_rot_define_select');
-
-    posInputs = {
-        x: document.getElementById('pv_pos_x'),
-        y: document.getElementById('pv_pos_y'),
-        z: document.getElementById('pv_pos_z')
-    };
-    rotInputs = {
-        x: document.getElementById('pv_rot_x'),
-        y: document.getElementById('pv_rot_y'),
-        z: document.getElementById('pv_rot_z')
-    };
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -51,6 +40,7 @@ export async function show(pvData = null, projectState = null, parentContext = n
     }
     
     parentLVName = parentContext.name;
+    currentProjectState = projectState;
 
     // --- Filter the list of LVs before populating ---
     const allLVs = Object.keys(projectState.logical_volumes);
@@ -67,17 +57,10 @@ export async function show(pvData = null, projectState = null, parentContext = n
     populateSelect(lvSelect, placeableLVs);
 
     // Fetch available defines
-    try {
-        positionDefines = await APIService.getDefinesByType('position');
-        rotationDefines = await APIService.getDefinesByType('rotation');
-    } catch (e) {
-        console.error("Could not fetch defines:", e);
-        positionDefines = {}; rotationDefines = {};
-    }
-
-    // Populate the define dropdowns
-    populateDefineSelect(posDefineSelect, positionDefines, 'position');
-    populateDefineSelect(rotDefineSelect, rotationDefines, 'rotation');
+    const posDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'position');
+    const rotDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'rotation');
+    populateDefineSelect(posDefineSelect, posDefines, 'position');
+    populateDefineSelect(rotDefineSelect, rotDefines, 'rotation');
 
     if (pvData && pvData.id) {
         // --- EDIT MODE ---
@@ -91,16 +74,9 @@ export async function show(pvData = null, projectState = null, parentContext = n
         lvSelect.disabled = true; // Can't change the LV being placed
         confirmButton.textContent = "Update Placement";
 
-        const pos = pvData.position || {x:0, y:0, z:0};
-        const rot_rad = pvData.rotation || {x:0, y:0, z:0};
-        posInputs.x.value = pos.x; posInputs.y.value = pos.y; posInputs.z.value = pos.z;
-        rotInputs.x.value = THREE.MathUtils.radToDeg(rot_rad.x);
-        rotInputs.y.value = THREE.MathUtils.radToDeg(rot_rad.y);
-        rotInputs.z.value = THREE.MathUtils.radToDeg(rot_rad.z);
-
         // Check if position/rotation is a define (string) or absolute (object)
-        setupTransformUI('position', pvData.position, posDefineSelect, posInputs, positionDefines);
-        setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotInputs, rotationDefines);
+        setupTransformUI('position', pvData.position, posDefineSelect, posDefines);
+        setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines);
 
     } else {
         // --- CREATE MODE ---
@@ -111,16 +87,10 @@ export async function show(pvData = null, projectState = null, parentContext = n
         nameInput.value = '';
         lvSelect.disabled = false;
         confirmButton.textContent = "Place Volume";
-        
-        // Reset transform fields
-        Object.values(posInputs).forEach(inp => inp.value = 0);
-        Object.values(rotInputs).forEach(inp => inp.value = 0);
 
-        // Set to Absolute by default
-        posDefineSelect.value = '[Absolute]';
-        rotDefineSelect.value = '[Absolute]';
-        handleDefineSelectionChange({target: posDefineSelect}); // Trigger UI update
-        handleDefineSelectionChange({target: rotDefineSelect}); // Trigger UI update
+        // Setup with default absolute values
+        setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines);
+        setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines);
     }
 
     modalElement.style.display = 'block';
@@ -163,9 +133,9 @@ function handleConfirm() {
 
     if (posDefineSelect.value === '[Absolute]') {
         position = {
-            x: parseFloat(posInputs.x.value),
-            y: parseFloat(posInputs.y.value),
-            z: parseFloat(posInputs.z.value),
+            x: document.getElementById('pv_pos_x').value,
+            y: document.getElementById('pv_pos_y').value,
+            z: document.getElementById('pv_pos_z').value,
         };
     } else {
         position = posDefineSelect.value; // Send the string name of the define
@@ -173,9 +143,9 @@ function handleConfirm() {
 
     if (rotDefineSelect.value === '[Absolute]') {
         rotation = {
-            x: THREE.MathUtils.degToRad(parseFloat(rotInputs.x.value)),
-            y: THREE.MathUtils.degToRad(parseFloat(rotInputs.y.value)),
-            z: THREE.MathUtils.degToRad(parseFloat(rotInputs.z.value)),
+            x: `(${document.getElementById('pv_rot_x').value}) * deg`,
+            y: `(${document.getElementById('pv_rot_y').value}) * deg`,
+            z: `(${document.getElementById('pv_rot_z').value}) * deg`,
         };
     } else {
         rotation = rotDefineSelect.value; // Send the string name of the define
@@ -196,61 +166,73 @@ function handleConfirm() {
 
 function handleDefineSelectionChange(event) {
     const select = event.target;
-    const type = select.dataset.type;
-    const isAbsolute = select.value === '[Absolute]';
-    const inputs = (type === 'position') ? posInputs : rotInputs;
-    const defines = (type === 'position') ? positionDefines : rotationDefines;
-
-    // Enable/disable text inputs
-    Object.values(inputs).forEach(input => input.disabled = !isAbsolute);
-
-    // If a define is selected, populate the fields with its values
-    if (!isAbsolute) {
-        const define = defines[select.value];
-        if (define) {
-            const val = define.value;
-            if (type === 'rotation') {
-                inputs.x.value = THREE.MathUtils.radToDeg(val.x);
-                inputs.y.value = THREE.MathUtils.radToDeg(val.y);
-                inputs.z.value = THREE.MathUtils.radToDeg(val.z);
-            } else {
-                inputs.x.value = val.x;
-                inputs.y.value = val.y;
-                inputs.z.value = val.z;
-            }
-        }
-    }
+    const type = select.dataset.transformType;
+    const defines = (type === 'position') 
+        ? Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'position')
+        : Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'rotation');
+    
+    const newValue = select.value === '[Absolute]' ? {x:'0', y:'0', z:'0'} : select.value;
+    
+    setupTransformUI(type, newValue, select, defines);
 }
 
-function setupTransformUI(type, value, select, inputs, defines) {
-    if (typeof value === 'string' && defines[value]) { // It's a define reference that exists
-        select.value = value;
-        Object.values(inputs).forEach(input => input.disabled = true);
-        const define = defines[value];
-        if (define) { // Double check, but should be true
-            const val = define.value || { x: 0, y: 0, z: 0 }; // safety default
-            if (type === 'rotation') {
-                inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0);
-                inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0);
-                inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0);
-            } else { // position
-                inputs.x.value = val.x || 0;
-                inputs.y.value = val.y || 0;
-                inputs.z.value = val.z || 0;
-            }
-        }
-    } else { // It's an absolute value object (or a missing define, treat as absolute)
-        select.value = '[Absolute]';
-        Object.values(inputs).forEach(input => input.disabled = false);
-        const val = (typeof value === 'object' && value !== null) ? value : { x: 0, y: 0, z: 0 }; // safety default
-        if (type === 'rotation') {
-            inputs.x.value = THREE.MathUtils.radToDeg(val.x || 0);
-            inputs.y.value = THREE.MathUtils.radToDeg(val.y || 0);
-            inputs.z.value = THREE.MathUtils.radToDeg(val.z || 0);
-        } else { // position
-            inputs.x.value = val.x || 0;
-            inputs.y.value = val.y || 0;
-            inputs.z.value = val.z || 0;
+// This function now builds the entire input block dynamically
+function setupTransformUI(type, value, select, defines) {
+    const inputsContainerId = `pv_${type}_inputs`;
+    let inputsContainer = document.getElementById(inputsContainerId);
+    if (!inputsContainer) {
+        inputsContainer = document.createElement('div');
+        inputsContainer.id = inputsContainerId;
+        select.parentElement.parentElement.appendChild(inputsContainer);
+    }
+    inputsContainer.innerHTML = ''; // Clear previous inputs
+
+    const isAbsolute = typeof value !== 'string';
+    select.value = isAbsolute ? '[Absolute]' : value;
+    
+    let displayValues = {x: '0', y: '0', z: '0'};
+    if (isAbsolute) {
+        displayValues = value || displayValues;
+    } else {
+        const define = currentProjectState.defines[value];
+        if (define) {
+            // Use the raw expression from the define for display
+            displayValues = define.raw_expression || displayValues;
         }
     }
+
+    ['x', 'y', 'z'].forEach(axis => {
+        const labelText = axis.toUpperCase();
+        const initialValue = displayValues[axis] || '0';
+        
+        if (isAbsolute) {
+            let val = initialValue;
+            // If it's a rotation, the raw expression is in rad, but UI is in deg
+            if (type === 'rotation' && !isNaN(parseFloat(val))) {
+                val = THREE.MathUtils.radToDeg(parseFloat(val)).toString();
+            }
+            const comp = ExpressionInput.create(`pv_${type}_${axis}`, labelText, val, currentProjectState);
+            inputsContainer.appendChild(comp);
+        } else {
+            // Display grayed-out box with evaluated value
+            const item = document.createElement('div');
+            item.className = 'property_item';
+            item.innerHTML = `<label>${labelText}:</label>`;
+            const disabledInput = document.createElement('input');
+            disabledInput.type = 'text';
+            disabledInput.disabled = true;
+            disabledInput.className = 'expression-result';
+            
+            const define = currentProjectState.defines[value];
+            if (define && define.value) {
+                let evalVal = define.value[axis] || 0;
+                if (type === 'rotation') {
+                    evalVal = THREE.MathUtils.radToDeg(evalVal);
+                }
+                disabledInput.value = evalVal.toPrecision(4);
+            }
+            item.appendChild(disabledInput);
+            inputsContainer.appendChild(item);
+        }
+    });
 }
