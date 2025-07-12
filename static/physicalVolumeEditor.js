@@ -33,7 +33,7 @@ export function initPVEditor(callbacks) {
     console.log("Physical Volume Editor Initialized.");
 }
 
-export async function show(pvData = null, projectState = null, parentContext = null) {
+export function show(pvData = null, projectState = null, parentContext = null) {
     if (!projectState || !parentContext) {
         alert("Cannot open PV Editor without project state and a parent volume.");
         return;
@@ -42,57 +42,39 @@ export async function show(pvData = null, projectState = null, parentContext = n
     parentLVName = parentContext.name;
     currentProjectState = projectState;
 
-    // --- Filter the list of LVs before populating ---
     const allLVs = Object.keys(projectState.logical_volumes);
     const worldRef = projectState.world_volume_ref;
-    
-    // Create a new array containing all LVs that are:
-    // 1. NOT the world volume
-    // 2. NOT the parent volume itself
-    const placeableLVs = allLVs.filter(lvName => {
-        return lvName !== worldRef && lvName !== parentLVName;
-    });
-
-    // Populate dropdown with available LVs
+    const placeableLVs = allLVs.filter(lvName => lvName !== worldRef && lvName !== parentLVName);
     populateSelect(lvSelect, placeableLVs);
 
-    // Fetch available defines
+    // Get an array of NAMES, not objects.
     const posDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'position');
     const rotDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'rotation');
-    populateDefineSelect(posDefineSelect, posDefines, 'position');
-    populateDefineSelect(rotDefineSelect, rotDefines, 'rotation');
+    populateDefineSelect(posDefineSelect, posDefines);
+    populateDefineSelect(rotDefineSelect, rotDefines);
 
     if (pvData && pvData.id) {
-        // --- EDIT MODE ---
         isEditMode = true;
         editingPVId = pvData.id;
-
         titleElement.textContent = `Edit Placement in '${parentLVName}'`;
         nameInput.value = pvData.name;
-
         lvSelect.value = pvData.volume_ref;
-        lvSelect.disabled = true; // Can't change the LV being placed
+        lvSelect.disabled = true;
         confirmButton.textContent = "Update Placement";
-
-        // Check if position/rotation is a define (string) or absolute (object)
+        
         setupTransformUI('position', pvData.position, posDefineSelect, posDefines);
         setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines);
-
     } else {
-        // --- CREATE MODE ---
         isEditMode = false;
         editingPVId = null;
-
         titleElement.textContent = `Place New Volume in '${parentLVName}'`;
         nameInput.value = '';
         lvSelect.disabled = false;
         confirmButton.textContent = "Place Volume";
-
-        // Setup with default absolute values
+        
         setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines);
         setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines);
     }
-
     modalElement.style.display = 'block';
 }
 
@@ -110,45 +92,42 @@ function populateSelect(selectElement, optionsArray) {
     });
 }
 
-function populateDefineSelect(selectElement, defines, type) {
+function populateDefineSelect(selectElement, definesArray) {
     selectElement.innerHTML = '<option value="[Absolute]">[Absolute Value]</option>';
-    selectElement.dataset.type = type; // Store type for event handler
-    for (const name in defines) {
+    definesArray.forEach(name => {
         const option = document.createElement('option');
         option.value = name;
         option.textContent = name;
         selectElement.appendChild(option);
-    }
+    });
 }
 
 function handleConfirm() {
     if (!onConfirmCallback) return;
-
-    const name = nameInput.value.trim(); // Name can be optional for PVs
+    const name = nameInput.value.trim();
     const lvRef = lvSelect.value;
     if (!lvRef) { alert("Please select a Logical Volume to place."); return; }
 
-    // --- Get transform data ---
     let position, rotation;
 
     if (posDefineSelect.value === '[Absolute]') {
         position = {
-            x: document.getElementById('pv_pos_x').value,
-            y: document.getElementById('pv_pos_y').value,
-            z: document.getElementById('pv_pos_z').value,
+            x: document.getElementById('pv_position_x').value,
+            y: document.getElementById('pv_position_y').value,
+            z: document.getElementById('pv_position_z').value,
         };
     } else {
-        position = posDefineSelect.value; // Send the string name of the define
+        position = posDefineSelect.value;
     }
 
     if (rotDefineSelect.value === '[Absolute]') {
         rotation = {
-            x: `(${document.getElementById('pv_rot_x').value}) * deg`,
-            y: `(${document.getElementById('pv_rot_y').value}) * deg`,
-            z: `(${document.getElementById('pv_rot_z').value}) * deg`,
+            x: `(${document.getElementById('pv_rotation_x').value}) * deg`,
+            y: `(${document.getElementById('pv_rotation_y').value}) * deg`,
+            z: `(${document.getElementById('pv_rotation_z').value}) * deg`,
         };
     } else {
-        rotation = rotDefineSelect.value; // Send the string name of the define
+        rotation = rotDefineSelect.value;
     }
 
     onConfirmCallback({
@@ -166,13 +145,15 @@ function handleConfirm() {
 
 function handleDefineSelectionChange(event) {
     const select = event.target;
-    const type = select.dataset.transformType;
+    const type = select.id.includes('_pos_') ? 'position' : 'rotation';
+    
     const defines = (type === 'position') 
         ? Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'position')
         : Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'rotation');
-    
+
     const newValue = select.value === '[Absolute]' ? {x:'0', y:'0', z:'0'} : select.value;
     
+    // Call the main UI builder to reconstruct the input fields
     setupTransformUI(type, newValue, select, defines);
 }
 
@@ -181,13 +162,14 @@ function setupTransformUI(type, value, select, defines) {
     const inputsContainerId = `pv_${type}_inputs`;
     let inputsContainer = document.getElementById(inputsContainerId);
     if (!inputsContainer) {
+        // This should not happen if the HTML is correct, but as a fallback:
         inputsContainer = document.createElement('div');
         inputsContainer.id = inputsContainerId;
         select.parentElement.parentElement.appendChild(inputsContainer);
     }
-    inputsContainer.innerHTML = ''; // Clear previous inputs
+    inputsContainer.innerHTML = ''; 
 
-    const isAbsolute = typeof value !== 'string';
+    const isAbsolute = typeof value !== 'string' || !defines.includes(value);
     select.value = isAbsolute ? '[Absolute]' : value;
     
     let displayValues = {x: '0', y: '0', z: '0'};
@@ -196,7 +178,6 @@ function setupTransformUI(type, value, select, defines) {
     } else {
         const define = currentProjectState.defines[value];
         if (define) {
-            // Use the raw expression from the define for display
             displayValues = define.raw_expression || displayValues;
         }
     }
@@ -204,17 +185,14 @@ function setupTransformUI(type, value, select, defines) {
     ['x', 'y', 'z'].forEach(axis => {
         const labelText = axis.toUpperCase();
         const initialValue = displayValues[axis] || '0';
-        
+        const inputId = `pv_${type}_${axis}`;
+
         if (isAbsolute) {
-            let val = initialValue;
-            // If it's a rotation, the raw expression is in rad, but UI is in deg
-            if (type === 'rotation' && !isNaN(parseFloat(val))) {
-                val = THREE.MathUtils.radToDeg(parseFloat(val)).toString();
-            }
-            const comp = ExpressionInput.create(`pv_${type}_${axis}`, labelText, val, currentProjectState);
+            // Create our full component for absolute expressions
+            const comp = ExpressionInput.create(inputId, labelText, initialValue, currentProjectState);
             inputsContainer.appendChild(comp);
         } else {
-            // Display grayed-out box with evaluated value
+            // Create a grayed-out box with the evaluated value for define references
             const item = document.createElement('div');
             item.className = 'property_item';
             item.innerHTML = `<label>${labelText}:</label>`;
