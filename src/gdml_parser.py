@@ -3,6 +3,8 @@ import xml.etree.ElementTree as ET
 import io
 import math
 import asteval
+import re
+import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, Assembly,
@@ -21,6 +23,53 @@ class GDMLParser:
                 el.tag = el.tag.split('}', 1)[1]
         return it.root
 
+    def _evaluate_name(self, name_expr):
+        """
+        Helper to evaluate a name attribute that might contain a loop variable.
+        If evaluation fails, it assumes the name is a literal string.
+        """
+        if not isinstance(name_expr, str):
+            return name_expr
+
+        # Find all substrings that look like variables/expressions inside brackets or on their own
+        parts = re.split(r'(\[.*?\])', name_expr)
+        
+        # A more robust regex to find variables, including those not in brackets
+        # This will find 'i', 'j', 'k', and 'ALUCONST' in "ALU[i][j][k]_ALUCONST"
+        # It looks for valid python identifiers.
+        all_vars = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', name_expr)
+
+        evaluated_name = name_expr
+        
+        for var in set(all_vars): # Use set to avoid duplicate replacements
+            if var in self.aeval.symtable:
+                try:
+                    # Get the value from our stateful asteval instance
+                    value = self.aeval.symtable[var]
+                    # Replace the variable name (as a whole word) with its value
+                    evaluated_name = re.sub(r'\b' + re.escape(var) + r'\b', str(value), evaluated_name)
+                except Exception:
+                    # Ignore if a variable can't be evaluated; it might be part of a literal string
+                    pass
+        
+        # Final cleanup for common GDML artifacts that are not filesystem-friendly
+        return evaluated_name.replace('[','_').replace(']','_').replace('__','_').strip('_')
+
+    def _partially_evaluate(self, expression_str, loop_vars):
+        """
+        Substitutes the current numeric values of loop variables into an expression string.
+        Leaves other variable names as they are.
+        Example: if i=2, "64-10*i" becomes "64-10*2". "WorldWidth" remains "WorldWidth".
+        """
+        if not isinstance(expression_str, str):
+            return expression_str
+            
+        for var, value in loop_vars.items():
+            # Use regex to replace only whole words to avoid replacing 'i' in 'sin'
+            expression_str = re.sub(r'\b' + re.escape(var) + r'\b', str(value), expression_str)
+            
+        return expression_str
+
     def parse_gdml_string(self, gdml_content_string):
         self.aeval = create_configured_asteval()
         self.geometry_state = GeometryState()
@@ -30,6 +79,13 @@ class GDMLParser:
         self._parse_solids(root.find('solids'))
         self._parse_structure(root.find('structure'))
         self._parse_setup(root.find('setup'))
+
+        # Clean up loop variables after parsing is complete
+        self.geometry_state.defines = {
+            name: define_obj for name, define_obj in self.geometry_state.defines.items()
+            if define_obj.category != "loop_variable"
+        }
+
         return self.geometry_state
 
     def _is_expression(self, value_str): # This function is no longer strictly necessary but can be kept
@@ -73,7 +129,7 @@ class GDMLParser:
                     print(f"Warning: Could not evaluate loop parameters. Skipping loop. Error: {e}")
                     continue
 
-                for i in range(start, end, step):
+                for i in range(start, end + 1, step):
                     self.aeval.symtable[loop_var_name] = i
                     self._process_children(child, handler, **kwargs)
                 
@@ -86,8 +142,12 @@ class GDMLParser:
         if define_element is None: return
 
         def define_handler(element):
-            name = element.get('name')
-            if not name: return
+            name_expr = element.get('name')
+            if not name_expr: return
+
+            # Evaluate the name
+            name = self._evaluate_name(name_expr)
+
             tag = element.tag
             raw_expression = None
             unit = None
@@ -136,15 +196,18 @@ class GDMLParser:
 
     def _parse_materials(self, materials_element):
         if materials_element is None: return
+
         # Find and parse any defines local to the materials block first
         local_defines = materials_element.find('define')
         if local_defines is not None:
             self._parse_defines(local_defines)
             
-        for element in materials_element:
+        def material_handler(element):
             if element.tag == 'material':
-                name = element.get('name')
-                if not name: continue
+                name_expr = element.get('name')
+                if not name_expr: return
+                name = self._evaluate_name(name_expr)
+
                 state = element.get('state')
                 Z_expr = element.get('Z')
                 density_expr = None
@@ -159,11 +222,16 @@ class GDMLParser:
                 mat = Material(name, Z_expr=Z_expr, A_expr=A_expr, density_expr=density_expr, state=state)
                 
                 for frac_el in element.findall('fraction'):
+                    # Evaluate the fraction reference
+                    frac_ref_expr = frac_el.get('ref')
+                    frac_ref = self._evaluate_name(frac_ref_expr)
                     mat.components.append({
-                        "ref": frac_el.get('ref'),
+                        "ref": frac_ref,
                         "fraction": frac_el.get('n')
                     })
                 self.geometry_state.add_material(mat)
+                
+        self._process_children(materials_element, material_handler)
 
     def _resolve_transform(self, parent_element):
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = None, None, None
@@ -207,9 +275,10 @@ class GDMLParser:
         current_boolean = top_level_boolean
 
         while True:
-            first_ref = current_boolean.raw_parameters.get('first_ref')
-            if not first_ref:
+            first_ref_expr = current_boolean.raw_parameters.get('first_ref')
+            if not first_ref_expr:
                 raise ValueError(f"Boolean solid '{current_boolean.name}' is missing 'first_ref'.")
+            first_ref = self._evaluate_name(first_ref_expr)
             
             first_solid = all_solids.get(first_ref)
             if not first_solid:
@@ -233,9 +302,11 @@ class GDMLParser:
         })
 
         for boolean_op in lineage:
-            second_ref = boolean_op.raw_parameters.get('second_ref')
-            if not second_ref:
+            second_ref_expr = boolean_op.raw_parameters.get('second_ref')
+            if not second_ref_expr:
                  raise ValueError(f"Boolean solid '{boolean_op.name}' is missing 'second_ref'.")
+            second_ref = self._evaluate_name(second_ref_expr)
+
             op_name = boolean_op.type
             transform = boolean_op.raw_parameters.get('transform_second')
             recipe.append({
@@ -259,8 +330,11 @@ class GDMLParser:
         def solid_handler(solid_el):
             # Treat name as a literal string. Loops will create solids with distinct names
             # based on the loop variable, which is handled fine by ProjectManager later.
-            name = solid_el.get('name')
-            if not name: return
+            name_expr = solid_el.get('name')
+            if not name_expr: return
+
+            # Evaluate the name
+            name = self._evaluate_name(name_expr)
 
             solid_type = solid_el.tag
 
@@ -279,19 +353,25 @@ class GDMLParser:
                             'theta', 'phi', 'inst', 'outst', 'PhiTwist', 'alpha1', 'alpha2', 
                             'Alph', 'Theta', 'Phi', 'twistedangle']
             
-            # All attributes are stored as raw expressions for later evaluation
+            # Get current values of loop variables from the asteval instance
+            current_loop_vars = {
+                k: v for k, v in self.aeval.symtable.items() 
+                if self.geometry_state.defines.get(k) and self.geometry_state.defines.get(k).category == 'loop_variable'
+            }
+
             for key, val in solid_el.attrib.items():
-                if key == 'name' or key == 'lunit' or key == 'aunit':
+                if key in ['name', 'lunit', 'aunit']:
                     continue
 
-                # If a parameter has a specific default unit, build the expression
+                # Partially evaluate the expression, substituting loop variables
+                partially_eval_val = self._partially_evaluate(val, current_loop_vars)
+
                 if key in length_params and default_lunit:
-                    params[key] = f"({val}) * {default_lunit}"
+                    params[key] = f"({partially_eval_val}) * {default_lunit}"
                 elif key in angle_params and default_aunit:
-                    params[key] = f"({val}) * {default_aunit}"
+                    params[key] = f"({partially_eval_val}) * {default_aunit}"
                 else:
-                    # Otherwise, store the raw value/expression
-                    params[key] = val
+                    params[key] = partially_eval_val
 
             # Handle nested tags for complex solids
             if solid_type in ['polycone', 'genericPolycone', 'polyhedra', 'genericPolyhedra']:
@@ -395,7 +475,11 @@ class GDMLParser:
         self._process_children(structure_element, second_pass_handler)
 
     def _parse_single_lv(self, vol_el):
-        lv_name = vol_el.get('name')
+        name_expr = vol_el.get('name')
+        if not name_expr: return
+        # Evaluate the name
+        lv_name = self._evaluate_name(name_expr)
+
         solid_ref_el = vol_el.find('solidref')
         mat_ref_el = vol_el.find('materialref')
 
@@ -403,8 +487,11 @@ class GDMLParser:
             print(f"Skipping incomplete logical volume: {lv_name}")
             return
 
-        solid_ref = solid_ref_el.get('ref')
-        mat_ref = mat_ref_el.get('ref')
+        solid_ref_expr = solid_ref_el.get('ref')
+        solid_ref = self._evaluate_name(solid_ref_expr)
+        
+        mat_ref_expr = mat_ref_el.get('ref')
+        mat_ref = self._evaluate_name(mat_ref_expr)
         
         # Avoid re-defining if it already exists (can happen with loops)
         if not self.geometry_state.get_logical_volume(lv_name):
@@ -442,16 +529,22 @@ class GDMLParser:
         self._process_children(vol_el, placement_handler, parent_lv=parent_lv)
 
     def _parse_pv_element(self, pv_el):
-        name = pv_el.get('name')
+        """Helper to parse a physvol tag and return a PhysicalVolumePlacement object."""
+        name_expr = pv_el.get('name') # Name can be optional in physvol
+        name = self._evaluate_name(name_expr) if name_expr else f"pv_default_{uuid.uuid4().hex[:6]}"
         
-        copy_number_expr = pv_el.get('copynumber', '0')
-        
-        vol_ref_el = pv_el.find('volumeref')
+        # We also need to evaluate the volumeref
+        vol_ref_expr = pv_el.find('volumeref').get('ref') if pv_el.find('volumeref') is not None else None
         asm_ref_el = pv_el.find('assemblyref')
         
-        if vol_ref_el is None and asm_ref_el is None: return None
-        
-        volume_ref = vol_ref_el.get('ref') if vol_ref_el is not None else asm_ref_el.get('ref')
+        if vol_ref_expr is None and asm_ref_el is None: return None
+
+        if vol_ref_expr:
+            volume_ref = self._evaluate_name(vol_ref_expr)
+        else: # assembly ref
+            volume_ref = asm_ref_el.get('ref')
+
+        copy_number_expr = pv_el.get('copynumber', '0')
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = self._resolve_transform(pv_el)
         
         return PhysicalVolumePlacement(name, volume_ref, copy_number_expr, pos_val_or_ref, rot_val_or_ref, scale_val_or_ref)

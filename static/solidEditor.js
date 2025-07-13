@@ -295,7 +295,11 @@ function renderParamsUI(params = {}) {
         const p = (key, defaultVal) => params[key] !== undefined ? params[key] : defaultVal;
 
         const uiBuilders = {
-            box: () => [ ExpressionInput.create('p_x', 'Size X (mm)', p('x', '100'), currentProjectState) ],
+            box: () => [ 
+                ExpressionInput.create('p_x', 'Size X (mm)', p('x', '100'), currentProjectState),
+                ExpressionInput.create('p_y', 'Size Y (mm)', p('y', '100'), currentProjectState),
+                ExpressionInput.create('p_z', 'Size Z (mm)', p('z', '100'), currentProjectState) 
+            ],
             tube: () => [
                 ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50'), currentProjectState),
@@ -619,10 +623,8 @@ function getRawParamsFromUI() {
 
     if (type === 'box') {
         raw_params.x = p('p_x');
-        // This is a special case for the box, where we only have one input
-        // but need to populate all three for symmetry.
-        raw_params.y = p('p_x'); 
-        raw_params.z = p('p_x');
+        raw_params.y = p('p_y'); 
+        raw_params.z = p('p_z');
     } else if (type === 'tube') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); 
         raw_params.dz = p('p_dz');
