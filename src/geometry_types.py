@@ -176,17 +176,28 @@ class LogicalVolume:
         self.material_ref = material_ref # Name/ID of the Material object
         self.vis_attributes = vis_attributes if vis_attributes is not None else {'color': {'r':0.8, 'g':0.8, 'b':0.8, 'a':1.0}}
         self.phys_children = [] # List of PhysicalVolumePlacement objects
+        self.procedural_children = []
 
     def add_child(self, placement):
-        self.phys_children.append(placement)
+        # Can be a PhysicalVolumePlacement or one of our new types
+        if isinstance(placement, PhysicalVolumePlacement):
+            self.phys_children.append(placement)
+        else:
+            self.procedural_children.append(placement)
 
     def to_dict(self):
+        procedural_dicts = []
+        for child in self.procedural_children:
+             if hasattr(child, 'to_dict'):
+                 procedural_dicts.append(child.to_dict())
+
         return {
             "id": self.id, "name": self.name,
             "solid_ref": self.solid_ref,
             "material_ref": self.material_ref,
             "vis_attributes": self.vis_attributes,
-            "phys_children": [child.to_dict() for child in self.phys_children]
+            "phys_children": [child.to_dict() for child in self.phys_children],
+            "procedural_children": procedural_dicts
         }
 
     @classmethod
@@ -197,6 +208,14 @@ class LogicalVolume:
             PhysicalVolumePlacement.from_dict(child_data, all_objects_map)
             for child_data in data.get('phys_children', [])
         ]
+        
+        # Placeholder for deserializing procedural children
+        instance.procedural_children = []
+        for proc_data in data.get('procedural_children', []):
+            if proc_data.get('type') == 'division':
+                instance.procedural_children.append(DivisionVolume.from_dict(proc_data))
+            # Add elif for 'replica', etc.
+            
         return instance
 
 
@@ -323,6 +342,70 @@ class Assembly:
         instance.id = data.get('id', str(uuid.uuid4()))
         instance.placements = [PhysicalVolumePlacement.from_dict(p) for p in data.get('placements', [])]
         return instance
+
+class DivisionVolume:
+    """Represents a <divisionvol> placement."""
+    def __init__(self, name, volume_ref, axis, number=0, width=0.0, offset=0.0, unit="mm"):
+        self.id = str(uuid.uuid4())
+        self.name = name  # Not in GDML spec, but useful for our UI
+        self.type = "division"
+        self.volume_ref = volume_ref
+        self.axis = axis # kXAxis, kYAxis, etc.
+        self.number = number
+        self.width = width
+        self.offset = offset
+        self.unit = unit
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "volume_ref": self.volume_ref, "axis": self.axis,
+            "number": self.number, "width": self.width, "offset": self.offset,
+            "unit": self.unit
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        # We assume name will be generated if not present
+        name = data.get('name', f"division_{data.get('id', uuid.uuid4().hex[:6])}")
+        return cls(name, data['volume_ref'], data['axis'], data.get('number'), 
+                   data.get('width'), data.get('offset'), data.get('unit'))
+
+class ReplicaVolume:
+    """Represents a <replicavol> placement."""
+    def __init__(self, name, volume_ref, number, direction, width=0.0, offset=0.0):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.type = "replica"
+        self.volume_ref = volume_ref
+        self.number = number
+        self.direction = direction # dict like {'x':1, 'y':0, ...}
+        self.width = width
+        self.offset = offset
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "volume_ref": self.volume_ref, "number": self.number,
+            "direction": self.direction, "width": self.width, "offset": self.offset
+        }
+
+# NOTE: Placeholder
+class ParamVolume:
+    """Represents a <paramvol> placement."""
+    def __init__(self, name, volume_ref, ncopies):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.type = "parameterised"
+        self.volume_ref = volume_ref
+        self.ncopies = ncopies
+        self.parameters = [] # This would be a list of parameter sets
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "volume_ref": self.volume_ref, "ncopies": self.ncopies
+        }
 
 class GeometryState:
     """Holds the entire geometry definition."""

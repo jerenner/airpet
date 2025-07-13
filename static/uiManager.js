@@ -23,7 +23,7 @@ let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, ma
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
-let addAssemblyButton, addLVButton, addPVButton;
+let addLVButton, addPVButton;
 
 // Keep track of selected parent LV in structure hierarchy and last selected item
 let selectedParentContext = null;
@@ -105,7 +105,6 @@ export function initUI(cb) {
 
     // Add buttons
     const addButtons = document.querySelectorAll('.add_button');
-    addAssemblyButton = document.getElementById('addAssemblyButton');
     addLVButton = document.getElementById('addLVButton');
     addPVButton = document.getElementById('addPVButton');
 
@@ -218,8 +217,6 @@ export function initUI(cb) {
     });
 
     // Add listeners for add logical and physical volume buttons
-    addAssemblyButton.addEventListener('click', callbacks.onAddAssemblyClicked);
-    addAssemblyButton.disabled = false;
     addLVButton.addEventListener('click', callbacks.onAddLVClicked);
     addLVButton.disabled = false;
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
@@ -270,6 +267,33 @@ export function initUI(cb) {
             const groupName = prompt(`Enter a name for the new ${type.replace('_',' ')} group:`);
             if (groupName && groupName.trim()) {
                 callbacks.onAddGroup(type, groupName.trim()); 
+            }
+        });
+    });
+
+    // Accordion functionality for Placements tab
+    const accordions = document.querySelectorAll('.accordion-header');
+    accordions.forEach(accordion => {
+        accordion.addEventListener('click', () => {
+            // Close other open accordions
+            accordions.forEach(other => {
+                if (other !== accordion) {
+                    other.classList.remove('active');
+                    other.nextElementSibling.style.display = 'none';
+                    other.querySelector('.accordion-icon').textContent = '+';
+                }
+            });
+
+            // Toggle the clicked one
+            accordion.classList.toggle('active');
+            const content = accordion.nextElementSibling;
+            const icon = accordion.querySelector('.accordion-icon');
+            if (content.style.display === 'block') {
+                content.style.display = 'none';
+                icon.textContent = '+';
+            } else {
+                content.style.display = 'block';
+                icon.textContent = '-';
             }
         });
     });
@@ -643,6 +667,14 @@ export function updateHierarchy(projectState) {
     }
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
     if(assembliesListRoot) assembliesListRoot.innerHTML = '';
+    
+    const replicasListRoot = document.getElementById('replicas_list_root');
+    if (replicasListRoot) replicasListRoot.innerHTML = '';
+    const divisionsListRoot = document.getElementById('divisions_list_root');
+    if (divisionsListRoot) divisionsListRoot.innerHTML = '';
+    const paramsListRoot = document.getElementById('params_list_root');
+    if (paramsListRoot) paramsListRoot.innerHTML = '';
+
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
