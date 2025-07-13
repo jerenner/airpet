@@ -14,6 +14,7 @@ from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
 from google.genai import client # For type hinting
 
+from src.expression_evaluator import ExpressionEvaluator 
 from src.project_manager import ProjectManager
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
@@ -28,6 +29,7 @@ CORS(app)
 ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
 project_manager = ProjectManager()
+expression_evaluator = ExpressionEvaluator()
 
 # Configure Gemini client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -840,36 +842,15 @@ def evaluate_expression_route():
     if not expression or not current_state_dict:
         return jsonify({"success": False, "error": "Missing expression or project state."}), 400
 
-    try:
-        # Create a temporary evaluator with the context from the provided state
-        aeval = asteval.Interpreter(symtable={}, minimal=True)
-        # Prime it with constants
-        aeval.symtable.update({
-            'pi': math.pi, 'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 
-            'rad': 1.0, 'deg': math.pi / 180.0,
-        })
-        
-        # Populate context with the *evaluated values* of existing defines
-        if 'defines' in current_state_dict:
-            for name, define_data in current_state_dict['defines'].items():
-                if isinstance(define_data.get('value'), (int, float)):
-                    aeval.symtable[name] = define_data['value']
-                # Special handling for vectors if needed, e.g., my_pos.x
-                elif isinstance(define_data.get('value'), dict):
-                     aeval.symtable[name] = define_data.get('value')
+    project_defines = current_state_dict.get('defines', {})
+    success, result = expression_evaluator.evaluate(expression, project_defines)
+    print(f"Result of {expression} is {result}")
 
-
-        # Safely evaluate the user's expression
-        result = aeval.eval(expression)
-
-        if aeval.error:
-             err = aeval.error[0]
-             return jsonify({"success": False, "error": err.get_error()}), 400
-
+    if success:
         return jsonify({"success": True, "result": result})
-
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    else:
+        # The result is the error message string
+        return jsonify({"success": False, "error": result}), 400
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

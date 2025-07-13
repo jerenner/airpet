@@ -159,6 +159,7 @@ class Solid:
 
     @classmethod
     def from_dict(cls, data):
+        raw_params = data.get('raw_parameters', {})
         instance = cls(data['name'], data['type'], raw_params)
         instance.id = data.get('id', str(uuid.uuid4()))
         instance._evaluated_parameters = data.get('_evaluated_parameters', {})
