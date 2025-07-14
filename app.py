@@ -844,7 +844,6 @@ def evaluate_expression_route():
 
     project_defines = current_state_dict.get('defines', {})
     success, result = expression_evaluator.evaluate(expression, project_defines)
-    print(f"Result of {expression} is {result}")
 
     if success:
         return jsonify({"success": True, "result": result})

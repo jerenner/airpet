@@ -429,6 +429,13 @@ export async function populateInspector(itemContext, projectState) {
         createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
         createReadOnlyProperty(inspectorContentDiv, "Copy Number:", data.copy_number);
 
+    } else if (type === 'replica') {
+        createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
+        createReadOnlyProperty(inspectorContentDiv, "Number:", data.number);
+        createReadOnlyProperty(inspectorContentDiv, "Width:", data.width);
+        createReadOnlyProperty(inspectorContentDiv, "Offset:", data.offset);
+        const dir = data.direction;
+        createReadOnlyProperty(inspectorContentDiv, "Direction:", `(x: ${dir.x}, y: ${dir.y}, z: ${dir.z})`);
     } else {
         for (const key in data) {
             if (key === 'id' || key === 'name' || key === 'phys_children' || typeof data[key] === 'function') continue;
@@ -665,20 +672,32 @@ export function updateHierarchy(projectState) {
         clearHierarchy();
         return;
     }
+
+    // --- Get all the list root elements ---
+    structureTreeRoot = document.getElementById('structure_tree_root');
+    assembliesListRoot = document.getElementById('assemblies_list_root');
+    lvolumesListRoot = document.getElementById('lvolumes_list_root');
+    definesListRoot = document.getElementById('defines_list_root');
+    materialsListRoot = document.getElementById('materials_list_root');
+    solidsListRoot = document.getElementById('solids_list_root');
+    // NEW: Get roots for procedural placements
+    const replicasListRoot = document.getElementById('replicas_list_root');
+    const divisionsListRoot = document.getElementById('divisions_list_root');
+    const paramsListRoot = document.getElementById('params_list_root');
+
+
+    // Clear all lists
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
     if(assembliesListRoot) assembliesListRoot.innerHTML = '';
-    
-    const replicasListRoot = document.getElementById('replicas_list_root');
-    if (replicasListRoot) replicasListRoot.innerHTML = '';
-    const divisionsListRoot = document.getElementById('divisions_list_root');
-    if (divisionsListRoot) divisionsListRoot.innerHTML = '';
-    const paramsListRoot = document.getElementById('params_list_root');
-    if (paramsListRoot) paramsListRoot.innerHTML = '';
-
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
+    // NEW: Clear procedural lists
+    if (replicasListRoot) replicasListRoot.innerHTML = '';
+    if (divisionsListRoot) divisionsListRoot.innerHTML = '';
+    if (paramsListRoot) paramsListRoot.innerHTML = '';
+
 
     // --- Grouped Population ---
     populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies), 'assembly');
@@ -715,6 +734,24 @@ export function updateHierarchy(projectState) {
         } else {
              structureTreeRoot.innerHTML = '<li>No world volume defined in project.</li>';
         }
+    }
+
+    // -- Populate Procedural Placements Tab ---
+    if (projectState.logical_volumes) {
+        Object.values(projectState.logical_volumes).forEach(lv => {
+            if (lv.procedural_children && lv.procedural_children.length > 0) {
+                lv.procedural_children.forEach(proc_child => {
+                    const itemElement = createProceduralItem(proc_child, lv.name);
+                    if (proc_child.type === 'replica' && replicasListRoot) {
+                        replicasListRoot.appendChild(itemElement);
+                    } else if (proc_child.type === 'division' && divisionsListRoot) {
+                        divisionsListRoot.appendChild(itemElement);
+                    } else if (proc_child.type === 'parameterised' && paramsListRoot) {
+                        paramsListRoot.appendChild(itemElement);
+                    }
+                });
+            }
+        });
     }
 }
 
@@ -1104,6 +1141,78 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             callbacks.onEditLVClicked(item.appData);
         });
     }
+    return item;
+}
+
+/**
+ * Creates a list item for a procedural placement (Replica, Division, etc.).
+ * @param {object} itemData - The data object for the procedural placement.
+ * @param {string} parentLVName - The name of the logical volume this placement belongs to.
+ * @returns {HTMLElement} The created <li> element.
+ */
+function createProceduralItem(itemData, parentLVName) {
+    const item = document.createElement('li');
+    let displayName = `Replica of '${itemData.volume_ref}' in '${parentLVName}'`;
+    
+    // You can add more display logic for other types here later
+    // if (itemData.type === 'division') { ... }
+
+    // Use the same consistent layout as other tree items
+    item.innerHTML = `
+        <div class="tree-item-content">
+            <span class="item-name">${displayName}</span>
+            <div class="item-controls">
+                <button class="delete-item-btn" title="Delete Item">×</button>
+            </div>
+        </div>
+    `;
+
+    // Store data on the element for later access (for the inspector, editing, etc.)
+    item.dataset.type = itemData.type; // 'replica', 'division', etc.
+    item.dataset.id = itemData.id;
+    item.dataset.name = displayName;
+    item.appData = itemData; // Store the full object
+
+    // Add a click listener for selection
+    item.addEventListener('click', (event) => {
+        event.stopPropagation();
+        // Simple selection: deselect all others and select this one
+        document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
+            sel.classList.remove('selected_item');
+        });
+        item.classList.add('selected_item');
+        
+        // Notify main.js of the selection
+        // We package it in an array to be consistent with multi-select logic
+        callbacks.onHierarchySelectionChanged([{
+            type: item.dataset.type,
+            id: item.dataset.id,
+            name: item.dataset.name,
+            data: item.appData
+        }]);
+    });
+
+    // Add delete button listener
+    const deleteBtn = item.querySelector('.delete-item-btn');
+    deleteBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (confirmAction(`Are you sure you want to delete this ${itemData.type} placement?`)) {
+            // Note: Deleting procedural placements is more complex than other objects.
+            // This will require a new API endpoint. For now, we can log it.
+            console.log(`TODO: Implement deletion for procedural child with ID ${itemData.id} from parent ${parentLVName}`);
+            showError("Deletion for procedural placements is not yet implemented.");
+            // callbacks.onDeleteSpecificItemClicked(itemData.type, itemData.id, { parent: parentLVName });
+        }
+    });
+
+    // Add double-click listener for editing
+    item.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        console.log(`TODO: Open editor for ${itemData.type} with ID ${itemData.id}`);
+        showError(`Editing for ${itemData.type} placements is not yet implemented.`);
+    });
+
+
     return item;
 }
 

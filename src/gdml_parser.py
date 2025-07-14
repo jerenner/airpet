@@ -7,7 +7,8 @@ import re
 import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
-    GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, Assembly,
+    GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
+    Assembly, ReplicaVolume, 
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
 )
 
@@ -230,7 +231,7 @@ class GDMLParser:
                         "fraction": frac_el.get('n')
                     })
                 self.geometry_state.add_material(mat)
-                
+
         self._process_children(materials_element, material_handler)
 
     def _resolve_transform(self, parent_element):
@@ -523,7 +524,11 @@ class GDMLParser:
                 pv = self._parse_pv_element(element)
                 if pv:
                     parent_lv_obj.add_child(pv)
-            elif element.tag == 'replicavol' or element.tag == 'divisionvol':
+            elif element.tag == 'replicavol':
+                replica = self._parse_replica_vol(element)
+                if replica:
+                    parent_lv_obj.add_child(replica)
+            elif element.tag == 'divisionvol' or element.tag == 'paramvol':
                 print(f"Warning: '{element.tag}' parsing is not yet implemented. Skipping.")
 
         self._process_children(vol_el, placement_handler, parent_lv=parent_lv)
@@ -548,6 +553,49 @@ class GDMLParser:
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = self._resolve_transform(pv_el)
         
         return PhysicalVolumePlacement(name, volume_ref, copy_number_expr, pos_val_or_ref, rot_val_or_ref, scale_val_or_ref)
+
+    def _parse_replica_vol(self, replica_el):
+        """Parses a <replicavol> tag and returns a ReplicaVolume object."""
+        # A name for the replica itself is not in the GDML spec,
+        # but we can generate one for our UI.
+        name = replica_el.get('name', f"replica_{uuid.uuid4().hex[:6]}")
+        
+        number_expr = replica_el.get('number', '1')
+        
+        # Initialize defaults
+        volume_ref = None
+        direction = {}
+        width = "0"
+        offset = "0"
+
+        # The <replicavol> tag contains a <volumeref> and a <replicate_along_axis> tag.
+        volumeref_el = replica_el.find('volumeref')
+        if volumeref_el is not None:
+            volume_ref = self._evaluate_name(volumeref_el.get('ref'))
+
+        replicator_el = replica_el.find('replicate_along_axis')
+        if replicator_el is not None:
+            direction_el = replicator_el.find('direction')
+            if direction_el is not None:
+                direction = {
+                    'x': direction_el.get('x', '0'),
+                    'y': direction_el.get('y', '0'),
+                    'z': direction_el.get('z', '0'),
+                }
+
+            width_el = replicator_el.find('width')
+            if width_el is not None:
+                width = width_el.get('value', '0')
+            
+            offset_el = replicator_el.find('offset')
+            if offset_el is not None:
+                offset = offset_el.get('value', '0')
+
+        if not volume_ref:
+            print("Warning: <replicavol> found without a <volumeref>. Skipping.")
+            return None
+        
+        return ReplicaVolume(name, volume_ref, number_expr, direction, width, offset)
 
     def _parse_setup(self, setup_element):
         if setup_element is None: return

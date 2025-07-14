@@ -521,6 +521,15 @@ async function handleHierarchySelection(newSelection) {
         const singleItem = newSelection[0];
         const { type, id } = singleItem;
 
+        // Handle procedural types in the inspector
+        if (type === 'replica' || type === 'division' || type === 'parameterised') {
+            // For these types, the 'data' is already the full object. No need to fetch details.
+            UIManager.populateInspector(singleItem, AppState.currentProjectState);
+            // Detach gizmo since these aren't directly manipulable in 3D
+            SceneManager.getTransformControls().detach();
+            return; // End the function here for these types
+        }
+
         // Fetch object details from backend on new selection.
         let details = await APIService.getObjectDetails(type, id);
         if (!details) {
