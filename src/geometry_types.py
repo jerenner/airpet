@@ -175,47 +175,53 @@ class LogicalVolume:
         self.solid_ref = solid_ref # Name/ID of the Solid object
         self.material_ref = material_ref # Name/ID of the Material object
         self.vis_attributes = vis_attributes if vis_attributes is not None else {'color': {'r':0.8, 'g':0.8, 'b':0.8, 'a':1.0}}
-        self.phys_children = [] # List of PhysicalVolumePlacement objects
-        self.procedural_children = []
+
+        # Unified content model for LVs
+        self.content_type = 'physvol'  # Default to standard placements
+        self.content = []              # If type is 'physvol', this is a list of PhysicalVolumePlacement
+                                       # If another type, this will hold a single procedural object
 
     def add_child(self, placement):
-        # Can be a PhysicalVolumePlacement or one of our new types
         if isinstance(placement, PhysicalVolumePlacement):
-            self.phys_children.append(placement)
-        else:
-            self.procedural_children.append(placement)
+            if self.content_type == 'physvol':
+                self.content.append(placement)
+        else: # It's a ReplicaVolume, DivisionVolume, etc.
+            self.content_type = placement.type
+            self.content = placement # Store the single object
 
     def to_dict(self):
-        procedural_dicts = []
-        for child in self.procedural_children:
-             if hasattr(child, 'to_dict'):
-                 procedural_dicts.append(child.to_dict())
+        content_data = None
+        if self.content_type == 'physvol':
+            content_data = [child.to_dict() for child in self.content]
+        elif self.content: # For replica, division, etc.
+            content_data = self.content.to_dict()
 
         return {
             "id": self.id, "name": self.name,
             "solid_ref": self.solid_ref,
             "material_ref": self.material_ref,
             "vis_attributes": self.vis_attributes,
-            "phys_children": [child.to_dict() for child in self.phys_children],
-            "procedural_children": procedural_dicts
+            "content_type": self.content_type, # NEW
+            "content": content_data           # NEW
         }
 
     @classmethod
-    def from_dict(cls, data, all_objects_map=None): # all_objects_map for resolving refs if they are objects not just names
+    def from_dict(cls, data, all_objects_map=None):
+        # This method needs to be updated to handle the new structure
+        # but we can do that later when we implement JSON loading.
+        # For now, this is sufficient for the GDML import flow.
         instance = cls(data['name'], data['solid_ref'], data['material_ref'], data.get('vis_attributes'))
         instance.id = data.get('id', str(uuid.uuid4()))
-        instance.phys_children = [
-            PhysicalVolumePlacement.from_dict(child_data, all_objects_map)
-            for child_data in data.get('phys_children', [])
-        ]
+        instance.content_type = data.get('content_type', 'physvol')
         
-        # Placeholder for deserializing procedural children
-        instance.procedural_children = []
-        for proc_data in data.get('procedural_children', []):
-            if proc_data.get('type') == 'division':
-                instance.procedural_children.append(DivisionVolume.from_dict(proc_data))
-            # Add elif for 'replica', etc.
-            
+        content_data = data.get('content')
+        if instance.content_type == 'physvol' and isinstance(content_data, list):
+            instance.content = [PhysicalVolumePlacement.from_dict(p) for p in content_data]
+        elif content_data: # It's a dict for a single procedural object
+            if instance.content_type == 'replica':
+                instance.content = ReplicaVolume.from_dict(content_data)
+            # Add elif for other types here...
+        
         return instance
 
 
@@ -479,53 +485,89 @@ class GeometryState:
     def get_threejs_scene_description(self):
         """
         Translates the internal geometry state into a flat list for Three.js.
-        This function now relies on the `_evaluated_` fields being correctly
-        populated by the ProjectManager before it is called.
+        This function now unrolls procedural placements like replicas.
         """
         if not self.world_volume_ref or self.world_volume_ref not in self.logical_volumes:
             return []
-
+            
         threejs_objects = []
-        
+
         def traverse(lv_name, parent_transform_matrix):
             lv = self.get_logical_volume(lv_name)
             if not lv: return
 
-            for pv in lv.phys_children:
+            placements_to_process = []
+            
+            # Check the content type to determine how to get the list of placements
+            if lv.content_type == 'physvol':
+                placements_to_process = lv.content
+            
+            elif lv.content_type == 'replica':
+                replica_obj = lv.content
+                child_lv_to_replicate = self.get_logical_volume(replica_obj.volume_ref)
+                if not child_lv_to_replicate:
+                    print(f"Warning: LV '{replica_obj.volume_ref}' referenced by replica in '{lv.name}' not found.")
+                    return
+
+                # The unrolling logic for replicas is correct, it creates temporary PVs
+                number = int(replica_obj.number)
+                # NOTE: The ProjectManager should have already evaluated these expressions.
+                # We directly use the numeric values here.
+                width = replica_obj.width
+                offset = replica_obj.offset
+                axis_dict = replica_obj.direction
+                axis_vec = np.array([float(axis_dict['x']), float(axis_dict['y']), float(axis_dict['z'])])
+
+                for i in range(number):
+                    translation_along_axis = -width * (number - 1) * 0.5 + i * width + offset
+                    copy_pos = {'x': axis_vec[0] * translation_along_axis,
+                                'y': axis_vec[1] * translation_along_axis,
+                                'z': axis_vec[2] * translation_along_axis}
+                    
+                    temp_pv = PhysicalVolumePlacement(
+                        name=f"{lv.name}_replica_{i}",
+                        volume_ref=child_lv_to_replicate.name,
+                        copy_number_expr=str(i)
+                    )
+                    # Populate the _evaluated_ fields for the temporary PV
+                    temp_pv._evaluated_position = copy_pos
+                    temp_pv._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0} # Replicas have no additional rotation
+                    placements_to_process.append(temp_pv)
+            
+            # This single loop now processes both regular physvols and unrolled replicas
+            for pv in placements_to_process:
+                
+                # The pv object from lv.content already has its _evaluated_
+                # fields populated by ProjectManager. We just need to call the matrix function.
+                # The temporary PVs from the replica loop also have them now.
                 local_transform_matrix = pv.get_transform_matrix()
                 world_transform_matrix = parent_transform_matrix @ local_transform_matrix
-                final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
                 
-                assembly = self.get_assembly(pv.volume_ref)
-                if assembly:
-                    # For assemblies, we don't render the assembly itself.
-                    # Instead, we traverse its children, applying the assembly's
-                    # world transform to them.
-                    for part_pv in assembly.placements:
-                        # The 'parent' transform for the assembly's parts is the
-                        # calculated world transform of the assembly placement itself.
-                        traverse(part_pv.volume_ref, world_transform_matrix)
+                child_lv = self.get_logical_volume(pv.volume_ref)
+                if not child_lv: continue
+                
+                # Check if the child is itself a procedural container.
+                # If so, we only traverse into it and do not render its envelope solid.
+                if child_lv.content_type in ['replica', 'division', 'parameterised']:
+                    traverse(child_lv.name, world_transform_matrix)
                 else:
-                    # This is a regular Logical Volume placement.
-                    child_lv = self.get_logical_volume(pv.volume_ref)
-                    if not child_lv: continue
+                    # This is a normal, renderable volume placement.
+                    final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
                     
                     threejs_objects.append({
                         "id": pv.id,
                         "name": pv.name,
-                        "solid_ref_for_threejs": child_lv.solid_ref, 
+                        "solid_ref_for_threejs": child_lv.solid_ref,
                         "position": final_pos,
                         "rotation": final_rot_rad,
-                        "is_world_volume_placement": (child_lv.name == self.world_volume_ref),
+                        "is_world_volume_placement": False,
                         "vis_attributes": child_lv.vis_attributes,
                         "copy_number": pv.copy_number
                     })
                     
-                    # Recurse into the children of this placed volume
+                    # Also traverse into this placed volume to render its children.
                     traverse(child_lv.name, world_transform_matrix)
 
-        # Start the traversal from the world volume with an identity matrix
         initial_transform = np.identity(4)
         traverse(self.world_volume_ref, initial_transform)
-        
         return threejs_objects

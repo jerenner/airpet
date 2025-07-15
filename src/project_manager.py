@@ -262,22 +262,47 @@ class ProjectManager:
                 return evaluated_dict
             return default_val
 
-        # This includes placements inside LVs and inside Assemblies
-        all_volumes_with_placements = list(state.logical_volumes.values()) + list(state.assemblies.values())
-        for vol in all_volumes_with_placements:
-            placements = getattr(vol, 'placements', getattr(vol, 'phys_children', []))
-            for pv in placements:
+        # Get all LVs and Assemblies to check for placements
+        all_lvs = list(state.logical_volumes.values())
+        all_asms = list(state.assemblies.values())
 
-                # Evaluate the copy number.
+        # Iterate through LVs to evaluate their placements
+        for lv in all_lvs:
+            if lv.content_type == 'physvol':
+                for pv in lv.content: # Use the new .content attribute
+                    try:
+                        pv.copy_number = int(aeval.eval(str(pv.copy_number_expr)))
+                    except Exception as e:
+                        pv.copy_number = 0
+                    
+                    pv._evaluated_position = evaluate_transform_part(pv.position, {'x': 0, 'y': 0, 'z': 0})
+                    pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x': 0, 'y': 0, 'z': 0})
+                    pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x': 1, 'y': 1, 'z': 1})
+            
+            elif lv.content_type in ['replica', 'division']:
+                # For procedural placements, we need to evaluate their parameters (width, offset, etc.)
+                proc_obj = lv.content
+                if proc_obj:
+                    # Evaluate numeric properties of the procedural object itself
+                    if hasattr(proc_obj, 'width'):
+                        proc_obj.width = float(aeval.eval(str(proc_obj.width)))
+                    if hasattr(proc_obj, 'offset'):
+                        proc_obj.offset = float(aeval.eval(str(proc_obj.offset)))
+                    if hasattr(proc_obj, 'number'):
+                        proc_obj.number = int(aeval.eval(str(proc_obj.number)))
+
+
+        # Iterate through Assemblies to evaluate their placements
+        for asm in all_asms:
+            for pv in asm.placements:
                 try:
                     pv.copy_number = int(aeval.eval(str(pv.copy_number_expr)))
                 except Exception as e:
-                    print(f"Warning: Could not evaluate copy number for '{pv.name}': {e}. Defaulting to 0.")
                     pv.copy_number = 0
-
-                pv._evaluated_position = evaluate_transform_part(pv.position, {'x':0, 'y':0, 'z':0})
-                pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x':0, 'y':0, 'z':0})
-                pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x':1, 'y':1, 'z':1})
+                
+                pv._evaluated_position = evaluate_transform_part(pv.position, {'x': 0, 'y': 0, 'z': 0})
+                pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x': 0, 'y': 0, 'z': 0})
+                pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x': 1, 'y': 1, 'z': 1})
 
         ## Stage 5 - Evaluate transforms inside boolean solid recipes ##
         for solid in state.solids.values():
@@ -351,15 +376,28 @@ class ProjectManager:
         elif object_type == "solid": obj = self.current_geometry_state.solids.get(object_name_or_id)
         elif object_type == "logical_volume": obj = self.current_geometry_state.logical_volumes.get(object_name_or_id)
         elif object_type == "physical_volume":
-            # Search all LVs and Assemblies for the PV by its unique ID
-            all_containers = list(self.current_geometry_state.logical_volumes.values()) + list(self.current_geometry_state.assemblies.values())
-            for container in all_containers:
-                placements = getattr(container, 'placements', getattr(container, 'phys_children', []))
-                for pv in placements:
-                    if pv.id == object_name_or_id:
-                        obj = pv
+            # Search through all logical volumes to find the PV
+            all_lvs = list(self.current_geometry_state.logical_volumes.values())
+            for lv in all_lvs:
+                # We only search in LVs that contain physical placements
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.id == object_name_or_id:
+                            obj = pv
+                            break
+                if obj:
+                    break
+            
+            # Also search through assemblies (important for completeness)
+            if not obj:
+                all_asms = list(self.current_geometry_state.assemblies.values())
+                for asm in all_asms:
+                    for pv in asm.placements:
+                        if pv.id == object_name_or_id:
+                            obj = pv
+                            break
+                    if obj:
                         break
-                if obj: break
         
         return obj.to_dict() if obj else None
 
@@ -661,16 +699,29 @@ class ProjectManager:
 
     def update_physical_volume(self, pv_id, new_name, new_position, new_rotation):
         if not self.current_geometry_state: return False, "No project loaded"
-        
-        # This just uses the existing update_physical_volume_transform and update_object_property
-        # For simplicity, we can do it directly here.
         pv_to_update = None
-        for lv in self.current_geometry_state.logical_volumes.values():
-            for pv in lv.phys_children:
-                if pv.id == pv_id:
-                    pv_to_update = pv
+
+        # Search through all logical volumes and their new 'content' list
+        all_lvs = list(self.current_geometry_state.logical_volumes.values())
+        for lv in all_lvs:
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.id == pv_id:
+                        pv_to_update = pv
+                        break
+            if pv_to_update:
+                break
+        
+        # Also search assemblies
+        if not pv_to_update:
+            all_asms = list(self.current_geometry_state.assemblies.values())
+            for asm in all_asms:
+                for pv in asm.placements:
+                    if pv.id == pv_id:
+                        pv_to_update = pv
+                        break
+                if pv_to_update:
                     break
-            if pv_to_update: break
         
         if not pv_to_update:
             return False, f"Physical Volume with ID '{pv_id}' not found."
@@ -904,99 +955,59 @@ class ProjectManager:
 
     def process_ai_response(self, ai_data: dict):
         """
-        Processes a structured dictionary from the AI, converting units
-        and adding new objects and placements.
+        Processes a structured dictionary from the AI, creating new objects
+        and applying updates like placements.
         """
         if not self.current_geometry_state:
             return False, "No project loaded."
 
-        # --- Centralized Unit Conversion ---
-        # A set of all solid parameter keys that represent angles and need conversion
-        angle_param_keys = {
-            'startphi', 'deltaphi', 'starttheta', 'deltatheta',
-            'alpha', 'theta', 'phi', 'inst', 'outst', 'phi_twist', 'twistedangle',
-            'alpha1', 'alpha2'
-        }
+        print("RECEIVED AI DATA")
+        print(ai_data)
 
-        # 1. Convert rotation 'defines' from degrees to radians
-        if "defines" in ai_data:
-            for define_data in ai_data.get("defines", {}).values():
-                if define_data.get("type") == "rotation":
-                    rot_val = define_data.get("value", {})
-                    if isinstance(rot_val, dict):
-                        for axis in ['x', 'y', 'z']:
-                            rot_val[axis] = math.radians(rot_val.get(axis, 0))
-
-        # 2. Convert solid angular parameters from degrees to radians
-        if "solids" in ai_data:
-            for solid_data in ai_data.get("solids", {}).values():
-                params = solid_data.get("parameters", {})
-                if not isinstance(params, dict): continue
-
-                for key, value in params.items():
-                    if key in angle_param_keys:
-                        try:
-                            params[key] = math.radians(float(value))
-                        except (ValueError, TypeError):
-                            # Handle cases where value might not be a number, though it should be.
-                            print(f"Warning: Could not convert angle parameter '{key}' with value '{value}' to radians.")
-                            pass
-
-                # Special handling for boolean solid recipes
-                if solid_data.get("type") == "boolean":
-                    recipe = params.get("recipe", [])
-                    for item in recipe:
-                        transform = item.get("transform")
-                        if transform and isinstance(transform.get("rotation"), dict):
-                            rot_val = transform["rotation"]
-                            for axis in ['x', 'y', 'z']:
-                                rot_val[axis] = math.radians(rot_val.get(axis, 0))
-
-        # 3. Convert placement rotations from degrees to radians
-        if "placements" in ai_data:
-            for placement_data in ai_data.get("placements", []):
-                rot_val = placement_data.get("rotation")
-                # Only convert if it's an absolute value dict, not a string reference
-                if isinstance(rot_val, dict):
-                    for axis in ['x', 'y', 'z']:
-                        rot_val[axis] = math.radians(rot_val.get(axis, 0))
-        
-        # --- End of Unit Conversion ---
-
-        creation_data = {
-            "defines": ai_data.get("defines", {}),
-            "materials": ai_data.get("materials", {}),
-            "solids": ai_data.get("solids", {}),
-            "logical_volumes": ai_data.get("logical_volumes", {}),
-        }
-        
-        if any(creation_data.values()):
+        # --- 1. Handle the 'creates' block ---
+        # This block defines new, standalone items. We can merge them all at once.
+        creation_data = ai_data.get("creates", {})
+        if creation_data:
             temp_state = GeometryState.from_dict(creation_data)
             success, error_msg = self.merge_from_state(temp_state)
             if not success:
                 return False, f"Failed to merge AI-defined objects: {error_msg}"
+        
+        # --- 2. Handle the 'updates' block ---
+        # This block modifies existing objects, like placing volumes inside another.
+        updates = ai_data.get("updates", [])
+        if not isinstance(updates, list):
+            return False, "AI response had an invalid 'updates' format (must be a list)."
 
-        placements = ai_data.get("placements", [])
-        if not isinstance(placements, list):
-            return False, "AI response had an invalid 'placements' format (must be a list)."
-
-        for pv_data in placements:
+        for update_task in updates:
             try:
-                parent_lv = pv_data['parent_lv_name']
-                volume_ref = pv_data['volume_ref']
-                pv_name = pv_data.get('pv_name', f"{volume_ref}_pv")
-                position = pv_data.get('position', {'x':0, 'y':0, 'z':0})
-                rotation = pv_data.get('rotation', {'x':0, 'y':0, 'z':0})
-                
-                _, pv_error = self.add_physical_volume(parent_lv, pv_name, volume_ref, position, rotation)
-                
-                if pv_error:
-                    return False, f"Failed to place '{volume_ref}' in '{parent_lv}': {pv_error}"
-            except KeyError as e:
-                return False, f"AI placement data is missing a required key: {e}"
-            except Exception as e:
-                return False, f"An error occurred during object placement: {e}"
+                obj_type = update_task['object_type']
+                obj_name = update_task['object_name']
+                action = update_task['action']
+                data = update_task['data']
 
+                if obj_type == "logical_volume" and action == "append_physvol":
+                    parent_lv = self.current_geometry_state.logical_volumes.get(obj_name)
+                    if not parent_lv:
+                        return False, f"Parent logical volume '{obj_name}' not found for placement."
+                    
+                    if parent_lv.content_type != 'physvol':
+                         return False, f"Cannot add a physical volume to '{obj_name}' because it is procedurally defined as a '{parent_lv.content_type}'."
+
+                    # The 'data' dictionary is a complete PhysicalVolumePlacement dictionary
+                    new_pv = PhysicalVolumePlacement.from_dict(data)
+                    parent_lv.add_child(new_pv)
+
+                else:
+                    # Placeholder for future actions like "update_property", "delete_item", etc.
+                    print(f"Warning: AI requested unknown action '{action}' on '{obj_type}'. Ignoring.")
+
+            except KeyError as e:
+                return False, f"AI update data is missing a required key: {e}"
+            except Exception as e:
+                return False, f"An error occurred during AI update processing: {e}"
+
+        # --- 3. Recalculate everything once at the end ---
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
 

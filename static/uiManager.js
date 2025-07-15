@@ -716,9 +716,10 @@ export function updateHierarchy(projectState) {
                 worldItem.classList.add('world-volume-item'); // Add a class for special styling/selection
 
                 // Now, recursively build the tree for all PVs placed *inside* the world
-                if (worldLV.phys_children && worldLV.phys_children.length > 0) {
+                const world_children_to_process = (worldLV.content_type === 'physvol') ? worldLV.content : [];
+                if (world_children_to_process && world_children_to_process.length > 0) {
                     const childrenUl = document.createElement('ul');
-                    worldLV.phys_children.forEach(pvData => {
+                    world_children_to_process.forEach(pvData => {
                         const childNode = buildVolumeNode(pvData, projectState);
                         if (childNode) childrenUl.appendChild(childNode);
                     });
@@ -739,18 +740,13 @@ export function updateHierarchy(projectState) {
     // -- Populate Procedural Placements Tab ---
     if (projectState.logical_volumes) {
         Object.values(projectState.logical_volumes).forEach(lv => {
-            if (lv.procedural_children && lv.procedural_children.length > 0) {
-                lv.procedural_children.forEach(proc_child => {
-                    const itemElement = createProceduralItem(proc_child, lv.name);
-                    if (proc_child.type === 'replica' && replicasListRoot) {
-                        replicasListRoot.appendChild(itemElement);
-                    } else if (proc_child.type === 'division' && divisionsListRoot) {
-                        divisionsListRoot.appendChild(itemElement);
-                    } else if (proc_child.type === 'parameterised' && paramsListRoot) {
-                        paramsListRoot.appendChild(itemElement);
-                    }
-                });
+            // Check if the LV is defined by a procedural rule
+            if (lv.content_type === 'replica' && replicasListRoot) {
+                // The 'content' is the single ReplicaVolume object
+                const itemElement = createProceduralItem(lv, lv.name); // Pass the LV itself
+                replicasListRoot.appendChild(itemElement);
             }
+            // Add 'else if' for division, paramvol etc. here
         });
     }
 }
@@ -874,33 +870,30 @@ function buildVolumeNode(pvData, projectState) {
     const pvItem = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData });
     
     // Check if the placed LV has children of its own
-    if (childLVData.phys_children && childLVData.phys_children.length > 0) {
+    const children_to_process = (childLVData.content_type === 'physvol') ? childLVData.content : [];
+    if (children_to_process && children_to_process.length > 0) {
         // --- GROUPING LOGIC ---
         if (childLVData.phys_children.length <= ITEMS_PER_GROUP) {
             // If few enough children, render them directly
             const childrenUl = document.createElement('ul');
-            childLVData.phys_children.forEach(nestedPvData => {
+            children_to_process.forEach(nestedPvData => {
                 const nestedNode = buildVolumeNode(nestedPvData, projectState);
                 if (nestedNode) childrenUl.appendChild(nestedNode);
             });
             if (childrenUl.hasChildNodes()) {
-                addToggle(pvItem, childrenUl); // Helper to add expand/collapse
+                addToggle(pvItem, childrenUl);
                 pvItem.appendChild(childrenUl);
             }
         } else {
             // If too many children, create grouped folders
             const childrenUl = document.createElement('ul');
-            for (let i = 0; i < childLVData.phys_children.length; i += ITEMS_PER_GROUP) {
-                const group = childLVData.phys_children.slice(i, i + ITEMS_PER_GROUP);
-                const groupName = `Placements ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, childLVData.phys_children.length)}`;
-                
+            for (let i = 0; i < children_to_process.length; i += ITEMS_PER_GROUP) {
+                const group = children_to_process.slice(i, i + ITEMS_PER_GROUP);
+                const groupName = `Placements ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, children_to_process.length)}`;
                 const folderLi = document.createElement('li');
                 folderLi.classList.add('hierarchy-folder');
-                
                 const subChildrenUl = document.createElement('ul');
-                subChildrenUl.style.display = 'none'; // Initially collapsed
-                
-                // Lazy-load the group's content
+                subChildrenUl.style.display = 'none';
                 let isPopulated = false;
                 const folderToggleCallback = () => {
                     if (!isPopulated) {
@@ -911,7 +904,6 @@ function buildVolumeNode(pvData, projectState) {
                         isPopulated = true;
                     }
                 };
-
                 const folderContent = createFolderElement(groupName, subChildrenUl, folderToggleCallback);
                 folderLi.appendChild(folderContent);
                 folderLi.appendChild(subChildrenUl);
@@ -998,6 +990,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         event.stopPropagation();
         item.classList.remove('dragging');
     });
+
+    // Add an icon for procedural volumes in the main hierarchy view
+    if (itemType === 'logical_volume' && fullItemData.content_type && fullItemData.content_type !== 'physvol') {
+        const icon = `<span class="procedural-icon" title="Type: ${fullItemData.content_type}">⚙️</span>`;
+        displayName = icon + ' ' + displayName;
+    }
 
     // --- Add a container for the name and buttons ---
     item.innerHTML = `
@@ -1088,6 +1086,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     });
 
     // Add listener for the new visibility button
+    
     if (itemType === 'physical_volume') {
         const visBtn = item.querySelector('.visibility-btn');
 

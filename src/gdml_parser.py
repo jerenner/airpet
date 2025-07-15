@@ -524,13 +524,24 @@ class GDMLParser:
                 pv = self._parse_pv_element(element)
                 if pv:
                     parent_lv_obj.add_child(pv)
+            
             elif element.tag == 'replicavol':
                 replica = self._parse_replica_vol(element)
                 if replica:
-                    parent_lv_obj.add_child(replica)
-            elif element.tag == 'divisionvol' or element.tag == 'paramvol':
-                print(f"Warning: '{element.tag}' parsing is not yet implemented. Skipping.")
+                    # Because a loop can contain multiple replica tags (though unusual),
+                    # we only process the first one found for a given LV.
+                    if parent_lv_obj.content_type == 'physvol':
+                        parent_lv_obj.add_child(replica)
+                    else:
+                        print(f"Warning: Logical Volume '{parent_lv_obj.name}' already has a procedural placement. Skipping extra <replicavol>.")
+            
+            elif element.tag == 'divisionvol':
+                print(f"Warning: '<divisionvol>' parsing is not yet implemented. Skipping.")
+            
+            elif element.tag == 'paramvol':
+                 print(f"Warning: '<paramvol>' parsing is not yet implemented. Skipping.")
 
+        # This call now handles physvols inside loops correctly.
         self._process_children(vol_el, placement_handler, parent_lv=parent_lv)
 
     def _parse_pv_element(self, pv_el):
