@@ -429,6 +429,26 @@ export async function populateInspector(itemContext, projectState) {
         createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
         createReadOnlyProperty(inspectorContentDiv, "Copy Number:", data.copy_number);
 
+    } else if (type === 'logical_volume') {
+        
+        // Check its content type to decide what to show
+        if (data.content_type === 'replica') {
+            // Show the Replica editor UI
+            const replica = data.content;
+            createReadOnlyProperty(inspectorContentDiv, "Solid (Envelope):", data.solid_ref);
+            createReadOnlyProperty(inspectorContentDiv, "Replicated LV:", replica.volume_ref);
+            // TODO: Create editable expression inputs for these
+            createReadOnlyProperty(inspectorContentDiv, "Number:", replica.number);
+            createReadOnlyProperty(inspectorContentDiv, "Width:", replica.width);
+            createReadOnlyProperty(inspectorContentDiv, "Offset:", replica.offset);
+            const dir = replica.direction;
+            createReadOnlyProperty(inspectorContentDiv, "Direction:", `(x: ${dir.x}, y: ${dir.y}, z: ${dir.z})`);
+        }
+        else { // It's a standard LV (or another procedural type for later)
+             createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
+             createReadOnlyProperty(inspectorContentDiv, "Material Ref:", data.material_ref);
+             // Could add a list of its physvol children here if desired
+        }
     } else if (type === 'replica') {
         createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
         createReadOnlyProperty(inspectorContentDiv, "Number:", data.number);

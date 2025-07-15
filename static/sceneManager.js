@@ -40,6 +40,9 @@ let getSnapSettingsCallback = null; // Function to get current snap settings -> 
 let onObjectTransformLiveCallback = null; // callback for live updates
 let onMultiObjectSelectedCallback = null;
 
+// Gizmo for multi-select
+let gizmoAttachmentHelper = new THREE.Object3D(); // Helper for gizmo on multi-select
+
 // --- Initialization ---
 export function initScene(callbacks) {
     onObjectSelectedCallback = callbacks.onObjectSelectedIn3D;
@@ -51,6 +54,7 @@ export function initScene(callbacks) {
     // Basic Scene Setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xdddddd);
+    scene.add(gizmoAttachmentHelper); // Add it to the scene
 
     viewerContainer = document.getElementById('viewer_container');
 
@@ -1292,16 +1296,50 @@ export function updateSelectionState(clickedMeshes = []) {
         }
     });
 
-    // --- Gizmo Logic ---
-    if (_selectedThreeObjects.length === 1) {
-        // If only one object is selected, attach the gizmo
-        if (getInteractionManagerMode() !== 'observe') {
-             transformControls.attach(_selectedThreeObjects[0]);
+    // // --- Gizmo Logic ---
+    // transformControls.detach();
+    // if (_selectedThreeObjects.length > 0) {
+    //     if (_selectedThreeObjects.length === 1) {
+    //         // If only one object is selected, attach gizmo directly
+    //         if (getInteractionManagerMode() !== 'observe') {
+    //              transformControls.attach(_selectedThreeObjects[0]);
+    //         }
+    //     } else {
+    //         // If multiple objects (like from a replica), attach to a helper
+    //         // Calculate the center of all selected objects
+    //         const box = new THREE.Box3();
+    //         _selectedThreeObjects.forEach(mesh => {
+    //             box.expandByObject(mesh);
+    //         });
+    //         const center = new THREE.Vector3();
+    //         box.getCenter(center);
+            
+    //         // Position our helper object at this center
+    //         gizmoAttachmentHelper.position.copy(center);
+    //         gizmoAttachmentHelper.rotation.set(0,0,0);
+    //         gizmoAttachmentHelper.scale.set(1,1,1);
+            
+    //         if (getInteractionManagerMode() !== 'observe') {
+    //             transformControls.attach(gizmoAttachmentHelper);
+    //         }
+    //     }
+    // }
+    // else {
+    //     // If zero objects are selected, always detach the gizmo
+    //     transformControls.detach();
+    // }
+}
+
+// A simple utility to get all meshes belonging to an owner.
+// This replaces the old selectProceduralPlacement.
+export function getMeshesForOwner(ownerPvId) {
+    const meshes = [];
+    geometryGroup.traverse(child => {
+        if (child.isMesh && child.userData && child.userData.owner_pv_id === ownerPvId) {
+            meshes.push(child);
         }
-    } else {
-        // If multiple or zero objects are selected, always detach the gizmo
-        transformControls.detach();
-    }
+    });
+    return meshes;
 }
 
 function highlightObject(obj) {
@@ -1343,9 +1381,33 @@ export function unselectAllInScene() {
 
 // --- Transform Controls Management ---
 export function attachTransformControls(object) {
-    if (transformControls.enabled && object && object.isMesh) {
-        transformControls.attach(object);
+
+    transformControls.detach();
+    if (!transformControls.enabled || !objects || objects.length === 0) return;
+
+    if (objects.length === 1) {
+        // Simple case: attach directly to the single mesh
+        transformControls.attach(objects[0]);
+    } else {
+        // Multi-object case (from a replica or user multi-select)
+        const box = new THREE.Box3();
+        objects.forEach(mesh => {
+            box.expandByObject(mesh);
+        });
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        
+        // Position our helper object at this center
+        gizmoAttachmentHelper.position.copy(center);
+        gizmoAttachmentHelper.rotation.set(0,0,0);
+        gizmoAttachmentHelper.scale.set(1,1,1);
+        
+        transformControls.attach(gizmoAttachmentHelper);
     }
+
+    // if (transformControls.enabled && object && object.isMesh) {
+    //     transformControls.attach(object);
+    // }
 }
 export function getTransformControls() { return transformControls; }
 export function getOrbitControls() { return orbitControls; }

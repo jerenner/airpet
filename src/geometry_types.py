@@ -492,7 +492,7 @@ class GeometryState:
             
         threejs_objects = []
 
-        def traverse(lv_name, parent_transform_matrix):
+        def traverse(lv_name, parent_transform_matrix, owning_pv_id=None):
             lv = self.get_logical_volume(lv_name)
             if not lv: return
 
@@ -549,14 +549,18 @@ class GeometryState:
                 # Check if the child is itself a procedural container.
                 # If so, we only traverse into it and do not render its envelope solid.
                 if child_lv.content_type in ['replica', 'division', 'parameterised']:
-                    traverse(child_lv.name, world_transform_matrix)
+                    traverse(child_lv.name, world_transform_matrix, owning_pv_id=pv.id)
                 else:
                     # This is a normal, renderable volume placement.
                     final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
+
+                    # Add owner information to the data sent to three.js
+                    owner_pv_id = owning_pv_id
                     
                     threejs_objects.append({
                         "id": pv.id,
                         "name": pv.name,
+                        "owner_pv_id": owner_pv_id,
                         "solid_ref_for_threejs": child_lv.solid_ref,
                         "position": final_pos,
                         "rotation": final_rot_rad,
@@ -566,7 +570,7 @@ class GeometryState:
                     })
                     
                     # Also traverse into this placed volume to render its children.
-                    traverse(child_lv.name, world_transform_matrix)
+                    traverse(child_lv.name, world_transform_matrix, owning_pv_id=pv.id)
 
         initial_transform = np.identity(4)
         traverse(self.world_volume_ref, initial_transform)

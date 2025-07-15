@@ -506,6 +506,16 @@ async function handleHierarchySelection(newSelection) {
     console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
 
+    // --- GIZMO LOGIC ---
+    SceneManager.getTransformControls().detach();
+    if (newSelection.length === 1 && newSelection[0].type === 'physical_volume') {
+        // Only show gizmo if ONE item (which could be a procedural group) is selected.
+        const meshesToTransform = AppState.selectedThreeObjects; // Use the already highlighted meshes
+        if (meshesToTransform.length > 0) {
+            SceneManager.attachTransformControls(meshesToTransform); // Pass the array to the updated function
+        }
+    }
+
     // Sync the 3D view to match the hierarchy selection
     const pvIdsToSelect = newSelection
         .filter(item => item.type === 'physical_volume')
@@ -519,7 +529,11 @@ async function handleHierarchySelection(newSelection) {
     if (newSelection.length === 1) {
         
         const singleItem = newSelection[0];
-        const { type, id } = singleItem;
+        const { type, id, name } = singleItem;
+
+        // Use the object's NAME for fetching details, as that's what the backend uses for non-PVs.
+        // The PV logic is separate and already uses the correct UUID (pv.id).
+        const idForApi = (type === 'physical_volume') ? id : name;
 
         // Handle procedural types in the inspector
         if (type === 'replica' || type === 'division' || type === 'parameterised') {
@@ -531,7 +545,7 @@ async function handleHierarchySelection(newSelection) {
         }
 
         // Fetch object details from backend on new selection.
-        let details = await APIService.getObjectDetails(type, id);
+        let details = await APIService.getObjectDetails(type, idForApi);
         if (!details) {
             UIManager.showError(`Could not fetch details for ${type} ${id}`);
             UIManager.clearInspector();
@@ -581,46 +595,149 @@ async function handleHierarchySelection(newSelection) {
 // Called by SceneManager when an object is clicked in 3D
 function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
-    let currentSelection = [...AppState.selectedHierarchyItems]; // Work with a copy
-    let newSelection = [];
-
-    const clickedPvContext = clickedMesh ? {
-        type: 'physical_volume',
-        id: clickedMesh.userData.id,
-        name: clickedMesh.userData.name,
-        data: clickedMesh.userData
-    } : null;
-
-    if (isCtrlHeld) {
-        const existingIndex = currentSelection.findIndex(item => item.id === clickedPvContext?.id);
-
-        if (existingIndex > -1) {
-            // Already selected -> remove it
-            currentSelection.splice(existingIndex, 1);
-            newSelection = currentSelection;
-        } else if (clickedPvContext) {
-            // Not selected -> add it
-            currentSelection.push(clickedPvContext);
-            newSelection = currentSelection;
+    // Start with the current canonical selection
+    let selectionContexts = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
+    
+    // Determine what was actually clicked
+    let clickedItemContext = null;
+    if (clickedMesh) {
+        const userData = clickedMesh.userData;
+        if (userData.owner_pv_id && userData.owner_pv_id !== userData.id) {
+            // It's a replica instance. The "item" is its owning PV.
+            const ownerPV = findPvInState(userData.owner_pv_id);
+            if (ownerPV) {
+                clickedItemContext = { type: 'physical_volume', id: ownerPV.id, name: ownerPV.name, data: ownerPV };
+            }
         } else {
-            newSelection = currentSelection; // Ctrl-clicking empty space does nothing
-        }
-    } else {
-        // Not holding Ctrl, so just select the clicked item (or nothing)
-        if (clickedPvContext) {
-            newSelection = [clickedPvContext];
-        } else {
-            newSelection = [];
+            // It's a standard PV.
+            clickedItemContext = { type: 'physical_volume', id: userData.id, name: userData.name, data: userData };
         }
     }
 
-    // Now, update the hierarchy UI to reflect the new selection state
-    const newSelectedIds = newSelection.map(item => item.id);
-    UIManager.setHierarchySelection(newSelectedIds);
+    if (clickedItemContext) {
+        const existingIndex = selectionContexts.findIndex(item => item.id === clickedItemContext.id);
 
-    // And finally, call the central handler to update the rest of the app
-    handleHierarchySelection(newSelection);
+        if (isCtrlHeld) {
+            if (existingIndex > -1) {
+                // It's already selected, so remove it.
+                selectionContexts.splice(existingIndex, 1);
+            } else {
+                // Not selected, so add it.
+                selectionContexts.push(clickedItemContext);
+            }
+        } else {
+            // Not holding Ctrl, so this is the only selected item.
+            selectionContexts = [clickedItemContext];
+        }
+    } else if (!isCtrlHeld) {
+        // Clicked on empty space without Ctrl, clear selection.
+        selectionContexts = [];
+    }
+    
+    // Now, `selectionContexts` holds the final list of ITEMS we want selected.
+    // We update the app state and then build the list of meshes to highlight.
+    
+    const meshesToHighlight = [];
+    selectionContexts.forEach(item => {
+        if (item.type === 'physical_volume') {
+            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            if (lv && lv.content_type !== 'physvol') {
+                // This is a procedural PV, get all its meshes.
+                meshesToHighlight.push(...SceneManager.getMeshesForOwner(item.id));
+            } else {
+                // This is a simple PV, get its single mesh.
+                const mesh = SceneManager.findMeshByPvId(item.id);
+                if (mesh) meshesToHighlight.push(mesh);
+            }
+        }
+    });
 
+    // Update the visual selection in the 3D scene.
+    SceneManager.updateSelectionState(meshesToHighlight);
+    AppState.selectedThreeObjects = meshesToHighlight;
+
+    // Update the canonical selection in the hierarchy UI.
+    const selectedIds = selectionContexts.map(item => item.id);
+    UIManager.setHierarchySelection(selectedIds);
+
+    // Finally, call the handler to update the inspector.
+    handleHierarchySelection(selectionContexts);
+
+    // let newSelection = [];
+    // let clickedPvContext = null;
+
+    // if (clickedMesh) {
+    //     const userData = clickedMesh.userData;
+
+    //     // --- Check for an owner ---
+    //     if (userData.owner_lv_id) {
+    //         // This is part of a procedural placement. We need to select the owner LV.
+    //         // We find the LV in the project state.
+    //         const ownerLV = AppState.currentProjectState.logical_volumes[userData.owner_lv_id] 
+    //                         || Object.values(AppState.currentProjectState.logical_volumes).find(v => v.id === userData.owner_lv_id);
+    //         if (ownerLV) {
+    //             // The context we want to select is the OWNER logical volume
+    //             clickedPvContext = {
+    //                 type: 'logical_volume',
+    //                 id: ownerLV.id,
+    //                 name: ownerLV.name,
+    //                 data: ownerLV
+    //             };
+    //         }
+    //     } else {
+    //         // This is a normal physical volume.
+    //         clickedPvContext = {
+    //             type: 'physical_volume',
+    //             id: userData.id,
+    //             name: userData.name,
+    //             data: userData
+    //         };
+    //     }
+    // }
+
+    // let currentSelection = [...AppState.selectedHierarchyItems]; // Work with a copy
+    // if (isCtrlHeld) {
+    //     const existingIndex = currentSelection.findIndex(item => item.id === clickedPvContext?.id);
+
+    //     if (existingIndex > -1) {
+    //         // Already selected -> remove it
+    //         currentSelection.splice(existingIndex, 1);
+    //         newSelection = currentSelection;
+    //     } else if (clickedPvContext) {
+    //         // Not selected -> add it
+    //         currentSelection.push(clickedPvContext);
+    //         newSelection = currentSelection;
+    //     } else {
+    //         newSelection = currentSelection; // Ctrl-clicking empty space does nothing
+    //     }
+    // } else {
+    //     // Not holding Ctrl, so just select the clicked item (or nothing)
+    //     if (clickedPvContext) {
+    //         newSelection = [clickedPvContext];
+    //     } else {
+    //         newSelection = [];
+    //     }
+    // }
+
+    // // Now, update the hierarchy UI to reflect the new selection state
+    // const newSelectedIds = newSelection.map(item => item.id);
+    // UIManager.setHierarchySelection(newSelectedIds);
+
+    // // And finally, call the central handler to update the rest of the app
+    // handleHierarchySelection(newSelection);
+
+}
+
+// Helper function to find a PV by its ID anywhere in the project state
+function findPvInState(pvId) {
+    const allLVs = Object.values(AppState.currentProjectState.logical_volumes);
+    for (const lv of allLVs) {
+        if (lv.content_type === 'physvol') {
+            const found = lv.content.find(pv => pv.id === pvId);
+            if (found) return found;
+        }
+    }
+    return null;
 }
 
 function handleTransformLive(liveObject) {
