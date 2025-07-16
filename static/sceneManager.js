@@ -40,8 +40,9 @@ let getSnapSettingsCallback = null; // Function to get current snap settings -> 
 let onObjectTransformLiveCallback = null; // callback for live updates
 let onMultiObjectSelectedCallback = null;
 
-// Gizmo for multi-select
+// Objects for multi-select and multi-transform
 let gizmoAttachmentHelper = new THREE.Object3D(); // Helper for gizmo on multi-select
+let initialTransforms = new Map(); // To store initial state on drag start
 
 // --- Initialization ---
 export function initScene(callbacks) {
@@ -90,23 +91,67 @@ export function initScene(callbacks) {
         orbitControls.enabled = !event.value; // Disable orbit while transforming
         // Optionally call a callback if main.js needs to know about drag start/stop
     });
-    // transformControls.addEventListener('objectChange', () => {
-    //     // This event means the attached object's transform has changed in Three.js
-    //     if (transformControls.object && onObjectTransformLiveCallback) { // && _selectedThreeObjects.length === 1 && _selectedThreeObjects[0] === transformControls.object) {
-    //         // Call the new lightweight UI update function directly
-    //         console.log("[SceneManager] objectChange for:", transformControls.object.name);
-    //         onObjectTransformLiveCallback(transformControls.object);
-    //     }
-    // });
-    transformControls.addEventListener('mouseUp', () => { // This signifies the end of a user interaction
-        if (transformControls.object && onObjectTransformEndCallback) {
-            console.log("[SceneManager] Transform mouseUp, calling onObjectTransformEndCallback for:", transformControls.object.name);
-            onObjectTransformEndCallback(transformControls.object); // Send final state to main.js
+    transformControls.addEventListener('mouseDown', () => {
+        initialTransforms.clear();
+        const object = transformControls.object;
+        if (!object) return;
+
+        // Check if we are controlling the helper (a group)
+        if (object === gizmoAttachmentHelper) {
+            initialTransforms.set('helper', gizmoAttachmentHelper.clone());
+            // Store initial transforms of all meshes controlled by the helper
+            _selectedThreeObjects.forEach(mesh => {
+                initialTransforms.set(mesh.userData.id, mesh.clone());
+            });
+        } else {
+            // It's a single object
+            initialTransforms.set(object.userData.id, object.clone());
         }
-        // Re-enable orbit controls if no longer dragging with transform gizmo (handled by dragging-changed too)
-        // if (!transformControls.dragging) {
-        //    if (orbitControls) orbitControls.enabled = true;
-        // }
+    });
+    transformControls.addEventListener('mouseUp', () => {
+        if (onObjectTransformEndCallback) {
+            const object = transformControls.object;
+            if (!object) return;
+            
+            // Determine if the helper was transformed
+            const wasHelperTransformed = (object === gizmoAttachmentHelper);
+
+            // Pass the transformed object AND the initial state map.
+            // The `wasHelperTransformed` flag tells main.js how to interpret the event.
+            onObjectTransformEndCallback(object, initialTransforms, wasHelperTransformed);
+        }
+        initialTransforms.clear();
+    });
+    // Listener for live dragging
+    transformControls.addEventListener('objectChange', () => {
+        const object = transformControls.object;
+        if (!object) return;
+
+        // Check if we are controlling the helper (i.e., a group)
+        if (object === gizmoAttachmentHelper && initialTransforms.has('helper')) {
+            const helperStart = initialTransforms.get('helper');
+            const helperCurrent = gizmoAttachmentHelper;
+
+            // Calculate the delta transform
+            const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
+            const deltaMatrix = new THREE.Matrix4().multiplyMatrices(helperCurrent.matrixWorld, helperStartMatrixInv);
+
+            // Apply this delta to all meshes that were part of the initial selection
+            _selectedThreeObjects.forEach(mesh => {
+                const initialMesh = initialTransforms.get(mesh.userData.id);
+                if (initialMesh) {
+                    const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
+                    
+                    const pos = new THREE.Vector3();
+                    const rot = new THREE.Quaternion();
+                    const scl = new THREE.Vector3();
+                    finalMatrix.decompose(pos, rot, scl);
+                    
+                    mesh.position.copy(pos);
+                    mesh.quaternion.copy(rot);
+                }
+            });
+        }
     });
 
     scene.add(transformControls);
@@ -1380,10 +1425,13 @@ export function unselectAllInScene() {
 }
 
 // --- Transform Controls Management ---
-export function attachTransformControls(object) {
-
+export function attachTransformControls(objects) { // `objects` is the parameter
     transformControls.detach();
-    if (!transformControls.enabled || !objects || objects.length === 0) return;
+    
+    // THE FIX IS HERE: The check must be on the function's parameter `objects`.
+    if (!transformControls.enabled || !objects || objects.length === 0) {
+        return;
+    }
 
     if (objects.length === 1) {
         // Simple case: attach directly to the single mesh
@@ -1392,22 +1440,35 @@ export function attachTransformControls(object) {
         // Multi-object case (from a replica or user multi-select)
         const box = new THREE.Box3();
         objects.forEach(mesh => {
-            box.expandByObject(mesh);
+            // It's safer to check if the mesh is valid before expanding the box
+            if (mesh) {
+                box.expandByObject(mesh);
+            }
         });
         const center = new THREE.Vector3();
         box.getCenter(center);
         
         // Position our helper object at this center
         gizmoAttachmentHelper.position.copy(center);
-        gizmoAttachmentHelper.rotation.set(0,0,0);
+        
+        // For rotation to work correctly, the helper's initial orientation
+        // must match the orientation of the object(s) it controls.
+        // For a group, we can assume they all have the same orientation,
+        // so we just take it from the first object in the list.
+        if (objects[0]) {
+            gizmoAttachmentHelper.quaternion.copy(objects[0].quaternion);
+        } else {
+            gizmoAttachmentHelper.rotation.set(0,0,0);
+        }
+        
         gizmoAttachmentHelper.scale.set(1,1,1);
+
+        // We only support moving one canonical item at a time (even if it's a group).
+        // The first mesh's owner_pv_id will be the same for all meshes in the group.
+        gizmoAttachmentHelper.userData.controlledObjectId = objects[0].userData.owner_pv_id || objects[0].userData.id;
         
         transformControls.attach(gizmoAttachmentHelper);
     }
-
-    // if (transformControls.enabled && object && object.isMesh) {
-    //     transformControls.attach(object);
-    // }
 }
 export function getTransformControls() { return transformControls; }
 export function getOrbitControls() { return orbitControls; }

@@ -489,254 +489,126 @@ async function handleDeleteSpecificItem(type, id) {
 }
 
 function handleModeChange(newMode) {
-    // Correctly update the UI button's active state
-    UIManager.setActiveModeButton(newMode); 
-
-    const currentSelectedIn3D = SceneManager.getSelectedObjects();
-    InteractionManager.setMode(newMode, currentSelectedIn3D.length === 1 ? currentSelectedIn3D[0] : null);
+    UIManager.setActiveModeButton(newMode);
+    InteractionManager.setMode(newMode, AppState.selectedThreeObjects.length > 0 ? AppState.selectedThreeObjects[0] : null);
     
     if (newMode === 'observe' && SceneManager.getTransformControls().object) {
         SceneManager.getTransformControls().detach();
-    } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length === 1){
-        SceneManager.attachTransformControls(AppState.selectedThreeObjects[0]);
+    } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length > 0){
+        // Pass the entire array of selected objects
+        SceneManager.attachTransformControls(AppState.selectedThreeObjects);
     }
 }
 
+// Replace the handleHierarchySelection function
 async function handleHierarchySelection(newSelection) {
     console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
 
-    // --- GIZMO LOGIC ---
-    SceneManager.getTransformControls().detach();
-    if (newSelection.length === 1 && newSelection[0].type === 'physical_volume') {
-        // Only show gizmo if ONE item (which could be a procedural group) is selected.
-        const meshesToTransform = AppState.selectedThreeObjects; // Use the already highlighted meshes
-        if (meshesToTransform.length > 0) {
-            SceneManager.attachTransformControls(meshesToTransform); // Pass the array to the updated function
+    // --- 1. Build the list of meshes to highlight/transform ---
+    const meshesToProcess = [];
+    newSelection.forEach(item => {
+        if (item.type === 'physical_volume') {
+            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            if (lv && lv.content_type !== 'physvol') {
+                // Procedural PV: get all its instances.
+                meshesToProcess.push(...SceneManager.getMeshesForOwner(item.id));
+            } else {
+                // Simple PV: get its single mesh.
+                const mesh = SceneManager.findMeshByPvId(item.id);
+                if (mesh) meshesToProcess.push(mesh);
+            }
         }
+    });
+
+    // --- 2. Update the 3D Scene (Visuals and Gizmo) ---
+    SceneManager.updateSelectionState(meshesToProcess);
+    AppState.selectedThreeObjects = meshesToProcess;
+    
+    // Consolidate the gizmo logic. Always detach first, then attach if needed.
+    SceneManager.getTransformControls().detach();
+    if (InteractionManager.getCurrentMode() !== 'observe' && meshesToProcess.length > 0) {
+        SceneManager.attachTransformControls(meshesToProcess);
     }
 
-    // Sync the 3D view to match the hierarchy selection
-    const pvIdsToSelect = newSelection
-        .filter(item => item.type === 'physical_volume')
-        .map(item => item.id);
-        
-    const meshesToSelect = pvIdsToSelect.map(id => SceneManager.findMeshByPvId(id)).filter(mesh => mesh);
-    SceneManager.updateSelectionState(meshesToSelect);
-    AppState.selectedThreeObjects = meshesToSelect;
+    // --- 3. Update the UI (Hierarchy List and Inspector) ---
+    const selectedIds = newSelection.map(item => item.id);
+    UIManager.setHierarchySelection(selectedIds);
 
-    // Update the inspector panel
     if (newSelection.length === 1) {
-        
         const singleItem = newSelection[0];
         const { type, id, name } = singleItem;
-
-        // Use the object's NAME for fetching details, as that's what the backend uses for non-PVs.
-        // The PV logic is separate and already uses the correct UUID (pv.id).
         const idForApi = (type === 'physical_volume') ? id : name;
 
-        // Handle procedural types in the inspector
-        if (type === 'replica' || type === 'division' || type === 'parameterised') {
-            // For these types, the 'data' is already the full object. No need to fetch details.
-            UIManager.populateInspector(singleItem, AppState.currentProjectState);
-            // Detach gizmo since these aren't directly manipulable in 3D
-            SceneManager.getTransformControls().detach();
-            return; // End the function here for these types
-        }
-
-        // Fetch object details from backend on new selection.
-        let details = await APIService.getObjectDetails(type, idForApi);
-        if (!details) {
-            UIManager.showError(`Could not fetch details for ${type} ${id}`);
+        // The getObjectDetails and populateInspector logic can now proceed
+        try {
+            const details = await APIService.getObjectDetails(type, idForApi);
+            if (details) {
+                singleItem.data = details; // Ensure data is up-to-date
+                UIManager.populateInspector(singleItem, AppState.currentProjectState);
+            } else {
+                UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
+                UIManager.clearInspector();
+            }
+        } catch (error) {
+            UIManager.showError(error.message);
             UIManager.clearInspector();
-            return;
-        }
-        singleItem.data = details;
-
-        // If one item is selected, populate the inspector as before
-        UIManager.populateInspector(singleItem, AppState.currentProjectState);
-
-        // If a physical volume is selected, cache its define references for live updates and select in 3D
-        if (type === 'physical_volume') {
-            SceneManager.selectObjectInSceneByPvId(id);
-            AppState.selectedThreeObjects = SceneManager.getSelectedObjects();
-            AppState.selectedPVContext.pvId = id;
-            AppState.selectedPVContext.positionDefineName = typeof details.position === 'string' ? details.position : null;
-            AppState.selectedPVContext.rotationDefineName = typeof details.rotation === 'string' ? details.rotation : null;
-            
-            if (InteractionManager.getCurrentMode() !== 'observe') {
-                const selectedMesh = AppState.selectedThreeObjects[0];
-                if(selectedMesh) SceneManager.attachTransformControls(selectedMesh);
-            }
-        } else {
-            // Clear PV context and detach gizmo if something other than a PV is selected
-            AppState.selectedPVContext.pvId = null;
-            AppState.selectedPVContext.positionDefineName = null;
-            AppState.selectedPVContext.rotationDefineName = null;
-            if (InteractionManager.getCurrentMode() !== 'observe') {
-                SceneManager.getTransformControls().detach();
-            }
         }
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
         UIManager.setInspectorTitle(`${newSelection.length} items selected`);
-        // Clear PV context since we can't edit transforms of multiple items at once
-        AppState.selectedPVContext.pvId = null;
-        // Detach gizmo if multiple things are selected
-        SceneManager.getTransformControls().detach();
     } else {
         UIManager.clearInspector();
-        // Clear PV context
-        AppState.selectedPVContext.pvId = null;
-        SceneManager.getTransformControls().detach(); // Detach gizmo on empty selection
     }
 }
 
 // Called by SceneManager when an object is clicked in 3D
 function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
+    if (isShiftHeld) return; // Shift-select is still deferred
 
-    // Start with the current canonical selection
-    let selectionContexts = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
+    let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
     
-    // Determine what was actually clicked
-    let clickedItemContext = null;
+    let clickedItemCanonicalId = null;
     if (clickedMesh) {
         const userData = clickedMesh.userData;
-        if (userData.owner_pv_id && userData.owner_pv_id !== userData.id) {
-            // It's a replica instance. The "item" is its owning PV.
-            const ownerPV = findPvInState(userData.owner_pv_id);
-            if (ownerPV) {
-                clickedItemContext = { type: 'physical_volume', id: ownerPV.id, name: ownerPV.name, data: ownerPV };
-            }
-        } else {
-            // It's a standard PV.
-            clickedItemContext = { type: 'physical_volume', id: userData.id, name: userData.name, data: userData };
-        }
+        clickedItemCanonicalId = (userData.owner_pv_id && userData.owner_pv_id !== userData.id) 
+                                 ? userData.owner_pv_id 
+                                 : userData.id;
     }
 
-    if (clickedItemContext) {
-        const existingIndex = selectionContexts.findIndex(item => item.id === clickedItemContext.id);
+    if (clickedItemCanonicalId) {
+        const existingIndex = currentSelection.findIndex(item => item.id === clickedItemCanonicalId);
 
         if (isCtrlHeld) {
             if (existingIndex > -1) {
-                // It's already selected, so remove it.
-                selectionContexts.splice(existingIndex, 1);
+                currentSelection.splice(existingIndex, 1);
             } else {
-                // Not selected, so add it.
-                selectionContexts.push(clickedItemContext);
+                const newItem = findItemInState(clickedItemCanonicalId);
+                if (newItem) currentSelection.push(newItem);
             }
         } else {
-            // Not holding Ctrl, so this is the only selected item.
-            selectionContexts = [clickedItemContext];
+            const newItem = findItemInState(clickedItemCanonicalId);
+            currentSelection = newItem ? [newItem] : [];
         }
     } else if (!isCtrlHeld) {
-        // Clicked on empty space without Ctrl, clear selection.
-        selectionContexts = [];
+        currentSelection = [];
     }
     
-    // Now, `selectionContexts` holds the final list of ITEMS we want selected.
-    // We update the app state and then build the list of meshes to highlight.
-    
-    const meshesToHighlight = [];
-    selectionContexts.forEach(item => {
-        if (item.type === 'physical_volume') {
-            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
-            if (lv && lv.content_type !== 'physvol') {
-                // This is a procedural PV, get all its meshes.
-                meshesToHighlight.push(...SceneManager.getMeshesForOwner(item.id));
-            } else {
-                // This is a simple PV, get its single mesh.
-                const mesh = SceneManager.findMeshByPvId(item.id);
-                if (mesh) meshesToHighlight.push(mesh);
-            }
-        }
-    });
-
-    // Update the visual selection in the 3D scene.
-    SceneManager.updateSelectionState(meshesToHighlight);
-    AppState.selectedThreeObjects = meshesToHighlight;
-
-    // Update the canonical selection in the hierarchy UI.
-    const selectedIds = selectionContexts.map(item => item.id);
-    UIManager.setHierarchySelection(selectedIds);
-
-    // Finally, call the handler to update the inspector.
-    handleHierarchySelection(selectionContexts);
-
-    // let newSelection = [];
-    // let clickedPvContext = null;
-
-    // if (clickedMesh) {
-    //     const userData = clickedMesh.userData;
-
-    //     // --- Check for an owner ---
-    //     if (userData.owner_lv_id) {
-    //         // This is part of a procedural placement. We need to select the owner LV.
-    //         // We find the LV in the project state.
-    //         const ownerLV = AppState.currentProjectState.logical_volumes[userData.owner_lv_id] 
-    //                         || Object.values(AppState.currentProjectState.logical_volumes).find(v => v.id === userData.owner_lv_id);
-    //         if (ownerLV) {
-    //             // The context we want to select is the OWNER logical volume
-    //             clickedPvContext = {
-    //                 type: 'logical_volume',
-    //                 id: ownerLV.id,
-    //                 name: ownerLV.name,
-    //                 data: ownerLV
-    //             };
-    //         }
-    //     } else {
-    //         // This is a normal physical volume.
-    //         clickedPvContext = {
-    //             type: 'physical_volume',
-    //             id: userData.id,
-    //             name: userData.name,
-    //             data: userData
-    //         };
-    //     }
-    // }
-
-    // let currentSelection = [...AppState.selectedHierarchyItems]; // Work with a copy
-    // if (isCtrlHeld) {
-    //     const existingIndex = currentSelection.findIndex(item => item.id === clickedPvContext?.id);
-
-    //     if (existingIndex > -1) {
-    //         // Already selected -> remove it
-    //         currentSelection.splice(existingIndex, 1);
-    //         newSelection = currentSelection;
-    //     } else if (clickedPvContext) {
-    //         // Not selected -> add it
-    //         currentSelection.push(clickedPvContext);
-    //         newSelection = currentSelection;
-    //     } else {
-    //         newSelection = currentSelection; // Ctrl-clicking empty space does nothing
-    //     }
-    // } else {
-    //     // Not holding Ctrl, so just select the clicked item (or nothing)
-    //     if (clickedPvContext) {
-    //         newSelection = [clickedPvContext];
-    //     } else {
-    //         newSelection = [];
-    //     }
-    // }
-
-    // // Now, update the hierarchy UI to reflect the new selection state
-    // const newSelectedIds = newSelection.map(item => item.id);
-    // UIManager.setHierarchySelection(newSelectedIds);
-
-    // // And finally, call the central handler to update the rest of the app
-    // handleHierarchySelection(newSelection);
-
+    // Now that we have the final list of selected items, trigger the main handler.
+    // This becomes the single point of truth for updating the UI, inspector, and 3D scene.
+    handleHierarchySelection(currentSelection);
 }
 
 // Helper function to find a PV by its ID anywhere in the project state
-function findPvInState(pvId) {
-    const allLVs = Object.values(AppState.currentProjectState.logical_volumes);
-    for (const lv of allLVs) {
+function findItemInState(itemId) {
+    // Search PVs
+    for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
         if (lv.content_type === 'physvol') {
-            const found = lv.content.find(pv => pv.id === pvId);
-            if (found) return found;
+            const found = lv.content.find(pv => pv.id === itemId);
+            if (found) return { type: 'physical_volume', id: found.id, name: found.name, data: found };
         }
     }
+    // Add searches for other types if needed in the future...
     return null;
 }
 
@@ -760,69 +632,89 @@ function handleTransformLive(liveObject) {
 }
 
 // Called by SceneManager when TransformControls finishes a transformation
-async function handleTransformEnd(transformedObject) {
-    if (!transformedObject || !transformedObject.userData) return;
-    
-    const pvId = transformedObject.userData.id;
-    // Get the original state of the PV before the drag started
-    const originalPVData = AppState.selectedHierarchyItems.find(item => item.id === pvId)?.data;
+async function handleTransformEnd(transformedObject, initialTransforms, wasHelperTransformed) {
+    if (!transformedObject) return;
 
-    if (!originalPVData) return;
+    const updates = [];
+    const selection = AppState.selectedHierarchyItems;
 
-    const newPosition = { x: transformedObject.position.x, y: transformedObject.position.y, z: transformedObject.position.z };
-    const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
-    const newRotation = { x: euler.x, y: euler.y, z: euler.z };
+    if (wasHelperTransformed) {
+        // --- This was the GIZMO HELPER (multi-select or procedural group) ---
 
-    let updatePosition = newPosition;
-    let updateRotation = newRotation;
-    
-    // Check if position was controlled by a define
-    if (typeof originalPVData.position === 'string') {
-        const defineName = originalPVData.position;
-        // const confirmed = confirm(
-        //     `You moved a volume whose position is controlled by the define '${defineName}'.\n\n` +
-        //     `[OK] = Update the define '${defineName}' itself with the new values.\n` +
-        //     `[Cancel] = Break the link and set this volume's position to an absolute value.`
-        // );
-        // if (confirmed) {
-            // User wants to update the define.
-            await APIService.updateDefine(defineName, newPosition);
-            // The PV's reference remains the same.
-            updatePosition = defineName; 
-        // } 
-        // If they cancel, `updatePosition` remains the new absolute numeric dictionary, breaking the link.
+        if (selection.length === 1 && selection[0].type === 'physical_volume') {
+            // --- CASE 1: A SINGLE PROCEDURAL GROUP (like a replica) WAS MOVED ---
+            // The helper's final world position IS the new world position for the owning PV.
+            const pvId = selection[0].id;
+            const pos = transformedObject.position;
+            const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
+            updates.push({
+                pvId: pvId,
+                position: { x: pos.x, y: pos.y, z: pos.z },
+                rotation: { x: euler.x, y: euler.y, z: euler.z }
+            });
+
+        } else {
+            // --- CASE 2: A STANDARD MULTI-SELECTION OF SIMPLE PVs WAS MOVED ---
+            const helperStart = initialTransforms.get('helper');
+            if (!helperStart) return;
+
+            const helperEndMatrix = transformedObject.matrixWorld;
+            const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
+            const deltaMatrix = new THREE.Matrix4().multiplyMatrices(helperEndMatrix, helperStartMatrixInv);
+
+            for (const item of selection) {
+                if (item.type === 'physical_volume') {
+                    const initialMesh = initialTransforms.get(item.id);
+                    if (initialMesh) {
+                        const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
+                        const pos = new THREE.Vector3();
+                        const rot = new THREE.Quaternion();
+                        const scl = new THREE.Vector3();
+                        finalMatrix.decompose(pos, rot, scl);
+                        const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+
+                        updates.push({
+                            pvId: item.id,
+                            position: { x: pos.x, y: pos.y, z: pos.z },
+                            rotation: { x: euler.x, y: euler.y, z: euler.z }
+                        });
+                    }
+                }
+            }
+        }
+    } else if (transformedObject.userData.id) {
+        // --- CASE 3: A SINGLE standard physical volume was moved directly ---
+        const pvId = transformedObject.userData.id;
+        const pos = transformedObject.position;
+        const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
+        updates.push({
+            pvId: pvId,
+            position: { x: pos.x, y: pos.y, z: pos.z },
+            rotation: { x: euler.x, y: euler.y, z: euler.z }
+        });
     }
 
-    // Check if rotation was controlled by a define
-    if (typeof originalPVData.rotation === 'string') {
-        const defineName = originalPVData.rotation;
-        // const newRotationDeg = {
-        //      x: `(${THREE.MathUtils.radToDeg(newRotation.x)}) * deg`,
-        //      y: `(${THREE.MathUtils.radToDeg(newRotation.y)}) * deg`,
-        //      z: `(${THREE.MathUtils.radToDeg(newRotation.z)}) * deg`
-        // };
-        // const confirmed = confirm(
-        //     `You rotated a volume whose rotation is controlled by the define '${defineName}'.\n\n` +
-        //     `[OK] = Update the define '${defineName}' itself with the new values.\n` +
-        //     `[Cancel] = Break the link and set this volume's rotation to an absolute value.`
-        // );
-        // if (confirmed) {
-            await APIService.updateDefine(defineName, newRotationDeg);
-            updateRotation = defineName;
-        // }
-    }
-    
-    UIManager.showLoading("Updating transform...");
+    if (updates.length === 0) return;
+
+    UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
     try {
-        const result = await APIService.updatePhysicalVolume(pvId, null, updatePosition, updateRotation);
-        syncUIWithState(result, getSelectionContext());
-    } catch (error) { 
-        UIManager.showError("Error saving transform: " + error.message); 
-        // It might be good to reload the state here to revert the visual change
-        const freshState = await APIService.getProjectState();
-        syncUIWithState(freshState, getSelectionContext());
+        let lastResult;
+        for (const update of updates) {
+            // This loop now correctly handles all cases: single, multi-select, and procedural group.
+            lastResult = await APIService.updatePhysicalVolume(update.pvId, null, update.position, update.rotation);
+            if (!lastResult.success) {
+                UIManager.showError(`Failed to update ${update.pvId}: ${lastResult.error}`);
+                break;
+            }
+        }
+        if (lastResult) {
+            syncUIWithState(lastResult, AppState.selectedHierarchyItems);
+        }
+    } catch (error) {
+        UIManager.showError("Error saving transform: " + error.message);
+    } finally {
+        UIManager.hideLoading();
     }
-    finally { UIManager.hideLoading(); }
 }
 
 // Called by UIManager when a property is changed in the Inspector Panel
