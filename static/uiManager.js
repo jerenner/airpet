@@ -355,7 +355,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     }
 
     ['x', 'y', 'z'].forEach(axis => {
-        // ## FIX: Create the component using ExpressionInput.create() ##
+        // ## Create the component using ExpressionInput.create() ##
         const comp = ExpressionInput.create(
             `inspector_pv_${type}_${axis}`, // Unique ID
             axis.toUpperCase(), // Label
@@ -371,9 +371,9 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
                     };
                     // Wrap rotation values with *deg for the backend
                     if (type === 'rotation') {
-                        newAbsValues.x = `(${newAbsValues.x}) * deg`;
-                        newAbsValues.y = `(${newAbsValues.y}) * deg`;
-                        newAbsValues.z = `(${newAbsValues.z}) * deg`;
+                        newAbsValues.x = `${newAbsValues.x}`;
+                        newAbsValues.y = `${newAbsValues.y}`;
+                        newAbsValues.z = `${newAbsValues.z}`;
                     }
                     callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newAbsValues);
                 }
@@ -417,7 +417,7 @@ export async function populateInspector(itemContext, projectState) {
         }
 
         buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)', data, posDefines, projectState);
-        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (deg, ZYX)', data, rotDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState);
         
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";

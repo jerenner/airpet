@@ -24,10 +24,12 @@ class ProjectManager:
 
     def _get_next_copy_number(self, parent_lv: LogicalVolume):
         """Finds the highest copy number among children and returns the next one."""
-        if not parent_lv.phys_children:
+        # Check content_type and iterate through the correct list
+        if parent_lv.content_type != 'physvol' or not parent_lv.content:
             return 1
+        
         max_copy_no = 0
-        for pv in parent_lv.phys_children:
+        for pv in parent_lv.content:
             if pv.copy_number > max_copy_no:
                 max_copy_no = pv.copy_number
         return max_copy_no + 1
@@ -420,14 +422,24 @@ class ProjectManager:
         elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
         elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
         elif object_type == "physical_volume":
-            all_containers = list(self.current_geometry_state.logical_volumes.values()) + list(self.current_geometry_state.assemblies.values())
-            for container in all_containers:
-                placements = getattr(container, 'placements', getattr(container, 'phys_children', []))
-                for pv in placements:
-                    if pv.id == object_id:
-                        target_obj = pv
-                        break
+            # Iterate through LVs and Assemblies using the new data model
+            all_lvs = list(self.current_geometry_state.logical_volumes.values())
+            for lv in all_lvs:
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.id == object_id:
+                            target_obj = pv
+                            break
                 if target_obj: break
+            
+            if not target_obj:
+                all_asms = list(self.current_geometry_state.assemblies.values())
+                for asm in all_asms:
+                    for pv in asm.placements:
+                        if pv.id == object_id:
+                            target_obj = pv
+                            break
+                    if target_obj: break
 
         if not target_obj: 
             return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
@@ -802,62 +814,92 @@ class ProjectManager:
 
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"
-
+        
+        state = self.current_geometry_state
         deleted = False
         error_msg = None
 
         if object_type == "define":
-            # TODO: Check for usages of this define
-            if object_id in self.current_geometry_state.defines:
-                del self.current_geometry_state.defines[object_id]
+            if object_id in state.defines:
+                del state.defines[object_id]
                 deleted = True
+        
         elif object_type == "material":
-            # TODO: Check for LVs using this material
-            if object_id in self.current_geometry_state.materials:
-                del self.current_geometry_state.materials[object_id]
+            if object_id in state.materials:
+                del state.materials[object_id]
                 deleted = True
+        
         elif object_type == "solid":
-            # TODO: Check for LVs using this solid
-            if object_id in self.current_geometry_state.solids:
-                del self.current_geometry_state.solids[object_id]
+            if object_id in state.solids:
+                del state.solids[object_id]
                 deleted = True
+        
         elif object_type == "logical_volume":
-            if object_id in self.current_geometry_state.logical_volumes:
-                if self.current_geometry_state.world_volume_ref == object_id:
+            if object_id in state.logical_volumes:
+                if state.world_volume_ref == object_id:
                     error_msg = "Cannot delete the world volume."
                 else:
-                    del self.current_geometry_state.logical_volumes[object_id]
-                    for lv in self.current_geometry_state.logical_volumes.values():
-                        lv.phys_children = [pv for pv in lv.phys_children if pv.volume_ref != object_id]
+                    # Delete the LV itself
+                    del state.logical_volumes[object_id]
+                    
+                    # Now, remove any placements that REFER to this deleted LV
+                    for lv in state.logical_volumes.values():
+                        if lv.content_type == 'physvol':
+                            lv.content = [pv for pv in lv.content if pv.volume_ref != object_id]
+                        elif lv.content and hasattr(lv.content, 'volume_ref') and lv.content.volume_ref == object_id:
+                            # If a procedural volume was replicating the deleted LV, reset it.
+                            # A more advanced implementation might delete the procedural LV entirely.
+                            lv.content_type = 'physvol'
+                            lv.content = []
                     deleted = True
-        elif object_type == "physical_volume":
-            found_pv = False
-            for lv in self.current_geometry_state.logical_volumes.values():
-                original_len = len(lv.phys_children)
-                lv.phys_children = [pv for pv in lv.phys_children if pv.id != object_id]
-                if len(lv.phys_children) < original_len:
-                    found_pv = True
-                    deleted = True
-                    break
-            if not found_pv: error_msg = "Physical Volume not found."
         
+        elif object_type == "physical_volume":
+            # Iterate through all LVs and check their 'content' list for the PV to delete
+            found_and_deleted = False
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    original_len = len(lv.content)
+                    # Filter the list, keeping only PVs that DON'T match the ID
+                    lv.content = [pv for pv in lv.content if pv.id != object_id]
+                    if len(lv.content) < original_len:
+                        found_and_deleted = True
+                        break # Found and deleted, no need to search further
+            
+            if found_and_deleted:
+                deleted = True
+            else:
+                error_msg = "Physical Volume not found."
+
         if deleted:
-            success, error_msg = self.recalculate_geometry_state()
-            return success, error_msg
+            success, calc_error = self.recalculate_geometry_state()
+            # If there's an error during recalculation, it should be reported
+            return success, calc_error or error_msg
         else:
-            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."            
+            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
           
     def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
         if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
             return False, "No project loaded"
 
         found_pv_object = None
-        for lv in self.current_geometry_state.logical_volumes.values():
-            for pv in lv.phys_children:
-                if pv.id == pv_id:
-                    found_pv_object = pv
-                    break
+        # Iterate through LVs and Assemblies using the new data model
+        all_lvs = list(self.current_geometry_state.logical_volumes.values())
+        for lv in all_lvs:
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.id == pv_id:
+                        found_pv_object = pv
+                        break
             if found_pv_object: break
+
+        if not found_pv_object:
+            all_asms = list(self.current_geometry_state.assemblies.values())
+            for asm in all_asms:
+                for pv in asm.placements:
+                    if pv.id == pv_id:
+                        found_pv_object = pv
+                        break
+                if found_pv_object: break
 
         if not found_pv_object:
             return False, f"Physical Volume with ID {pv_id} not found"
@@ -944,7 +986,11 @@ class ProjectManager:
             if new_name != name:
                 rename_map[name] = new_name
             lv.name = new_name
-            lv.phys_children = [] # Clear any placements, as they are not merged
+            
+            # Clear the new content list and reset the type
+            lv.content_type = 'physvol'
+            lv.content = [] 
+
             self.current_geometry_state.add_logical_volume(lv)
         
         # --- Merge Assemblies ---

@@ -875,7 +875,7 @@ async function handlePVEditorConfirm(data) {
             const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation);
             
             // After placement, we want the PARENT LV to remain selected
-            syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name }]);
+            syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name, name: data.parent_lv_name }]);
         } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
     }
