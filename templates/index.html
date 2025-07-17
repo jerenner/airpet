@@ -799,7 +799,6 @@
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
-            <button class="tab_button" data-tab="tab_placements">Placements</button>
             <button class="tab_button" data-tab="tab_lvolumes">LVs</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_materials">Materials</button>
@@ -815,63 +814,6 @@
                     </div>
                 </div>
                 <ul id="structure_tree_root"></ul>
-            </div>
-            <div id="tab_placements" class="tab_pane">
-                <div class="accordion">
-                    <div class="accordion-item">
-                        <button class="accordion-header">
-                            <span>Assemblies</span>
-                            <span class="accordion-icon">+</span>
-                        </button>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <span class="tab-title"></span>
-                                <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
-                                <button id="addAssemblyButton" title="Place selected assembly">+ Add</button>
-                            </div>
-                            <ul id="assemblies_list_root"></ul>
-                        </div>
-                    </div>
-
-                    <div class="accordion-item">
-                        <button class="accordion-header">
-                            <span>Replicas</span>
-                            <span class="accordion-icon">+</span>
-                        </button>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button id="addReplicaButton" title="Create a new Replica Placement">+ Add</button>
-                            </div>
-                            <ul id="replicas_list_root"></ul>
-                        </div>
-                    </div>
-                    
-                    <div class="accordion-item">
-                        <button class="accordion-header">
-                            <span>Divisions</span>
-                            <span class="accordion-icon">+</span>
-                        </button>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button id="addDivisionButton" title="Create a new Division Placement">+ Add</button>
-                            </div>
-                            <ul id="divisions_list_root"></ul>
-                        </div>
-                    </div>
-
-                    <div class="accordion-item">
-                        <button class="accordion-header">
-                            <span>Parameterised</span>
-                            <span class="accordion-icon">+</span>
-                        </button>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button id="addParamButton" title="Create a new Parameterised Placement">+ Add</button>
-                            </div>
-                            <ul id="params_list_root"></ul>
-                        </div>
-                    </div>
-                </div>
             </div>
             <div id="tab_lvolumes" class="tab_pane">
                 <div class="tab_header">
@@ -1175,7 +1117,23 @@
                     <label for="lvEditorAlpha" style="width:auto; margin-left:10px;">Opacity:</label>
                     <input type="range" id="lvEditorAlpha" min="0" max="1" step="0.05" value="1.0">
                 </div>
-                <!-- Placeholders for future additions -->
+                <hr>
+                <!-- Radio buttons for content type -->
+                <div class="property_item">
+                    <label>Content Type:</label>
+                    <div id="lvContentTypeRadios">
+                        <input type="radio" name="lv_content_type" value="physvol" id="lv_type_physvol" checked> <label for="lv_type_physvol">Standard</label>
+                        <input type="radio" name="lv_content_type" value="replica" id="lv_type_replica"> <label for="lv_type_replica">Replica</label>
+                        <!-- Placeholders for the future -->
+                        <input type="radio" name="lv_content_type" value="division" id="lv_type_division" disabled> <label for="lv_type_division" style="color:#999;">Division</label>
+                        <input type="radio" name="lv_content_type" value="assembly" id="lv_type_assembly" disabled> <label for="lv_type_assembly" style="color:#999;">Assembly</label>
+                    </div>
+                </div>
+                
+                <!-- Placeholder for procedural parameters -->
+                <div id="lv-procedural-params" style="border-top: 1px dotted #ccc; margin-top: 10px; padding-top: 10px;">
+                    <!-- Content will be generated by JS -->
+                </div>
                 <hr>
                 <!--<p style="text-align:center; color:#888;"><i>Sensitive Detector, User Limits can be added here later.</i></p>-->
             </div>

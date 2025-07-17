@@ -799,7 +799,7 @@ async function handleSolidEditorConfirm(data) {
             
             // After creation, select the new solid in the hierarchy
             const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).find(k => k.startsWith(data.name));
-            syncUIWithState(result, [{type: 'solid', id: newSolidName}]);
+            syncUIWithState(result, [{type: 'solid', id: newSolidName, name: newSolidName}]);
 
         } catch (error) { 
             UIManager.showError("Error adding solid: " + (error.message || error)); 
@@ -822,7 +822,7 @@ async function handleLVEditorConfirm(data) {
     if (data.isEdit) {
         UIManager.showLoading("Updating Logical Volume...");
         try {
-            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes);
+            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.content_type, data.content);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating LV: " + (error.message || error));
@@ -832,7 +832,7 @@ async function handleLVEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Logical Volume...");
         try {
-            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes);
+            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.content_type, data.content);
             syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
         } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
@@ -935,7 +935,7 @@ async function handleMaterialEditorConfirm(data) {
             const result = await APIService.addMaterial(data.name, data.params);
 
             // After creating, set the selection to the newly created material
-            syncUIWithState(result, [{ type: 'material', id: data.name }]);
+            syncUIWithState(result, [{ type: 'material', id: data.name, name: data.name }]);
         } catch (error) {
             UIManager.showError("Error creating material: " + (error.message || error));
         } finally {

@@ -4,7 +4,7 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly, get_unit_value
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, Assembly, get_unit_value
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -638,7 +638,7 @@ class ProjectManager:
         self.recalculate_geometry_state()
         return True, None
 
-    def add_logical_volume(self, name_suggestion, solid_ref, material_ref, vis_attributes=None):
+    def add_logical_volume(self, name_suggestion, solid_ref, material_ref, vis_attributes=None, content_type='physvol', content=None):
         if not self.current_geometry_state: return None, "No project loaded"
         if solid_ref not in self.current_geometry_state.solids:
             return None, f"Solid '{solid_ref}' not found."
@@ -647,28 +647,42 @@ class ProjectManager:
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.logical_volumes)
         new_lv = LogicalVolume(name, solid_ref, material_ref, vis_attributes)
+
+        new_lv.content_type = content_type
+        if content_type == 'replica':
+            new_lv.content = ReplicaVolume.from_dict(content)
+        # Add logic for other types here...
+        else: # physvol
+            new_lv.content = [] # It's a new, empty standard LV
+
         self.current_geometry_state.add_logical_volume(new_lv)
         self.recalculate_geometry_state()
         return new_lv.to_dict(), None        
 
-    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None):
+    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None, new_content_type=None, new_content=None):
         if not self.current_geometry_state: return False, "No project loaded"
         
         lv = self.current_geometry_state.logical_volumes.get(lv_name)
         if not lv:
             return False, f"Logical Volume '{lv_name}' not found."
 
-        if new_solid_ref and new_solid_ref not in self.current_geometry_state.solids:
-            return False, f"New solid '{new_solid_ref}' not found."
-        if new_material_ref and new_material_ref not in self.current_geometry_state.materials:
-            return False, f"New material '{new_material_ref}' not found."
-            
-        if new_solid_ref:
+        # Update standard properties if provided
+        if new_solid_ref and new_solid_ref in self.current_geometry_state.solids:
             lv.solid_ref = new_solid_ref
-        if new_material_ref:
+        if new_material_ref and new_material_ref in self.current_geometry_state.materials:
             lv.material_ref = new_material_ref
-        if new_vis_attributes: 
+        if new_vis_attributes:
             lv.vis_attributes = new_vis_attributes
+            
+        # NEW: Update content if provided
+        if new_content_type and new_content is not None:
+            lv.content_type = new_content_type
+            if new_content_type == 'replica':
+                lv.content = ReplicaVolume.from_dict(new_content)
+            # Add logic for other types here...
+            else: # physvol
+                # This could be more complex, might need to update existing children
+                lv.content = [] 
         
         self.recalculate_geometry_state()
         return True, None

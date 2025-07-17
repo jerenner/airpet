@@ -396,6 +396,27 @@ class ReplicaVolume:
             "direction": self.direction, "width": self.width, "offset": self.offset
         }
 
+    @classmethod
+    def from_dict(cls, data):
+        """Creates a ReplicaVolume instance from a dictionary."""
+        # A name might not be present in the data from the frontend, so we generate one.
+        name = data.get('name', f"replica_{data.get('id', uuid.uuid4().hex[:6])}")
+        
+        # Ensure default values are handled correctly if keys are missing
+        number = data.get('number', "1")
+        direction = data.get('direction', {'x': '1', 'y': '0', 'z': '0'})
+        width = data.get('width', "0.0")
+        offset = data.get('offset', "0.0")
+        volume_ref = data.get('volume_ref')
+
+        if not volume_ref:
+            # This would be an invalid state, but we can handle it gracefully.
+            raise ValueError("ReplicaVolume content data is missing 'volume_ref'")
+
+        instance = cls(name, volume_ref, number, direction, width, offset)
+        instance.id = data.get('id', instance.id) # Use provided ID if it exists
+        return instance
+
 # NOTE: Placeholder
 class ParamVolume:
     """Represents a <paramvol> placement."""

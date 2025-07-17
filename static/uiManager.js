@@ -1011,16 +1011,17 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.classList.remove('dragging');
     });
 
+    // --- Add a container for the name and buttons ---
+    let finalDisplayName = displayName; // Start with the passed name
     // Add an icon for procedural volumes in the main hierarchy view
     if (itemType === 'logical_volume' && fullItemData.content_type && fullItemData.content_type !== 'physvol') {
         const icon = `<span class="procedural-icon" title="Type: ${fullItemData.content_type}">⚙️</span>`;
-        displayName = icon + ' ' + displayName;
+        finalDisplayName = icon + ' ' + displayName;
     }
 
-    // --- Add a container for the name and buttons ---
     item.innerHTML = `
         <div class="tree-item-content">
-            <span class="item-name">${displayName}</span>
+            <span class="item-name">${finalDisplayName}</span>
             <div class="item-controls">
                 ${itemType === 'physical_volume' ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
                 <button class="delete-item-btn" title="Delete Item">×</button>
