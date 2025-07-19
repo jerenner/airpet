@@ -60,6 +60,7 @@ async function initializeApp() {
         // Add/edit PVs
         onAddPVClicked: handleAddPV,
         onEditPVClicked: handleEditPV,
+        onGroupIntoAssemblyClicked: handleGroupIntoAssembly,
         // Add assembly
         onAddAssemblyClicked: handleAddAssembly,
         onPVVisibilityToggle: handlePVVisibilityToggle,
@@ -1158,4 +1159,60 @@ async function handleMoveItemsToGroup(groupType, itemIds, targetGroupName) {
     } finally {
         UIManager.hideLoading();
     }
+}
+
+// Assembly functions
+async function handleGroupIntoAssembly() {
+    const selectionContexts = getSelectionContext();
+    if (!selectionContexts || selectionContexts.length === 0) {
+        UIManager.showError("Please select one or more Physical Volumes to group into an assembly.");
+        return;
+    }
+
+    // Ensure all selected items are physical volumes
+    const pvItems = selectionContexts.filter(item => item.type === 'physical_volume');
+    if (pvItems.length !== selectionContexts.length) {
+        UIManager.showError("You can only group Physical Volumes into an assembly. Please adjust your selection.");
+        return;
+    }
+
+    const parentContext = UIManager.getSelectedParentContext();
+    if (!parentContext) {
+        UIManager.showError("Could not determine a parent volume for the new assembly. Please select the items from within a single parent volume.");
+        return;
+    }
+    const parentLvName = parentContext.data.name || parentContext.name;
+    
+    const assemblyName = prompt("Enter a name for the new assembly:", "MyAssembly");
+    if (!assemblyName || !assemblyName.trim()) {
+        return; // User cancelled
+    }
+
+    const pvIds = pvItems.map(item => item.id);
+
+    UIManager.showLoading("Creating assembly...");
+    try {
+        const result = await APIService.createAssemblyFromPVs(pvIds, assemblyName.trim(), parentLvName);
+        // After creation, we want to select the new assembly's placement
+        const newAssemblyPV = findPlacementOfVolume(result.project_state, assemblyName.trim());
+        syncUIWithState(result, newAssemblyPV ? [newAssemblyPV] : []);
+    } catch (error) {
+        UIManager.showError("Failed to create assembly: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+// Helper to find the new assembly's PV after creation
+function findPlacementOfVolume(projectState, volumeRefName) {
+    for (const lv of Object.values(projectState.logical_volumes)) {
+        if (lv.content_type === 'physvol') {
+            for (const pv of lv.content) {
+                if (pv.volume_ref === volumeRefName) {
+                    return { type: 'physical_volume', id: pv.id, name: pv.name, data: pv };
+                }
+            }
+        }
+    }
+    return null;
 }

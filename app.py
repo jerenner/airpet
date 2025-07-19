@@ -855,5 +855,24 @@ def evaluate_expression_route():
         # The result is the error message string
         return jsonify({"success": False, "error": result}), 400
 
+@app.route('/create_assembly_from_pvs', methods=['POST'])
+def create_assembly_from_pvs_route():
+    data = request.get_json()
+    pv_ids = data.get('pv_ids')
+    assembly_name = data.get('assembly_name')
+    parent_lv_name = data.get('parent_lv_name')
+
+    if not all([pv_ids, assembly_name, parent_lv_name]):
+        return jsonify({"success": False, "error": "Missing data for assembly creation."}), 400
+
+    new_pv, error_msg = project_manager.create_assembly_from_pvs(
+        pv_ids, assembly_name, parent_lv_name
+    )
+    
+    if error_msg:
+        return jsonify({"success": False, "error": error_msg}), 500
+    else:
+        return create_success_response(f"Assembly '{assembly_name}' created successfully.")
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

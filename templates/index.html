@@ -751,46 +751,14 @@
             padding: 4px;
             border-radius: 3px;
         }
-        
-        /* Accordion styles for Placements tab */
-        .accordion {
-            width: 100%;
+    
+        /* Assembly CSS */
+        .assembly-icon {
+            display: inline-block;
+            color: #6b7280; /* A neutral gray */
         }
-        .accordion-item {
-            border-bottom: 1px solid #ccc;
-        }
-        .accordion-header {
-            background-color: #e0e0e0;
-            cursor: pointer;
-            padding: 8px;
-            width: 100%;
-            border: none;
-            text-align: left;
-            outline: none;
-            font-size: 13px;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .accordion-header:hover {
-            background-color: #d8d8d8;
-        }
-        .accordion-icon {
-            font-size: 16px;
-            font-weight: bold;
-        }
-        .accordion-content {
-            padding: 0; /* Remove padding to let the tab_header and ul take full width */
-            display: none;
-            overflow: hidden;
-            background-color: #e9e9e9;
-        }
-        .accordion-content .tab_header {
-            /* Adjust header style for accordion context */
-            background-color: #f0f0f0;
-            padding: 4px;
-            justify-content: flex-end; /* Align buttons to the right */
+        .selected_item .assembly-icon {
+            color: white;
         }
 
     </style>
@@ -810,6 +778,7 @@
                 <div class="tab_header">
                     <span class="tab-title">World Structure</span>
                     <div>
+                        <button id="addAssemblyButton" title="Create a new Assembly from selected placements">+ Assembly</button>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
                 </div>
@@ -1126,7 +1095,6 @@
                         <input type="radio" name="lv_content_type" value="replica" id="lv_type_replica"> <label for="lv_type_replica">Replica</label>
                         <!-- Placeholders for the future -->
                         <input type="radio" name="lv_content_type" value="division" id="lv_type_division" disabled> <label for="lv_type_division" style="color:#999;">Division</label>
-                        <input type="radio" name="lv_content_type" value="assembly" id="lv_type_assembly" disabled> <label for="lv_type_assembly" style="color:#999;">Assembly</label>
                     </div>
                 </div>
                 

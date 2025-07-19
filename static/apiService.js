@@ -494,3 +494,23 @@ export async function evaluateExpression(expression, projectState) {
     // This uses handleResponse, which will throw an error on non-OK responses
     return handleResponse(response);
 }
+
+/**
+ * Creates a new assembly from a list of existing physical volumes.
+ * @param {string[]} pvIds - Array of UUIDs for the physical volumes to group.
+ * @param {string} assemblyName - The desired name for the new assembly.
+ * @param {string} parentLvName - The name of the LV where the new assembly will be placed.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function createAssemblyFromPVs(pvIds, assemblyName, parentLvName) {
+    const response = await fetch(`${API_BASE_URL}/create_assembly_from_pvs`, { // New endpoint
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            pv_ids: pvIds,
+            assembly_name: assemblyName,
+            parent_lv_name: parentLvName
+        })
+    });
+    return handleResponse(response);
+}

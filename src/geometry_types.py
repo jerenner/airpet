@@ -574,6 +574,42 @@ class GeometryState:
                 # The temporary PVs from the replica loop also have them now.
                 local_transform_matrix = pv.get_transform_matrix()
                 world_transform_matrix = parent_transform_matrix @ local_transform_matrix
+
+                # --- Check if the reference is to an Assembly ---
+                assembly_ref = self.get_assembly(pv.volume_ref)
+                if assembly_ref:
+                    # This PV places an entire assembly. We don't render the PV itself,
+                    # but instead, we traverse into the assembly.
+                    for part_pv in assembly_ref.placements:
+                        # The part_pv's transform is relative to the assembly's origin.
+                        # The assembly's origin is defined by the current world_transform_matrix.
+                        # So, we pass the current world_transform_matrix down as the new parent matrix.
+                        child_lv_of_assembly = self.get_logical_volume(part_pv.volume_ref)
+                        if child_lv_of_assembly:
+                             # We need a new "fake" LV to pass to traverse, since assembly parts aren't in an LV
+                             # A better way is to make traverse work with a list of PVs directly.
+                             # For now, let's just make a direct recursive call with the part_pv
+                             
+                             part_local_matrix = part_pv.get_transform_matrix()
+                             part_world_matrix = world_transform_matrix @ part_local_matrix
+
+                             # Now render and traverse this part
+                             part_child_lv = self.get_logical_volume(part_pv.volume_ref)
+                             if part_child_lv:
+                                 # This is a bit repetitive, ideal for a helper function, but will work.
+                                final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(part_world_matrix)
+                                threejs_objects.append({
+                                    "id": part_pv.id,
+                                    "name": part_pv.name,
+                                    "owner_pv_id": part_pv.id, # The part owns itself in this context
+                                    "solid_ref_for_threejs": part_child_lv.solid_ref,
+                                    "position": final_pos,
+                                    "rotation": final_rot_rad,
+                                    # ... other attributes
+                                })
+                                traverse(part_child_lv.name, part_world_matrix)
+
+                    continue # Continue to the next pv in the placements_to_process list
                 
                 child_lv = self.get_logical_volume(pv.volume_ref)
                 if not child_lv: continue

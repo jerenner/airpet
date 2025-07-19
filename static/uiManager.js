@@ -23,7 +23,7 @@ let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, ma
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
-let addLVButton, addPVButton;
+let addLVButton, addPVButton, addAssemblyButton;
 
 // Keep track of selected parent LV in structure hierarchy and last selected item
 let selectedParentContext = null;
@@ -107,6 +107,7 @@ export function initUI(cb) {
     const addButtons = document.querySelectorAll('.add_button');
     addLVButton = document.getElementById('addLVButton');
     addPVButton = document.getElementById('addPVButton');
+    addAssemblyButton = document.getElementById('addAssemblyButton');
 
     // Mode Buttons
     modeObserveButton = document.getElementById('modeObserveButton');
@@ -146,15 +147,6 @@ export function initUI(cb) {
     apiKeyInput = document.getElementById('apiKeyInput');
     saveApiKeyButton = document.getElementById('saveApiKey');
     cancelApiKeyButton = document.getElementById('cancelApiKey');
-
-    // Add Object Modal Elements
-    // addObjectModal = document.getElementById('addObjectModal');
-    // modalBackdrop = document.getElementById('modalBackdrop');
-    // newObjectTypeSelect = document.getElementById('newObjectType');
-    // newObjectNameInput = document.getElementById('newObjectName');
-    // newObjectParamsDiv = document.getElementById('newObjectParams');
-    // confirmAddObjectButton = document.getElementById('confirmAddObject');
-    // cancelAddObjectButton = document.getElementById('cancelAddObject');
 
     // --- Initialize snap settings from UI values on startup ---
     const initialTransSnap = document.getElementById('gridSnapSizeInput').value;
@@ -221,6 +213,7 @@ export function initUI(cb) {
     addLVButton.disabled = false;
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
+    addAssemblyButton.addEventListener('click', callbacks.onGroupIntoAssemblyClicked);
 
     // AI Panel Listener
     aiGenerateButton.addEventListener('click', () => {
@@ -879,63 +872,68 @@ function createFolderElement(name, itemType, isDroppable) {
 }
 
 function buildVolumeNode(pvData, projectState) {
-    const allLVs = projectState.logical_volumes;
-    const childLVData = allLVs[pvData.volume_ref];
-    if (!childLVData) return null; // Safety check
+        if (!pvData) return null;
 
-    let displayName = pvData.name || `pv_${pvData.id.substring(0,4)}`;
-    displayName += ` (LV: ${childLVData.name})`;
+        const allLVs = projectState.logical_volumes || {};
+        const allAssemblies = projectState.assemblies || {};
 
-    // The list item represents the Physical Volume
-    const pvItem = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData });
-    
-    // Check if the placed LV has children of its own
-    const children_to_process = (childLVData.content_type === 'physvol') ? childLVData.content : [];
-    if (children_to_process && children_to_process.length > 0) {
-        // --- GROUPING LOGIC ---
-        if (childLVData.phys_children.length <= ITEMS_PER_GROUP) {
-            // If few enough children, render them directly
-            const childrenUl = document.createElement('ul');
-            children_to_process.forEach(nestedPvData => {
-                const nestedNode = buildVolumeNode(nestedPvData, projectState);
-                if (nestedNode) childrenUl.appendChild(nestedNode);
-            });
-            if (childrenUl.hasChildNodes()) {
-                addToggle(pvItem, childrenUl);
-                pvItem.appendChild(childrenUl);
+        // Determine if this PV is placing an Assembly or a Logical Volume
+        const isAssemblyPlacement = allAssemblies[pvData.volume_ref];
+        const childLVData = allLVs[pvData.volume_ref];
+
+        let displayName = pvData.name || `pv_${pvData.id.substring(0, 4)}`;
+        let itemElement;
+
+        if (isAssemblyPlacement) {
+            // --- This PV is an Assembly Placement ---
+            const assembly = isAssemblyPlacement;
+            displayName = `<span class="assembly-icon" title="Assembly">📁</span> ` + displayName;
+            displayName += ` (Assembly: ${pvData.volume_ref})`;
+
+            // The main item represents the PV that places the assembly
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData);
+            
+            // Its children are the PVs inside the assembly
+            if (assembly.placements && assembly.placements.length > 0) {
+                const childrenUl = document.createElement('ul');
+                assembly.placements.forEach(nestedPvData => {
+                    // Recursively build nodes for each PV inside the assembly
+                    const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                    if (nestedNode) childrenUl.appendChild(nestedNode);
+                });
+                if (childrenUl.hasChildNodes()) {
+                    addToggle(itemElement, childrenUl);
+                    itemElement.appendChild(childrenUl);
+                }
+            }
+        } else if (childLVData) {
+            // --- This PV is a standard Logical Volume Placement ---
+            displayName += ` (LV: ${pvData.volume_ref})`;
+
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData });
+
+            // Its children are the PVs inside the placed LV
+            const children_to_process = (childLVData.content_type === 'physvol') ? childLVData.content : [];
+            if (children_to_process && children_to_process.length > 0) {
+                const childrenUl = document.createElement('ul');
+                children_to_process.forEach(nestedPvData => {
+                    const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                    if (nestedNode) childrenUl.appendChild(nestedNode);
+                });
+                if (childrenUl.hasChildNodes()) {
+                    addToggle(itemElement, childrenUl);
+                    itemElement.appendChild(childrenUl);
+                }
             }
         } else {
-            // If too many children, create grouped folders
-            const childrenUl = document.createElement('ul');
-            for (let i = 0; i < children_to_process.length; i += ITEMS_PER_GROUP) {
-                const group = children_to_process.slice(i, i + ITEMS_PER_GROUP);
-                const groupName = `Placements ${i + 1} - ${Math.min(i + ITEMS_PER_GROUP, children_to_process.length)}`;
-                const folderLi = document.createElement('li');
-                folderLi.classList.add('hierarchy-folder');
-                const subChildrenUl = document.createElement('ul');
-                subChildrenUl.style.display = 'none';
-                let isPopulated = false;
-                const folderToggleCallback = () => {
-                    if (!isPopulated) {
-                        group.forEach(nestedPvData => {
-                            const nestedNode = buildVolumeNode(nestedPvData, projectState);
-                            if (nestedNode) subChildrenUl.appendChild(nestedNode);
-                        });
-                        isPopulated = true;
-                    }
-                };
-                const folderContent = createFolderElement(groupName, subChildrenUl, folderToggleCallback);
-                folderLi.appendChild(folderContent);
-                folderLi.appendChild(subChildrenUl);
-                childrenUl.appendChild(folderLi);
-            }
-            addToggle(pvItem, childrenUl); // Add toggle to the parent pvItem
-            pvItem.appendChild(childrenUl);
+            // This is a broken reference, but we can still show the placement
+            displayName += ` (Broken Ref: ${pvData.volume_ref})`;
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData);
+            itemElement.style.color = 'red';
         }
-    }
 
-    return pvItem;
-}
+        return itemElement;
+    }
 
 function addToggle(parentLi, childrenUl) {
     const toggle = document.createElement('span');
@@ -1313,9 +1311,63 @@ export function setInspectorTitle(titleText) {
     }
 }
 
-// Return the selected parent LV
+/**
+ * Gets the common parent context for all currently selected items in the hierarchy.
+ * Returns null if items have different parents or if no valid parent is found.
+ * @returns {object | null} The parent context { type, id, name, data } or null.
+ */
 export function getSelectedParentContext() {
-    return selectedParentContext;
+    const selectedItems = document.querySelectorAll('#structure_tree_root .selected_item');
+    if (selectedItems.length === 0) {
+        return null;
+    }
+
+    let firstParent = null;
+
+    for (let i = 0; i < selectedItems.length; i++) {
+        const item = selectedItems[i];
+        const currentParentEl = findParentInHierarchy(item);
+
+        if (!currentParentEl) {
+            // This item has no valid parent in the hierarchy (should not happen for PVs)
+            return null;
+        }
+
+        if (i === 0) {
+            // This is the first item, establish its parent as the reference parent
+            firstParent = currentParentEl;
+        } else if (currentParentEl !== firstParent) {
+            // A subsequent item has a different parent. The selection is not unified.
+            return null;
+        }
+    }
+
+    // If we get here, all items share the same parent. Return its context.
+    if (firstParent) {
+        return {
+            type: firstParent.dataset.type,
+            id: firstParent.dataset.id,
+            name: firstParent.dataset.name,
+            data: firstParent.appData
+        };
+    }
+    
+    return null;
+}
+
+/**
+ * Helper function to traverse up the DOM from a hierarchy item to find its parent item (LV or PV).
+ * @param {HTMLElement} element - The starting list item.
+ * @returns {HTMLElement | null} The parent list item element or null.
+ */
+function findParentInHierarchy(element) {
+    if (!element) return null;
+    // Go up two levels (from <li> to <ul> to parent <li>)
+    let parent = element.parentElement?.parentElement; 
+    if (parent && parent.tagName === 'LI' && parent.dataset.id) {
+        return parent;
+    }
+    return null; // Reached the top of the tree
 }
 
 export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {

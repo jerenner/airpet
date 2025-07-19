@@ -812,6 +812,59 @@ class ProjectManager:
         self.recalculate_geometry_state()
         return placed_pvs, None
 
+    def create_assembly_from_pvs(self, pv_ids, assembly_name_suggestion, parent_lv_name):
+        """
+        Groups existing PVs into a new assembly, removes them from their original parent,
+        and places the new assembly back into that parent.
+        """
+        if not self.current_geometry_state:
+            return None, "No project loaded."
+        
+        state = self.current_geometry_state
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if not parent_lv or parent_lv.content_type != 'physvol':
+            return None, f"Parent volume '{parent_lv_name}' not found or is not a standard volume."
+
+        # 1. Find and collect the PV objects to be moved
+        pvs_to_move = []
+        pvs_to_keep = []
+        pv_id_set = set(pv_ids)
+
+        for pv in parent_lv.content:
+            if pv.id in pv_id_set:
+                pvs_to_move.append(pv)
+            else:
+                pvs_to_keep.append(pv)
+
+        if len(pvs_to_move) != len(pv_id_set):
+            return None, "Some physical volumes to be assembled were not found in the specified parent."
+        
+        # 2. Create the new assembly
+        assembly_name = self._generate_unique_name(assembly_name_suggestion, state.assemblies)
+        new_assembly = Assembly(name=assembly_name)
+        
+        # 3. Move the PVs from the parent LV to the new assembly
+        new_assembly.placements = pvs_to_move
+        parent_lv.content = pvs_to_keep
+
+        # 4. Add the assembly to the project state
+        state.add_assembly(new_assembly)
+
+        # 5. Create a new physical volume to place the assembly back into the parent LV
+        assembly_pv_name = self._generate_unique_name(f"{assembly_name}_placement", 
+                                                      {pv.name for pv in parent_lv.content})
+        assembly_placement = PhysicalVolumePlacement(
+            name=assembly_pv_name,
+            volume_ref=assembly_name,
+            position_val_or_ref={'x': '0', 'y': '0', 'z': '0'}, # Place at origin of parent
+            rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'}
+        )
+        parent_lv.add_child(assembly_placement)
+
+        # 6. Recalculate and return
+        self.recalculate_geometry_state()
+        return assembly_placement.to_dict(), None
+
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"
         
