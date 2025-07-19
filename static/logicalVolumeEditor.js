@@ -106,10 +106,11 @@ function renderProceduralParams(type, data = null) {
     if (type === 'replica') {
         // We need a dropdown of all LVs that can be replicated
         const allLVs = Object.keys(currentProjectState.logical_volumes);
+        const availableLVs = isEditMode ? allLVs.filter(name => name !== editingLVId) : allLVs;
         
         const replicaLVSelect = document.createElement('select');
         replicaLVSelect.id = 'replica_lv_ref';
-        populateSelect(replicaLVSelect, allLVs);
+        populateSelect(replicaLVSelect, availableLVs);
         if (data) replicaLVSelect.value = data.volume_ref;
         
         const item = document.createElement('div');

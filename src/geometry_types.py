@@ -513,9 +513,20 @@ class GeometryState:
             
         threejs_objects = []
 
+        # Add a set to track visited LVs in the current traversal path
+        visited_path = set()
+
         def traverse(lv_name, parent_transform_matrix, owning_pv_id=None):
+            # Cycle detection
+            if lv_name in visited_path:
+                print(f"Warning: Detected recursive placement of Logical Volume '{lv_name}'. Stopping traversal to prevent crash.")
+                return
+            visited_path.add(lv_name) # Add current LV to the path
+
             lv = self.get_logical_volume(lv_name)
-            if not lv: return
+            if not lv: 
+                visited_path.remove(lv_name) # Remove before returning
+                return
 
             placements_to_process = []
             
@@ -592,6 +603,9 @@ class GeometryState:
                     
                     # Also traverse into this placed volume to render its children.
                     traverse(child_lv.name, world_transform_matrix, owning_pv_id=pv.id)
+
+            # Remove LV from path when returning up the stack
+            visited_path.remove(lv_name)
 
         initial_transform = np.identity(4)
         traverse(self.world_volume_ref, initial_transform)

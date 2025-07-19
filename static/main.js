@@ -643,13 +643,30 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
 
         if (selection.length === 1 && selection[0].type === 'physical_volume') {
             // --- CASE 1: A SINGLE PROCEDURAL GROUP (like a replica) WAS MOVED ---
-            // The helper's final world position IS the new world position for the owning PV.
-            const pvId = selection[0].id;
-            const pos = transformedObject.position;
+            const ownerPV = selection[0].data; // This is lvReplica_phys
+            const ownerLV = AppState.currentProjectState.logical_volumes[ownerPV.volume_ref];
+            
+            // Get the final position of the gizmo/helper
+            const finalHelperPos = transformedObject.position;
+
+            let finalOwnerPos = finalHelperPos;
+
+            // FIX: If it's a replica with an offset, we must adjust the parent's final position.
+            if (ownerLV && ownerLV.content_type === 'replica') {
+                const replica = ownerLV.content;
+                const offset = parseFloat(replica.offset || 0);
+                const dir = replica.direction;
+                const axisVec = new THREE.Vector3(parseFloat(dir.x||0), parseFloat(dir.y||0), parseFloat(dir.z||0));
+                
+                // Subtract the offset from the helper's final position to get the parent's correct center
+                const offsetVec = axisVec.multiplyScalar(offset);
+                finalOwnerPos = new THREE.Vector3().copy(finalHelperPos).sub(offsetVec);
+            }
+
             const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
             updates.push({
-                pvId: pvId,
-                position: { x: pos.x, y: pos.y, z: pos.z },
+                pvId: selection[0].id,
+                position: { x: finalOwnerPos.x, y: finalOwnerPos.y, z: finalOwnerPos.z },
                 rotation: { x: euler.x, y: euler.y, z: euler.z }
             });
 
