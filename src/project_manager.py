@@ -1234,3 +1234,59 @@ class ProjectManager:
         
         # If target_group_name is None, the items are effectively moved to "ungrouped".
         return True, None
+
+    def _find_and_remove_pv(self, pv_id):
+        """
+        Helper function to find a PV by its ID anywhere in the geometry,
+        remove it from its current parent, and return the PV object and its old parent.
+        Returns (pv_object, parent_object) or (None, None).
+        """
+        state = self.current_geometry_state
+        # Search in Logical Volumes
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for i, pv in enumerate(lv.content):
+                    if pv.id == pv_id:
+                        return lv.content.pop(i), lv
+        
+        # Search in Assemblies
+        for asm in state.assemblies.values():
+            for i, pv in enumerate(asm.placements):
+                if pv.id == pv_id:
+                    return asm.placements.pop(i), asm
+        
+        return None, None
+
+    def move_pv_to_assembly(self, pv_ids, target_assembly_name):
+        """Moves a list of PVs from their current parent to a target assembly."""
+        state = self.current_geometry_state
+        target_assembly = state.assemblies.get(target_assembly_name)
+        if not target_assembly:
+            return False, f"Target assembly '{target_assembly_name}' not found."
+
+        for pv_id in pv_ids:
+            pv_to_move, old_parent = self._find_and_remove_pv(pv_id)
+            if not pv_to_move:
+                return False, f"Physical Volume with ID '{pv_id}' not found."
+            target_assembly.placements.append(pv_to_move)
+
+        self.recalculate_geometry_state()
+        return True, None
+
+    def move_pv_to_lv(self, pv_ids, target_lv_name):
+        """Moves a list of PVs from their current parent to a target logical volume."""
+        state = self.current_geometry_state
+        target_lv = state.logical_volumes.get(target_lv_name)
+        if not target_lv:
+            return False, f"Target logical volume '{target_lv_name}' not found."
+        if target_lv.content_type != 'physvol':
+            return False, f"Target '{target_lv_name}' is a procedural volume and cannot accept direct placements."
+
+        for pv_id in pv_ids:
+            pv_to_move, old_parent = self._find_and_remove_pv(pv_id)
+            if not pv_to_move:
+                return False, f"Physical Volume with ID '{pv_id}' not found."
+            target_lv.content.append(pv_to_move)
+
+        self.recalculate_geometry_state()
+        return True, None

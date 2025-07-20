@@ -80,6 +80,9 @@ async function initializeApp() {
         onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
         onAiGenerateClicked: handleAiGenerate,
+        // Hierarchy organization
+        onMovePvToAssembly: handleMovePvToAssembly,
+        onMovePvToLv: handleMovePvToLv,
         // Group organization
         getProjectState: () => AppState.currentProjectState, // Give UI manager access to state
         onAddGroup: handleAddGroup,
@@ -1215,4 +1218,28 @@ function findPlacementOfVolume(projectState, volumeRefName) {
         }
     }
     return null;
+}
+
+async function handleMovePvToAssembly(pvId, assemblyName) {
+    UIManager.showLoading(`Moving PV to assembly '${assemblyName}'...`);
+    try {
+        const result = await APIService.movePvToAssembly(pvId, assemblyName);
+        syncUIWithState(result); // This redraws everything
+    } catch (error) {
+        UIManager.showError("Failed to move PV: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleMovePvToLv(pvId, lvName) {
+    UIManager.showLoading(`Moving PV to volume '${lvName}'...`);
+    try {
+        const result = await APIService.movePvToLv(pvId, lvName);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError("Failed to move PV: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
 }

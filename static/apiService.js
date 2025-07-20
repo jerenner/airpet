@@ -514,3 +514,21 @@ export async function createAssemblyFromPVs(pvIds, assemblyName, parentLvName) {
     });
     return handleResponse(response);
 }
+
+export async function movePvToAssembly(pvIds, targetAssemblyName) { // Changed to pvIds
+    const response = await fetch(`${API_BASE_URL}/move_pv_to_assembly`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pv_ids: pvIds, target_assembly_name: targetAssemblyName }) // Changed to pv_ids
+    });
+    return handleResponse(response);
+}
+
+export async function movePvToLv(pvIds, targetLvName) { // Changed to pvIds
+    const response = await fetch(`${API_BASE_URL}/move_pv_to_lv`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pv_ids: pvIds, target_lv_name: targetLvName }) // Changed to pv_ids
+    });
+    return handleResponse(response);
+}

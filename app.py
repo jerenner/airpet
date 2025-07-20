@@ -874,5 +874,33 @@ def create_assembly_from_pvs_route():
     else:
         return create_success_response(f"Assembly '{assembly_name}' created successfully.")
 
+@app.route('/move_pv_to_assembly', methods=['POST'])
+def move_pv_to_assembly_route():
+    data = request.get_json()
+    pv_ids = data.get('pv_ids')
+    target_assembly_name = data.get('target_assembly_name')
+    if not all([pv_ids, target_assembly_name]):
+        return jsonify({"success": False, "error": "Missing PV IDs or target assembly name."}), 400
+
+    success, error_msg = project_manager.move_pv_to_assembly(pv_ids, target_assembly_name)
+    if success:
+        return create_success_response("PV moved to assembly.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/move_pv_to_lv', methods=['POST'])
+def move_pv_to_lv_route():
+    data = request.get_json()
+    pv_ids = data.get('pv_ids')
+    target_lv_name = data.get('target_lv_name')
+    if not all([pv_ids, target_lv_name]):
+        return jsonify({"success": False, "error": "Missing PV IDs or target LV name."}), 400
+
+    success, error_msg = project_manager.move_pv_to_lv(pv_ids, target_lv_name)
+    if success:
+        return create_success_response("PV moved to logical volume.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

@@ -951,63 +951,67 @@ function addToggle(parentLi, childrenUl) {
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
     const item = document.createElement('li');
-    item.draggable = true; // Make the item draggable!
-    
-    // --- Add dragstart listener ---
-    item.addEventListener('dragstart', (event) => {
-        event.stopPropagation();
+
+    // Make the item draggable if it's a type that can be moved or grouped
+    if (itemType === 'physical_volume' || itemType === 'solid' || itemType === 'material' || itemType === 'define') {
+        item.draggable = true; // Make the item draggable!
         
-        const selectedItems = document.querySelectorAll('#left_panel_container .selected_item');
-        let dragData;
-
-        // Check if the item being dragged is part of the current selection
-        const isDraggingSelectedItem = Array.from(selectedItems).some(el => el.dataset.id === itemIdForBackend);
-        const isMultiDrag = selectedItems.length > 1 && isDraggingSelectedItem;
-
-        if (isMultiDrag) {
-            // Dragging a part of a multi-selection
-            const itemsToDrag = Array.from(selectedItems)
-                // IMPORTANT: Only drag items of the same type!
-                .filter(el => el.dataset.type === itemType) 
-                .map(el => ({ id: el.dataset.id, type: el.dataset.type }));
+        // --- Add dragstart listener ---
+        item.addEventListener('dragstart', (event) => {
+            event.stopPropagation();
             
-            dragData = { type: 'multi-selection', items: itemsToDrag };
+            const selectedItems = document.querySelectorAll('#left_panel_container .selected_item');
+            let dragData;
 
-            // --- CUSTOM DRAG IMAGE LOGIC ---
-            if (itemsToDrag.length > 0) {
-                const dragHelper = document.getElementById('drag-image-helper');
-                // Create a simple but effective visual: a stack icon and a count
-                dragHelper.innerHTML = `
-                    <span style="font-size: 18px;">📋</span>
-                    <span>${itemsToDrag.length} ${itemType}(s)</span>
-                `;
-                // Use setDragImage to replace the default browser ghost image.
-                // The (0, 0) coordinates mean the cursor will be at the top-left of our custom image.
-                // You can adjust these to center it, e.g., (dragHelper.offsetWidth / 2, dragHelper.offsetHeight / 2)
-                event.dataTransfer.setDragImage(dragHelper, 10, 10);
+            // Check if the item being dragged is part of the current selection
+            const isDraggingSelectedItem = Array.from(selectedItems).some(el => el.dataset.id === itemIdForBackend);
+            const isMultiDrag = selectedItems.length > 1 && isDraggingSelectedItem;
+
+            if (isMultiDrag) {
+                // Dragging a part of a multi-selection
+                const itemsToDrag = Array.from(selectedItems)
+                    // IMPORTANT: Only drag items of the same type!
+                    .filter(el => el.dataset.type === itemType) 
+                    .map(el => ({ id: el.dataset.id, type: el.dataset.type }));
+                
+                dragData = { type: 'multi-selection', items: itemsToDrag };
+
+                // --- CUSTOM DRAG IMAGE LOGIC ---
+                if (itemsToDrag.length > 0) {
+                    const dragHelper = document.getElementById('drag-image-helper');
+                    // Create a simple but effective visual: a stack icon and a count
+                    dragHelper.innerHTML = `
+                        <span style="font-size: 18px;">📋</span>
+                        <span>${itemsToDrag.length} ${itemType}(s)</span>
+                    `;
+                    // Use setDragImage to replace the default browser ghost image.
+                    // The (0, 0) coordinates mean the cursor will be at the top-left of our custom image.
+                    // You can adjust these to center it, e.g., (dragHelper.offsetWidth / 2, dragHelper.offsetHeight / 2)
+                    event.dataTransfer.setDragImage(dragHelper, 10, 10);
+                }
+            } else {
+                // Dragging a single item (even if others are selected)
+                dragData = { type: 'single-item', id: itemIdForBackend, itemType: itemType };
             }
-        } else {
-            // Dragging a single item (even if others are selected)
-            dragData = { type: 'single-item', id: itemIdForBackend, itemType: itemType };
-        }
-        
-        event.dataTransfer.setData('application/json', JSON.stringify(dragData));
-        event.dataTransfer.effectAllowed = 'move';
-        
-        // Add a class to all dragged items for styling
-        if (isMultiDrag) {
-            selectedItems.forEach(el => {
-                if(el.dataset.type === itemType) el.classList.add('dragging');
-            });
-        } else {
-            item.classList.add('dragging');
-        }
-    });
+            
+            event.dataTransfer.setData('application/json', JSON.stringify(dragData));
+            event.dataTransfer.effectAllowed = 'move';
+            
+            // Add a class to all dragged items for styling
+            if (isMultiDrag) {
+                selectedItems.forEach(el => {
+                    if(el.dataset.type === itemType) el.classList.add('dragging');
+                });
+            } else {
+                item.classList.add('dragging');
+            }
+        });
 
-    item.addEventListener('dragend', (event) => {
-        event.stopPropagation();
-        item.classList.remove('dragging');
-    });
+        item.addEventListener('dragend', (event) => {
+            event.stopPropagation();
+            item.classList.remove('dragging');
+        });
+    }
 
     // --- Add a container for the name and buttons ---
     let finalDisplayName = displayName; // Start with the passed name
@@ -1030,6 +1034,39 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     item.dataset.id = itemIdForBackend;
     item.dataset.name = displayName;
     item.appData = {...fullItemData, ...additionalData};
+
+    // --- DROP LOGIC (NEW) ---
+    // An item can be a drop target if it's an LV that can contain PVs, or a PV that represents an Assembly.
+    const isStandardLV = itemType === 'logical_volume' && fullItemData.content_type === 'physvol';
+    const isAssemblyPlacement = itemType === 'physical_volume' && (callbacks.getProjectState()?.assemblies || {})[fullItemData.volume_ref];
+
+    if (isStandardLV || isAssemblyPlacement) {
+        item.addEventListener('dragover', e => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            item.classList.add('drop-target-hover');
+        });
+        item.addEventListener('dragleave', () => item.classList.remove('drop-target-hover'));
+        item.addEventListener('drop', (event) => {
+            event.preventDefault();
+            event.stopPropagation(); // Prevent event bubbling up to parent drop targets
+            item.classList.remove('drop-target-hover');
+            const data = JSON.parse(event.dataTransfer.getData('application/json'));
+
+            // We only handle dropping physical volumes for now
+            if (data.itemType !== 'physical_volume') return;
+
+            const pvIds = (data.type === 'multi-selection') ? data.items.map(i => i.id) : [data.id];
+
+            if (isAssemblyPlacement) {
+                const assemblyName = fullItemData.volume_ref;
+                callbacks.onMovePvToAssembly(pvIds, assemblyName);
+            } else { // isStandardLV
+                const lvName = fullItemData.name;
+                callbacks.onMovePvToLv(pvIds, lvName);
+            }
+        });
+    }
 
     // Main click listener for selection
     //const contentDiv = item.querySelector('.tree-item-content');
