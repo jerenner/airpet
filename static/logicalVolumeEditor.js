@@ -140,7 +140,41 @@ function renderProceduralParams(type, data = null) {
             else if (parseFloat(data.direction.z) === 1) document.getElementById('replica_axis_z').checked = true;
             else document.getElementById('replica_axis_x').checked = true;
         }
+    } else if (type === 'division') {
+        const allLVs = Object.keys(currentProjectState.logical_volumes);
+        const availableLVs = isEditMode ? allLVs.filter(name => name !== editingLVId) : allLVs;
 
+        const divisionLVSelect = document.createElement('select');
+        divisionLVSelect.id = 'division_lv_ref';
+        populateSelect(divisionLVSelect, availableLVs);
+        if (data) divisionLVSelect.value = data.volume_ref;
+
+        const item = document.createElement('div');
+        item.className = 'property_item';
+        item.innerHTML = `<label for="division_lv_ref">Volume to Divide:</label>`;
+        item.appendChild(divisionLVSelect);
+        proceduralParamsDiv.appendChild(item);
+
+        proceduralParamsDiv.appendChild(ExpressionInput.create('division_number', 'Number of Divisions', data?.number || '1', currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('division_width', 'Width (mm)', data?.width || '0', currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('division_offset', 'Offset (mm)', data?.offset || '0', currentProjectState));
+        
+        // Dropdown for axis
+        const axisDiv = document.createElement('div');
+        axisDiv.className = 'property_item';
+        axisDiv.innerHTML = `<label for="division_axis">Axis:</label>
+                             <select id="division_axis">
+                                <option value="kXAxis">X Axis</option>
+                                <option value="kYAxis">Y Axis</option>
+                                <option value="kZAxis">Z Axis</option>
+                                <option value="kRho">Rho</option>
+                                <option value="kPhi">Phi</option>
+                             </select>`;
+        proceduralParamsDiv.appendChild(axisDiv);
+
+        if (data && data.axis) {
+            document.getElementById('division_axis').value = data.axis;
+        }
     } else if (type === 'physvol') {
         proceduralParamsDiv.style.display = 'none'; // Nothing to show for standard LVs
     } else {
@@ -208,6 +242,15 @@ function handleConfirm() {
                 y: selectedAxis === 'y' ? '1' : '0',
                 z: selectedAxis === 'z' ? '1' : '0'
             }
+        };
+    } else if (contentType === 'division') {
+        content = {
+            type: 'division',
+            volume_ref: document.getElementById('division_lv_ref').value,
+            number: document.getElementById('division_number').value,
+            width: document.getElementById('division_width').value,
+            offset: document.getElementById('division_offset').value,
+            axis: document.getElementById('division_axis').value
         };
     } else {
         // For 'physvol', content is an empty list by default upon creation.

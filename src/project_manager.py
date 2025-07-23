@@ -4,7 +4,7 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, Assembly, get_unit_value
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, DivisionVolume, Assembly, get_unit_value
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -663,7 +663,8 @@ class ProjectManager:
         new_lv.content_type = content_type
         if content_type == 'replica':
             new_lv.content = ReplicaVolume.from_dict(content)
-        # Add logic for other types here...
+        elif content_type == 'division':
+            new_lv.content = DivisionVolume.from_dict(content)
         else: # physvol
             new_lv.content = [] # It's a new, empty standard LV
 
@@ -691,6 +692,8 @@ class ProjectManager:
             lv.content_type = new_content_type
             if new_content_type == 'replica':
                 lv.content = ReplicaVolume.from_dict(new_content)
+            elif new_content_type == 'division':
+                lv.content = DivisionVolume.from_dict(new_content)
             # Add logic for other types here...
             else: # physvol
                 # This could be more complex, might need to update existing children

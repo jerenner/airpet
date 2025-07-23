@@ -1124,23 +1124,37 @@ function _applyTransform(mesh, transformData) {
 /**
  * Recursively gets or builds a geometry for a solid.
  * Caches results to avoid re-computation.
- * @param {string} solidName - The name of the solid to get/build.
+ * @param {string | object} solidRef - The name of the solid OR a dictionary defining the solid.
  * @param {object} solidsDict - The dictionary of all solid definitions.
  * @param {object} projectState - The full project state.
  * @param {Map<string, THREE.BufferGeometry>} geometryCache - The cache for built geometries.
  * @param {Evaluator} csgEvaluator - The CSG evaluator instance.
  * @returns {THREE.BufferGeometry | null}
  */
-function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache, csgEvaluator) {
-    // 1. Return from cache if already built
-    if (geometryCache.has(solidName)) {
-        return geometryCache.get(solidName);
+function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometryCache, csgEvaluator) {
+
+    // --- Differentiate between a reference (string) and a definition (object) ---
+    let solidData;
+    let solidName;
+    let isTemporary = false;
+
+    if (typeof solidRef === 'string') {
+        solidName = solidRef;
+        solidData = solidsDict[solidName];
+    } else if (typeof solidRef === 'object' && solidRef !== null) {
+        solidName = solidRef.name; // Use the name from the object for caching
+        solidData = solidRef;
+        isTemporary = true; // Flag that this is a one-off object
     }
 
-    const solidData = solidsDict[solidName];
     if (!solidData) {
         console.error(`[SceneManager] Solid definition for '${solidName}' not found!`);
         return null;
+    }
+
+    // 1. Return from cache if already built
+    if (geometryCache.has(solidName)) {
+        return geometryCache.get(solidName);
     }
 
     let finalGeometry = null;
@@ -1204,10 +1218,10 @@ function _getOrBuildGeometry(solidName, solidsDict, projectState, geometryCache,
     }
     
     // 3. Cache and return the final geometry
-    if (finalGeometry) {
+    //    Only cache permanent solids, not temporary slices from divisions.
+    if (finalGeometry && !isTemporary) {
         geometryCache.set(solidName, finalGeometry);
     }
-
     return finalGeometry;
 }
 
@@ -1243,11 +1257,12 @@ export function renderObjects(pvDescriptions, projectState) {
              return; // 'return' inside a forEach acts like 'continue'
         }
 
-        const solidName = pvData.solid_ref_for_threejs; // Backend should provide this direct ref
-        const cachedGeom = geometryCache.get(solidName);
+        const solidRef = pvData.solid_ref_for_threejs; // Backend should provide this direct ref
+        const cachedGeom = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
 
         if (!cachedGeom) {
-            console.warn(`[SceneManager] No cached geometry found for solid '${solidName}'. Skipping placement of '${pvData.name}'.`);
+            const solidIdentifier = (typeof solidRef === 'string') ? solidRef : solidRef.name;
+            console.warn(`[SceneManager] No geometry could be built for solid '${solidIdentifier}'. Skipping placement of '${pvData.name}'.`);
             return;
         }
 

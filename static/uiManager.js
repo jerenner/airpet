@@ -1069,7 +1069,6 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     }
 
     // Main click listener for selection
-    //const contentDiv = item.querySelector('.tree-item-content');
     item.addEventListener('click', (event) => {
         event.stopPropagation();
 

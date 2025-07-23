@@ -8,7 +8,7 @@ import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
-    Assembly, ReplicaVolume, 
+    Assembly, DivisionVolume, ReplicaVolume, 
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
 )
 
@@ -536,7 +536,12 @@ class GDMLParser:
                         print(f"Warning: Logical Volume '{parent_lv_obj.name}' already has a procedural placement. Skipping extra <replicavol>.")
             
             elif element.tag == 'divisionvol':
-                print(f"Warning: '<divisionvol>' parsing is not yet implemented. Skipping.")
+                division = self._parse_division_vol(element)
+                if division:
+                    if parent_lv_obj.content_type == 'physvol':
+                        parent_lv_obj.add_child(division)
+                    else:
+                        print(f"Warning: Logical Volume '{parent_lv_obj.name}' already has a procedural placement. Skipping extra <divisionvol>.")
             
             elif element.tag == 'paramvol':
                  print(f"Warning: '<paramvol>' parsing is not yet implemented. Skipping.")
@@ -607,6 +612,37 @@ class GDMLParser:
             return None
         
         return ReplicaVolume(name, volume_ref, number_expr, direction, width, offset)
+
+    def _parse_division_vol(self, division_el):
+        """Parses a <divisionvol> tag and returns a DivisionVolume object."""
+        # A name for the division itself is not in the GDML spec,
+        # but we generate one for our UI representation.
+        name = division_el.get('name', f"division_{uuid.uuid4().hex[:6]}")
+        
+        # Extract attributes from the divisionvol tag itself
+        axis = division_el.get('axis')
+        number_expr = division_el.get('number')
+        width_expr = division_el.get('width')
+        offset_expr = division_el.get('offset', '0')
+        unit = division_el.get('unit', 'mm')
+
+        if not axis or (not number_expr and not width_expr):
+            print("Warning: <divisionvol> is missing required 'axis' and ('number' or 'width') attributes. Skipping.")
+            return None
+
+        # Find the nested <volumeref>
+        volumeref_el = division_el.find('volumeref')
+        if volumeref_el is None:
+            print("Warning: <divisionvol> found without a <volumeref>. Skipping.")
+            return None
+            
+        volume_ref = self._evaluate_name(volumeref_el.get('ref'))
+
+        return DivisionVolume(name, volume_ref, axis,
+                            number=number_expr,
+                            width=width_expr,
+                            offset=offset_expr,
+                            unit=unit)
 
     def _parse_setup(self, setup_element):
         if setup_element is None: return
