@@ -175,6 +175,8 @@ function renderProceduralParams(type, data = null) {
         if (data && data.axis) {
             document.getElementById('division_axis').value = data.axis;
         }
+    } else if (type === 'parameterised') {
+        proceduralParamsDiv.innerHTML = `<p style="color:#888;"><i>Editor for '${type}' content not yet implemented.</i></p>`;
     } else if (type === 'physvol') {
         proceduralParamsDiv.style.display = 'none'; // Nothing to show for standard LVs
     } else {

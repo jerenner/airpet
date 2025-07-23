@@ -417,7 +417,22 @@ class ReplicaVolume:
         instance.id = data.get('id', instance.id) # Use provided ID if it exists
         return instance
 
-# NOTE: Placeholder
+class Parameterisation:
+    """Represents a single <parameters> block for a parameterised volume."""
+    def __init__(self, number, position, dimensions_type, dimensions):
+        self.number = number
+        self.position = position
+        self.dimensions_type = dimensions_type # e.g., "box_dimensions"
+        self.dimensions = dimensions # A dict of the dimension attrs, e.g. {'x':'10', 'y':'10'}
+
+    def to_dict(self):
+        return {
+            "number": self.number,
+            "position": self.position,
+            "dimensions_type": self.dimensions_type,
+            "dimensions": self.dimensions
+        }
+
 class ParamVolume:
     """Represents a <paramvol> placement."""
     def __init__(self, name, volume_ref, ncopies):
@@ -426,13 +441,24 @@ class ParamVolume:
         self.type = "parameterised"
         self.volume_ref = volume_ref
         self.ncopies = ncopies
-        self.parameters = [] # This would be a list of parameter sets
+        self.parameters = [] # This will be a list of Parameterisation objects
+
+    def add_parameter_set(self, param_set):
+        self.parameters.append(param_set)
 
     def to_dict(self):
         return {
             "id": self.id, "name": self.name, "type": self.type,
-            "volume_ref": self.volume_ref, "ncopies": self.ncopies
+            "volume_ref": self.volume_ref, "ncopies": self.ncopies,
+            "parameters": [p.to_dict() for p in self.parameters]
         }
+
+    @classmethod
+    def from_dict(cls, data):
+        # We'll need this for the LV editor later
+        instance = cls(data.get('name'), data.get('volume_ref'), data.get('ncopies'))
+        # ... logic to deserialize parameters ...
+        return instance
 
 class GeometryState:
     """Holds the entire geometry definition."""
@@ -555,6 +581,8 @@ class GeometryState:
         # Handle division separately as it renders and recurses differently
         if lv.content_type == 'division':
             self._unroll_division_and_traverse(lv, world_transform_matrix, path, threejs_objects, owner_id=current_owner_id)
+        elif lv.content_type == 'parameterised':
+            self._unroll_param_and_traverse(lv, world_transform_matrix, path, threejs_objects, owner_id=current_owner_id)
 
     def _unroll_replica(self, lv):
         replica = lv.content
@@ -613,3 +641,53 @@ class GeometryState:
             if child_lv.content_type == 'physvol' and child_lv.content:
                 for child_of_child_pv in child_lv.content:
                     self._traverse(child_of_child_pv, slice_world_matrix, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
+
+    def _unroll_param_and_traverse(self, lv, parent_matrix, path, threejs_objects, owner_id):
+        param_vol = lv.content
+        child_lv_template = self.get_logical_volume(param_vol.volume_ref)
+        if not child_lv_template: return
+
+        original_solid = self.get_solid(child_lv_template.solid_ref)
+        if not original_solid: return
+
+        for i, param_set in enumerate(param_vol.parameters):
+            # 1. Create a new, temporary solid with the specified dimensions
+            new_solid_params = original_solid.raw_parameters.copy()
+            # The dimension keys in GDML don't have the '_dimensions' suffix
+            dims_type_clean = param_set.dimensions_type.replace('_dimensions', '')
+            
+            # Update the parameters with the values from this specific copy
+            new_solid_params.update(param_set.dimensions)
+
+            temp_solid = Solid(f"{original_solid.name}_param_{i}",
+                               dims_type_clean,
+                               new_solid_params)
+            # We must manually evaluate these new raw parameters
+            # This is a simplified evaluation for rendering purposes
+            temp_solid._evaluated_parameters = {k: float(v) for k, v in param_set.dimensions.items()}
+
+
+            # 2. Create a temporary PV for this copy's placement
+            temp_pv = PhysicalVolumePlacement(
+                name=f"{lv.name}_param_{i}",
+                volume_ref=child_lv_template.name,
+                copy_number_expr=str(i)
+            )
+            # The position can be a ref or a dict of expressions, which should have been evaluated
+            temp_pv._evaluated_position = param_set.position 
+            temp_pv._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
+
+            # 3. Render this specific instance
+            instance_world_matrix = parent_matrix @ temp_pv.get_transform_matrix()
+            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(instance_world_matrix)
+            threejs_objects.append({
+                "id": temp_pv.id, "name": temp_pv.name, "owner_pv_id": owner_id,
+                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temp solid definition
+                "position": final_pos, "rotation": final_rot_rad,
+                "vis_attributes": child_lv_template.vis_attributes, "copy_number": i
+            })
+
+            # 4. Recurse into the ORIGINAL child LV's content, placed inside this new instance
+            if child_lv_template.content_type == 'physvol' and child_lv_template.content:
+                for child_of_child_pv in child_lv_template.content:
+                    self._traverse(child_of_child_pv, instance_world_matrix, path + [lv.name], threejs_objects, owner_pv_id=owner_id)

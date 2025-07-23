@@ -4,15 +4,18 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, DivisionVolume, Assembly, get_unit_value
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, DivisionVolume, Assembly
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
+from .expression_evaluator import create_configured_asteval, ExpressionEvaluator
 
 class ProjectManager:
     def __init__(self):
         self.current_geometry_state = GeometryState()
         self.gdml_parser = GDMLParser()
+        # Give the project manager its own evaluator instance
+        self.expression_evaluator = ExpressionEvaluator()
 
     def _generate_unique_name(self, base_name, existing_names_dict):
         if base_name not in existing_names_dict:
@@ -45,18 +48,8 @@ class ProjectManager:
 
         state = self.current_geometry_state
 
-        # Initialize asteval and add math functions
-        aeval = asteval.Interpreter(symtable={}, minimal=True)
-        for func_name in ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
-                          'sqrt', 'exp', 'log', 'log10', 'pow', 'abs']:
-            if hasattr(math, func_name):
-                aeval.symtable[func_name] = getattr(math, func_name)
-        
-        # Add constants and units
-        aeval.symtable.update({
-            'pi': math.pi, 'PI': math.pi, 'HALFPI': math.pi / 2.0, 'TWOPI': 2.0 * math.pi,
-            'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'rad': 1.0, 'deg': math.pi / 180.0,
-        })
+        # Use our central factory to get a correctly configured interpreter.
+        aeval = create_configured_asteval()
         
         # --- Stage 1: Iteratively resolve all defines ---
         unresolved_defines = list(state.defines.values())
@@ -258,7 +251,11 @@ class ProjectManager:
                 evaluated_dict = {}
                 for axis, raw_expr in part_data.items():
                     try:
-                        evaluated_dict[axis] = aeval.eval(str(raw_expr))
+                        # Check if it's already a number
+                        if isinstance(raw_expr, (int, float)):
+                            evaluated_dict[axis] = raw_expr
+                        else:
+                            evaluated_dict[axis] = aeval.eval(str(raw_expr))
                     except Exception:
                         evaluated_dict[axis] = default_val.get(axis, 0)
                 return evaluated_dict

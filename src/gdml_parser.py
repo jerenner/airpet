@@ -8,7 +8,7 @@ import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
-    Assembly, DivisionVolume, ReplicaVolume, 
+    Assembly, DivisionVolume, ReplicaVolume, ParamVolume, Parameterisation,
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
 )
 
@@ -544,7 +544,12 @@ class GDMLParser:
                         print(f"Warning: Logical Volume '{parent_lv_obj.name}' already has a procedural placement. Skipping extra <divisionvol>.")
             
             elif element.tag == 'paramvol':
-                 print(f"Warning: '<paramvol>' parsing is not yet implemented. Skipping.")
+                param = self._parse_param_vol(element)
+                if param:
+                    if parent_lv_obj.content_type == 'physvol':
+                        parent_lv_obj.add_child(param)
+                    else:
+                        print(f"Warning: Logical Volume '{parent_lv_obj.name}' already has a procedural placement. Skipping extra <paramvol>.")
 
         # This call now handles physvols inside loops correctly.
         self._process_children(vol_el, placement_handler, parent_lv=parent_lv)
@@ -649,3 +654,49 @@ class GDMLParser:
         world_el = setup_element.find('world')
         if world_el is not None:
             self.geometry_state.world_volume_ref = world_el.get('ref')
+
+    def _parse_param_vol(self, param_el):
+        """Parses a <paramvol> tag and returns a ParamVolume object."""
+        name = param_el.get('name', f"param_{uuid.uuid4().hex[:6]}")
+        ncopies = param_el.get('ncopies', '0')
+        
+        volumeref_el = param_el.find('volumeref')
+        if volumeref_el is None:
+            print("Warning: <paramvol> is missing <volumeref>. Skipping.")
+            return None
+        volume_ref = self._evaluate_name(volumeref_el.get('ref'))
+
+        param_vol_obj = ParamVolume(name, volume_ref, ncopies)
+
+        # Look for the wrapper tag, but fall back to searching the whole element.
+        search_root = param_el.find('parameterised_position_size')
+        if search_root is None:
+            search_root = param_el
+
+        for params_el in search_root.iter('parameters'):
+            number = params_el.get('number')
+            position = None
+            dimensions_type = None
+            dimensions = {}
+
+            # Find position and dimension tags inside <parameters>
+            pos_el = params_el.find('position')
+            posref_el = params_el.find('positionref')
+
+            if posref_el is not None:
+                position = posref_el.get('ref')
+            elif pos_el is not None:
+                position = {k: v for k, v in pos_el.attrib.items() if k != 'unit'}
+
+            # Find the first dimensions tag (e.g., <box_dimensions>, <tube_dimensions>)
+            for child in params_el:
+                if child.tag.endswith('_dimensions'):
+                    dimensions_type = child.tag
+                    dimensions = {k: v for k, v in child.attrib.items() if k not in ['lunit', 'aunit']}
+                    break # Found it, stop searching
+
+            if dimensions_type: # Position can be optional (defaults to origin)
+                param_set = Parameterisation(number, position, dimensions_type, dimensions)
+                param_vol_obj.add_parameter_set(param_set)
+        
+        return param_vol_obj

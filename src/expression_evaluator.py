@@ -19,6 +19,7 @@ def create_configured_asteval():
         'pi': math.pi, 'PI': math.pi,
         'mm': 1.0, 'cm': 10.0, 'm': 1000.0,
         'rad': 1.0, 'deg': math.pi / 180.0,
+        'degree': math.pi / 180.0
     })
     
     return aeval
