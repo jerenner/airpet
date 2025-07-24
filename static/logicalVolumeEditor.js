@@ -8,6 +8,7 @@ let editingLVId = null;
 let colorInput, alphaInput;
 let currentProjectState = null;
 let contentTypeRadios, proceduralParamsDiv;
+let paramSetsState = []; // Holds the data for each <parameters> block
 
 export function initLVEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -176,7 +177,38 @@ function renderProceduralParams(type, data = null) {
             document.getElementById('division_axis').value = data.axis;
         }
     } else if (type === 'parameterised') {
-        proceduralParamsDiv.innerHTML = `<p style="color:#888;"><i>Editor for '${type}' content not yet implemented.</i></p>`;
+        const allLVs = Object.keys(currentProjectState.logical_volumes);
+        const availableLVs = isEditMode ? allLVs.filter(name => name !== editingLVId) : allLVs;
+
+        // --- Main UI for Paramvol ---
+        const html = `
+            <div class="property_item">
+                <label for="param_lv_ref">Volume to Parameterise:</label>
+                <select id="param_lv_ref"></select>
+            </div>
+            <div id="param_sets_container"></div>
+            <button id="add_param_set_btn" class="add_button" style="margin-top: 10px;">+ Add Parameter Set</button>
+        `;
+        proceduralParamsDiv.innerHTML = html;
+        
+        const paramLVSelect = document.getElementById('param_lv_ref');
+        populateSelect(paramLVSelect, availableLVs);
+
+        // --- State Initialization ---
+        if (data) {
+            paramLVSelect.value = data.volume_ref;
+            // Deep copy the parameters into our local state
+            paramSetsState = JSON.parse(JSON.stringify(data.parameters || []));
+        } else {
+            paramSetsState = [];
+        }
+
+        rebuildParamSetsUI(); // Initial render of all parameter blocks
+
+        // --- Event Listeners ---
+        document.getElementById('add_param_set_btn').addEventListener('click', addParamSet);
+        paramLVSelect.addEventListener('change', rebuildParamSetsUI); // Re-render if the LV changes, as solid type might change
+
     } else if (type === 'physvol') {
         proceduralParamsDiv.style.display = 'none'; // Nothing to show for standard LVs
     } else {
@@ -184,6 +216,104 @@ function renderProceduralParams(type, data = null) {
     }
 }
 
+// Helper function to render all parameter set blocks from the state
+function rebuildParamSetsUI() {
+    const container = document.getElementById('param_sets_container');
+    container.innerHTML = '';
+    paramSetsState.forEach((paramSet, index) => {
+        container.appendChild(buildParamSetUI(paramSet, index));
+    });
+}
+
+// Helper function to add a new, empty parameter set to the state
+function addParamSet() {
+    const newIndex = paramSetsState.length;
+    paramSetsState.push({
+        number: newIndex + 1,
+        position: { x: '0', y: '0', z: '0' },
+        dimensions_type: '', // Will be determined by the selected LV
+        dimensions: {}
+    });
+    rebuildParamSetsUI();
+}
+
+// The core function to build the UI for a single parameter block
+function buildParamSetUI(paramSet, index) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'boolean-recipe-row'; // Reuse this style for a nice border
+    wrapper.innerHTML = `
+        <div class="boolean-top-part">
+            <h6>Parameters for Copy #${paramSet.number}</h6>
+            <button class="remove-op-btn" data-index="${index}" title="Remove Set">×</button>
+        </div>
+        <div class="transform-controls-inline">
+            <div class="position-editor-container"></div>
+            <div class="dimensions-editor-container"></div>
+        </div>
+    `;
+
+    const posContainer = wrapper.querySelector('.position-editor-container');
+    const dimsContainer = wrapper.querySelector('.dimensions-editor-container');
+
+    // --- Build Position Editor ---
+    const posGroup = document.createElement('div');
+    posGroup.className = 'transform-group';
+    posGroup.innerHTML = `<span>Position (mm)</span>`;
+    posContainer.appendChild(posGroup);
+    ['x', 'y', 'z'].forEach(axis => {
+        const comp = ExpressionInput.create(`param_${index}_pos_${axis}`, axis.toUpperCase(), paramSet.position[axis] || '0', currentProjectState, (newValue) => {
+            paramSetsState[index].position[axis] = newValue;
+        });
+        posGroup.appendChild(comp);
+    });
+
+    // --- Build Dimensions Editor (Dynamically) ---
+    const selectedLVName = document.getElementById('param_lv_ref').value;
+    const selectedLV = currentProjectState.logical_volumes[selectedLVName];
+    if (selectedLV) {
+        const solid = currentProjectState.solids[selectedLV.solid_ref];
+        if (solid) {
+            const dimsGroup = document.createElement('div');
+            dimsGroup.className = 'transform-group';
+            dimsGroup.innerHTML = `<span>Dimensions (${solid.type})</span>`;
+            dimsContainer.appendChild(dimsGroup);
+
+            // Store the dimension type in our state
+            paramSetsState[index].dimensions_type = `${solid.type}_dimensions`;
+            
+            // Get the parameter keys for this solid type
+            const solidParams = getSolidParams(solid.type);
+            solidParams.forEach(paramKey => {
+                const initialValue = paramSet.dimensions[paramKey] || solid.raw_parameters[paramKey] || '0';
+                const comp = ExpressionInput.create(`param_${index}_dim_${paramKey}`, paramKey, initialValue, currentProjectState, (newValue) => {
+                    paramSetsState[index].dimensions[paramKey] = newValue;
+                });
+                dimsGroup.appendChild(comp);
+            });
+        }
+    }
+    
+    // Add event listener for the remove button
+    wrapper.querySelector('.remove-op-btn').addEventListener('click', () => {
+        paramSetsState.splice(index, 1);
+        // Re-number subsequent sets
+        paramSetsState.forEach((p, i) => { p.number = i + 1; });
+        rebuildParamSetsUI();
+    });
+
+    return wrapper;
+}
+
+// Helper to get the dimension keys for a given solid type
+function getSolidParams(solidType) {
+    const paramsMap = {
+        'box': ['x', 'y', 'z'],
+        'tube': ['rmin', 'rmax', 'z', 'startphi', 'deltaphi'],
+        'cone': ['rmin1', 'rmax1', 'rmin2', 'rmax2', 'z', 'startphi', 'deltaphi'],
+        // Add other supported parameterised solids here
+    };
+    return paramsMap[solidType] || [];
+}
 
 export function hide() {
     modalElement.style.display = 'none';
@@ -253,6 +383,13 @@ function handleConfirm() {
             width: document.getElementById('division_width').value,
             offset: document.getElementById('division_offset').value,
             axis: document.getElementById('division_axis').value
+        };
+    } else if (contentType === 'parameterised') {
+        content = {
+            type: 'parameterised',
+            volume_ref: document.getElementById('param_lv_ref').value,
+            ncopies: paramSetsState.length,
+            parameters: paramSetsState // The state is already in the correct format
         };
     } else {
         // For 'physvol', content is an empty list by default upon creation.

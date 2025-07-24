@@ -4,7 +4,7 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, ReplicaVolume, DivisionVolume, Assembly
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, DivisionVolume, ParamVolume
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -159,7 +159,7 @@ class ProjectManager:
             elif solid_type == 'tube':
                 ep['rmin'] = p.get('rmin', 0)
                 ep['rmax'] = p.get('rmax', 0)
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi) # Default is a full circle
 
@@ -168,7 +168,7 @@ class ProjectManager:
                 ep['rmax1'] = p.get('rmax1', 0)
                 ep['rmin2'] = p.get('rmin2', 0)
                 ep['rmax2'] = p.get('rmax2', 0)
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
 
@@ -188,46 +188,46 @@ class ProjectManager:
                 ep['dz'] = p.get('z', 0) / 2.0
 
             elif solid.type == 'para':
-                ep['dx'] = p.get('x', 0) / 2.0
-                ep['dy'] = p.get('y', 0) / 2.0
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dx'] = p.get('dx', 0) / 2.0
+                ep['dy'] = p.get('dy', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
                 ep['alpha'] = p.get('alpha', 0)
                 ep['theta'] = p.get('theta', 0)
                 ep['phi'] = p.get('phi', 0)
             
             elif solid.type == 'hype':
-                 ep['dz'] = p.get('z', 0) / 2.0
+                 ep['dz'] = p.get('dz', 0) / 2.0
                  ep['rmin'] = p.get('rmin', 0)
                  ep['rmax'] = p.get('rmax', 0)
                  ep['inst'] = p.get('inst', 0)
                  ep['outst'] = p.get('outst', 0)
 
             elif solid_type == 'trap':
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
                 ep['theta'] = p.get('theta', 0)
                 ep['phi'] = p.get('phi', 0)
-                ep['dy1'] = p.get('y1', 0) / 2.0
-                ep['dx1'] = p.get('x1', 0) / 2.0
-                ep['dx2'] = p.get('x2', 0) / 2.0
+                ep['dy1'] = p.get('dy1', 0) / 2.0
+                ep['dx1'] = p.get('dx1', 0) / 2.0
+                ep['dx2'] = p.get('dx2', 0) / 2.0
                 ep['alpha1'] = p.get('alpha1', 0)
-                ep['dy2'] = p.get('y2', 0) / 2.0
-                ep['dx3'] = p.get('x3', 0) / 2.0
-                ep['dx4'] = p.get('x4', 0) / 2.0
+                ep['dy2'] = p.get('dy2', 0) / 2.0
+                ep['dx3'] = p.get('dx3', 0) / 2.0
+                ep['dx4'] = p.get('dx4', 0) / 2.0
                 ep['alpha2'] = p.get('alpha2', 0)
                 
             elif solid_type == 'twistedbox':
                 ep['phi_twist'] = p.get('PhiTwist', 0)
-                ep['dx'] = p.get('x', 0) / 2.0
-                ep['dy'] = p.get('y', 0) / 2.0
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dx'] = p.get('dx', 0) / 2.0
+                ep['dy'] = p.get('dy', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
             
             elif solid_type == 'twistedtrd':
                 ep['phi_twist'] = p.get('PhiTwist', 0)
-                ep['dx1'] = p.get('x1', 0) / 2.0
-                ep['dx2'] = p.get('x2', 0) / 2.0
-                ep['dy1'] = p.get('y1', 0) / 2.0
-                ep['dy2'] = p.get('y2', 0) / 2.0
-                ep['dz'] = p.get('z', 0) / 2.0
+                ep['dx1'] = p.get('dx1', 0) / 2.0
+                ep['dx2'] = p.get('dx2', 0) / 2.0
+                ep['dy1'] = p.get('dy1', 0) / 2.0
+                ep['dy2'] = p.get('dy2', 0) / 2.0
+                ep['dz'] = p.get('dz', 0) / 2.0
 
             elif solid_type == 'twistedtubs':
                 ep['twistedangle'] = p.get('twistedangle', 0)
@@ -684,14 +684,15 @@ class ProjectManager:
         if new_vis_attributes:
             lv.vis_attributes = new_vis_attributes
             
-        # NEW: Update content if provided
+        # Update content if provided
         if new_content_type and new_content is not None:
             lv.content_type = new_content_type
             if new_content_type == 'replica':
                 lv.content = ReplicaVolume.from_dict(new_content)
             elif new_content_type == 'division':
                 lv.content = DivisionVolume.from_dict(new_content)
-            # Add logic for other types here...
+            elif new_content_type == 'parameterised':
+                lv.content = ParamVolume.from_dict(new_content)
             else: # physvol
                 # This could be more complex, might need to update existing children
                 lv.content = [] 

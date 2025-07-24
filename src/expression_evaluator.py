@@ -59,7 +59,7 @@ class ExpressionEvaluator:
                      self.interpreter.symtable[name] = define_data['value']
         
         try:
-            # FIX: Call the eval method on our configured interpreter instance
+            # Call the eval method on our configured interpreter instance
             result = self.interpreter.eval(expression, show_errors=False, raise_errors=True)
             return True, result
         except Exception as e:

@@ -304,8 +304,8 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (deg)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (deg)', p('deltaphi', '360'), currentProjectState)
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
             ],
             cone: () => [
                 ExpressionInput.create('p_rmin1', 'Inner Radius 1 (mm)', p('rmin1', '0'), currentProjectState),
@@ -313,16 +313,16 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_rmin2', 'Inner Radius 2 (mm)', p('rmin2', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (deg)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (deg)', p('deltaphi', '360'), currentProjectState)
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '360'), currentProjectState)
             ],
             sphere: () => [
                 ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (deg)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (deg)', p('deltaphi', '360'), currentProjectState),
-                ExpressionInput.create('p_starttheta', 'Start Theta (deg)', p('starttheta', '0'), currentProjectState),
-                ExpressionInput.create('p_deltatheta', 'Delta Theta (deg)', p('deltatheta', '180'), currentProjectState)
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState),
+                ExpressionInput.create('p_starttheta', 'Start Theta (rad)', p('starttheta', '0'), currentProjectState),
+                ExpressionInput.create('p_deltatheta', 'Delta Theta (rad)', p('deltatheta', 'pi'), currentProjectState)
             ],
             orb: () => [
                 ExpressionInput.create('p_r', 'Radius (mm)', p('r', '100'), currentProjectState)
@@ -331,8 +331,8 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_rmin', 'Min Radius (mm)', p('rmin', '20'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Max Radius (mm)', p('rmax', '30'), currentProjectState),
                 ExpressionInput.create('p_rtor', 'Torus Radius (mm)', p('rtor', '100'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (deg)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (deg)', p('deltaphi', '360'), currentProjectState)
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
             ],
             trd: () => [
                 ExpressionInput.create('p_dx1', 'X Half-Length 1 (mm)', p('dx1', '50'), currentProjectState),
@@ -345,9 +345,9 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_dx', 'X Half-Length (mm)', p('dx', '50'), currentProjectState),
                 ExpressionInput.create('p_dy', 'Y Half-Length (mm)', p('dy', '60'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '70'), currentProjectState),
-                ExpressionInput.create('p_alpha', 'Alpha (deg)', p('alpha', '15'), currentProjectState),
-                ExpressionInput.create('p_theta', 'Theta (deg)', p('theta', '15'), currentProjectState),
-                ExpressionInput.create('p_phi', 'Phi (deg)', p('phi', '15'), currentProjectState)
+                ExpressionInput.create('p_alpha', 'Alpha (rad)', p('alpha', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'), currentProjectState)
             ],
             eltube: () => [
                 ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),

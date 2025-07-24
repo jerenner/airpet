@@ -433,6 +433,13 @@ class Parameterisation:
             "dimensions": self.dimensions
         }
 
+    @classmethod
+    def from_dict(cls, data):
+        return cls(data.get('number'),
+                   data.get('position'),
+                   data.get('dimensions_type'),
+                   data.get('dimensions'))
+
 class ParamVolume:
     """Represents a <paramvol> placement."""
     def __init__(self, name, volume_ref, ncopies):
@@ -455,9 +462,19 @@ class ParamVolume:
 
     @classmethod
     def from_dict(cls, data):
-        # We'll need this for the LV editor later
-        instance = cls(data.get('name'), data.get('volume_ref'), data.get('ncopies'))
-        # ... logic to deserialize parameters ...
+        # The name is not in the content block, but passed separately.
+        # We can use a placeholder.
+        name = data.get('name', f"param_{uuid.uuid4().hex[:6]}")
+        instance = cls(name, data.get('volume_ref'), data.get('ncopies'))
+        
+        # Deserialize the list of parameter blocks
+        param_data_list = data.get('parameters', [])
+        instance.parameters = [Parameterisation.from_dict(p_data) for p_data in param_data_list]
+        
+        # Ensure ID is preserved if it exists
+        if 'id' in data:
+            instance.id = data['id']
+
         return instance
 
 class GeometryState:
