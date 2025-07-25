@@ -941,8 +941,12 @@ function addToggle(parentLi, childrenUl) {
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
     const item = document.createElement('li');
 
+    // --- DRAG LOGIC ---
+    const draggableTypes = ['physical_volume', 'solid', 'material', 'define', 
+                            'optical_surface', 'skin_surface', 'border_surface'];
+
     // Make the item draggable if it's a type that can be moved or grouped
-    if (itemType === 'physical_volume' || itemType === 'solid' || itemType === 'material' || itemType === 'define') {
+    if (draggableTypes.includes(itemType)) {
         item.draggable = true; // Make the item draggable!
         
         // --- Add dragstart listener ---
