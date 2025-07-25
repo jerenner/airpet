@@ -902,5 +902,49 @@ def move_pv_to_lv_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_optical_surface', methods=['POST'])
+def add_optical_surface_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    params = {
+        'model': data.get('model'),
+        'finish': data.get('finish'),
+        'surf_type': data.get('type'),
+        'value': data.get('value'),
+        'properties': data.get('properties', {})
+    }
+    
+    if not name_suggestion:
+        return jsonify({"success": False, "error": "Missing name for optical surface."}), 400
+    
+    new_obj, error_msg = project_manager.add_optical_surface(name_suggestion, params)
+    
+    if new_obj:
+        return create_success_response("Optical Surface created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_optical_surface', methods=['POST'])
+def update_optical_surface_route():
+    data = request.get_json()
+    surface_name = data.get('id')
+    new_params = {
+        'model': data.get('model'),
+        'finish': data.get('finish'),
+        'surf_type': data.get('type'),
+        'value': data.get('value'),
+        'properties': data.get('properties', {})
+    }
+
+    if not surface_name:
+        return jsonify({"success": False, "error": "Missing ID for optical surface update."}), 400
+
+    success, error_msg = project_manager.update_optical_surface(surface_name, new_params)
+    
+    if success:
+        return create_success_response(f"Optical Surface '{surface_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

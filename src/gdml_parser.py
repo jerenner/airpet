@@ -9,6 +9,7 @@ from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
     Assembly, DivisionVolume, ReplicaVolume, ParamVolume, Parameterisation,
+    OpticalSurface, SkinSurface, BorderSurface,
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
 )
 
@@ -336,8 +337,26 @@ class GDMLParser:
 
             # Evaluate the name
             name = self._evaluate_name(name_expr)
-
             solid_type = solid_el.tag
+
+            # Handle opticalsurface tag
+            if solid_type == 'opticalsurface':
+                model = solid_el.get('model', 'glisur')
+                finish = solid_el.get('finish', 'polished')
+                surf_type = solid_el.get('type', 'dielectric_dielectric')
+                value = solid_el.get('value', '1.0')
+                
+                optical_surf = OpticalSurface(name, model, finish, surf_type, value)
+
+                # Parse nested <property> tags
+                for prop_el in solid_el.findall('property'):
+                    prop_name = prop_el.get('name')
+                    prop_ref = prop_el.get('ref')
+                    if prop_name and prop_ref:
+                        optical_surf.properties[prop_name] = prop_ref
+                
+                self.geometry_state.add_optical_surface(optical_surf)
+                return # End processing for this element
 
             # Unit-aware parameters
             params = {}
@@ -467,13 +486,54 @@ class GDMLParser:
         
         # Second pass: populate the children of the LVs now that all are defined
         def second_pass_handler(element):
-             if element.tag == 'volume':
+            if element.tag == 'volume':
                 lv_name = element.get('name')
                 lv = self.geometry_state.get_logical_volume(lv_name)
                 if lv:
                     self._parse_lv_children(element, lv)
+            # Parse surface tags in the second pass
+            elif element.tag in ['skinsurface', 'bordersurface']:
+                self._parse_surface(element)
 
         self._process_children(structure_element, second_pass_handler)
+
+    def _parse_surface(self, surf_el):
+        """Parses a <skinsurface> or <bordersurface> tag."""
+        name = surf_el.get('name')
+        if not name: return
+
+        surface_property_ref = surf_el.get('surfaceproperty')
+        if not surface_property_ref:
+            print(f"Warning: Surface '{name}' is missing a surfaceproperty reference. Skipping.")
+            return
+        
+        if surf_el.tag == 'skinsurface':
+            volumeref_el = surf_el.find('volumeref')
+            if not volumeref_el:
+                print(f"Warning: Skin surface '{name}' is missing a volumeref. Skipping.")
+                return
+            
+            volume_ref = self._evaluate_name(volumeref_el.get('ref'))
+            skin_surf = SkinSurface(name, volume_ref, surface_property_ref)
+            self.geometry_state.add_skin_surface(skin_surf)
+
+        elif surf_el.tag == 'bordersurface':
+            physvol_refs = surf_el.findall('physvolref')
+            if len(physvol_refs) < 2:
+                print(f"Warning: Border surface '{name}' needs two physvolref tags. Skipping.")
+                return
+            
+            # Note: GDML does not name PV placements. The ref here points to the LV, and Geant4
+            # figures out the PVs. Our model needs PV IDs. This is a future challenge.
+            # For now, we will store the LV refs and resolve them later.
+            # A robust implementation would need to find the unique PV that places LV X inside LV Y.
+            # For parsing, we store the *names* of the PVs from the GDML, if they exist.
+            # The GDML schema implies these are references to the PV names.
+            pv1_ref = self._evaluate_name(physvol_refs[0].get('ref'))
+            pv2_ref = self._evaluate_name(physvol_refs[1].get('ref'))
+            
+            border_surf = BorderSurface(name, pv1_ref, pv2_ref, surface_property_ref)
+            self.geometry_state.add_border_surface(border_surf)
 
     def _parse_single_lv(self, vol_el):
         name_expr = vol_el.get('name')

@@ -4,7 +4,9 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, DivisionVolume, ParamVolume
+from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, \
+                            PhysicalVolumePlacement, Assembly, ReplicaVolume, DivisionVolume, \
+                            ParamVolume, OpticalSurface, SkinSurface, BorderSurface
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -369,14 +371,22 @@ class ProjectManager:
         """
         if not self.current_geometry_state: return None
         
+        state = self.current_geometry_state
         obj = None
-        if object_type == "define": obj = self.current_geometry_state.defines.get(object_name_or_id)
-        elif object_type == "material": obj = self.current_geometry_state.materials.get(object_name_or_id)
-        elif object_type == "solid": obj = self.current_geometry_state.solids.get(object_name_or_id)
-        elif object_type == "logical_volume": obj = self.current_geometry_state.logical_volumes.get(object_name_or_id)
+
+        if object_type == "define": obj = state.defines.get(object_name_or_id)
+        elif object_type == "material": obj = state.materials.get(object_name_or_id)
+        elif object_type == "solid": obj = state.solids.get(object_name_or_id)
+        elif object_type == "logical_volume": obj = state.logical_volumes.get(object_name_or_id)
+        elif object_type == "optical_surface":
+            obj = state.optical_surfaces.get(object_name_or_id)
+        elif object_type == "skin_surface":
+            obj = state.skin_surfaces.get(object_name_or_id)
+        elif object_type == "border_surface":
+            obj = state.border_surfaces.get(object_name_or_id)
         elif object_type == "physical_volume":
             # Search through all logical volumes to find the PV
-            all_lvs = list(self.current_geometry_state.logical_volumes.values())
+            all_lvs = list(state.logical_volumes.values())
             for lv in all_lvs:
                 # We only search in LVs that contain physical placements
                 if lv.content_type == 'physvol':
@@ -389,7 +399,7 @@ class ProjectManager:
             
             # Also search through assemblies (important for completeness)
             if not obj:
-                all_asms = list(self.current_geometry_state.assemblies.values())
+                all_asms = list(state.assemblies.values())
                 for asm in all_asms:
                     for pv in asm.placements:
                         if pv.id == object_name_or_id:
@@ -1288,6 +1298,46 @@ class ProjectManager:
             if not pv_to_move:
                 return False, f"Physical Volume with ID '{pv_id}' not found."
             target_lv.content.append(pv_to_move)
+
+        self.recalculate_geometry_state()
+        return True, None
+
+    def add_optical_surface(self, name_suggestion, params):
+        """Adds a new optical surface to the project."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+        
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.optical_surfaces)
+        
+        new_surface = OpticalSurface(
+            name=name,
+            model=params.get('model'),
+            finish=params.get('finish'),
+            surf_type=params.get('surf_type'),
+            value=params.get('value'),
+        )
+        new_surface.properties = params.get('properties', {})
+        
+        self.current_geometry_state.add_optical_surface(new_surface)
+        self.recalculate_geometry_state() # Recalculate if any values are expressions
+        
+        return new_surface.to_dict(), None
+
+    def update_optical_surface(self, surface_name, new_params):
+        """Updates an existing optical surface."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+        
+        target_surface = self.current_geometry_state.optical_surfaces.get(surface_name)
+        if not target_surface:
+            return False, f"Optical Surface '{surface_name}' not found."
+
+        # Update attributes from the params dictionary
+        target_surface.model = new_params.get('model', target_surface.model)
+        target_surface.finish = new_params.get('finish', target_surface.finish)
+        target_surface.type = new_params.get('surf_type', target_surface.type)
+        target_surface.value = new_params.get('value', target_surface.value)
+        target_surface.properties = new_params.get('properties', target_surface.properties)
 
         self.recalculate_geometry_state()
         return True, None

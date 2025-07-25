@@ -761,6 +761,54 @@
             color: white;
         }
 
+        /* Accordion CSS */
+        .accordion {
+            width: 100%;
+        }
+        .accordion-item {
+            border-bottom: 1px solid #ccc;
+        }
+        /* This is now the clickable header, styled like a folder */
+        .accordion-header {
+            background-color: #e0e0e0;
+            cursor: pointer;
+            padding: 6px 8px; /* Tighter padding */
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-size: 13px;
+            font-weight: bold;
+            display: flex; /* Use flex to align items */
+            align-items: center;
+        }
+        .accordion-header:hover {
+            background-color: #d8d8d8;
+        }
+        /* This is the [+] / [-] toggle */
+        .accordion-toggle {
+            font-family: monospace;
+            font-size: 14px;
+            margin-right: 8px;
+            width: 15px; /* Fixed width for alignment */
+        }
+        .accordion-content {
+            padding: 0;
+            display: none; /* IMPORTANT: Default to hidden */
+            overflow: hidden;
+            background-color: #e9e9e9;
+            border-left: 1px dashed #aaa; /* Add indent like hierarchy folders */
+            margin-left: 10px;
+        }
+        .accordion-content.active {
+            display: block; /* Class to show the content */
+        }
+        .accordion-content .tab_header {
+            background-color: #f0f0f0;
+            padding: 4px;
+            justify-content: flex-end;
+        }
+
     </style>
 </head>
 <body>
@@ -769,7 +817,7 @@
             <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
             <button class="tab_button" data-tab="tab_lvolumes">LVs</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
-            <button class="tab_button" data-tab="tab_materials">Materials</button>
+            <button class="tab_button" data-tab="tab_properties">Properties</button>
             <button class="tab_button" data-tab="tab_solids">Solids</button>
         </div>
         <div class="tab_content_area">
@@ -800,13 +848,61 @@
                 </div>
                 <ul id="defines_list_root"></ul>
             </div>
-            <div id="tab_materials" class="tab_pane">
-                <div class="tab_header">
-                    <span class="tab-title">Materials</span>
-                    <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
-                    <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
+            <div id="tab_properties" class="tab_pane">
+                <div class="accordion">
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[-]</span>
+                            <span>&nbsp;Materials</span>
+                        </div>
+                        <div class="accordion-content active">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
+                            </div>
+                            <ul id="materials_list_root"></ul>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Optical Surfaces</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="optical_surface" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="optical_surface" title="Create a new Optical Surface">+ Add</button>
+                            </div>
+                            <ul id="optical_surfaces_list_root"></ul>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Skin Surfaces</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="skin_surface" title="Add new Group">📁</button>
+                                <button id="addSkinSurfaceButton" class="add_button" title="Create a new Skin Surface">+ Add</button>
+                            </div>
+                            <ul id="skin_surfaces_list_root"></ul>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Border Surfaces</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="border_surface" title="Add new Group">📁</button>
+                                <button id="addBorderSurfaceButton" class="add_button" title="Create a new Border Surface">+ Add</button>
+                            </div>
+                            <ul id="border_surfaces_list_root"></ul>
+                        </div>
+                    </div>
                 </div>
-                <ul id="materials_list_root"></ul>
             </div>
             <div id="tab_solids" class="tab_pane">
                 <div class="tab_header">
@@ -984,6 +1080,56 @@
             <div class="modal-footer">
                 <button id="materialEditorCancel">Cancel</button>
                 <button id="materialEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for Optical Surfaces -->
+    <div id="opticalSurfaceEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 600px; height: auto;">
+            <div class="modal-header">
+                <h4 id="opticalSurfaceEditorTitle">Create New Optical Surface</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="osEditorName">Name:</label>
+                    <input type="text" id="osEditorName" placeholder="e.g., TeflonSurface">
+                </div>
+                <div class="property_item">
+                    <label for="osEditorModel">Model:</label>
+                    <select id="osEditorModel">
+                        <option value="glisur">glisur</option>
+                        <option value="unified">unified</option>
+                    </select>
+                </div>
+                <div class="property_item">
+                    <label for="osEditorFinish">Finish:</label>
+                    <select id="osEditorFinish">
+                        <option value="polished">polished</option>
+                        <option value="ground">ground</option>
+                        <option value="polishedfrontpainted">polishedfrontpainted</option>
+                        <option value="groundfrontpainted">groundfrontpainted</option>
+                    </select>
+                </div>
+                <div class="property_item">
+                    <label for="osEditorType">Type:</label>
+                    <select id="osEditorType">
+                        <option value="dielectric_metal">dielectric_metal</option>
+                        <option value="dielectric_dielectric">dielectric_dielectric</option>
+                    </select>
+                </div>
+                <div id="os-editor-value-container">
+                    <!-- Expression input for 'value' will go here -->
+                </div>
+                <hr>
+                <h6>Material Properties</h6>
+                <div id="os-properties-list">
+                    <!-- List of key/value properties will be generated here -->
+                </div>
+                <button id="add-os-property-btn" style="margin-top: 10px;">+ Add Property</button>
+            </div>
+            <div class="modal-footer">
+                <button id="osEditorCancel">Cancel</button>
+                <button id="osEditorConfirm" class="confirm-button">Create</button>
             </div>
         </div>
     </div>

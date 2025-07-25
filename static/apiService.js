@@ -532,3 +532,25 @@ export async function movePvToLv(pvIds, targetLvName) { // Changed to pvIds
     });
     return handleResponse(response);
 }
+
+export async function addOpticalSurface(name, params) {
+    // The params object already contains all necessary fields from the editor
+    const payload = { name, ...params };
+    const response = await fetch(`${API_BASE_URL}/add_optical_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
+export async function updateOpticalSurface(id, params) {
+    // The params object already contains all necessary fields from the editor
+    const payload = { id, ...params };
+    const response = await fetch(`${API_BASE_URL}/update_optical_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}

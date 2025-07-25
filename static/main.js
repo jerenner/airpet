@@ -6,6 +6,7 @@ import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
 import * as MaterialEditor from './materialEditor.js';
+import * as OpticalSurfaceEditor from './opticalSurfaceEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SolidEditor from './solidEditor.js';
@@ -51,6 +52,9 @@ async function initializeApp() {
         // Add/edit defines
         onAddDefineClicked: handleAddDefine,
         onEditDefineClicked: handleEditDefine,
+        // Add/edit optical surfaces
+        onAddOpticalSurfaceClicked: handleAddOpticalSurface,
+        onEditOpticalSurfaceClicked: handleEditOpticalSurface,
         // Add/edit materials
         onAddMaterialClicked: handleAddMaterial,
         onEditMaterialClicked: handleEditMaterial,
@@ -137,6 +141,11 @@ async function initializeApp() {
     // Initialize solid editor
     SolidEditor.initSolidEditor({
         onConfirm: handleSolidEditorConfirm
+    });
+
+    // Initialize the optical surface editor
+    OpticalSurfaceEditor.initOpticalSurfaceEditor({
+        onConfirm: handleOpticalSurfaceEditorConfirm
     });
 
     // Add menu listeners
@@ -1239,6 +1248,34 @@ async function handleMovePvToLv(pvId, lvName) {
         syncUIWithState(result);
     } catch (error) {
         UIManager.showError("Failed to move PV: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleAddOpticalSurface() {
+    OpticalSurfaceEditor.show(null, AppState.currentProjectState);
+}
+
+function handleEditOpticalSurface(osData) {
+    OpticalSurfaceEditor.show(osData, AppState.currentProjectState);
+}
+
+async function handleOpticalSurfaceEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    // These API functions don't exist yet, but we are setting up the frontend for them
+    const apiCall = data.isEdit 
+        ? APIService.updateOpticalSurface(data.id, data)
+        : APIService.addOpticalSurface(data.name, data);
+
+    const loadingMessage = data.isEdit ? "Updating Optical Surface..." : "Creating Optical Surface...";
+    UIManager.showLoading(loadingMessage);
+    try {
+        const result = await apiCall;
+        const newSelection = [{ type: 'optical_surface', id: data.name, name: data.name, data: result.project_state.optical_surfaces[data.name] }];
+        syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
+    } catch (error) {
+        UIManager.showError("Error processing Optical Surface: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }

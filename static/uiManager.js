@@ -19,7 +19,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
-let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot;
+let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot, opticalSurfacesListRoot;
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
@@ -49,6 +49,8 @@ let callbacks = {
     onEditDefineClicked: (defineData) => {},
     onAddMaterialClicked: ()=>{}, 
     onEditMaterialClicked: (d)=>{},
+    onAddOpticalSurfaceClicked: ()=>{}, 
+    onEditOpticalSurfaceClicked: (surfaceData)=>{},
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
     onAddObjectClicked: () => {}, // To show modal
@@ -192,7 +194,7 @@ export function initUI(cb) {
     gridSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(gridSnapSizeInput.value, undefined));
     angleSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(undefined, angleSnapSizeInput.value));
 
-    // Add listeners for add object buttons (call the solid editor)
+    // Add listeners for add object buttons
     addButtons.forEach(button => {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.addType;
@@ -202,6 +204,8 @@ export function initUI(cb) {
                 callbacks.onAddSolidClicked();
             } else if (type.startsWith('material')) {
                 callbacks.onAddMaterialClicked();
+            } else if (type.startsWith('optical_surface')) {
+                callbacks.onAddOpticalSurfaceClicked();
             } else {
                 console.log("ERROR: module does not exist")
             }
@@ -264,29 +268,21 @@ export function initUI(cb) {
         });
     });
 
-    // Accordion functionality for Placements tab
+    // Accordion functionality for Properties tab
     const accordions = document.querySelectorAll('.accordion-header');
     accordions.forEach(accordion => {
         accordion.addEventListener('click', () => {
-            // Close other open accordions
-            accordions.forEach(other => {
-                if (other !== accordion) {
-                    other.classList.remove('active');
-                    other.nextElementSibling.style.display = 'none';
-                    other.querySelector('.accordion-icon').textContent = '+';
-                }
-            });
-
-            // Toggle the clicked one
-            accordion.classList.toggle('active');
             const content = accordion.nextElementSibling;
-            const icon = accordion.querySelector('.accordion-icon');
-            if (content.style.display === 'block') {
-                content.style.display = 'none';
-                icon.textContent = '+';
+            const toggle = accordion.querySelector('.accordion-toggle');
+            
+            // Toggle the 'active' class on the content
+            content.classList.toggle('active');
+
+            // Update the toggle text based on whether the content is now active
+            if (content.classList.contains('active')) {
+                toggle.textContent = '[-]';
             } else {
-                content.style.display = 'block';
-                icon.textContent = '-';
+                toggle.textContent = '[+]';
             }
         });
     });
@@ -693,11 +689,7 @@ export function updateHierarchy(projectState) {
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
-    // NEW: Get roots for procedural placements
-    const replicasListRoot = document.getElementById('replicas_list_root');
-    const divisionsListRoot = document.getElementById('divisions_list_root');
-    const paramsListRoot = document.getElementById('params_list_root');
-
+    opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
 
     // Clear all lists
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
@@ -706,11 +698,7 @@ export function updateHierarchy(projectState) {
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
-    // NEW: Clear procedural lists
-    if (replicasListRoot) replicasListRoot.innerHTML = '';
-    if (divisionsListRoot) divisionsListRoot.innerHTML = '';
-    if (paramsListRoot) paramsListRoot.innerHTML = '';
-
+    if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
 
     // --- Grouped Population ---
     populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies), 'assembly');
@@ -718,6 +706,7 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(definesListRoot, Object.values(projectState.defines), 'define');
     populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
     populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
+    populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot) { // Make sure the element exists
@@ -1140,8 +1129,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         }
     });
 
-    // Add listener for the new visibility button
-    
+    // For double-clicking physical volumes
     if (itemType === 'physical_volume') {
         const visBtn = item.querySelector('.visibility-btn');
 
@@ -1162,9 +1150,8 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible);
         });
     }
-
     // For double-clicking of solids, volumes, etc.
-    if (itemType === 'define') {
+    else if (itemType === 'define') {
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditDefineClicked(item.appData);
@@ -1193,6 +1180,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditLVClicked(item.appData);
+        });
+    } else if (itemType === 'optical_surface') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditOpticalSurfaceClicked(item.appData);
         });
     }
     return item;
@@ -1430,6 +1422,7 @@ export function clearHierarchy() {
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
+    if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
 }
 
 export function clearInspector() {

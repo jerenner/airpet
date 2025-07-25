@@ -477,6 +477,78 @@ class ParamVolume:
 
         return instance
 
+class OpticalSurface:
+    """Represents an <opticalsurface> property set."""
+    def __init__(self, name, model='glisur', finish='polished', surf_type='dielectric_dielectric', value='1.0'):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.model = model
+        self.finish = finish
+        self.type = surf_type
+        self.value = value
+        self.properties = {} # Dict to hold property vectors, e.g., {'REFLECTIVITY': 'reflectivity_matrix'}
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "model": self.model,
+            "finish": self.finish, "type": self.type, "value": self.value,
+            "properties": self.properties
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'], data.get('model', 'glisur'), data.get('finish', 'polished'),
+                       data.get('type', 'dielectric_dielectric'), data.get('value', '1.0'))
+        instance.id = data.get('id', instance.id)
+        instance.properties = data.get('properties', {})
+        return instance
+
+class SkinSurface:
+    """Represents a <skinsurface> link."""
+    def __init__(self, name, volume_ref, surfaceproperty_ref):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.type = "skin" # For UI identification
+        self.volume_ref = volume_ref # Name of the LogicalVolume
+        self.surfaceproperty_ref = surfaceproperty_ref # Name of the OpticalSurface
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "volume_ref": self.volume_ref,
+            "surfaceproperty_ref": self.surfaceproperty_ref
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'], data['volume_ref'], data['surfaceproperty_ref'])
+        instance.id = data.get('id', instance.id)
+        return instance
+
+class BorderSurface:
+    """Represents a <bordersurface> link."""
+    def __init__(self, name, physvol1_ref, physvol2_ref, surfaceproperty_ref):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.type = "border" # For UI identification
+        self.physvol1_ref = physvol1_ref # ID of the first PhysicalVolumePlacement
+        self.physvol2_ref = physvol2_ref # ID of the second PhysicalVolumePlacement
+        self.surfaceproperty_ref = surfaceproperty_ref # Name of the OpticalSurface
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "type": self.type,
+            "physvol1_ref": self.physvol1_ref,
+            "physvol2_ref": self.physvol2_ref,
+            "surfaceproperty_ref": self.surfaceproperty_ref
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'], data['physvol1_ref'], data['physvol2_ref'], data['surfaceproperty_ref'])
+        instance.id = data.get('id', instance.id)
+        return instance
+
 class GeometryState:
     """Holds the entire geometry definition."""
     def __init__(self, world_volume_ref=None):
@@ -487,6 +559,11 @@ class GeometryState:
         self.assemblies = {} # name: Assembly object
         self.world_volume_ref = world_volume_ref # Name of the world LogicalVolume
 
+        # Dictionaries for surface properties
+        self.optical_surfaces = {}
+        self.skin_surfaces = {}
+        self.border_surfaces = {}
+
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
         self.ui_groups = {
@@ -494,7 +571,10 @@ class GeometryState:
             'material': [],
             'solid': [],
             'logical_volume': [],
-            'assembly': []
+            'assembly': [],
+            'optical_surface': [], 
+            'skin_surface': [], 
+            'border_surface': []
         }
 
     def add_define(self, define_obj):
@@ -507,12 +587,21 @@ class GeometryState:
         self.logical_volumes[lv_obj.name] = lv_obj
     def add_assembly(self, assembly_obj):
         self.assemblies[assembly_obj.name] = assembly_obj
+    def add_optical_surface(self, surf_obj):
+        self.optical_surfaces[surf_obj.name] = surf_obj
+    def add_skin_surface(self, surf_obj):
+        self.skin_surfaces[surf_obj.name] = surf_obj
+    def add_border_surface(self, surf_obj):
+        self.border_surfaces[surf_obj.name] = surf_obj
     
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
     def get_solid(self, name): return self.solids.get(name)
     def get_logical_volume(self, name): return self.logical_volumes.get(name)
     def get_assembly(self, name): return self.assemblies.get(name)
+    def get_optical_surface(self, name): return self.optical_surfaces.get(name)
+    def get_skin_surface(self, name): return self.skin_surfaces.get(name)
+    def get_border_surface(self, name): return self.border_surfaces.get(name)
 
     def to_dict(self):
         return {
@@ -522,6 +611,9 @@ class GeometryState:
             "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
             "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
             "world_volume_ref": self.world_volume_ref,
+            "optical_surfaces": {name: surf.to_dict() for name, surf in self.optical_surfaces.items()},
+            "skin_surfaces": {name: surf.to_dict() for name, surf in self.skin_surfaces.items()},
+            "border_surfaces": {name: surf.to_dict() for name, surf in self.border_surfaces.items()},
             "ui_groups": self.ui_groups 
         }
 
@@ -539,9 +631,15 @@ class GeometryState:
         }
         instance.assemblies = {name: Assembly.from_dict(d) for name, d in data.get('assemblies', {}).items()}
 
+        # Deserialize the surface dictionaries
+        instance.optical_surfaces = {name: OpticalSurface.from_dict(d) for name, d in data.get('optical_surfaces', {}).items()}
+        instance.skin_surfaces = {name: SkinSurface.from_dict(d) for name, d in data.get('skin_surfaces', {}).items()}
+        instance.border_surfaces = {name: BorderSurface.from_dict(d) for name, d in data.get('border_surfaces', {}).items()}
+
         # --- Deserialize the groups ---
         # Use data.get to provide a default empty dict for older project files
-        default_groups = {'define': [], 'material': [], 'solid': [], 'logical_volume': [], 'assembly': []}
+        default_groups = {'define': [], 'material': [], 'solid': [], 'logical_volume': [], 'assembly': [],
+                          'optical_surface': [], 'skin_surface': [], 'border_surface': []}
         instance.ui_groups = data.get('ui_groups', default_groups)
 
         return instance
