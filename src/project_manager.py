@@ -1341,3 +1341,124 @@ class ProjectManager:
 
         self.recalculate_geometry_state()
         return True, None
+
+    def add_skin_surface(self, name_suggestion, volume_ref, surface_ref):
+        """Adds a new skin surface link to the project."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+        
+        state = self.current_geometry_state
+        
+        # Validate references
+        if volume_ref not in state.logical_volumes:
+            return None, f"Logical Volume '{volume_ref}' not found."
+        if surface_ref not in state.optical_surfaces:
+            return None, f"Optical Surface '{surface_ref}' not found."
+
+        name = self._generate_unique_name(name_suggestion, state.skin_surfaces)
+        
+        new_skin_surface = SkinSurface(
+            name=name,
+            volume_ref=volume_ref,
+            surfaceproperty_ref=surface_ref
+        )
+        
+        state.add_skin_surface(new_skin_surface)
+        # No recalculation is needed as this is just a link, but we'll do it for consistency.
+        self.recalculate_geometry_state()
+        
+        return new_skin_surface.to_dict(), None
+
+    def update_skin_surface(self, surface_name, new_volume_ref, new_surface_ref):
+        """Updates an existing skin surface link."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+        
+        state = self.current_geometry_state
+        target_surface = state.skin_surfaces.get(surface_name)
+        if not target_surface:
+            return False, f"Skin Surface '{surface_name}' not found."
+
+        # Validate new references before applying them
+        if new_volume_ref not in state.logical_volumes:
+            return False, f"New Logical Volume '{new_volume_ref}' not found."
+        if new_surface_ref not in state.optical_surfaces:
+            return False, f"New Optical Surface '{new_surface_ref}' not found."
+
+        # Update attributes
+        target_surface.volume_ref = new_volume_ref
+        target_surface.surfaceproperty_ref = new_surface_ref
+
+        self.recalculate_geometry_state()
+        return True, None
+
+    def _find_pv_by_id(self, pv_id):
+        """Helper to find a PV object by its UUID across the entire geometry."""
+        state = self.current_geometry_state
+        # Search in Logical Volumes
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.id == pv_id:
+                        return pv
+        # Search in Assemblies
+        for asm in state.assemblies.values():
+            for pv in asm.placements:
+                if pv.id == pv_id:
+                    return pv
+        return None
+
+    def add_border_surface(self, name_suggestion, pv1_ref_id, pv2_ref_id, surface_ref):
+        """Adds a new border surface link to the project."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+        
+        state = self.current_geometry_state
+        
+        # Validate references
+        if not self._find_pv_by_id(pv1_ref_id):
+            return None, f"Physical Volume 1 (ID: {pv1_ref_id}) not found."
+        if not self._find_pv_by_id(pv2_ref_id):
+            return None, f"Physical Volume 2 (ID: {pv2_ref_id}) not found."
+        if surface_ref not in state.optical_surfaces:
+            return None, f"Optical Surface '{surface_ref}' not found."
+
+        name = self._generate_unique_name(name_suggestion, state.border_surfaces)
+        
+        new_border_surface = BorderSurface(
+            name=name,
+            physvol1_ref=pv1_ref_id,
+            physvol2_ref=pv2_ref_id,
+            surfaceproperty_ref=surface_ref
+        )
+        
+        state.add_border_surface(new_border_surface)
+        self.recalculate_geometry_state()
+        
+        return new_border_surface.to_dict(), None
+
+    def update_border_surface(self, surface_name, new_pv1_ref_id, new_pv2_ref_id, new_surface_ref):
+        """Updates an existing border surface link."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+        
+        state = self.current_geometry_state
+        target_surface = state.border_surfaces.get(surface_name)
+        if not target_surface:
+            return False, f"Border Surface '{surface_name}' not found."
+
+        # Validate new references
+        if not self._find_pv_by_id(new_pv1_ref_id):
+            return False, f"New Physical Volume 1 (ID: {new_pv1_ref_id}) not found."
+        if not self._find_pv_by_id(new_pv2_ref_id):
+            return False, f"New Physical Volume 2 (ID: {new_pv2_ref_id}) not found."
+        if new_surface_ref not in state.optical_surfaces:
+            return False, f"New Optical Surface '{new_surface_ref}' not found."
+
+        # Update attributes
+        target_surface.physvol1_ref = new_pv1_ref_id
+        target_surface.physvol2_ref = new_pv2_ref_id
+        target_surface.surfaceproperty_ref = new_surface_ref
+
+        self.recalculate_geometry_state()
+        return True, None

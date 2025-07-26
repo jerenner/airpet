@@ -946,5 +946,76 @@ def update_optical_surface_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_skin_surface', methods=['POST'])
+def add_skin_surface_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    volume_ref = data.get('volume_ref')
+    surface_ref = data.get('surfaceproperty_ref')
+    
+    if not all([name_suggestion, volume_ref, surface_ref]):
+        return jsonify({"success": False, "error": "Missing name, volume reference, or surface reference."}), 400
+    
+    new_obj, error_msg = project_manager.add_skin_surface(name_suggestion, volume_ref, surface_ref)
+    
+    if new_obj:
+        return create_success_response("Skin Surface created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_skin_surface', methods=['POST'])
+def update_skin_surface_route():
+    data = request.get_json()
+    surface_name = data.get('id')
+    volume_ref = data.get('volume_ref')
+    surface_ref = data.get('surfaceproperty_ref')
+
+    if not all([surface_name, volume_ref, surface_ref]):
+        return jsonify({"success": False, "error": "Missing name, volume reference, or surface reference for update."}), 400
+
+    success, error_msg = project_manager.update_skin_surface(surface_name, volume_ref, surface_ref)
+    
+    if success:
+        return create_success_response(f"Skin Surface '{surface_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/add_border_surface', methods=['POST'])
+def add_border_surface_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    pv1_ref = data.get('physvol1_ref')
+    pv2_ref = data.get('physvol2_ref')
+    surface_ref = data.get('surfaceproperty_ref')
+    print(f"Surface ref is {surface_ref}")
+    
+    if not all([name_suggestion, pv1_ref, pv2_ref, surface_ref]):
+        return jsonify({"success": False, "error": "Missing name or reference for border surface."}), 400
+    
+    new_obj, error_msg = project_manager.add_border_surface(name_suggestion, pv1_ref, pv2_ref, surface_ref)
+    
+    if new_obj:
+        return create_success_response("Border Surface created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_border_surface', methods=['POST'])
+def update_border_surface_route():
+    data = request.get_json()
+    surface_name = data.get('id')
+    pv1_ref = data.get('physvol1_ref')
+    pv2_ref = data.get('physvol2_ref')
+    surface_ref = data.get('surfaceproperty_ref')
+
+    if not all([surface_name, pv1_ref, pv2_ref, surface_ref]):
+        return jsonify({"success": False, "error": "Missing data for border surface update."}), 400
+
+    success, error_msg = project_manager.update_border_surface(surface_name, pv1_ref, pv2_ref, surface_ref)
+    
+    if success:
+        return create_success_response(f"Border Surface '{surface_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

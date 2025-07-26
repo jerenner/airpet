@@ -884,7 +884,7 @@
                         <div class="accordion-content">
                             <div class="tab_header">
                                 <button class="add-group-btn" data-group-type="skin_surface" title="Add new Group">📁</button>
-                                <button id="addSkinSurfaceButton" class="add_button" title="Create a new Skin Surface">+ Add</button>
+                                <button class="add_button" data-add-type="skin_surface" title="Create a new Skin Surface">+ Add</button>
                             </div>
                             <ul id="skin_surfaces_list_root"></ul>
                         </div>
@@ -897,7 +897,7 @@
                         <div class="accordion-content">
                             <div class="tab_header">
                                 <button class="add-group-btn" data-group-type="border_surface" title="Add new Group">📁</button>
-                                <button id="addBorderSurfaceButton" class="add_button" title="Create a new Border Surface">+ Add</button>
+                                <button class="add_button" data-add-type="border_surface" title="Create a new Border Surface">+ Add</button>
                             </div>
                             <ul id="border_surfaces_list_root"></ul>
                         </div>
@@ -1130,6 +1130,62 @@
             <div class="modal-footer">
                 <button id="osEditorCancel">Cancel</button>
                 <button id="osEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for Skin Surfaces -->
+    <div id="skinSurfaceEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="skinSurfaceEditorTitle">Create New Skin Surface</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="ssEditorName">Name:</label>
+                    <input type="text" id="ssEditorName" placeholder="e.g., CrystalSkin">
+                </div>
+                <div class="property_item">
+                    <label for="ssEditorLVRef">Target Logical Volume:</label>
+                    <select id="ssEditorLVRef"></select>
+                </div>
+                <div class="property_item">
+                    <label for="ssEditorSurfaceRef">Optical Surface Property:</label>
+                    <select id="ssEditorSurfaceRef"></select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="ssEditorCancel">Cancel</button>
+                <button id="ssEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for Border Surfaces -->
+    <div id="borderSurfaceEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="borderSurfaceEditorTitle">Create New Border Surface</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="bsEditorName">Name:</label>
+                    <input type="text" id="bsEditorName" placeholder="e.g., CrystalToAirSurface">
+                </div>
+                <div class="property_item">
+                    <label for="bsEditorPV1Ref">Physical Volume 1:</label>
+                    <select id="bsEditorPV1Ref"></select>
+                </div>
+                <div class="property_item">
+                    <label for="bsEditorPV2Ref">Physical Volume 2:</label>
+                    <select id="bsEditorPV2Ref"></select>
+                </div>
+                <div class="property_item">
+                    <label for="bsEditorSurfaceRef">Optical Surface Property:</label>
+                    <select id="bsEditorSurfaceRef"></select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="bsEditorCancel">Cancel</button>
+                <button id="bsEditorConfirm" class="confirm-button">Create</button>
             </div>
         </div>
     </div>

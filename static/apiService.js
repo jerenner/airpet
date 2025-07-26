@@ -554,3 +554,44 @@ export async function updateOpticalSurface(id, params) {
     });
     return handleResponse(response);
 }
+
+export async function addSkinSurface(name, params) {
+    // The params object from the editor contains volume_ref and surfaceproperty_ref
+    const payload = { name, ...params };
+    const response = await fetch(`${API_BASE_URL}/add_skin_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
+export async function updateSkinSurface(id, params) {
+    const payload = { id, ...params };
+    const response = await fetch(`${API_BASE_URL}/update_skin_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
+export async function addBorderSurface(name, params) {
+    const payload = { name, ...params };
+    const response = await fetch(`${API_BASE_URL}/add_border_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
+export async function updateBorderSurface(id, params) {
+    const payload = { id, ...params };
+    const response = await fetch(`${API_BASE_URL}/update_border_surface`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 
 import * as APIService from './apiService.js';
+import * as BorderSurfaceEditor from './borderSurfaceEditor.js';
 import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
@@ -9,6 +10,7 @@ import * as MaterialEditor from './materialEditor.js';
 import * as OpticalSurfaceEditor from './opticalSurfaceEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
+import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
 import * as UIManager from './uiManager.js';
 
@@ -55,6 +57,10 @@ async function initializeApp() {
         // Add/edit optical surfaces
         onAddOpticalSurfaceClicked: handleAddOpticalSurface,
         onEditOpticalSurfaceClicked: handleEditOpticalSurface,
+        onAddSkinSurfaceClicked: handleAddSkinSurface,
+        onEditSkinSurfaceClicked: handleEditSkinSurface,
+        onAddBorderSurfaceClicked: handleAddBorderSurface,
+        onEditBorderSurfaceClicked: handleEditBorderSurface,
         // Add/edit materials
         onAddMaterialClicked: handleAddMaterial,
         onEditMaterialClicked: handleEditMaterial,
@@ -146,6 +152,16 @@ async function initializeApp() {
     // Initialize the optical surface editor
     OpticalSurfaceEditor.initOpticalSurfaceEditor({
         onConfirm: handleOpticalSurfaceEditorConfirm
+    });
+
+    // Initialize the skin surface editor
+    SkinSurfaceEditor.initSkinSurfaceEditor({
+        onConfirm: handleSkinSurfaceEditorConfirm
+    });
+
+    // Initialize the border surface editor
+    BorderSurfaceEditor.initBorderSurfaceEditor({
+        onConfirm: handleBorderSurfaceEditorConfirm
     });
 
     // Add menu listeners
@@ -1276,6 +1292,62 @@ async function handleOpticalSurfaceEditorConfirm(data) {
         syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
     } catch (error) {
         UIManager.showError("Error processing Optical Surface: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleAddSkinSurface() {
+    SkinSurfaceEditor.show(null, AppState.currentProjectState);
+}
+
+function handleEditSkinSurface(ssData) {
+    SkinSurfaceEditor.show(ssData, AppState.currentProjectState);
+}
+
+async function handleSkinSurfaceEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    // These API functions will be created in the next step
+    const apiCall = data.isEdit 
+        ? APIService.updateSkinSurface(data.id, data)
+        : APIService.addSkinSurface(data.name, data);
+
+    const loadingMessage = data.isEdit ? "Updating Skin Surface..." : "Creating Skin Surface...";
+    UIManager.showLoading(loadingMessage);
+    try {
+        const result = await apiCall;
+        const newSelection = [{ type: 'skin_surface', id: data.name, name: data.name, data: result.project_state.skin_surfaces[data.name] }];
+        syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
+    } catch (error) {
+        UIManager.showError("Error processing Skin Surface: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleAddBorderSurface() {
+    BorderSurfaceEditor.show(null, AppState.currentProjectState);
+}
+
+function handleEditBorderSurface(bsData) {
+    BorderSurfaceEditor.show(bsData, AppState.currentProjectState);
+}
+
+async function handleBorderSurfaceEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    // These API functions will be created in the next step
+    const apiCall = data.isEdit 
+        ? APIService.updateBorderSurface(data.id, data)
+        : APIService.addBorderSurface(data.name, data);
+
+    const loadingMessage = data.isEdit ? "Updating Border Surface..." : "Creating Border Surface...";
+    UIManager.showLoading(loadingMessage);
+    try {
+        const result = await apiCall;
+        const newSelection = [{ type: 'border_surface', id: data.name, name: data.name, data: result.project_state.border_surfaces[data.name] }];
+        syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
+    } catch (error) {
+        UIManager.showError("Error processing Border Surface: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }

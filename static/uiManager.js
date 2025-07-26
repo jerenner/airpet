@@ -19,7 +19,8 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
-let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, solidsListRoot, opticalSurfacesListRoot;
+let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
+    solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, borderSurfacesListRoot;
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
@@ -51,6 +52,8 @@ let callbacks = {
     onEditMaterialClicked: (d)=>{},
     onAddOpticalSurfaceClicked: ()=>{}, 
     onEditOpticalSurfaceClicked: (surfaceData)=>{},
+    onAddSkinSurfaceClicked: ()=>{}, 
+    onEditSkinSurfaceClicked: (surfaceData)=>{},
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
     onAddObjectClicked: () => {}, // To show modal
@@ -206,6 +209,10 @@ export function initUI(cb) {
                 callbacks.onAddMaterialClicked();
             } else if (type.startsWith('optical_surface')) {
                 callbacks.onAddOpticalSurfaceClicked();
+            } else if (type.startsWith('skin_surface')) {
+                callbacks.onAddSkinSurfaceClicked();
+            } else if (type.startsWith('border_surface')) {
+                callbacks.onAddBorderSurfaceClicked();
             } else {
                 console.log("ERROR: module does not exist")
             }
@@ -690,6 +697,8 @@ export function updateHierarchy(projectState) {
     materialsListRoot = document.getElementById('materials_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
+    skinSurfacesListRoot = document.getElementById('skin_surfaces_list_root');
+    borderSurfacesListRoot = document.getElementById('border_surfaces_list_root');
 
     // Clear all lists
     if(structureTreeRoot) structureTreeRoot.innerHTML = '';
@@ -699,6 +708,8 @@ export function updateHierarchy(projectState) {
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
+    if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
+    if(borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
 
     // --- Grouped Population ---
     populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies), 'assembly');
@@ -707,6 +718,8 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
     populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
+    populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
+    populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot) { // Make sure the element exists
@@ -1190,6 +1203,16 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             event.stopPropagation();
             callbacks.onEditOpticalSurfaceClicked(item.appData);
         });
+    } else if (itemType === 'skin_surface') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditSkinSurfaceClicked(item.appData);
+        });
+    } else if (itemType === 'border_surface') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditBorderSurfaceClicked(item.appData);
+        });
     }
     return item;
 }
@@ -1427,6 +1450,8 @@ export function clearHierarchy() {
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
+    if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
+    if(borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
 }
 
 export function clearInspector() {
