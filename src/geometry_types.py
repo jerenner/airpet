@@ -89,6 +89,28 @@ class Define:
         instance.value = data.get('value') # Restore evaluated value too
         return instance
 
+class Element:
+    """Represents a chemical element, composed of isotopes or defined by Z."""
+    def __init__(self, name, formula=None, Z=None, A_expr=None, components=None):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.formula = formula
+        self.Z = Z # Atomic Number
+        self.A_expr = A_expr # Atomic Mass (for simple elements)
+        self.components = components if components else [] # For elements made of isotopes
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "formula": self.formula,
+            "Z": self.Z, "A_expr": self.A_expr, "components": self.components
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'], data.get('formula'), data.get('Z'),
+                       data.get('A_expr'), data.get('components'))
+        instance.id = data.get('id', instance.id)
+        return instance
 
 class Material:
     """Represents a material."""
@@ -554,6 +576,7 @@ class GeometryState:
     def __init__(self, world_volume_ref=None):
         self.defines = {} # name: Define object
         self.materials = {} # name: Material object
+        self.elements = {}  # name: Element object
         self.solids = {}    # name: Solid object
         self.logical_volumes = {} # name: LogicalVolume object
         self.assemblies = {} # name: Assembly object
@@ -581,6 +604,8 @@ class GeometryState:
         self.defines[define_obj.name] = define_obj
     def add_material(self, material_obj):
         self.materials[material_obj.name] = material_obj
+    def add_element(self, element_obj):
+        self.elements[element_obj.name] = element_obj
     def add_solid(self, solid_obj):
         self.solids[solid_obj.name] = solid_obj
     def add_logical_volume(self, lv_obj):
@@ -596,6 +621,7 @@ class GeometryState:
     
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
+    def get_element(self, name): return self.elements.get(name)
     def get_solid(self, name): return self.solids.get(name)
     def get_logical_volume(self, name): return self.logical_volumes.get(name)
     def get_assembly(self, name): return self.assemblies.get(name)
@@ -607,6 +633,7 @@ class GeometryState:
         return {
             "defines": {name: define.to_dict() for name, define in self.defines.items()},
             "materials": {name: material.to_dict() for name, material in self.materials.items()},
+            "elements": {name: element.to_dict() for name, element in self.elements.items()},
             "solids": {name: solid.to_dict() for name, solid in self.solids.items()},
             "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
             "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
@@ -622,6 +649,7 @@ class GeometryState:
         instance = cls(data.get('world_volume_ref'))
         instance.defines = {name: Define.from_dict(d) for name, d in data.get('defines', {}).items()}
         instance.materials = {name: Material.from_dict(d) for name, d in data.get('materials', {}).items()}
+        instance.elements = {name: Element.from_dict(d) for name, d in data.get('elements', {}).items()}
         instance.solids = {name: Solid.from_dict(d) for name, d in data.get('solids', {}).items()}
         
         # For logical volumes, pass the instance itself to resolve internal refs if needed during from_dict

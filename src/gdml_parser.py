@@ -7,7 +7,7 @@ import re
 import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
-    GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement, 
+    GeometryState, Define, Material, Element, Solid, LogicalVolume, PhysicalVolumePlacement, 
     Assembly, DivisionVolume, ReplicaVolume, ParamVolume, Parameterisation,
     OpticalSurface, SkinSurface, BorderSurface,
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
@@ -205,7 +205,10 @@ class GDMLParser:
             self._parse_defines(local_defines)
             
         def material_handler(element):
-            if element.tag == 'material':
+            # Process <material> OR <element> tags
+            tag = element.tag
+
+            if tag == 'material':
                 name_expr = element.get('name')
                 if not name_expr: return
                 name = self._evaluate_name(name_expr)
@@ -223,6 +226,7 @@ class GDMLParser:
                 
                 mat = Material(name, Z_expr=Z_expr, A_expr=A_expr, density_expr=density_expr, state=state)
                 
+                # Handle composition by mass fraction
                 for frac_el in element.findall('fraction'):
                     # Evaluate the fraction reference
                     frac_ref_expr = frac_el.get('ref')
@@ -231,7 +235,41 @@ class GDMLParser:
                         "ref": frac_ref,
                         "fraction": frac_el.get('n')
                     })
+
+                # Handle composition by number of atoms
+                for comp_el in element.findall('composite'):
+                    comp_ref_expr = comp_el.get('ref')
+                    comp_ref = self._evaluate_name(comp_ref_expr)
+                    mat.components.append({
+                        "ref": comp_ref,
+                        "natoms": comp_el.get('n') # Keep 'n' as an expression string
+                    })
+
                 self.geometry_state.add_material(mat)
+            
+            elif tag == 'element':
+                name_expr = element.get('name')
+                if not name_expr: return
+                name = self._evaluate_name(name_expr)
+
+                formula = element.get('formula')
+                Z_expr = element.get('Z') # Z can be an expression
+                
+                atom_el = element.find('atom')
+                A_expr = atom_el.get('value') if atom_el is not None else None
+                
+                new_element = Element(name, formula=formula, Z=Z_expr, A_expr=A_expr)
+
+                # Check for isotope fractions (we'll parse isotopes later)
+                for frac_el in element.findall('fraction'):
+                    iso_ref_expr = frac_el.get('ref')
+                    iso_ref = self._evaluate_name(iso_ref_expr)
+                    new_element.components.append({
+                        "ref": iso_ref,
+                        "fraction": frac_el.get('n')
+                    })
+                
+                self.geometry_state.add_element(new_element)
 
         self._process_children(materials_element, material_handler)
 

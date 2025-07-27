@@ -3,7 +3,7 @@
 import * as ExpressionInput from './expressionInput.js';
 
 let modalElement, titleElement, nameInput, confirmButton, cancelButton, paramsDiv;
-let simpleRadio, mixtureRadio;
+let simpleRadio, mixtureRadio, compositeRadio;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingMaterialId = null;
@@ -21,11 +21,13 @@ export function initMaterialEditor(callbacks) {
     paramsDiv = document.getElementById('material-editor-params');
     simpleRadio = document.getElementById('mat_type_simple');
     mixtureRadio = document.getElementById('mat_type_mixture');
+    compositeRadio = document.getElementById('mat_type_composite');
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
-    simpleRadio.addEventListener('change', () => renderParamsUI(null, true)); // Pass a flag to reset
-    mixtureRadio.addEventListener('change', () => renderParamsUI(null, true));
+    simpleRadio.addEventListener('change', () => renderParamsUI()); // Pass a flag to reset
+    mixtureRadio.addEventListener('change', () => renderParamsUI());
+    compositeRadio.addEventListener('change', () => renderParamsUI());
 
     console.log("Material Editor Initialized.");
 }
@@ -44,7 +46,12 @@ export function show(materialData = null, projectState = null) {
         confirmButton.textContent = "Update Material";
         
         if (materialData.components && materialData.components.length > 0) {
-            mixtureRadio.checked = true;
+            // Check if it's a composite (by natoms) or mixture (by fraction)
+            if (materialData.components[0].natoms !== undefined) {
+                compositeRadio.checked = true;
+            } else {
+                mixtureRadio.checked = true;
+            }
             materialComponents = JSON.parse(JSON.stringify(materialData.components)); // Deep copy
         } else {
             simpleRadio.checked = true;
@@ -72,18 +79,23 @@ function hide() {
 function renderParamsUI(matData = null) {
     paramsDiv.innerHTML = '';
     const isSimple = simpleRadio.checked;
+    const isComposite = compositeRadio.checked;
     
     if (isSimple) {
         // Use the new component for each parameter
         paramsDiv.appendChild(ExpressionInput.create('mat_Z', 'Atomic Number (Z)', matData?.Z_expr || '1', currentProjectState));
         paramsDiv.appendChild(ExpressionInput.create('mat_A', 'Atomic Mass (g/mole)', matData?.A_expr || '1.008', currentProjectState));
         paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
-    } else { // Mixture
+    } else { // Mixture or Composite
         paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
         
         const hr = document.createElement('hr');
+
+        // Dynamic title based on type
+        const titleText = isComposite ? 'Elements (by # of Atoms)' : 'Components (by Mass Fraction)';
+
         const mixtureHtml = `
-            <h6>Components (by mass fraction)</h6>
+            <h6>${titleText}</h6>
             <div id="material-components-list"></div>
             <button id="add-mat-comp-btn" class="add_button" style="margin-top: 10px;">+ Add Component</button>`;
         const mixtureDiv = document.createElement('div');
@@ -102,7 +114,14 @@ function rebuildComponentsUI() {
     if (!listDiv) return;
     listDiv.innerHTML = '';
 
-    const materials = Object.keys(currentProjectState.materials || {});
+    const isComposite = compositeRadio.checked;
+
+    // Get the list of available items for the dropdown
+    const availableItems = isComposite 
+        ? Object.keys(currentProjectState.elements || {}) 
+        : Object.keys(currentProjectState.materials || {});
+
+    //const materials = Object.keys(currentProjectState.materials || {});
 
     materialComponents.forEach((comp, index) => {
         const row = document.createElement('div');
@@ -113,31 +132,28 @@ function rebuildComponentsUI() {
         selectLabel.textContent = "Material:";
         const select = document.createElement('select');
         select.className = 'comp-ref';
-        select.dataset.index = index;
-        materials.forEach(matName => {
-            if (isEditMode && matName === editingMaterialId) return;
-            const opt = document.createElement('option');
-            opt.value = matName;
-            opt.textContent = matName;
-            select.appendChild(opt);
-        });
+        populateSelect(select, availableItems); 
         select.value = comp.ref;
 
-        // --- Create the fraction label and expression input ---
-        const fractionLabel = document.createElement('label');
-        fractionLabel.textContent = "Fraction:";
-        fractionLabel.style.marginLeft = '10px';
+        // --- Input for fraction or number of atoms ---
+        const valueLabel = document.createElement('label');
+        valueLabel.textContent = isComposite ? "# Atoms:" : "Fraction:";
+        valueLabel.style.marginLeft = '10px';
 
-        // ## FIX: Use the new inline expression component for the fraction
-        const fractionInputComponent = ExpressionInput.createInline(
-            `mat_comp_frac_${index}`,
-            comp.fraction, // This is now an expression string
+        const valueKey = isComposite ? 'natoms' : 'fraction';
+        const initialValue = comp[valueKey] || '0.0';
+
+        const valueInputComponent = ExpressionInput.createInline(
+            `mat_comp_val_${index}`,
+            initialValue,
             currentProjectState,
-            (newValue) => { // onChange callback
-                materialComponents[index].fraction = newValue;
+            (newValue) => {
+                materialComponents[index][valueKey] = newValue;
+                // If we are a mixture, we also need to clear the other key
+                if (isComposite) delete materialComponents[index].fraction;
+                else delete materialComponents[index].natoms;
             }
         );
-        fractionInputComponent.id = `mat-comp-frac-wrapper-${index}`; // Add an ID to the wrapper itself
 
         // --- Create the remove button ---
         const removeBtn = document.createElement('button');
@@ -160,13 +176,23 @@ function rebuildComponentsUI() {
 }
 
 function addComponentRow() {
-    const availableMaterials = Object.keys(currentProjectState.materials || {}).filter(m => m !== editingMaterialId);
-    if (availableMaterials.length === 0) {
-        alert("No other materials available to add to the mixture.");
+    const isComposite = compositeRadio.checked;
+    const availableItems = isComposite 
+        ? Object.keys(currentProjectState.elements || {}) 
+        : Object.keys(currentProjectState.materials || {}).filter(m => m !== editingMaterialId);
+
+    if (availableItems.length === 0) {
+        alert(`No available ${isComposite ? 'elements' : 'materials'} to add.`);
         return;
     }
-    // Initialize fraction as a string expression
-    materialComponents.push({ ref: availableMaterials[0], fraction: '0.0' });
+    
+    const newComponent = { ref: availableItems[0] };
+    if (isComposite) {
+        newComponent.natoms = '1'; // Default to 1 atom
+    } else {
+        newComponent.fraction = '0.0'; // Default to 0.0 fraction
+    }
+    materialComponents.push(newComponent);
     rebuildComponentsUI();
 }
 
@@ -185,13 +211,24 @@ function updateComponentState(event) {
     }
 }
 
+function populateSelect(selectElement, optionsArray) {
+    selectElement.innerHTML = ''; // Clear any existing options
+    optionsArray.forEach(optionText => {
+        const option = document.createElement('option');
+        option.value = optionText;
+        option.textContent = optionText;
+        selectElement.appendChild(option);
+    });
+}
+
 function handleConfirm() {
     const name = nameInput.value.trim();
     if (!name && !isEditMode) { alert("Please provide a name."); return; }
 
     const isSimple = simpleRadio.checked;
-    let params = {};
+    const isComposite = compositeRadio.checked;
 
+    let params = {};
     if (isSimple) {
         params = {
             Z_expr: document.getElementById('mat_Z').value,
@@ -200,11 +237,11 @@ function handleConfirm() {
             components: []
         };
     } else {
-        // TODO: NEED TO VALIDATE THE FRACTIONAL COMPONENTS
+        // For both Mixture and Composite
         params = {
             density_expr: document.getElementById('mat_density').value,
-            components: materialComponents, // This now contains string expressions for fractions
-            Z_expr: null,
+            components: materialComponents,
+            Z_expr: null, // Let Geant4 calculate these
             A_expr: null
         };
     }
