@@ -6,6 +6,7 @@ import * as BorderSurfaceEditor from './borderSurfaceEditor.js';
 import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as LVEditor from './logicalVolumeEditor.js';
+import * as ElementEditor from './elementEditor.js';
 import * as MaterialEditor from './materialEditor.js';
 import * as OpticalSurfaceEditor from './opticalSurfaceEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
@@ -64,6 +65,9 @@ async function initializeApp() {
         // Add/edit materials
         onAddMaterialClicked: handleAddMaterial,
         onEditMaterialClicked: handleEditMaterial,
+        // Add/edit elements
+        onAddElementClicked: handleAddElement,
+        onEditElementClicked: handleEditElement,
         // Add/edit LVs
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
@@ -137,6 +141,11 @@ async function initializeApp() {
     // Initialize the materials editor
     MaterialEditor.initMaterialEditor({
         onConfirm: handleMaterialEditorConfirm
+    });
+
+    // Initialize the elements editor
+    ElementEditor.initElementEditor({
+        onConfirm: handleElementEditorConfirm
     });
 
     // Initialize physical volume editor
@@ -1348,6 +1357,34 @@ async function handleBorderSurfaceEditorConfirm(data) {
         syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
     } catch (error) {
         UIManager.showError("Error processing Border Surface: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleAddElement() {
+    ElementEditor.show(null, AppState.currentProjectState);
+}
+
+function handleEditElement(elData) {
+    ElementEditor.show(elData, AppState.currentProjectState);
+}
+
+async function handleElementEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    const apiCall = data.isEdit 
+        ? APIService.updateElement(data.id, data)
+        : APIService.addElement(data.name, data);
+
+    const loadingMessage = data.isEdit ? "Updating Element..." : "Creating Element...";
+    UIManager.showLoading(loadingMessage);
+    try {
+        const result = await apiCall;
+        const newElementName = Object.keys(result.project_state.elements).find(k => k.startsWith(data.name)) || data.name;
+        const newSelection = [{ type: 'element', id: newElementName, name: newElementName, data: result.project_state.elements[newElementName] }];
+        syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
+    } catch (error) {
+        UIManager.showError("Error processing Element: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }

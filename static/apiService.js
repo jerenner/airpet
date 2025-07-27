@@ -171,6 +171,26 @@ export async function updateMaterial(id, params) {
     return handleResponse(response);
 }
 
+export async function addElement(name, params) {
+    const payload = { name, ...params };
+    const response = await fetch(`${API_BASE_URL}/add_element`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
+export async function updateElement(id, params) {
+    const payload = { id, ...params };
+    const response = await fetch(`${API_BASE_URL}/update_element`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    return handleResponse(response);
+}
+
 export async function addPrimitiveSolid(name, type, params) {
     const response = await fetch(`${API_BASE_URL}/add_primitive_solid`, {
         method: 'POST',

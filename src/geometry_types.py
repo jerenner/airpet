@@ -112,6 +112,27 @@ class Element:
         instance.id = data.get('id', instance.id)
         return instance
 
+class Isotope:
+    """Represents a chemical isotope."""
+    def __init__(self, name, N, Z, A_expr=None):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.N = N # Number of nucleons
+        self.Z = Z # Atomic Number
+        self.A_expr = A_expr # Atomic Mass
+
+    def to_dict(self):
+        return {
+            "id": self.id, "name": self.name, "N": self.N,
+            "Z": self.Z, "A_expr": self.A_expr
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data['name'], data.get('N'), data.get('Z'), data.get('A_expr'))
+        instance.id = data.get('id', instance.id)
+        return instance
+
 class Material:
     """Represents a material."""
     def __init__(self, name, Z_expr=None, A_expr=None, density_expr="0.0", state=None, components=None):
@@ -577,6 +598,7 @@ class GeometryState:
         self.defines = {} # name: Define object
         self.materials = {} # name: Material object
         self.elements = {}  # name: Element object
+        self.isotopes = {}  # name: Isotope object
         self.solids = {}    # name: Solid object
         self.logical_volumes = {} # name: LogicalVolume object
         self.assemblies = {} # name: Assembly object
@@ -592,6 +614,7 @@ class GeometryState:
         self.ui_groups = {
             'define': [],
             'material': [],
+            'element': [],
             'solid': [],
             'logical_volume': [],
             'assembly': [],
@@ -606,6 +629,8 @@ class GeometryState:
         self.materials[material_obj.name] = material_obj
     def add_element(self, element_obj):
         self.elements[element_obj.name] = element_obj
+    def add_isotope(self, isotope_obj):
+        self.isotopes[isotope_obj.name] = isotope_obj
     def add_solid(self, solid_obj):
         self.solids[solid_obj.name] = solid_obj
     def add_logical_volume(self, lv_obj):
@@ -622,6 +647,7 @@ class GeometryState:
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
     def get_element(self, name): return self.elements.get(name)
+    def get_isotope(self, name): return self.isotopes.get(name)
     def get_solid(self, name): return self.solids.get(name)
     def get_logical_volume(self, name): return self.logical_volumes.get(name)
     def get_assembly(self, name): return self.assemblies.get(name)
@@ -634,6 +660,7 @@ class GeometryState:
             "defines": {name: define.to_dict() for name, define in self.defines.items()},
             "materials": {name: material.to_dict() for name, material in self.materials.items()},
             "elements": {name: element.to_dict() for name, element in self.elements.items()},
+            "isotopes": {name: isotope.to_dict() for name, isotope in self.isotopes.items()},
             "solids": {name: solid.to_dict() for name, solid in self.solids.items()},
             "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
             "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
@@ -650,6 +677,7 @@ class GeometryState:
         instance.defines = {name: Define.from_dict(d) for name, d in data.get('defines', {}).items()}
         instance.materials = {name: Material.from_dict(d) for name, d in data.get('materials', {}).items()}
         instance.elements = {name: Element.from_dict(d) for name, d in data.get('elements', {}).items()}
+        instance.isotopes = {name: Isotope.from_dict(d) for name, d in data.get('isotopes', {}).items()}
         instance.solids = {name: Solid.from_dict(d) for name, d in data.get('solids', {}).items()}
         
         # For logical volumes, pass the instance itself to resolve internal refs if needed during from_dict
@@ -666,7 +694,7 @@ class GeometryState:
 
         # --- Deserialize the groups ---
         # Use data.get to provide a default empty dict for older project files
-        default_groups = {'define': [], 'material': [], 'solid': [], 'logical_volume': [], 'assembly': [],
+        default_groups = {'define': [], 'material': [], 'element': [], 'solid': [], 'logical_volume': [], 'assembly': [],
                           'optical_surface': [], 'skin_surface': [], 'border_surface': []}
         instance.ui_groups = data.get('ui_groups', default_groups)
 

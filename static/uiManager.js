@@ -20,7 +20,8 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
-    solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, borderSurfacesListRoot;
+    elementsListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
+    borderSurfacesListRoot;
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
@@ -50,6 +51,8 @@ let callbacks = {
     onEditDefineClicked: (defineData) => {},
     onAddMaterialClicked: ()=>{}, 
     onEditMaterialClicked: (d)=>{},
+    onAddElementClicked: ()=>{}, 
+    onEditElementClicked: (d)=>{},
     onAddOpticalSurfaceClicked: ()=>{}, 
     onEditOpticalSurfaceClicked: (surfaceData)=>{},
     onAddSkinSurfaceClicked: ()=>{}, 
@@ -139,6 +142,7 @@ export function initUI(cb) {
     lvolumesListRoot = document.getElementById('lvolumes_list_root');
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
+    elementsListRoot = document.getElementById('elements_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
 
@@ -207,6 +211,8 @@ export function initUI(cb) {
                 callbacks.onAddSolidClicked();
             } else if (type.startsWith('material')) {
                 callbacks.onAddMaterialClicked();
+            } else if (type.startsWith('element')) {
+                callbacks.onAddElementClicked();
             } else if (type.startsWith('optical_surface')) {
                 callbacks.onAddOpticalSurfaceClicked();
             } else if (type.startsWith('skin_surface')) {
@@ -695,6 +701,7 @@ export function updateHierarchy(projectState) {
     lvolumesListRoot = document.getElementById('lvolumes_list_root');
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
+    elementsListRoot = document.getElementById('elements_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
     skinSurfacesListRoot = document.getElementById('skin_surfaces_list_root');
@@ -706,6 +713,7 @@ export function updateHierarchy(projectState) {
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
+    if(elementsListRoot) elementsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
@@ -716,6 +724,7 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(lvolumesListRoot, Object.values(projectState.logical_volumes), 'logical_volume');
     populateListWithGrouping(definesListRoot, Object.values(projectState.defines), 'define');
     populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
+    populateListWithGrouping(elementsListRoot, Object.values(projectState.elements || {}), 'element');
     populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
@@ -955,7 +964,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     const item = document.createElement('li');
 
     // --- DRAG LOGIC ---
-    const draggableTypes = ['physical_volume', 'solid', 'material', 'define', 
+    const draggableTypes = ['physical_volume', 'solid', 'material', 'element', 'define', 
                             'optical_surface', 'skin_surface', 'border_surface'];
 
     // Make the item draggable if it's a type that can be moved or grouped
@@ -1177,6 +1186,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (e) => {
             e.stopPropagation();
             callbacks.onEditMaterialClicked(item.appData);
+        });
+    } else if (itemType === 'element') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditElementClicked(item.appData);
         });
     } else if (itemType === 'physical_volume') {
         item.addEventListener('dblclick', (event) => {
@@ -1448,6 +1462,7 @@ export function clearHierarchy() {
     if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
+    if(elementsListRoot) elementsListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';

@@ -4,7 +4,7 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, LogicalVolume, \
+from .geometry_types import GeometryState, Solid, Define, Material, Element, LogicalVolume, \
                             PhysicalVolumePlacement, Assembly, ReplicaVolume, DivisionVolume, \
                             ParamVolume, OpticalSurface, SkinSurface, BorderSurface
 from .gdml_parser import GDMLParser
@@ -376,6 +376,7 @@ class ProjectManager:
 
         if object_type == "define": obj = state.defines.get(object_name_or_id)
         elif object_type == "material": obj = state.materials.get(object_name_or_id)
+        elif object_type == "element": obj = state.elements.get(object_name_or_id)
         elif object_type == "solid": obj = state.solids.get(object_name_or_id)
         elif object_type == "logical_volume": obj = state.logical_volumes.get(object_name_or_id)
         elif object_type == "optical_surface":
@@ -521,6 +522,43 @@ class ProjectManager:
         # if 'components' in new_properties: target_mat.components = new_properties['components']
         for key, value in new_properties.items(): setattr(target_mat, key, value)
         
+        self.recalculate_geometry_state()
+        return True, None
+
+    def add_element(self, name_suggestion, params):
+        """Adds a new element to the project."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+        
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.elements)
+        
+        new_element = Element(
+            name=name,
+            formula=params.get('formula'),
+            Z=params.get('Z'),
+            A_expr=params.get('A_expr'),
+            components=params.get('components', [])
+        )
+        
+        self.current_geometry_state.add_element(new_element)
+        self.recalculate_geometry_state()
+        
+        return new_element.to_dict(), None
+
+    def update_element(self, element_name, new_params):
+        """Updates an existing element."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+        
+        target_element = self.current_geometry_state.elements.get(element_name)
+        if not target_element:
+            return False, f"Element '{element_name}' not found."
+
+        target_element.formula = new_params.get('formula', target_element.formula)
+        target_element.Z = new_params.get('Z', target_element.Z)
+        target_element.A_expr = new_params.get('A_expr', target_element.A_expr)
+        target_element.components = new_params.get('components', target_element.components)
+
         self.recalculate_geometry_state()
         return True, None
 

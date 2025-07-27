@@ -7,7 +7,7 @@ import re
 import uuid
 from .expression_evaluator import create_configured_asteval
 from .geometry_types import (
-    GeometryState, Define, Material, Element, Solid, LogicalVolume, PhysicalVolumePlacement, 
+    GeometryState, Define, Material, Element, Isotope, Solid, LogicalVolume, PhysicalVolumePlacement, 
     Assembly, DivisionVolume, ReplicaVolume, ParamVolume, Parameterisation,
     OpticalSurface, SkinSurface, BorderSurface,
     UNIT_FACTORS, convert_to_internal_units, get_unit_value
@@ -270,6 +270,20 @@ class GDMLParser:
                     })
                 
                 self.geometry_state.add_element(new_element)
+            
+            elif tag == 'isotope':
+                name_expr = element.get('name')
+                if not name_expr: return
+                name = self._evaluate_name(name_expr)
+
+                N_expr = element.get('N')
+                Z_expr = element.get('Z')
+
+                atom_el = element.find('atom')
+                A_expr = atom_el.get('value') if atom_el is not None else None
+
+                new_isotope = Isotope(name, N=N_expr, Z=Z_expr, A_expr=A_expr)
+                self.geometry_state.add_isotope(new_isotope)
 
         self._process_children(materials_element, material_handler)
 

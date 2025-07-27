@@ -294,6 +294,48 @@ def update_material_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_element', methods=['POST'])
+def add_element_route():
+    data = request.get_json()
+    name_suggestion = data.get('name')
+    params = {
+        'formula': data.get('formula'),
+        'Z': data.get('Z'),
+        'A_expr': data.get('A_expr'),
+        'components': data.get('components', [])
+    }
+    
+    if not name_suggestion:
+        return jsonify({"success": False, "error": "Missing name for element."}), 400
+    
+    new_obj, error_msg = project_manager.add_element(name_suggestion, params)
+    
+    if new_obj:
+        return create_success_response("Element created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_element', methods=['POST'])
+def update_element_route():
+    data = request.get_json()
+    element_name = data.get('id')
+    new_params = {
+        'formula': data.get('formula'),
+        'Z': data.get('Z'),
+        'A_expr': data.get('A_expr'),
+        'components': data.get('components', [])
+    }
+
+    if not element_name:
+        return jsonify({"success": False, "error": "Missing ID for element update."}), 400
+
+    success, error_msg = project_manager.update_element(element_name, new_params)
+    
+    if success:
+        return create_success_response(f"Element '{element_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
 @app.route('/add_define', methods=['POST'])
 def add_define_route():
     data = request.get_json()

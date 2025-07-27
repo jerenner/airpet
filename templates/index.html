@@ -850,6 +850,7 @@
             </div>
             <div id="tab_properties" class="tab_pane">
                 <div class="accordion">
+                    <!-- Materials accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
                             <span class="accordion-toggle">[-]</span>
@@ -863,6 +864,21 @@
                             <ul id="materials_list_root"></ul>
                         </div>
                     </div>
+                    <!-- Elements accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Elements</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="element" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="element" title="Create a new Element">+ Add</button>
+                            </div>
+                            <ul id="elements_list_root"></ul>
+                        </div>
+                    </div>
+                    <!-- Optical surfaces accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
                             <span class="accordion-toggle">[+]</span>
@@ -876,6 +892,7 @@
                             <ul id="optical_surfaces_list_root"></ul>
                         </div>
                     </div>
+                    <!-- Skin surfaces accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
                             <span class="accordion-toggle">[+]</span>
@@ -889,6 +906,7 @@
                             <ul id="skin_surfaces_list_root"></ul>
                         </div>
                     </div>
+                    <!-- Border surfaces accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
                             <span class="accordion-toggle">[+]</span>
@@ -1081,6 +1099,41 @@
             <div class="modal-footer">
                 <button id="materialEditorCancel">Cancel</button>
                 <button id="materialEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for Elements -->
+    <div id="elementEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="elementEditorTitle">Create New Element</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="elEditorName">Name:</label>
+                    <input type="text" id="elEditorName" placeholder="e.g., EnrichedUranium">
+                </div>
+                <div class="property_item">
+                    <label for="elEditorFormula">Formula (Symbol):</label>
+                    <input type="text" id="elEditorFormula" placeholder="e.g., U">
+                </div>
+                <!-- Radio buttons for element type -->
+                <div class="property_item">
+                    <label>Definition:</label>
+                    <div>
+                        <input type="radio" name="el_type" value="simple" id="el_type_simple" checked> <label for="el_type_simple">Simple (by Z, A)</label>
+                        <input type="radio" name="el_type" value="isotope" id="el_type_isotope"> <label for="el_type_isotope">By Isotope Fraction</label>
+                    </div>
+                </div>
+                <hr>
+                <!-- Parameters section is dynamic -->
+                <div id="element-editor-params">
+                    <!-- JS will populate this section -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="elEditorCancel">Cancel</button>
+                <button id="elEditorConfirm" class="confirm-button">Create</button>
             </div>
         </div>
     </div>

@@ -164,8 +164,8 @@ function rebuildComponentsUI() {
         // --- Assemble the row ---
         row.appendChild(selectLabel);
         row.appendChild(select);
-        row.appendChild(fractionLabel);
-        row.appendChild(fractionInputComponent);
+        row.appendChild(valueLabel);
+        row.appendChild(valueInputComponent);
         row.appendChild(removeBtn);
         listDiv.appendChild(row);
     });
