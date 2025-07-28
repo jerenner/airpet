@@ -336,6 +336,22 @@ def update_element_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/add_isotope', methods=['POST'])
+def add_isotope_route():
+    data = request.get_json(); name = data.get('name'); params = data
+    if not name: return jsonify({"success": False, "error": "Missing name for isotope."}), 400
+    new_obj, err = project_manager.add_isotope(name, params)
+    if new_obj: return create_success_response("Isotope created.")
+    return jsonify({"success": False, "error": err}), 500
+
+@app.route('/update_isotope', methods=['POST'])
+def update_isotope_route():
+    data = request.get_json(); name = data.get('id'); params = data
+    if not name: return jsonify({"success": False, "error": "Missing ID for isotope update."}), 400
+    ok, err = project_manager.update_isotope(name, params)
+    if ok: return create_success_response(f"Isotope '{name}' updated.")
+    return jsonify({"success": False, "error": err}), 500
+
 @app.route('/add_define', methods=['POST'])
 def add_define_route():
     data = request.get_json()

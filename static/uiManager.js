@@ -20,7 +20,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
-    elementsListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
+    elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
     borderSurfacesListRoot;
 let inspectorContentDiv;
 
@@ -213,6 +213,8 @@ export function initUI(cb) {
                 callbacks.onAddMaterialClicked();
             } else if (type.startsWith('element')) {
                 callbacks.onAddElementClicked();
+            } else if (type.startsWith('isotope')) {
+                callbacks.onAddIsotopeClicked();
             } else if (type.startsWith('optical_surface')) {
                 callbacks.onAddOpticalSurfaceClicked();
             } else if (type.startsWith('skin_surface')) {
@@ -702,6 +704,7 @@ export function updateHierarchy(projectState) {
     definesListRoot = document.getElementById('defines_list_root');
     materialsListRoot = document.getElementById('materials_list_root');
     elementsListRoot = document.getElementById('elements_list_root');
+    isotopesListRoot = document.getElementById('isotopes_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
     skinSurfacesListRoot = document.getElementById('skin_surfaces_list_root');
@@ -714,6 +717,7 @@ export function updateHierarchy(projectState) {
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(elementsListRoot) elementsListRoot.innerHTML = '';
+    if(isotopesListRoot) isotopesListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
@@ -725,6 +729,7 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(definesListRoot, Object.values(projectState.defines), 'define');
     populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
     populateListWithGrouping(elementsListRoot, Object.values(projectState.elements || {}), 'element');
+    populateListWithGrouping(isotopesListRoot, Object.values(projectState.isotopes || {}), 'isotope');
     populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
@@ -1192,6 +1197,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             event.stopPropagation();
             callbacks.onEditElementClicked(item.appData);
         });
+    } else if (itemType === 'isotope') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditIsotopeClicked(item.appData);
+        });
     } else if (itemType === 'physical_volume') {
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
@@ -1463,6 +1473,7 @@ export function clearHierarchy() {
     if(definesListRoot) definesListRoot.innerHTML = '';
     if(materialsListRoot) materialsListRoot.innerHTML = '';
     if(elementsListRoot) elementsListRoot.innerHTML = '';
+    if(isotopesListRoot) isotopesListRoot.innerHTML = '';
     if(solidsListRoot) solidsListRoot.innerHTML = '';
     if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';

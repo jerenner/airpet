@@ -878,6 +878,20 @@
                             <ul id="elements_list_root"></ul>
                         </div>
                     </div>
+                    <!-- Isotopes Accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Isotopes</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="isotope" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="isotope" title="Create a new Isotope">+ Add</button>
+                            </div>
+                            <ul id="isotopes_list_root"></ul>
+                        </div>
+                    </div>
                     <!-- Optical surfaces accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
@@ -1134,6 +1148,37 @@
             <div class="modal-footer">
                 <button id="elEditorCancel">Cancel</button>
                 <button id="elEditorConfirm" class="confirm-button">Create</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor for isotopes -->
+    <div id="isotopeEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4 id="isotopeEditorTitle">Create New Isotope</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="isoEditorName">Name:</label>
+                    <input type="text" id="isoEditorName" placeholder="e.g., U235">
+                </div>
+                <hr>
+                <div class="property_item">
+                    <label for="isoEditorZ">Atomic Number (Z):</label>
+                    <input type="text" id="isoEditorZ" value="92">
+                </div>
+                <div class="property_item">
+                    <label for="isoEditorN">Nucleon Number (N):</label>
+                    <input type="text" id="isoEditorN" value="235">
+                </div>
+                <div class="property_item">
+                    <label for="isoEditorA">Atomic Mass (A):</label>
+                    <input type="text" id="isoEditorA" placeholder="e.g., 235.01">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="isoEditorCancel">Cancel</button>
+                <button id="isoEditorConfirm" class="confirm-button">Create</button>
             </div>
         </div>
     </div>

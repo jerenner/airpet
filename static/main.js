@@ -5,6 +5,7 @@ import * as APIService from './apiService.js';
 import * as BorderSurfaceEditor from './borderSurfaceEditor.js';
 import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
+import * as IsotopeEditor from './isotopeEditor.js';
 import * as LVEditor from './logicalVolumeEditor.js';
 import * as ElementEditor from './elementEditor.js';
 import * as MaterialEditor from './materialEditor.js';
@@ -68,6 +69,9 @@ async function initializeApp() {
         // Add/edit elements
         onAddElementClicked: handleAddElement,
         onEditElementClicked: handleEditElement,
+        // Add/edit isotopes
+        onAddIsotopeClicked: handleAddIsotope,
+        onEditIsotopeClicked: handleEditIsotope,
         // Add/edit LVs
         onAddLVClicked: handleAddLV,
         onEditLVClicked: handleEditLV,
@@ -146,6 +150,11 @@ async function initializeApp() {
     // Initialize the elements editor
     ElementEditor.initElementEditor({
         onConfirm: handleElementEditorConfirm
+    });
+
+    // Initialize the isotopes editor
+    IsotopeEditor.initIsotopeEditor({ 
+        onConfirm: handleIsotopeEditorConfirm 
     });
 
     // Initialize physical volume editor
@@ -996,6 +1005,43 @@ async function handleMaterialEditorConfirm(data) {
         } finally {
             UIManager.hideLoading();
         }
+    }
+}
+
+function handleAddIsotope() { 
+    IsotopeEditor.show(null); 
+}
+
+function handleEditIsotope(isoData) { 
+    IsotopeEditor.show(isoData); 
+}
+
+async function handleIsotopeEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    const apiCall = data.isEdit 
+        ? APIService.updateIsotope(data.id, data)
+        : APIService.addIsotope(data.name, data);
+
+    const loadingMessage = data.isEdit ? "Updating Isotope..." : "Creating Isotope...";
+    UIManager.showLoading(loadingMessage);
+    try {
+        const result = await apiCall;
+        
+        // Find the final name in case the backend had to make it unique
+        const newIsotopeName = Object.keys(result.project_state.isotopes).find(k => k.startsWith(data.name)) || data.name;
+        
+        const newSelection = [{ 
+            type: 'isotope', 
+            id: newIsotopeName, 
+            name: newIsotopeName, 
+            data: result.project_state.isotopes[newIsotopeName] 
+        }];
+        
+        syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
+    } catch (error) {
+        UIManager.showError("Error processing Isotope: " + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
     }
 }
 

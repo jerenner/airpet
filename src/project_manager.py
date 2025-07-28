@@ -4,9 +4,10 @@ import math
 import tempfile
 import os
 import asteval
-from .geometry_types import GeometryState, Solid, Define, Material, Element, LogicalVolume, \
-                            PhysicalVolumePlacement, Assembly, ReplicaVolume, DivisionVolume, \
-                            ParamVolume, OpticalSurface, SkinSurface, BorderSurface
+from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
+                            LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
+                            DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
+                            BorderSurface
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -377,6 +378,7 @@ class ProjectManager:
         if object_type == "define": obj = state.defines.get(object_name_or_id)
         elif object_type == "material": obj = state.materials.get(object_name_or_id)
         elif object_type == "element": obj = state.elements.get(object_name_or_id)
+        elif object_type == "isotope": obj = state.isotopes.get(object_name_or_id)
         elif object_type == "solid": obj = state.solids.get(object_name_or_id)
         elif object_type == "logical_volume": obj = state.logical_volumes.get(object_name_or_id)
         elif object_type == "optical_surface":
@@ -559,6 +561,24 @@ class ProjectManager:
         target_element.A_expr = new_params.get('A_expr', target_element.A_expr)
         target_element.components = new_params.get('components', target_element.components)
 
+        self.recalculate_geometry_state()
+        return True, None
+
+    def add_isotope(self, name_suggestion, params):
+        if not self.current_geometry_state: return None, "No project loaded"
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.isotopes)
+        new_isotope = Isotope(name, Z=params.get('Z'), N=params.get('N'), A_expr=params.get('A_expr'))
+        self.current_geometry_state.add_isotope(new_isotope)
+        self.recalculate_geometry_state()
+        return new_isotope.to_dict(), None
+
+    def update_isotope(self, isotope_name, new_params):
+        if not self.current_geometry_state: return False, "No project loaded"
+        target_isotope = self.current_geometry_state.isotopes.get(isotope_name)
+        if not target_isotope: return False, f"Isotope '{isotope_name}' not found."
+        target_isotope.Z = new_params.get('Z', target_isotope.Z)
+        target_isotope.N = new_params.get('N', target_isotope.N)
+        target_isotope.A_expr = new_params.get('A_expr', target_isotope.A_expr)
         self.recalculate_geometry_state()
         return True, None
 
