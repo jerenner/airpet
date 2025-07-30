@@ -501,8 +501,9 @@ def add_physical_volume_route():
     volume_ref = data.get('volume_ref')
     position = data.get('position')
     rotation = data.get('rotation')
+    scale = data.get('scale')
     
-    new_pv, error_msg = project_manager.add_physical_volume(parent_lv_name, name, volume_ref, position, rotation)
+    new_pv, error_msg = project_manager.add_physical_volume(parent_lv_name, name, volume_ref, position, rotation, scale)
     
     if new_pv:
         return create_success_response("Physical Volume placed.")
@@ -516,8 +517,9 @@ def update_physical_volume_route():
     name = data.get('name')
     position = data.get('position')
     rotation = data.get('rotation')
+    scale = data.get('scale')
 
-    success, error_msg = project_manager.update_physical_volume(pv_id, name, position, rotation)
+    success, error_msg = project_manager.update_physical_volume(pv_id, name, position, rotation, scale)
 
     if success:
         return create_success_response(f"Physical Volume '{pv_id}' updated.")

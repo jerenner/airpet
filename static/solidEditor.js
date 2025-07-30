@@ -277,6 +277,7 @@ function renderParamsUI(params = {}) {
     dynamicParamsDiv.innerHTML = '';
     const type = typeSelect.value;
     const isBoolean = type === 'boolean';
+    const isScaled = type === 'scaledSolid';
 
     if (isBoolean) {
         if (booleanRecipe.length === 0) {
@@ -289,7 +290,37 @@ function renderParamsUI(params = {}) {
         `;
         document.getElementById('add-boolean-op-btn').addEventListener('click', addBooleanOperation);
         rebuildBooleanUI();
-        } else {
+    }
+    else if (isScaled) { 
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        
+        // Dropdown to select the solid to be scaled
+        const solidItem = document.createElement('div');
+        solidItem.className = 'property_item';
+        solidItem.innerHTML = `<label for="scaled_solid_ref">Solid to Scale:</label>`;
+        const solidRefSelect = document.createElement('select');
+        solidRefSelect.id = 'scaled_solid_ref';
+        // Populate with all solids EXCEPT the one being edited (to prevent self-reference)
+        const allSolids = Object.keys(currentProjectState.solids || {});
+        const availableSolids = isEditMode ? allSolids.filter(s => s !== editingSolidId) : allSolids;
+        populateSelect(solidRefSelect, availableSolids);
+        solidItem.appendChild(solidRefSelect);
+        dynamicParamsDiv.appendChild(solidItem);
+
+        // Expression inputs for the scale factors
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_x', 'Scale X', params?.scale?.x || '1.0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_y', 'Scale Y', params?.scale?.y || '1.0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_z', 'Scale Z', params?.scale?.z || '1.0', currentProjectState));
+
+        // Pre-select the solid if in edit mode
+        if (params && params.solid_ref) {
+            solidRefSelect.value = params.solid_ref;
+        }
+
+        // Add change listener to update preview
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
+    } else {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
         
         const p = (key, defaultVal) => params[key] !== undefined ? params[key] : defaultVal;
@@ -364,6 +395,7 @@ function renderParamsUI(params = {}) {
 
         dynamicParamsDiv.addEventListener('change', updatePreview);
     }
+    
     updatePreview();
 }
 
@@ -621,7 +653,14 @@ function getRawParamsFromUI() {
     const raw_params = {};
     const p = (id) => document.getElementById(id)?.value.trim() || '0';
 
-    if (type === 'box') {
+    if (type === 'scaledSolid') {
+        raw_params.solid_ref = document.getElementById('scaled_solid_ref').value;
+        raw_params.scale = {
+            x: p('p_scale_x'),
+            y: p('p_scale_y'),
+            z: p('p_scale_z')
+        };
+    } else if (type === 'box') {
         raw_params.x = p('p_x');
         raw_params.y = p('p_y'); 
         raw_params.z = p('p_z');
@@ -741,7 +780,20 @@ async function updatePreview() {
         } catch (error) {
             console.error("Error building boolean preview:", error);
         }
-
+    } else if (type === 'scaledSolid') { 
+        const solidToScaleName = document.getElementById('scaled_solid_ref').value;
+        const solidToScaleData = currentProjectState.solids[solidToScaleName];
+        if (solidToScaleData) {
+            // Get the geometry of the base solid
+            geometry = createPrimitiveGeometry(solidToScaleData, currentProjectState, csgEvaluator);
+            if (geometry) {
+                // Evaluate the scale factors from the UI
+                const scaleX = (await APIService.evaluateExpression(document.getElementById('p_scale_x').value, currentProjectState)).result || 1;
+                const scaleY = (await APIService.evaluateExpression(document.getElementById('p_scale_y').value, currentProjectState)).result || 1;
+                const scaleZ = (await APIService.evaluateExpression(document.getElementById('p_scale_z').value, currentProjectState)).result || 1;
+                geometry.scale(scaleX, scaleY, scaleZ);
+            }
+        }
     } else { // It's a primitive
         const rawParams = getRawParamsFromUI();
         const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {

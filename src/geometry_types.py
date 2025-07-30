@@ -290,25 +290,36 @@ class PhysicalVolumePlacement:
         self._evaluated_scale = {'x': 1, 'y': 1, 'z': 1}
 
     def get_transform_matrix(self):
-        """Returns a 4x4 numpy transformation matrix for this placement."""
-        # Note: Assumes position and rotation are resolved value dicts, not refs
+        """
+        Returns a 4x4 numpy transformation matrix for this placement,
+        applying scale, then rotation, then translation.
+        """
         pos = self._evaluated_position
-        rot = self._evaluated_rotation # Assumed ZYX Euler in radians
-        
-        # Create rotation matrices for each axis
+        rot = self._evaluated_rotation
+        scl = self._evaluated_scale
+
+        # Create Translation Matrix (T)
+        T = np.array([[1, 0, 0, pos['x']],
+                      [0, 1, 0, pos['y']],
+                      [0, 0, 1, pos['z']],
+                      [0, 0, 0, 1]])
+
+        # Create ZYX Euler Rotation Matrix (R)
         Rx = np.array([[1, 0, 0], [0, math.cos(rot['x']), -math.sin(rot['x'])], [0, math.sin(rot['x']), math.cos(rot['x'])]])
         Ry = np.array([[math.cos(rot['y']), 0, math.sin(rot['y'])], [0, 1, 0], [-math.sin(rot['y']), 0, math.cos(rot['y'])]])
         Rz = np.array([[math.cos(rot['z']), -math.sin(rot['z']), 0], [math.sin(rot['z']), math.cos(rot['z']), 0], [0, 0, 1]])
+        R_3x3 = Rz @ Ry @ Rx
+        R = np.eye(4)
+        R[:3, :3] = R_3x3
         
-        # Combine rotations (ZYX order)
-        R = Rz @ Ry @ Rx
+        # Create Scaling Matrix (S)
+        S = np.array([[scl['x'], 0, 0, 0],
+                      [0, scl['y'], 0, 0],
+                      [0, 0, scl['z'], 0],
+                      [0, 0, 0, 1]])
         
-        # Create 4x4 transformation matrix
-        T = np.eye(4)
-        T[:3, :3] = R
-        T[:3, 3] = [pos['x'], pos['y'], pos['z']]
-        
-        return T
+        # Combine them: Final Transform = T * R * S
+        return T @ R @ S
     
     @staticmethod
     def decompose_matrix(matrix):
@@ -731,11 +742,11 @@ class GeometryState:
 
         # Render the LV's solid IF it's a standard volume
         if lv.content_type not in ['replica', 'division', 'parameterised']:
-            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
+            final_pos, final_rot_rad, final_scl = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
             threejs_objects.append({
                 "id": pv.id, "name": pv.name, "owner_pv_id": current_owner_id,
                 "solid_ref_for_threejs": lv.solid_ref,
-                "position": final_pos, "rotation": final_rot_rad,
+                "position": final_pos, "rotation": final_rot_rad, "scale": final_scl,
                 "vis_attributes": lv.vis_attributes, "copy_number": pv.copy_number
             })
 

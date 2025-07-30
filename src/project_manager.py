@@ -133,14 +133,29 @@ class ProjectManager:
             temp_eval_params = {}
             for key, raw_expr in raw_params.items():
                 if key in ['lunit', 'aunit']: continue
-
-                expr_to_eval = str(raw_expr)
-                if key in length_attrs and default_lunit:
-                    expr_to_eval = f"({expr_to_eval}) * {default_lunit}"
-                elif key in angle_attrs and default_aunit:
-                    expr_to_eval = f"({expr_to_eval}) * {default_aunit}"
                 
-                if isinstance(raw_expr, (str, int, float)):
+                # Handle "scale" key for scaledSolid
+                if key == 'scale' and isinstance(raw_expr, dict):
+                    evaluated_scale = {}
+                    for axis, axis_expr in raw_expr.items():
+                        try:
+                            evaluated_scale[axis] = aeval.eval(str(axis_expr))
+                        except Exception as e:
+                            print(f"Warning: Could not eval scale param '{axis}' for solid '{solid.name}': {e}")
+                            evaluated_scale[axis] = 1.0 # Default to 1 on failure
+                    temp_eval_params[key] = evaluated_scale
+                # Handle "solid_ref" key for scaledSolid: just pass it along
+                elif key == 'solid_ref' and isinstance(raw_expr, str):
+                    temp_eval_params[key] = raw_expr
+                elif isinstance(raw_expr, (str, int, float)):
+
+                    # Add default units to expression
+                    expr_to_eval = str(raw_expr)
+                    if key in length_attrs and default_lunit:
+                        expr_to_eval = f"({expr_to_eval}) * {default_lunit}"
+                    elif key in angle_attrs and default_aunit:
+                        expr_to_eval = f"({expr_to_eval}) * {default_aunit}"
+
                     try:
                         temp_eval_params[key] = aeval.eval(expr_to_eval)
                     except Exception as e:
@@ -154,7 +169,12 @@ class ProjectManager:
             ep = solid._evaluated_parameters
 
             solid_type = solid.type
-            if solid_type == 'box':
+            if solid_type == 'scaledSolid':
+                # For scaled solids, the evaluated params are the scale dict and the solid_ref
+                ep['scale'] = p.get('scale', {'x': 1.0, 'y': 1.0, 'z': 1.0})
+                ep['solid_ref'] = p.get('solid_ref')
+
+            elif solid_type == 'box':
                 ep['x'] = p.get('x', 0)
                 ep['y'] = p.get('y', 0)
                 ep['z'] = p.get('z', 0)
@@ -432,7 +452,8 @@ class ProjectManager:
         elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
         elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
         elif object_type == "physical_volume":
-            # Iterate through LVs and Assemblies using the new data model
+
+            # Iterate through LVs and Assemblies
             all_lvs = list(self.current_geometry_state.logical_volumes.values())
             for lv in all_lvs:
                 if lv.content_type == 'physvol':
@@ -707,8 +728,9 @@ class ProjectManager:
         
         position = {'x': '0', 'y': '0', 'z': '0'} 
         rotation = {'x': '0', 'y': '0', 'z': '0'}
+        scale    = {'x': '1', 'y': '1', 'z': '1'}
 
-        _, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation)
+        _, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation, scale)
         if pv_error:
             return False, f"Failed to place physical volume: {pv_error}"
         
@@ -768,7 +790,7 @@ class ProjectManager:
         self.recalculate_geometry_state()
         return True, None
 
-    def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation):
+    def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation, scale):
         if not self.current_geometry_state: return None, "No project loaded"
         
         parent_lv = self.current_geometry_state.logical_volumes.get(parent_lv_name)
@@ -785,14 +807,15 @@ class ProjectManager:
         # position_dict and rotation_dict are assumed to be {'x':val,...} in internal units
         new_pv = PhysicalVolumePlacement(pv_name, placed_lv_ref,
                                         position_val_or_ref=position,
-                                        rotation_val_or_ref=rotation)
+                                        rotation_val_or_ref=rotation,
+                                        scale_val_or_ref=scale)
         parent_lv.add_child(new_pv)
         print(f"Added Physical Volume: {pv_name} into {parent_lv_name}")
 
         self.recalculate_geometry_state()
         return new_pv.to_dict(), None
 
-    def update_physical_volume(self, pv_id, new_name, new_position, new_rotation):
+    def update_physical_volume(self, pv_id, new_name, new_position, new_rotation, new_scale):
         if not self.current_geometry_state: return False, "No project loaded"
         pv_to_update = None
 
@@ -821,9 +844,10 @@ class ProjectManager:
         if not pv_to_update:
             return False, f"Physical Volume with ID '{pv_id}' not found."
             
-        if new_name: pv_to_update.name = new_name
-        if new_position: pv_to_update.position = new_position
-        if new_rotation: pv_to_update.rotation = new_rotation
+        if new_name is not None: pv_to_update.name = new_name
+        if new_position is not None: pv_to_update.position = new_position
+        if new_rotation is not None: pv_to_update.rotation = new_rotation
+        if new_scale is not None: pv_to_update.scale = new_scale
         
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg

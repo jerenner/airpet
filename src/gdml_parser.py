@@ -410,6 +410,24 @@ class GDMLParser:
                 self.geometry_state.add_optical_surface(optical_surf)
                 return # End processing for this element
 
+            # --- Handle scaledSolid tag ---
+            if solid_type == 'scaledSolid':
+                params = {}
+                solidref_el = solid_el.find('solidref')
+                scaleref_el = solid_el.find('scaleref')
+                scale_el = solid_el.find('scale')
+
+                if solidref_el is not None:
+                    params['solid_ref'] = solidref_el.get('ref')
+                
+                if scaleref_el is not None:
+                    params['scale'] = scaleref_el.get('ref')
+                elif scale_el is not None:
+                    params['scale'] = {k: v for k, v in scale_el.attrib.items() if k != 'name'}
+                
+                temp_solids[name] = Solid(name, solid_type, params)
+                return # End processing for this element
+
             # Unit-aware parameters
             params = {}
 

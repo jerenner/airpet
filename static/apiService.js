@@ -341,20 +341,20 @@ export async function updateLogicalVolume(id, solid_ref, material_ref, vis_attri
     return handleResponse(response);
 }
 
-export async function addPhysicalVolume(parent_lv_name, name, volume_ref, position, rotation) {
+export async function addPhysicalVolume(parent_lv_name, name, volume_ref, position, rotation, scale) {
     const response = await fetch(`${API_BASE_URL}/add_physical_volume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent_lv_name, name, volume_ref, position, rotation })
+        body: JSON.stringify({ parent_lv_name, name, volume_ref, position, rotation, scale })
     });
     return handleResponse(response);
 }
 
-export async function updatePhysicalVolume(id, name, position, rotation) {
+export async function updatePhysicalVolume(id, name, position, rotation, scale) {
     const response = await fetch(`${API_BASE_URL}/update_physical_volume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, position, rotation })
+        body: JSON.stringify({ id, name, position, rotation, scale })
     });
     return handleResponse(response);
 }

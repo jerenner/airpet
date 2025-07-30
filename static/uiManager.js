@@ -10,7 +10,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     gdmlFileInput, projectFileInput, gdmlPartFileInput, jsonPartFileInput,
     aiResponseFileInput, stepFileInput,
     deleteSelectedObjectButton,
-    modeObserveButton, modeTranslateButton, modeRotateButton, //modeScaleButton,
+    modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton,
     toggleWireframeButton, toggleGridButton, toggleAxesButton,
     cameraModeOrbitButton, cameraModeFlyButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
@@ -121,7 +121,7 @@ export function initUI(cb) {
     modeObserveButton = document.getElementById('modeObserveButton');
     modeTranslateButton = document.getElementById('modeTranslateButton');
     modeRotateButton = document.getElementById('modeRotateButton');
-    //modeScaleButton = document.getElementById('modeScaleButton'); // If you add it
+    modeScaleButton = document.getElementById('modeScaleButton');
     currentModeDisplay = document.getElementById('currentModeDisplay');
 
     // View Menu Buttons
@@ -186,7 +186,7 @@ export function initUI(cb) {
     modeObserveButton.addEventListener('click', () => { setActiveModeButton('observe'); callbacks.onModeChangeClicked('observe'); });
     modeTranslateButton.addEventListener('click', () => { setActiveModeButton('translate'); callbacks.onModeChangeClicked('translate'); });
     modeRotateButton.addEventListener('click', () => { setActiveModeButton('rotate'); callbacks.onModeChangeClicked('rotate'); });
-    //if(modeScaleButton) modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
+    modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
 
     toggleWireframeButton.addEventListener('click', callbacks.onWireframeToggleClicked);
     toggleGridButton.addEventListener('click', callbacks.onGridToggleClicked);
@@ -343,12 +343,20 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
 
     populateDefineSelect(select, Object.keys(defines));
 
+    // --- Set default values and determine if units are needed ---
+    let displayValues = {x: '0', y: '0', z: '0'};
+    //let wrapInUnit = false;
+    if (type === 'scale') {
+        displayValues = {x: '1', y: '1', z: '1'}; // Scale defaults to 1
+    }//} else if (type === 'rotation') {
+    //    wrapInUnit = true; // Rotations are sent to backend with *deg
+    //}
+
     const data = pvData[type];
     const isAbsolute = typeof data !== 'string' || !defines[data];
     select.value = isAbsolute ? '[Absolute]' : data;
     
     // Determine the initial values to display
-    let displayValues = {x: '0', y: '0', z: '0'};
     if (isAbsolute) {
         // If it's absolute, the data itself is the dictionary of raw expressions
         displayValues = data || displayValues;
@@ -363,7 +371,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
         const comp = ExpressionInput.create(
             `inspector_pv_${type}_${axis}`, // Unique ID
             axis.toUpperCase(), // Label
-            displayValues[axis] || '0', // Initial value
+            displayValues[axis] || ((type === 'scale') ? '1' : '0'), // Initial value, default to 1 for scale, 0 for others
             projectState,
             (newValue) => { // onChange callback
                 if (select.value === '[Absolute]') {
@@ -373,12 +381,11 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
                         y: document.getElementById(`inspector_pv_${type}_y`).value,
                         z: document.getElementById(`inspector_pv_${type}_z`).value,
                     };
-                    // Wrap rotation values with *deg for the backend
-                    if (type === 'rotation') {
-                        newAbsValues.x = `${newAbsValues.x}`;
-                        newAbsValues.y = `${newAbsValues.y}`;
-                        newAbsValues.z = `${newAbsValues.z}`;
-                    }
+                    // if (wrapInUnit) {
+                    //     newAbsValues.x = `(${newAbsValues.x}) * deg`;
+                    //     newAbsValues.y = `(${newAbsValues.y}) * deg`;
+                    //     newAbsValues.z = `(${newAbsValues.z}) * deg`;
+                    // }
                     callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newAbsValues);
                 }
             }
@@ -391,9 +398,8 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     });
 
     select.addEventListener('change', (e) => {
-        const newValue = e.target.value === '[Absolute]'
-            ? { x: '0', y: '0', z: '0' }
-            : e.target.value;
+        const defaultValue = (type === 'scale') ? { x: '1', y: '1', z: '1' } : { x: '0', y: '0', z: '0' };
+        const newValue = e.target.value === '[Absolute]' ? defaultValue : e.target.value;
         callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newValue);
     });
 
@@ -415,13 +421,16 @@ export async function populateInspector(itemContext, projectState) {
         const allDefines = projectState.defines || {};
         const posDefines = {};
         const rotDefines = {};
+        const sclDefines = {};
         for (const defName in allDefines) {
             if (allDefines[defName].type === 'position') posDefines[defName] = allDefines[defName];
             if (allDefines[defName].type === 'rotation') rotDefines[defName] = allDefines[defName];
+            if (allDefines[defName].type === 'scale')    sclDefines[defName] = allDefines[defName];
         }
 
-        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)', data, posDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState);
         buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'scale',    'Scale',          data, sclDefines, projectState);
         
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";
@@ -676,7 +685,7 @@ export function setActiveModeButton(mode) {
     if(modeObserveButton) modeObserveButton.classList.toggle('active_mode', mode === 'observe');
     if(modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
     if(modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
-    //if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
+    if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
     if(currentModeDisplay) currentModeDisplay.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 }
 
@@ -740,9 +749,15 @@ export function updateHierarchy(projectState) {
         if (projectState.world_volume_ref && projectState.logical_volumes) {
             const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
             if (worldLV) {
+
                 // Create the root of the tree representing the World LV
-                const worldItem = createTreeItem(`(World) ${worldLV.name}`, 'logical_volume', worldLV.name, worldLV);
+                const worldItem = createTreeItem(worldLV.name, 'logical_volume', worldLV.id, worldLV);
                 worldItem.classList.add('world-volume-item'); // Add a class for special styling/selection
+                // Prepend the "(World)" text visually after the item is created
+                const nameSpan = worldItem.querySelector('.item-name');
+                if (nameSpan) {
+                    nameSpan.innerHTML = `<span style="font-weight:normal; color:#555;">(World) </span>` + nameSpan.innerHTML;
+                }
 
                 // Now, recursively build the tree for all PVs placed *inside* the world
                 const world_children_to_process = (worldLV.content_type === 'physvol') ? worldLV.content : [];
@@ -1162,13 +1177,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
     // For double-clicking physical volumes
     if (itemType === 'physical_volume') {
-        const visBtn = item.querySelector('.visibility-btn');
 
-        // --- Set the initial state of the button ---
+        // Add visibility button
+        const visBtn = item.querySelector('.visibility-btn');
         const isHidden = SceneManager.isPvHidden(itemIdForBackend);
         item.classList.toggle('item-hidden', isHidden);
         visBtn.style.opacity = isHidden ? '0.4' : '1.0';
-
         visBtn.addEventListener('click', (event) => {
             event.stopPropagation();
 
@@ -1179,6 +1193,16 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             item.classList.toggle('item-hidden', !isNowVisible);
             visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
             callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible);
+        });
+
+        // Add double-click listener
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            // We need to find the parent LV name. For a PV, the LV data is in additionalData.
+            const parentLV = findParentLV(item);
+            if (parentLV) {
+                 callbacks.onEditPVClicked(item.appData, parentLV.dataset.name);
+            }
         });
     }
     // For double-clicking of solids, volumes, etc.
@@ -1201,15 +1225,6 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditIsotopeClicked(item.appData);
-        });
-    } else if (itemType === 'physical_volume') {
-        item.addEventListener('dblclick', (event) => {
-            event.stopPropagation();
-            // We need to find the parent LV name. For a PV, the LV data is in additionalData.
-            const parentLV = findParentLV(item);
-            if (parentLV) {
-                 callbacks.onEditPVClicked(item.appData, parentLV.dataset.name);
-            }
         });
     } else if (itemType === 'solid') {
         item.addEventListener('dblclick', (event) => {

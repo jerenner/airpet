@@ -686,75 +686,59 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
     const selection = AppState.selectedHierarchyItems;
 
     if (wasHelperTransformed) {
-        // --- This was the GIZMO HELPER (multi-select or procedural group) ---
+        // --- CASE 1: A GROUP was transformed via the helper gizmo ---
+        const helperStart = initialTransforms.get('helper');
+        if (!helperStart) return;
 
-        if (selection.length === 1 && selection[0].type === 'physical_volume') {
-            // --- CASE 1: A SINGLE PROCEDURAL GROUP (like a replica) WAS MOVED ---
-            const ownerPV = selection[0].data; // This is lvReplica_phys
-            const ownerLV = AppState.currentProjectState.logical_volumes[ownerPV.volume_ref];
-            
-            // Get the final position of the gizmo/helper
-            const finalHelperPos = transformedObject.position;
+        const deltaMatrix = new THREE.Matrix4().multiplyMatrices(
+            transformedObject.matrixWorld,
+            new THREE.Matrix4().copy(helperStart.matrixWorld).invert()
+        );
 
-            let finalOwnerPos = finalHelperPos;
-
-            // FIX: If it's a replica with an offset, we must adjust the parent's final position.
-            if (ownerLV && ownerLV.content_type === 'replica') {
-                const replica = ownerLV.content;
-                const offset = parseFloat(replica.offset || 0);
-                const dir = replica.direction;
-                const axisVec = new THREE.Vector3(parseFloat(dir.x||0), parseFloat(dir.y||0), parseFloat(dir.z||0));
-                
-                // Subtract the offset from the helper's final position to get the parent's correct center
-                const offsetVec = axisVec.multiplyScalar(offset);
-                finalOwnerPos = new THREE.Vector3().copy(finalHelperPos).sub(offsetVec);
-            }
-
-            const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
-            updates.push({
-                pvId: selection[0].id,
-                position: { x: finalOwnerPos.x, y: finalOwnerPos.y, z: finalOwnerPos.z },
-                rotation: { x: euler.x, y: euler.y, z: euler.z }
-            });
-
-        } else {
-            // --- CASE 2: A STANDARD MULTI-SELECTION OF SIMPLE PVs WAS MOVED ---
-            const helperStart = initialTransforms.get('helper');
-            if (!helperStart) return;
-
-            const helperEndMatrix = transformedObject.matrixWorld;
-            const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
-            const deltaMatrix = new THREE.Matrix4().multiplyMatrices(helperEndMatrix, helperStartMatrixInv);
-
-            for (const item of selection) {
-                if (item.type === 'physical_volume') {
-                    const initialMesh = initialTransforms.get(item.id);
-                    if (initialMesh) {
-                        const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
-                        const pos = new THREE.Vector3();
-                        const rot = new THREE.Quaternion();
-                        const scl = new THREE.Vector3();
-                        finalMatrix.decompose(pos, rot, scl);
-                        const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
-
-                        updates.push({
-                            pvId: item.id,
-                            position: { x: pos.x, y: pos.y, z: pos.z },
-                            rotation: { x: euler.x, y: euler.y, z: euler.z }
-                        });
+        for (const item of selection) {
+            if (item.type === 'physical_volume') {
+                const initialMeshState = initialTransforms.get(item.id);
+                if (initialMeshState) {
+                    // Apply the delta to the item's initial world matrix to find its new world matrix
+                    const finalWorldMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMeshState.matrixWorld);
+                    
+                    // We need to convert this new world matrix back to a local transform
+                    // relative to its parent in the THREE.js scene.
+                    const parentWorldMatrixInv = new THREE.Matrix4();
+                    if (initialMeshState.parent) {
+                        parentWorldMatrixInv.copy(initialMeshState.parent.matrixWorld).invert();
                     }
+                    
+                    const finalLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentWorldMatrixInv, finalWorldMatrix);
+
+                    const pos = new THREE.Vector3();
+                    const rot = new THREE.Quaternion();
+                    const scl = new THREE.Vector3();
+                    finalLocalMatrix.decompose(pos, rot, scl);
+                    const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+
+                    updates.push({
+                        pvId: item.id,
+                        position: { x: pos.x, y: pos.y, z: pos.z },
+                        rotation: { x: euler.x, y: euler.y, z: euler.z },
+                        scale: { x: scl.x, y: scl.y, z: scl.z }
+                    });
                 }
             }
         }
     } else if (transformedObject.userData.id) {
-        // --- CASE 3: A SINGLE standard physical volume was moved directly ---
+        // --- CASE 2: A SINGLE object was transformed directly ---
         const pvId = transformedObject.userData.id;
+        // The object's transform properties ARE its new local transform.
         const pos = transformedObject.position;
         const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
+        const scale = transformedObject.scale;
+        
         updates.push({
             pvId: pvId,
             position: { x: pos.x, y: pos.y, z: pos.z },
-            rotation: { x: euler.x, y: euler.y, z: euler.z }
+            rotation: { x: euler.x, y: euler.y, z: euler.z },
+            scale:    { x: scale.x, y: scale.y, z: scale.z }
         });
     }
 
@@ -764,14 +748,21 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
     try {
         let lastResult;
         for (const update of updates) {
-            // This loop now correctly handles all cases: single, multi-select, and procedural group.
-            lastResult = await APIService.updatePhysicalVolume(update.pvId, null, update.position, update.rotation);
+            // This is a direct update, so we are overwriting any defines.
+            // A more advanced version could prompt the user.
+            // Ensure we are not sending undefined values.
+            const position = update.position || null;
+            const rotation = update.rotation || null;
+            const scale = update.scale || null;
+
+            lastResult = await APIService.updatePhysicalVolume(update.pvId, null, position, rotation, scale);
             if (!lastResult.success) {
                 UIManager.showError(`Failed to update ${update.pvId}: ${lastResult.error}`);
                 break;
             }
         }
         if (lastResult) {
+            // Restore selection based on the original selection context
             syncUIWithState(lastResult, AppState.selectedHierarchyItems);
         }
     } catch (error) {
@@ -929,14 +920,14 @@ async function handlePVEditorConfirm(data) {
     if (data.isEdit) {
         UIManager.showLoading("Updating Physical Volume...");
         try {
-            const result = await APIService.updatePhysicalVolume(data.id, data.name, data.position, data.rotation);
+            const result = await APIService.updatePhysicalVolume(data.id, data.name, data.position, data.rotation, data.scale);
             syncUIWithState(result, selectionContext);
         } catch (error) { UIManager.showError("Error updating PV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
     } else {
         UIManager.showLoading("Placing Physical Volume...");
         try {
-            const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation);
+            const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation, data.scale);
             
             // After placement, we want the PARENT LV to remain selected
             syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name, name: data.parent_lv_name }]);

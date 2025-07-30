@@ -1160,7 +1160,29 @@ function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometryCache, 
     let finalGeometry = null;
 
     // 2. Build geometry based on type
-    if (solidData.type === 'boolean') {
+    // --- SCALED SOLID ---
+    if (solidData.type === 'scaledSolid') {
+        const p = solidData._evaluated_parameters;
+        console.log("Got eval params", p)
+        if (p && p.solid_ref && p.scale) {
+            // Recursively get the geometry of the solid that is being scaled
+            const baseGeometry = _getOrBuildGeometry(p.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+            if (baseGeometry) {
+                // Clone it so we don't modify the cached original
+                finalGeometry = baseGeometry.clone();
+                // Apply the scaling transformation
+                finalGeometry.scale(p.scale.x, p.scale.y, p.scale.z);
+                // The scaled geometry should have its bounding box re-computed for proper camera framing etc.
+                finalGeometry.computeBoundingBox();
+                finalGeometry.computeBoundingSphere();
+            }
+        }
+        if (!finalGeometry) { // Handle error case
+             console.error(`Could not build scaledSolid '${solidName}'`);
+             return new THREE.BoxGeometry(10,10,10); // Return a placeholder
+        }
+
+    } else if (solidData.type === 'boolean') {
         const recipe = solidData.raw_parameters.recipe;
         if (!recipe || recipe.length < 1 || !recipe[0].solid_ref) {
             console.error(`Boolean solid '${solidName}' has an invalid recipe.`);
@@ -1290,6 +1312,7 @@ export function renderObjects(pvDescriptions, projectState) {
             const euler = new THREE.Euler(pvData.rotation.x, pvData.rotation.y, pvData.rotation.z, 'ZYX');
             mesh.quaternion.setFromEuler(euler);
         }
+        if (pvData.scale) mesh.scale.set(pvData.scale.x, pvData.scale.y, pvData.scale.z);
 
         // --- Apply persistent visibility state ---
         if (hiddenPvIds.has(pvData.id)) {

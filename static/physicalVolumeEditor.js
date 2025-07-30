@@ -7,7 +7,7 @@ let isEditMode = false;
 let editingPVId = null;
 let parentLVName = null;
 
-let posDefineSelect, rotDefineSelect;
+let posDefineSelect, rotDefineSelect, sclDefineSelect;
 let positionDefines, rotationDefines;
 let currentProjectState;
 
@@ -23,12 +23,14 @@ export function initPVEditor(callbacks) {
 
     posDefineSelect = document.getElementById('pv_pos_define_select');
     rotDefineSelect = document.getElementById('pv_rot_define_select');
+    sclDefineSelect = document.getElementById('pv_scl_define_select');
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
 
     posDefineSelect.addEventListener('change', handleDefineSelectionChange);
     rotDefineSelect.addEventListener('change', handleDefineSelectionChange);
+    sclDefineSelect.addEventListener('change', handleDefineSelectionChange);
 
     console.log("Physical Volume Editor Initialized.");
 }
@@ -50,8 +52,10 @@ export function show(pvData = null, projectState = null, parentContext = null) {
     // Get an array of NAMES, not objects.
     const posDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'position');
     const rotDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'rotation');
+    const sclDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'scale');
     populateDefineSelect(posDefineSelect, posDefines);
     populateDefineSelect(rotDefineSelect, rotDefines);
+    populateDefineSelect(sclDefineSelect, sclDefines);
 
     if (pvData && pvData.id) {
         isEditMode = true;
@@ -64,6 +68,7 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         
         setupTransformUI('position', pvData.position, posDefineSelect, posDefines);
         setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines);
+        setupTransformUI('scale',    pvData.scale,    sclDefineSelect, sclDefines);
     } else {
         isEditMode = false;
         editingPVId = null;
@@ -74,6 +79,7 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         
         setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines);
         setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines);
+        setupTransformUI('scale',    {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines);
     }
     modalElement.style.display = 'block';
 }
@@ -108,7 +114,7 @@ function handleConfirm() {
     const lvRef = lvSelect.value;
     if (!lvRef) { alert("Please select a Logical Volume to place."); return; }
 
-    let position, rotation;
+    let position, rotation, scale;
 
     if (posDefineSelect.value === '[Absolute]') {
         position = {
@@ -122,12 +128,22 @@ function handleConfirm() {
 
     if (rotDefineSelect.value === '[Absolute]') {
         rotation = {
-            x: `(${document.getElementById('pv_rotation_x').value}) * deg`,
-            y: `(${document.getElementById('pv_rotation_y').value}) * deg`,
-            z: `(${document.getElementById('pv_rotation_z').value}) * deg`,
+            x: document.getElementById('pv_rotation_x').value,
+            y: document.getElementById('pv_rotation_y').value,
+            z: document.getElementById('pv_rotation_z').value,
         };
     } else {
         rotation = rotDefineSelect.value;
+    }
+
+    if (sclDefineSelect.value === '[Absolute]') {
+        scale = {
+            x: document.getElementById('pv_scale_x').value,
+            y: document.getElementById('pv_scale_y').value,
+            z: document.getElementById('pv_scale_z').value,
+        };
+    } else {
+        scale = sclDefineSelect.value;
     }
 
     onConfirmCallback({
@@ -138,6 +154,7 @@ function handleConfirm() {
         volume_ref: lvRef,
         position: position,
         rotation: rotation,
+        scale: scale,
     });
     
     hide();
@@ -172,7 +189,7 @@ function setupTransformUI(type, value, select, defines) {
     const isAbsolute = typeof value !== 'string' || !defines.includes(value);
     select.value = isAbsolute ? '[Absolute]' : value;
     
-    let displayValues = {x: '0', y: '0', z: '0'};
+    let displayValues = (type === 'scale') ? {x: '1', y: '1', z: '1'} : {x: '0', y: '0', z: '0'};
     if (isAbsolute) {
         displayValues = value || displayValues;
     } else {
