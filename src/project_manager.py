@@ -53,6 +53,24 @@ class ProjectManager:
 
         # Use our central factory to get a correctly configured interpreter.
         aeval = create_configured_asteval()
+
+        # Helper function for evaluating transforms ##
+        def evaluate_transform_part(part_data, default_val):
+            if isinstance(part_data, str): # It's a reference to a define
+                return aeval.symtable.get(part_data, default_val)
+            elif isinstance(part_data, dict): # It's a dict of expressions
+                evaluated_dict = {}
+                for axis, raw_expr in part_data.items():
+                    try:
+                        # Check if it's already a number
+                        if isinstance(raw_expr, (int, float)):
+                            evaluated_dict[axis] = raw_expr
+                        else:
+                            evaluated_dict[axis] = aeval.eval(str(raw_expr))
+                    except Exception:
+                        evaluated_dict[axis] = default_val.get(axis, 0)
+                return evaluated_dict
+            return default_val
         
         # --- Stage 1: Iteratively resolve all defines ---
         unresolved_defines = list(state.defines.values())
@@ -164,7 +182,7 @@ class ProjectManager:
                 else:
                     temp_eval_params[key] = raw_expr
 
-            # Second pass for normalization now includes defaults ##
+            # Second pass for normalization ##
             p = temp_eval_params
             ep = solid._evaluated_parameters
 
@@ -173,6 +191,15 @@ class ProjectManager:
                 # For scaled solids, the evaluated params are the scale dict and the solid_ref
                 ep['scale'] = p.get('scale', {'x': 1.0, 'y': 1.0, 'z': 1.0})
                 ep['solid_ref'] = p.get('solid_ref')
+
+            elif solid_type == 'reflectedSolid':
+                ep['solid_ref'] = p.get('solid_ref')
+                transform = p.get('transform', {})
+                ep['transform'] = {
+                    '_evaluated_position': evaluate_transform_part(transform.get('position'), {'x': 0, 'y': 0, 'z': 0}),
+                    '_evaluated_rotation': evaluate_transform_part(transform.get('rotation'), {'x': 0, 'y': 0, 'z': 0}),
+                    '_evaluated_scale': evaluate_transform_part(transform.get('scale'), {'x': 1, 'y': 1, 'z': 1})
+                }
 
             elif solid_type == 'box':
                 ep['x'] = p.get('x', 0)
@@ -265,24 +292,6 @@ class ProjectManager:
                 solid._evaluated_parameters = p
 
         # --- Stage 4: Evaluate all placement transforms ---
-
-        # Helper function for evaluating transforms ##
-        def evaluate_transform_part(part_data, default_val):
-            if isinstance(part_data, str): # It's a reference to a define
-                return aeval.symtable.get(part_data, default_val)
-            elif isinstance(part_data, dict): # It's a dict of expressions
-                evaluated_dict = {}
-                for axis, raw_expr in part_data.items():
-                    try:
-                        # Check if it's already a number
-                        if isinstance(raw_expr, (int, float)):
-                            evaluated_dict[axis] = raw_expr
-                        else:
-                            evaluated_dict[axis] = aeval.eval(str(raw_expr))
-                    except Exception:
-                        evaluated_dict[axis] = default_val.get(axis, 0)
-                return evaluated_dict
-            return default_val
 
         # Get all LVs and Assemblies to check for placements
         all_lvs = list(state.logical_volumes.values())

@@ -428,6 +428,24 @@ class GDMLParser:
                 temp_solids[name] = Solid(name, solid_type, params)
                 return # End processing for this element
 
+            # --- Handle reflectedSolid tag ---
+            if solid_type == 'reflectedSolid':
+                params = {}
+                solidref_el = solid_el.find('solidref')
+                if solidref_el is not None:
+                    params['solid_ref'] = solidref_el.get('ref')
+                
+                # A reflected solid has a full transform, just like a physvol
+                pos, rot, scl = self._resolve_transform(solid_el)
+                params['transform'] = {
+                    'position': pos,
+                    'rotation': rot,
+                    'scale': scl
+                }
+                
+                temp_solids[name] = Solid(name, solid_type, params)
+                return # End processing for this element
+
             # Unit-aware parameters
             params = {}
 

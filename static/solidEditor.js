@@ -278,6 +278,7 @@ function renderParamsUI(params = {}) {
     const type = typeSelect.value;
     const isBoolean = type === 'boolean';
     const isScaled = type === 'scaledSolid';
+    const isReflected = type === 'reflectedSolid';
 
     if (isBoolean) {
         if (booleanRecipe.length === 0) {
@@ -318,6 +319,65 @@ function renderParamsUI(params = {}) {
         }
 
         // Add change listener to update preview
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
+    } else if (isReflected) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        
+        // --- Solid Reference Dropdown ---
+        const solidItem = document.createElement('div');
+        solidItem.className = 'property_item';
+        solidItem.innerHTML = `<label for="reflected_solid_ref">Solid to Transform:</label>`;
+        const solidRefSelect = document.createElement('select');
+        solidRefSelect.id = 'reflected_solid_ref';
+        const allSolids = Object.keys(currentProjectState.solids || {});
+        const availableSolids = isEditMode ? allSolids.filter(s => s !== editingSolidId) : allSolids;
+        populateSelect(solidRefSelect, availableSolids);
+        solidItem.appendChild(solidRefSelect);
+        dynamicParamsDiv.appendChild(solidItem);
+        
+        // --- Transform Editors ---
+        const transformWrapper = document.createElement('div');
+        transformWrapper.className = 'transform-controls-inline'; // Reuse this style
+        dynamicParamsDiv.appendChild(transformWrapper);
+        
+        const transformData = params.transform || {};
+
+        // Position
+        const posGroup = document.createElement('div');
+        posGroup.className = 'transform-group';
+        posGroup.innerHTML = `<span>Position (mm)</span>`;
+        transformWrapper.appendChild(posGroup);
+        ['x', 'y', 'z'].forEach(axis => {
+            const initialVal = transformData.position?.[axis] || '0';
+            posGroup.appendChild(ExpressionInput.create(`p_reflect_pos_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+        });
+
+        // Rotation
+        const rotGroup = document.createElement('div');
+        rotGroup.className = 'transform-group';
+        rotGroup.innerHTML = `<span>Rotation (rad)</span>`;
+        transformWrapper.appendChild(rotGroup);
+        ['x', 'y', 'z'].forEach(axis => {
+            const initialVal = transformData.rotation?.[axis] || '0';
+            rotGroup.appendChild(ExpressionInput.create(`p_reflect_rot_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+        });
+
+        // Scale (including reflection)
+        const sclGroup = document.createElement('div');
+        sclGroup.className = 'transform-group';
+        sclGroup.innerHTML = `<span>Scale / Reflection</span>`;
+        transformWrapper.appendChild(sclGroup);
+        ['x', 'y', 'z'].forEach(axis => {
+            const initialVal = transformData.scale?.[axis] || '1';
+            sclGroup.appendChild(ExpressionInput.create(`p_reflect_scl_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+        });
+
+        // Pre-select the solid if in edit mode
+        if (params && params.solid_ref) {
+            solidRefSelect.value = params.solid_ref;
+        }
+        
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
     } else {
@@ -660,6 +720,19 @@ function getRawParamsFromUI() {
             y: p('p_scale_y'),
             z: p('p_scale_z')
         };
+    } else if (type === 'reflectedSolid') {
+        raw_params.solid_ref = document.getElementById('reflected_solid_ref').value;
+        raw_params.transform = {
+            position: {
+                x: p('p_reflect_pos_x'), y: p('p_reflect_pos_y'), z: p('p_reflect_pos_z')
+            },
+            rotation: {
+                x: p('p_reflect_rot_x'), y: p('p_reflect_rot_y'), z: p('p_reflect_rot_z')
+            },
+            scale: {
+                x: p('p_reflect_scl_x'), y: p('p_reflect_scl_y'), z: p('p_reflect_scl_z')
+            }
+        };
     } else if (type === 'box') {
         raw_params.x = p('p_x');
         raw_params.y = p('p_y'); 
@@ -792,6 +865,32 @@ async function updatePreview() {
                 const scaleY = (await APIService.evaluateExpression(document.getElementById('p_scale_y').value, currentProjectState)).result || 1;
                 const scaleZ = (await APIService.evaluateExpression(document.getElementById('p_scale_z').value, currentProjectState)).result || 1;
                 geometry.scale(scaleX, scaleY, scaleZ);
+            }
+        }
+    } else if (type === 'reflectedSolid') {
+        const solidToReflectName = document.getElementById('reflected_solid_ref').value;
+        const solidToReflectData = currentProjectState.solids[solidToReflectName];
+        if (solidToReflectData) {
+            geometry = createPrimitiveGeometry(solidToReflectData, currentProjectState, csgEvaluator);
+            if (geometry) {
+                // Evaluate all transform components
+                const posX = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_x').value, currentProjectState)).result || 0;
+                const posY = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_y').value, currentProjectState)).result || 0;
+                const posZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_z').value, currentProjectState)).result || 0;
+                const rotX = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_x').value, currentProjectState)).result || 0;
+                const rotY = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_y').value, currentProjectState)).result || 0;
+                const rotZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_z').value, currentProjectState)).result || 0;
+                const sclX = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_x').value, currentProjectState)).result || 1;
+                const sclY = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_y').value, currentProjectState)).result || 1;
+                const sclZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_z').value, currentProjectState)).result || 1;
+                
+                // Build and apply the transformation matrix
+                const position = new THREE.Vector3(posX, posY, posZ);
+                const euler = new THREE.Euler(rotX, rotY, rotZ, 'ZYX');
+                const quaternion = new THREE.Quaternion().setFromEuler(euler);
+                const scale = new THREE.Vector3(sclX, sclY, sclZ);
+                const matrix = new THREE.Matrix4().compose(position, quaternion, scale);
+                geometry.applyMatrix4(matrix);
             }
         }
     } else { // It's a primitive

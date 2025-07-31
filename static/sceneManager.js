@@ -1181,7 +1181,36 @@ function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometryCache, 
              console.error(`Could not build scaledSolid '${solidName}'`);
              return new THREE.BoxGeometry(10,10,10); // Return a placeholder
         }
+    } else if (solidData.type === 'reflectedSolid') {
+        const p = solidData._evaluated_parameters;
+        if (p && p.solid_ref && p.transform) {
+            // Recursively get the geometry of the solid that is being reflected/transformed
+            const baseGeometry = _getOrBuildGeometry(p.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+            if (baseGeometry) {
+                finalGeometry = baseGeometry.clone();
+                
+                // Create a transformation matrix from the evaluated parameters
+                const pos = p.transform._evaluated_position || {x:0, y:0, z:0};
+                const rot = p.transform._evaluated_rotation || {x:0, y:0, z:0};
+                const scl = p.transform._evaluated_scale || {x:1, y:1, z:1};
 
+                const positionVec = new THREE.Vector3(pos.x, pos.y, pos.z);
+                const euler = new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX');
+                const quaternion = new THREE.Quaternion().setFromEuler(euler);
+                const scaleVec = new THREE.Vector3(scl.x, scl.y, scl.z);
+
+                const matrix = new THREE.Matrix4().compose(positionVec, quaternion, scaleVec);
+
+                // Apply the matrix to the geometry
+                finalGeometry.applyMatrix4(matrix);
+                finalGeometry.computeBoundingBox();
+                finalGeometry.computeBoundingSphere();
+            }
+        }
+        if (!finalGeometry) {
+             console.error(`Could not build reflectedSolid '${solidName}'`);
+             return new THREE.BoxGeometry(10,10,10);
+        }
     } else if (solidData.type === 'boolean') {
         const recipe = solidData.raw_parameters.recipe;
         if (!recipe || recipe.length < 1 || !recipe[0].solid_ref) {
