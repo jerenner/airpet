@@ -266,26 +266,39 @@ class ProjectManager:
                 ep['alpha2'] = p.get('alpha2', 0)
                 
             elif solid_type == 'twistedbox':
-                ep['phi_twist'] = p.get('PhiTwist', 0)
-                ep['dx'] = p.get('dx', 0) / 2.0
-                ep['dy'] = p.get('dy', 0) / 2.0
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['PhiTwist'] = p.get('PhiTwist', 0)
+                ep['x'] = p.get('x', 0) / 2.0
+                ep['y'] = p.get('y', 0) / 2.0
+                ep['z'] = p.get('z', 0) / 2.0
             
             elif solid_type == 'twistedtrd':
-                ep['phi_twist'] = p.get('PhiTwist', 0)
-                ep['dx1'] = p.get('dx1', 0) / 2.0
-                ep['dx2'] = p.get('dx2', 0) / 2.0
-                ep['dy1'] = p.get('dy1', 0) / 2.0
-                ep['dy2'] = p.get('dy2', 0) / 2.0
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['PhiTwist'] = p.get('PhiTwist', 0)
+                ep['x1'] = p.get('x1', 0) / 2.0
+                ep['x2'] = p.get('x2', 0) / 2.0
+                ep['y1'] = p.get('y1', 0) / 2.0
+                ep['y2'] = p.get('y2', 0) / 2.0
+                ep['z'] = p.get('z', 0) / 2.0
+
+            elif solid_type == 'twistedtrap':
+                ep['PhiTwist'] = p.get('PhiTwist', 0)
+                ep['z'] = p.get('z', 0)
+                ep['Theta'] = p.get('Theta', 0)
+                ep['Phi'] = p.get('Phi', 0)
+                ep['y1'] = p.get('y1', 0)
+                ep['x1'] = p.get('x1', 0)
+                ep['x2'] = p.get('x2', 0)
+                ep['y2'] = p.get('y2', 0)
+                ep['x3'] = p.get('x3', 0)
+                ep['x4'] = p.get('x4', 0)
+                ep['Alph'] = p.get('Alph', 0)
 
             elif solid_type == 'twistedtubs':
                 ep['twistedangle'] = p.get('twistedangle', 0)
-                ep['rmin'] = p.get('endinnerrad', 0)
-                ep['rmax'] = p.get('endouterrad', 0)
-                ep['dz'] = p.get('zlen', 0) / 2.0
-                ep['dphi'] = p.get('phi', p.get('totphi', 2 * math.pi))
-            
+                ep['endinnerrad'] = p.get('endinnerrad', 0)
+                ep['endouterrad'] = p.get('endouterrad', 0)
+                ep['zlen'] = p.get('zlen', 0) / 2.0
+                ep['phi'] = p.get('phi', 2 * math.pi)
+
             elif solid_type in ['genericPolycone', 'genericPolyhedra']:
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)

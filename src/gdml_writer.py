@@ -324,10 +324,10 @@ class GDMLWriter:
             solid_el.set("vertex4", p['vertex4_ref'])
 
         elif solid_obj.type == 'twistedbox':
-            solid_el.set("PhiTwist", str(convert_from_internal_units(p['phi_twist'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("x", str(p['dx'] * 2.0))
-            solid_el.set("y", str(p['dy'] * 2.0))
-            solid_el.set("z", str(p['dz'] * 2.0))
+            solid_el.set("PhiTwist", str(convert_from_internal_units(p['PhiTwist'], DEFAULT_OUTPUT_AUNIT, "angle")))
+            solid_el.set("x", str(p['x'] * 2.0))
+            solid_el.set("y", str(p['y'] * 2.0))
+            solid_el.set("z", str(p['z'] * 2.0))
 
         elif solid_obj.type == 'twistedtrd':
             solid_el.set("PhiTwist", str(convert_from_internal_units(p['phi_twist'], DEFAULT_OUTPUT_AUNIT, "angle")))
@@ -338,24 +338,32 @@ class GDMLWriter:
             solid_el.set("z", str(p['dz'] * 2.0))
 
         elif solid_obj.type == 'twistedtrap':
-            solid_el.set("PhiTwist", str(convert_from_internal_units(p['phi_twist'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("z", str(p['dz'] * 2.0))
-            solid_el.set("Theta", str(convert_from_internal_units(p['theta'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("Phi", str(convert_from_internal_units(p['phi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("y1", str(p['dy1'] * 2.0))
-            solid_el.set("x1", str(p['dx1'] * 2.0))
-            solid_el.set("x2", str(p['dx2'] * 2.0))
-            solid_el.set("y2", str(p['dy2'] * 2.0))
-            solid_el.set("x3", str(p['dx3'] * 2.0))
-            solid_el.set("x4", str(p['dx4'] * 2.0))
-            solid_el.set("Alph", str(convert_from_internal_units(p['alpha'], DEFAULT_OUTPUT_AUNIT, "angle"))) # Note 'Alph' in GDML
+            solid_el.set("PhiTwist", str(convert_from_internal_units(p['PhiTwist'], DEFAULT_OUTPUT_AUNIT, "angle")))
+            solid_el.set("z", str(p['z'] * 2.0))
+            solid_el.set("Theta", str(convert_from_internal_units(p['Theta'], DEFAULT_OUTPUT_AUNIT, "angle")))
+            solid_el.set("Phi", str(convert_from_internal_units(p['Phi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+            solid_el.set("y1", str(p['y1'] * 2.0))
+            solid_el.set("x1", str(p['x1'] * 2.0))
+            solid_el.set("x2", str(p['x2'] * 2.0))
+            solid_el.set("y2", str(p['y2'] * 2.0))
+            solid_el.set("x3", str(p['x3'] * 2.0))
+            solid_el.set("x4", str(p['x4'] * 2.0))
+            solid_el.set("Alph", str(convert_from_internal_units(p['Alph'], DEFAULT_OUTPUT_AUNIT, "angle"))) # Note 'Alph' in GDML
+        
+        elif solid_obj.type == 'twistedtrd':
+            solid_el.set("PhiTwist", str(p.get('PhiTwist')))
+            solid_el.set("x1", str(p.get('x1')))
+            solid_el.set("x2", str(p.get('x2')))
+            solid_el.set("y1", str(p.get('y1')))
+            solid_el.set("y2", str(p.get('y2')))
+            solid_el.set("z", str(p.get('z')))
 
         elif solid_obj.type == 'twistedtubs':
             solid_el.set("twistedangle", str(convert_from_internal_units(p['twistedangle'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("endinnerrad", str(p['rmin'])) # Map back from our rmin/rmax
-            solid_el.set("endouterrad", str(p['rmax']))
-            solid_el.set("zlen", str(p['dz'] * 2.0))
-            solid_el.set("phi", str(convert_from_internal_units(p['dphi'], DEFAULT_OUTPUT_AUNIT, "angle"))) # map back from dphi
+            solid_el.set("endinnerrad", str(p['endinnerrad']))
+            solid_el.set("endouterrad", str(p['endouterrad']))
+            solid_el.set("zlen", str(p['zlen'] * 2.0))
+            solid_el.set("phi", str(convert_from_internal_units(p['phi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             # nseg could also be written if stored
 
         elif solid_obj.type == "cutTube":

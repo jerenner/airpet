@@ -513,6 +513,40 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
                 ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'), currentProjectState)
+            ],
+            twistedbox: () => [
+                ExpressionInput.create('p_x', 'Full Length X (mm)', p('x', '100'), currentProjectState),
+                ExpressionInput.create('p_y', 'Full Length Y (mm)', p('y', '100'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState)
+            ],
+            twistedtrap: () => [
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_z', 'Half Length Z (mm)', p('z', '100'), currentProjectState),
+                ExpressionInput.create('p_Theta', 'Polar Angle Theta (rad)', p('Theta', '0'), currentProjectState),
+                ExpressionInput.create('p_Phi', 'Azimuthal Angle Phi (rad)', p('Phi', '0'), currentProjectState),
+                ExpressionInput.create('p_y1', 'Half Length Y at -z (mm)', p('y1', '50'), currentProjectState),
+                ExpressionInput.create('p_x1', 'Half Length X at -z, -y (mm)', p('x1', '50'), currentProjectState),
+                ExpressionInput.create('p_x2', 'Half Length X at -z, +y (mm)', p('x2', '50'), currentProjectState),
+                ExpressionInput.create('p_y2', 'Half Length Y at +z (mm)', p('y2', '75'), currentProjectState),
+                ExpressionInput.create('p_x3', 'Half Length X at +z, -y (mm)', p('x3', '75'), currentProjectState),
+                ExpressionInput.create('p_x4', 'Half Length X at +z, +y (mm)', p('x4', '75'), currentProjectState),
+                ExpressionInput.create('p_Alph', 'Tilt Angle Alpha (rad)', p('Alph', '0'), currentProjectState),
+            ],
+            twistedtrd: () => [
+                ExpressionInput.create('p_x1', 'X Half-Length at -z (mm)', p('x1', '50'), currentProjectState),
+                ExpressionInput.create('p_x2', 'X Half-Length at +z (mm)', p('x2', '75'), currentProjectState),
+                ExpressionInput.create('p_y1', 'Y Half-Length at -z (mm)', p('y1', '50'), currentProjectState),
+                ExpressionInput.create('p_y2', 'Y Half-Length at +z (mm)', p('y2', '75'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState)
+            ],
+            twistedtubs: () => [
+                ExpressionInput.create('p_twistedangle', 'Twist Angle (rad)', p('twistedangle', 'pi/4'), currentProjectState),
+                ExpressionInput.create('p_endinnerrad', 'Inner Radius (mm)', p('endinnerrad', '50'), currentProjectState),
+                ExpressionInput.create('p_endouterrad', 'Outer Radius (mm)', p('endouterrad', '100'), currentProjectState),
+                ExpressionInput.create('p_zlen', 'Full Length Z (mm)', p('zlen', '200'), currentProjectState),
+                ExpressionInput.create('p_phi', 'Delta Phi / Sector Angle (rad)', p('phi', '2*pi'), currentProjectState)
             ]
         };
         
@@ -980,6 +1014,36 @@ function getRawParamsFromUI() {
     } else if (type === 'eltube') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
         raw_params.dz = p('p_dz');
+    } else if (type === 'twistedbox') {
+        raw_params.x = p('p_x');
+        raw_params.y = p('p_y');
+        raw_params.z = p('p_z');
+        raw_params.PhiTwist = p('p_PhiTwist');
+    } else if (type === 'twistedtrap') {
+        raw_params.PhiTwist = p('p_PhiTwist');
+        raw_params.z = p('p_z');
+        raw_params.Theta = p('p_Theta');
+        raw_params.Phi = p('p_Phi');
+        raw_params.y1 = p('p_y1');
+        raw_params.x1 = p('p_x1');
+        raw_params.x2 = p('p_x2');
+        raw_params.y2 = p('p_y2');
+        raw_params.x3 = p('p_x3');
+        raw_params.x4 = p('p_x4');
+        raw_params.Alph = p('p_Alph');
+    } else if (type === 'twistedtrd') {
+        raw_params.x1 = p('p_x1');
+        raw_params.x2 = p('p_x2');
+        raw_params.y1 = p('p_y1');
+        raw_params.y2 = p('p_y2');
+        raw_params.z = p('p_z');
+        raw_params.PhiTwist = p('p_PhiTwist');
+    } else if (type === 'twistedtubs') {
+        raw_params.twistedangle = p('p_twistedangle');
+        raw_params.endinnerrad = p('p_endinnerrad');
+        raw_params.endouterrad = p('p_endouterrad');
+        raw_params.zlen = p('p_zlen');
+        raw_params.phi = p('p_phi');
     }
     return raw_params;
 }
@@ -1218,6 +1282,7 @@ async function updatePreview() {
         const p = tempSolidData._evaluated_parameters;
         if (p.dz !== undefined) p.dz /= 2.0;
         
+        tempSolidData._evaluated_parameters = p;
         geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
     }
     

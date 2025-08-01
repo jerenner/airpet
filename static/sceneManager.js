@@ -4,6 +4,7 @@ import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 
 // --- Module-level variables ---
@@ -1027,18 +1028,19 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             }
             break;
         case 'twistedbox':
-        case 'twistedtrd':
             {
                 // Both twistedbox and twistedtrd can be handled by the same logic.
                 // A twistedbox is just a twistedtrd with dx1=dx2 and dy1=dy2.
-                const dz = p.dz;
-                const phiTwist = p.phi_twist;
+                const dz = p.z;
+                const phiTwist = p.PhiTwist;
                 
                 // Define the 2D vertices for the bottom and top faces
-                const dx1 = p.dx1 !== undefined ? p.dx1 : p.dx; // Use 'dx' for twistedbox
-                const dy1 = p.dy1 !== undefined ? p.dy1 : p.dy;
-                const dx2 = p.dx2 !== undefined ? p.dx2 : p.dx;
-                const dy2 = p.dy2 !== undefined ? p.dy2 : p.dy;
+                const dx1 = p.x1 !== undefined ? p.x1 : p.x; // Use 'dx' for twistedbox
+                const dy1 = p.y1 !== undefined ? p.y1 : p.y;
+                const dx2 = p.x2 !== undefined ? p.x2 : p.x;
+                const dy2 = p.y2 !== undefined ? p.y2 : p.y;
+
+                console.log("Rendering with z = ",phiTwist)
 
                 const bottomVerts = [
                     new THREE.Vector2(-dx1, -dy1),
@@ -1088,77 +1090,218 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.computeVertexNormals();
             }
             break;
+        case 'twistedtrap':
+            {
+                const halfZ = p.z;
+                const y1 = p.y1; const x1 = p.x1; const x2 = p.x2;
+                const y2 = p.y2; const x3 = p.x3; const x4 = p.x4;
+                const phiTwist = p.PhiTwist; // Twist angle
+                const theta = p.Theta; // Polar angle of line joining face centers
+                const phi = p.Phi; // Azimuthal angle of line joining face centers
+                const alph = p.Alph; // Tilt angle of y-sides
+
+                // Calculate the 8 vertices of the twisted trap.
+                // This logic directly mimics the G4TwistedTrap constructor.
+                const tanAlph = Math.tan(alph);
+                const tanTheta_cosPhi = Math.tan(theta) * Math.cos(phi);
+                const tanTheta_sinPhi = Math.tan(theta) * Math.sin(phi);
+
+                const vertices = [
+                    new THREE.Vector3(-tanTheta_cosPhi * halfZ - tanAlph * y1 - x1, -tanTheta_sinPhi * halfZ - y1, -halfZ), // 0
+                    new THREE.Vector3(-tanTheta_cosPhi * halfZ - tanAlph * y1 + x1, -tanTheta_sinPhi * halfZ - y1, -halfZ), // 1
+                    new THREE.Vector3(-tanTheta_cosPhi * halfZ + tanAlph * y1 - x2, -tanTheta_sinPhi * halfZ + y1, -halfZ), // 2
+                    new THREE.Vector3(-tanTheta_cosPhi * halfZ + tanAlph * y1 + x2, -tanTheta_sinPhi * halfZ + y1, -halfZ), // 3
+                    new THREE.Vector3( tanTheta_cosPhi * halfZ - tanAlph * y2 - x3,  tanTheta_sinPhi * halfZ - y2,  halfZ), // 4
+                    new THREE.Vector3( tanTheta_cosPhi * halfZ - tanAlph * y2 + x3,  tanTheta_sinPhi * halfZ - y2,  halfZ), // 5
+                    new THREE.Vector3( tanTheta_cosPhi * halfZ + tanAlph * y2 - x4,  tanTheta_sinPhi * halfZ + y2,  halfZ), // 6
+                    new THREE.Vector3( tanTheta_cosPhi * halfZ + tanAlph * y2 + x4,  tanTheta_sinPhi * halfZ + y2,  halfZ)  // 7
+                ];
+                
+                // Apply the twist to the top face (+z) vertices
+                const rot = new THREE.Matrix4().makeRotationZ(phiTwist);
+                for (let i = 4; i < 8; i++) {
+                    vertices[i].applyMatrix4(rot);
+                }
+
+                // Create geometry from the 8 vertices. THREE.ConvexGeometry is perfect for this.
+                geometry = new ConvexGeometry(vertices);
+            }
+            break;
+        case 'twistedtrd':
+            {
+                // This is a twisted trd, which is a twisted trapezoid with parallel x-y faces.
+                // It's a twistedbox with different dimensions at the top and bottom.
+                const dz = p.z; // half-length z
+                const phiTwist = p.PhiTwist;
+
+                // Define the 2D vertices for the bottom (-z) and top (+z) faces
+                const bottomVerts = [
+                    new THREE.Vector2(-p.x1, -p.y1),
+                    new THREE.Vector2( p.x1, -p.y1),
+                    new THREE.Vector2( p.x1,  p.y1),
+                    new THREE.Vector2(-p.x1,  p.y1),
+                ];
+                const topVerts = [
+                    new THREE.Vector2(-p.x2, -p.y2),
+                    new THREE.Vector2( p.x2, -p.y2),
+                    new THREE.Vector2( p.x2,  p.y2),
+                    new THREE.Vector2(-p.x2,  p.y2),
+                ];
+
+                // The rendering algorithm is identical to twistedbox, just with different vertices.
+                const vertices = [];
+                const indices = [];
+                const rotationAxis = new THREE.Vector3(0, 0, 1);
+                
+                const bottom3D = bottomVerts.map(v => new THREE.Vector3(v.x, v.y, -dz));
+                const top3D = topVerts.map(v =>
+                    new THREE.Vector3(v.x, v.y, 0).applyAxisAngle(rotationAxis, phiTwist).setZ(dz)
+                );
+                
+                vertices.push(...bottom3D.flatMap(v => [v.x, v.y, v.z]));
+                vertices.push(...top3D.flatMap(v => [v.x, v.y, v.z]));
+                
+                // Create side faces
+                for (let i = 0; i < 4; i++) {
+                    const next_i = (i + 1) % 4;
+                    const p1 = i;         // bottom face, current vertex
+                    const p2 = next_i;    // bottom face, next vertex
+                    const p3 = next_i + 4;// top face, next vertex
+                    const p4 = i + 4;     // top face, current vertex
+                    indices.push(p1, p2, p3,  p1, p3, p4);
+                }
+                // Create caps
+                indices.push(0, 1, 2,  0, 2, 3); // Bottom cap (flipped winding)
+                indices.push(4, 6, 5,  4, 7, 6); // Top cap
+                
+                geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
+                geometry.setIndex(indices);
+                geometry.computeVertexNormals();
+            }
+            break;
         case 'twistedtubs':
             {
-                // This requires parametric surface generation.
-                const rmin = p.rmin;
-                const rmax = p.rmax;
-                const dz = p.dz;
-                const dphi = p.dphi;
-                const twist = p.twistedangle;
+                // The parameters from the solid editor are already normalized
+                const rmin = p.endinnerrad;
+                const rmax = p.endouterrad;
+                const halfZ = p.zlen;
+                const dphi = p.phi; // phi sector angle in radians
+                const twist = p.twistedangle; // total twist angle in radians
+
                 const radialSegments = 32;
                 const heightSegments = 10;
                 
                 const vertices = [];
                 const indices = [];
 
-                // Generate vertices for the inner and outer surfaces
+                // Helper to generate a vertex
+                const getVertex = (r, phi, z, currentTwist) => {
+                    const x = r * Math.cos(phi);
+                    const y = r * Math.sin(phi);
+                    const vec = new THREE.Vector3(x, y, 0);
+                    vec.applyAxisAngle(new THREE.Vector3(0, 0, 1), currentTwist);
+                    vec.z = z;
+                    return vec;
+                };
+
+                // Generate all vertices for the entire shape first
                 for (let j = 0; j <= heightSegments; j++) {
-                    const v = j / heightSegments; // v is fractional height, from 0 to 1
-                    const z = -dz + v * (2 * dz);
-                    const currentTwist = twist * (v - 0.5); // twist is centered around z=0
+                    const v = j / heightSegments; // Fractional height
+                    const z = -halfZ + v * (2 * halfZ);
+                    const currentTwist = twist * (v - 0.5); // Twist centered at z=0
 
                     for (let i = 0; i <= radialSegments; i++) {
-                        const u = i / radialSegments; // u is fractional angle
+                        const u = i / radialSegments; // Fractional angle
                         const phi = u * dphi;
                         
                         // Outer surface vertex
-                        let x_out = rmax * Math.cos(phi);
-                        let y_out = rmax * Math.sin(phi);
-                        let vec_out = new THREE.Vector3(x_out, y_out, 0).applyAxisAngle(new THREE.Vector3(0,0,1), currentTwist);
-                        vertices.push(vec_out.x, vec_out.y, z);
+                        vertices.push(getVertex(rmax, phi, z, currentTwist));
                         
-                        // Inner surface vertex
+                        // Inner surface vertex (if it exists)
                         if (rmin > 0) {
-                            let x_in = rmin * Math.cos(phi);
-                            let y_in = rmin * Math.sin(phi);
-                            let vec_in = new THREE.Vector3(x_in, y_in, 0).applyAxisAngle(new THREE.Vector3(0,0,1), currentTwist);
-                            vertices.push(vec_in.x, vec_in.y, z);
+                            vertices.push(getVertex(rmin, phi, z, currentTwist));
                         }
                     }
                 }
-                
-                const pointsPerRow = rmin > 0 ? (radialSegments + 1) * 2 : (radialSegments + 1);
-                
-                // Generate indices for the faces
+
+                const pointsPerRow = (rmin > 0) ? (radialSegments + 1) * 2 : (radialSegments + 1);
+
+                // Generate indices for the faces (sides)
                 for (let j = 0; j < heightSegments; j++) {
                     for (let i = 0; i < radialSegments; i++) {
                         const row1 = j * pointsPerRow;
                         const row2 = (j + 1) * pointsPerRow;
-                        
-                        // Outer surface
-                        const p1_out = row1 + i * (rmin > 0 ? 2 : 1);
-                        const p2_out = row1 + (i + 1) * (rmin > 0 ? 2 : 1);
-                        const p3_out = row2 + (i + 1) * (rmin > 0 ? 2 : 1);
-                        const p4_out = row2 + i * (rmin > 0 ? 2 : 1);
-                        indices.push(p1_out, p2_out, p3_out,  p1_out, p3_out, p4_out);
+                        const pointsPerSegment = (rmin > 0) ? 2 : 1;
 
-                        // Inner surface
+                        // Outer surface quad
+                        const p1 = row1 + i * pointsPerSegment;
+                        const p2 = row1 + (i + 1) * pointsPerSegment;
+                        const p3 = row2 + (i + 1) * pointsPerSegment;
+                        const p4 = row2 + i * pointsPerSegment;
+                        indices.push(p1, p2, p3);
+                        indices.push(p1, p3, p4);
+
+                        // Inner surface quad (if it exists)
                         if (rmin > 0) {
-                            const p1_in = row1 + i * 2 + 1;
-                            const p2_in = row1 + (i + 1) * 2 + 1;
-                            const p3_in = row2 + (i + 1) * 2 + 1;
-                            const p4_in = row2 + i * 2 + 1;
-                            indices.push(p1_in, p3_in, p2_in,  p1_in, p4_in, p3_in); // Inverted for inner surface
+                            const p1_in = p1 + 1;
+                            const p2_in = p2 + 1;
+                            const p3_in = p3 + 1;
+                            const p4_in = p4 + 1;
+                            // Flipped winding order for inward-facing normals
+                            indices.push(p1_in, p3_in, p2_in);
+                            indices.push(p1_in, p4_in, p3_in);
                         }
                     }
                 }
 
-                // Note: Capping for twisted tubs is complex and omitted for this implementation.
-                // It would require creating a non-planar polygon and triangulating it.
+                // --- FIX: Add Caps and Sides for Phi Segments ---
+                if (Math.abs(dphi - 2 * Math.PI) > 1e-9) { // If it's not a full tube
+                    // Add side face at phi = 0
+                    for (let j = 0; j < heightSegments; j++) {
+                        const row1 = j * pointsPerRow;
+                        const row2 = (j + 1) * pointsPerRow;
+                        if (rmin > 0) {
+                           const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
+                           indices.push(p1, p3, p2); indices.push(p1, p4, p3);
+                        }
+                    }
+                    // Add side face at phi = dphi
+                    for (let j = 0; j < heightSegments; j++) {
+                        const row1 = j * pointsPerRow + radialSegments * ((rmin > 0) ? 2 : 1);
+                        const row2 = (j + 1) * pointsPerRow + radialSegments * ((rmin > 0) ? 2 : 1);
+                        if (rmin > 0) {
+                           const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
+                           indices.push(p1, p2, p3); indices.push(p1, p4, p2);
+                        }
+                    }
+                }
+                
+                // Add top and bottom caps (triangulation)
+                for (let i = 0; i < radialSegments; i++) {
+                    const pointsPerSegment = (rmin > 0) ? 2 : 1;
+                    // Bottom cap
+                    const b_p1 = i * pointsPerSegment;
+                    const b_p2 = (i + 1) * pointsPerSegment;
+                    if (rmin > 0) {
+                        const b_p3 = (i + 1) * pointsPerSegment + 1;
+                        const b_p4 = i * pointsPerSegment + 1;
+                        indices.push(b_p1, b_p3, b_p2); indices.push(b_p1, b_p4, b_p3);
+                    }
+                    // Top cap
+                    const topRowOffset = heightSegments * pointsPerRow;
+                    const t_p1 = topRowOffset + i * pointsPerSegment;
+                    const t_p2 = topRowOffset + (i + 1) * pointsPerSegment;
+                    if (rmin > 0) {
+                        const t_p3 = topRowOffset + (i + 1) * pointsPerSegment + 1;
+                        const t_p4 = topRowOffset + i * pointsPerSegment + 1;
+                        indices.push(t_p1, t_p2, t_p3); indices.push(t_p1, t_p3, t_p4);
+                    }
+                }
 
                 geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                // We have vertices as an array of Vector3, need to flatten for BufferAttribute
+                geometry.setFromPoints(vertices);
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
             }
