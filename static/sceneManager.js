@@ -3,12 +3,8 @@ import * as THREE from 'three';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
-
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
-
-import { getCurrentMode as getInteractionManagerMode } from './interactionManager.js';
 
 // --- Module-level variables ---
 let scene, camera, renderer, viewerContainer;
@@ -22,7 +18,6 @@ let axesHelper;
 let isWireframeMode = false;
 let isGridVisible = true;
 let isAxesVisible = true;
-let currentCameraMode = 'orbit';
 
 // Selection box
 let selectionBox;
@@ -590,7 +585,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             {
                 const points = [];
                 const isPolyhedra = solidData.type.includes('polyhedra');
-                const numSides = isPolyhedra ? (p.numsides || 32) : 32;
+                const numSides = isPolyhedra ? (p.numsides || 8) : 32;
 
                 // GDML polycone is defined by a series of z-planes, each with rmin, rmax, and z.
                 // We need to create a 2D profile from these that LatheGeometry can revolve.

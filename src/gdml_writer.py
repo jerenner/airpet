@@ -240,21 +240,19 @@ class GDMLWriter:
                 # Write raw expressions for r and z
                 ET.SubElement(solid_el, "rzpoint", {"r": str(rzp['r']), "z": str(rzp['z'])})
         
+        elif solid_obj.type == 'polyhedra':
+            solid_el.set("startphi", str(p['startphi']))
+            solid_el.set("deltaphi", str(p['deltaphi']))
+            solid_el.set("numsides", str(p['numsides']))
+            for zp in p.get('zplanes', []):
+                ET.SubElement(solid_el, "zplane", {"r": str(zp['r']), "z": str(zp['z']), "rmax": str(zp['rmax'])})
+
         elif solid_obj.type == 'genericPolyhedra':
             solid_el.set("startphi", str(p['startphi']))
             solid_el.set("deltaphi", str(p['deltaphi']))
             solid_el.set("numsides", str(p['numsides']))
             for rzp in p.get('rzpoints', []):
                 ET.SubElement(solid_el, "rzpoint", {"r": str(rzp['r']), "z": str(rzp['z'])})
-
-        elif solid_obj.type == 'polyhedra':
-            solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("numsides", str(p['numsides']))
-            for zp in p.get('zplanes', []): # For G4Polyhedra
-                ET.SubElement(solid_el, "zplane", {
-                    "z": str(zp['z']), "rmin": str(zp['rmin']), "rmax": str(zp['rmax'])
-                })
         
         elif solid_obj.type == 'tessellated':
             # It should have lunit and aunit attributes if vertices are not pre-defined with units

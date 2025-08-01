@@ -17,15 +17,12 @@ let editingSolidId = null;      // store the ID/name of the solid being edited
 let currentProjectState = null; // to hold the project state
 let createLVCheckbox, placePVCheckbox, lvOptionsDiv, lvMaterialSelect;
 
-// State for boolean operations
-let booleanSolidA = null; // Will hold { name, type, parameters }
-let booleanSolidB = null;
-
 // State variable for the boolean recipe
 let booleanRecipe = []; // An array of {op, solid, transform}
 
-// State variable for genericPolycone
+// State variables for genericPolycone, genericPolyhedra
 let rzPointsState = []; // Holds [{r: 'expr', z: 'expr'}]
+let zPlanesState = []; 
 
 const editorContainer = document.getElementById('solid_preview_container');
 const modalElement = document.getElementById('solidEditorModal');
@@ -283,6 +280,8 @@ function renderParamsUI(params = {}) {
     const isScaled = type === 'scaledSolid';
     const isReflected = type === 'reflectedSolid';
     const isGenericPolycone = type === 'genericPolycone';
+    const isPolyhedra = type === 'polyhedra'; 
+    const isGenericPolyhedra = type === 'genericPolyhedra';
 
     if (isBoolean) {
         if (booleanRecipe.length === 0) {
@@ -384,13 +383,18 @@ function renderParamsUI(params = {}) {
         
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
-    } else if (isGenericPolycone) {
+    } else if (isGenericPolycone || isGenericPolyhedra) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
 
         // Add inputs for startphi and deltaphi
         dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
         dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
         
+        // Add numsides input only for polyhedra types
+        if (isGenericPolyhedra) {
+            dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8', currentProjectState));
+        }
+
         // Create the container for the RZ point list
         const rzHtml = `
             <hr>
@@ -408,6 +412,29 @@ function renderParamsUI(params = {}) {
         // Initial render and attach listeners
         rebuildRZPointsUI();
         document.getElementById('add-rz-point-btn').addEventListener('click', addRZPoint);
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
+    } else if (isPolyhedra) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8', currentProjectState));
+
+        const zplaneHtml = `
+            <hr>
+            <h6>Z-Planes (at least 2 required)</h6>
+            <div id="zplanes-list"></div>
+            <button id="add-zplane-btn" class="add_button" style="margin-top: 10px;">+ Add Z-Plane</button>
+        `;
+        const zplaneContainer = document.createElement('div');
+        zplaneContainer.innerHTML = zplaneHtml;
+        dynamicParamsDiv.appendChild(zplaneContainer);
+
+        zPlanesState = params.zplanes ? JSON.parse(JSON.stringify(params.zplanes)) : [];
+
+        rebuildZPlanesUI();
+        document.getElementById('add-zplane-btn').addEventListener('click', addZPlane);
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
     } else {
@@ -550,6 +577,70 @@ function rebuildRZPointsUI() {
 function addRZPoint() {
     rzPointsState.push({ r: '0', z: '0' });
     rebuildRZPointsUI();
+    updatePreview();
+}
+
+function rebuildZPlanesUI() {
+    const listDiv = document.getElementById('zplanes-list');
+    if (!listDiv) return;
+    listDiv.innerHTML = '';
+
+    zPlanesState.forEach((plane, index) => {
+        const row = document.createElement('div');
+        row.className = 'property_item'; // A simple flex row
+
+        // Create expression input for Rmin
+        const rminComp = ExpressionInput.createInline(`zplane_${index}_rmin`, plane.rmin || '0', currentProjectState, (newValue) => {
+            zPlanesState[index].rmin = newValue;
+            updatePreview();
+        });
+        const rminLabel = document.createElement('label');
+        rminLabel.textContent = `Rmin${index}:`;
+        rminLabel.style.marginRight = '5px';
+
+        // Create expression input for Rmax
+        const rmaxComp = ExpressionInput.createInline(`zplane_${index}_rmax`, plane.rmax || '0', currentProjectState, (newValue) => {
+            zPlanesState[index].rmax = newValue;
+            updatePreview();
+        });
+        const rmaxLabel = document.createElement('label');
+        rmaxLabel.textContent = `Rmax${index}:`;
+        rmaxLabel.style.marginLeft = '10px';
+        rmaxLabel.style.marginRight = '5px';
+        
+        // Create expression input for Z
+        const zComp = ExpressionInput.createInline(`zplane_${index}_z`, plane.z || '0', currentProjectState, (newValue) => {
+            zPlanesState[index].z = newValue;
+            updatePreview();
+        });
+        const zLabel = document.createElement('label');
+        zLabel.textContent = `Z${index}:`;
+        zLabel.style.marginLeft = '10px';
+        zLabel.style.marginRight = '5px';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-op-btn';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = () => {
+            zPlanesState.splice(index, 1);
+            rebuildZPlanesUI();
+            updatePreview();
+        };
+
+        row.appendChild(rminLabel);
+        row.appendChild(rminComp);
+        row.appendChild(rmaxLabel);
+        row.appendChild(rmaxComp);
+        row.appendChild(zLabel);
+        row.appendChild(zComp);
+        row.appendChild(removeBtn);
+        listDiv.appendChild(row);
+    });
+}
+
+function addZPlane() {
+    zPlanesState.push({ rmin: '0', rmax: '0', z: '0' });
+    rebuildZPlanesUI();
     updatePreview();
 }
 
@@ -876,6 +967,16 @@ function getRawParamsFromUI() {
         raw_params.rlo = p('p_rlo');
         raw_params.rhi = p('p_rhi');
         raw_params.dz = p('p_dz');
+    } else if (type === 'polyhedra') {
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.numsides = p('p_numsides');
+        raw_params.zplanes = zPlanesState; // Assumes a new state variable
+    } else if (type === 'genericPolyhedra') {
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.numsides = p('p_numsides');
+        raw_params.rzpoints = rzPointsState;
     } else if (type === 'eltube') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
         raw_params.dz = p('p_dz');
@@ -1011,39 +1112,30 @@ async function updatePreview() {
                 geometry.applyMatrix4(matrix);
             }
         }
-    } else if (type === 'genericPolycone') {
+    } else if (type === 'genericPolycone' || type === 'genericPolyhedra') {
         // Evaluate startphi and deltaphi for the preview
-        const startphiExpr = document.getElementById('p_startphi').value;
-        const deltaphiExpr = document.getElementById('p_deltaphi').value;
-        
-        // Use a helper to safely evaluate, providing a default value on failure
-        const safeEval = async (expr, defaultValue) => {
-            if (!expr.trim()) return defaultValue;
-            try {
-                const response = await APIService.evaluateExpression(expr, currentProjectState);
-                return response.success ? response.result : defaultValue;
-            } catch (e) {
-                return defaultValue;
-            }
-        };
+        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value, currentProjectState)).result || '0';
+        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value, currentProjectState)).result || '2*pi';
+        const numSides = (type === 'genericPolyhedra') ? ((await APIService.evaluateExpression(document.getElementById('p_numsides').value, currentProjectState)).result || '32') : '32';
 
-        const startphi = await safeEval(startphiExpr, '0');
-        const deltaphi = await safeEval(deltaphiExpr, '2*pi');
-
-        // Evaluate all RZ points, using the safe helper
-        const evalPromises = rzPointsState.map(p => Promise.all([
-            safeEval(p.r, 0),
-            safeEval(p.z, 0)
+        // Evaluate all RZ points
+        const evalPromises = rzPointsState.map(point => Promise.all([
+            APIService.evaluateExpression(point.r, currentProjectState),
+            APIService.evaluateExpression(point.z, currentProjectState)
         ]));
         
         const evaluatedPairs = await Promise.all(evalPromises);
         
-        const points = evaluatedPairs.map(pair => new THREE.Vector2(pair[0], pair[1]));
+        const points = evaluatedPairs.map(pair => {
+            const r = pair[0].success ? pair[0].result : 0;
+            const z = pair[1].success ? pair[1].result : 0;
+            return new THREE.Vector2(r, z);
+        });
         
         // GDML requires at least 3 points, but three.js can draw with 2. Still require > 2.
         if (points.length > 2) {
             try {
-                geometry = new THREE.LatheGeometry(points, 32, startphi, deltaphi);
+                geometry = new THREE.LatheGeometry(points, numSides, startphi, deltaphi);
                 geometry.rotateX(Math.PI / 2);
             } catch(e) {
                 console.error("Three.js LatheGeometry error:", e);
@@ -1052,6 +1144,60 @@ async function updatePreview() {
         } else {
             // If there are not enough points, explicitly ensure geometry is null.
             // This prevents the old geometry from remaining.
+            geometry = null;
+        }
+
+    } else if (type === 'polyhedra') {
+        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value, currentProjectState)).result || '0';
+        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value, currentProjectState)).result || '2*pi';
+        const numSides = (await APIService.evaluateExpression(document.getElementById('p_numsides').value, currentProjectState)).result || '32';
+
+        // Evaluate all Z-Planes asynchronously
+        const evalPromises = zPlanesState.map(plane => Promise.all([
+            APIService.evaluateExpression(plane.rmin, currentProjectState),
+            APIService.evaluateExpression(plane.rmax, currentProjectState),
+            APIService.evaluateExpression(plane.z, currentProjectState)
+        ]));
+        
+        const evaluatedPlanes = await Promise.all(evalPromises);
+
+        // Convert z-planes to an RZ profile for LatheGeometry
+        // This is the specific logic for Polycone/Polyhedra
+        const points = [];
+        if (evaluatedPlanes.length > 0) {
+
+            const planes = evaluatedPlanes.map(plane => ({
+                rmin: plane[0].success ? plane[0].result : 0,
+                rmax: plane[1].success ? plane[1].result : 0,
+                z:    plane[2].success ? plane[2].result : 0
+            }));
+            
+            // Sort planes by Z just in case
+            planes.sort((a, b) => a.z - b.z);
+            
+            // Start at the bottom-outer point
+            points.push(new THREE.Vector2(planes[0].rmax, planes[0].z));
+
+            // Trace the inner profile from bottom to top
+            planes.forEach(plane => {
+                points.push(new THREE.Vector2(plane.rmin, plane.z));
+            });
+
+            // Trace the outer profile from top to bottom
+            for (let i = planes.length - 1; i >= 0; i--) {
+                points.push(new THREE.Vector2(planes[i].rmax, planes[i].z));
+            }
+        }
+        
+        if (points.length > 2) {
+            try {
+                geometry = new THREE.LatheGeometry(points, numSides, startphi, deltaphi);
+                geometry.rotateX(-Math.PI / 2);
+            } catch(e) {
+                console.error("Three.js LatheGeometry error:", e);
+                geometry = null;
+            }
+        } else {
             geometry = null;
         }
 
@@ -1068,7 +1214,7 @@ async function updatePreview() {
             _evaluated_parameters: Object.fromEntries(evaluatedEntries)
         };
         
-        // Normalize values (half-lengths, degrees to rad) for Three.js
+        // Normalize values (half-lengths) for Three.js
         const p = tempSolidData._evaluated_parameters;
         if (p.dz !== undefined) p.dz /= 2.0;
         
@@ -1104,11 +1250,6 @@ function updateSlotUI(slot, solidData) {
 }
 
 function clearSlot(slot) {
-    if (slot.id === 'slot-a') {
-        booleanSolidA = null;
-    } else {
-        booleanSolidB = null;
-    }
     updateSlotUI(slot, null);
     updatePreview(); // Update preview to show the solid has been removed
 }
