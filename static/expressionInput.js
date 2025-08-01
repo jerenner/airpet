@@ -52,8 +52,9 @@ export function create(id, label, initialValue = '0', projectState, onChange = (
         const expression = inputEl.value;
         if (!expression.trim()) {
             resultEl.value = '';
-            resultEl.style.borderColor = ''; // Reset border
+            resultEl.title = '';
             inputEl.style.borderColor = '';
+            resultEl.style.borderColor = '';
             return;
         }
         try {
@@ -128,8 +129,9 @@ export function createInline(id, initialValue = '0', projectState, onChange = ()
         const expression = inputEl.value;
         if (!expression.trim()) {
             resultEl.value = '';
-            resultEl.style.borderColor = '';
+            resultEl.title = '';
             inputEl.style.borderColor = '';
+            resultEl.style.borderColor = '';
             return;
         }
         try {

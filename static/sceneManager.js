@@ -506,6 +506,83 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             geometry = new THREE.TorusGeometry(p.rtor, p.rmax, 16, 100, p.deltaphi);
             if(p.startphi !== 0) geometry.rotateZ(p.startphi);
             break;
+        case 'paraboloid':
+            {
+                const r_lo = p.rlo; // Radius at -dz
+                const r_hi = p.rhi; // Radius at +dz
+                const half_z = p.dz; // Half-length
+
+                // Parabola equation: r(z) = a*z + b
+                // We have two points (-dz, rlo) and (+dz, rhi), but it's r^2 = a*z + b
+                // So, rlo^2 = a*(-dz) + b  and  rhi^2 = a*(+dz) + b
+                // Solving for a and b:
+                // a = (rhi^2 - rlo^2) / (2 * dz)
+                // b = (rhi^2 + rlo^2) / 2
+                
+                const points = [];
+                const segments = 20;
+
+                if (Math.abs(half_z) > 1e-9) {
+                    const a = (r_hi * r_hi - r_lo * r_lo) / (2 * half_z);
+                    const b = (r_hi * r_hi + r_lo * r_lo) / 2;
+
+                    for (let i = 0; i <= segments; i++) {
+                        const z = -half_z + (2 * half_z * i) / segments;
+                        const r_sq = a * z + b;
+                        // Ensure we don't take sqrt of a negative number
+                        const r = (r_sq > 0) ? Math.sqrt(r_sq) : 0;
+                        points.push(new THREE.Vector2(r, z));
+                    }
+                }
+
+                if (points.length > 1) {
+                    geometry = new THREE.LatheGeometry(points, 32, 0, 2 * Math.PI);
+                    geometry.rotateX(-Math.PI / 2);
+                } else {
+                    geometry = new THREE.SphereGeometry(10, 8, 8); // Placeholder
+                }
+            }
+            break;
+        case 'hype':
+            {
+                const rmin = p.rmin;
+                const rmax = p.rmax;
+                const halfZ = p.dz; // This should be the half-length
+                const tanInnerStereo = Math.tan(p.inst);
+                const tanOuterStereo = Math.tan(p.outst);
+
+                const points = [];
+                const segments = 20; // Number of points to define the curve
+
+                for (let i = 0; i <= segments; i++) {
+                    const z = -halfZ + (2 * halfZ * i) / segments;
+                    // Hyperbola formula: r^2 = r0^2 + (tan(stereo))^2 * z^2
+                    const r_inner = Math.sqrt(rmin * rmin + tanInnerStereo * tanInnerStereo * z * z);
+                    points.push(new THREE.Vector2(r_inner, z));
+                }
+                for (let i = segments; i >= 0; i--) {
+                    const z = -halfZ + (2 * halfZ * i) / segments;
+                    const r_outer = Math.sqrt(rmax * rmax + tanOuterStereo * tanOuterStereo * z * z);
+                    points.push(new THREE.Vector2(r_outer, z));
+                }
+
+                // Close the shape if rmin is not zero
+                if (rmin > 1e-9) {
+                     points.push(points[0]);
+                }
+
+
+                if (points.length > 1) {
+                    // Revolve the 2D profile around the Z-axis (which is Y in LatheGeometry's frame)
+                    // Note: Hype in GDML doesn't have start/end phi angles, so we use a full circle.
+                    geometry = new THREE.LatheGeometry(points, 32, 0, 2 * Math.PI);
+                    // LatheGeometry revolves around Y, so rotate to align with the Z-axis.
+                    geometry.rotateX(-Math.PI / 2);
+                } else {
+                    geometry = new THREE.SphereGeometry(10, 8, 8); // Placeholder
+                }
+            }
+            break;
         case 'polycone':
         case 'genericPolycone':
         case 'polyhedra':
@@ -1131,7 +1208,7 @@ function _applyTransform(mesh, transformData) {
  * @param {Evaluator} csgEvaluator - The CSG evaluator instance.
  * @returns {THREE.BufferGeometry | null}
  */
-function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometryCache, csgEvaluator) {
+export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometryCache, csgEvaluator) {
 
     // --- Differentiate between a reference (string) and a definition (object) ---
     let solidData;
@@ -1407,39 +1484,6 @@ export function updateSelectionState(clickedMeshes = []) {
             mesh.material = _highlightMaterial;
         }
     });
-
-    // // --- Gizmo Logic ---
-    // transformControls.detach();
-    // if (_selectedThreeObjects.length > 0) {
-    //     if (_selectedThreeObjects.length === 1) {
-    //         // If only one object is selected, attach gizmo directly
-    //         if (getInteractionManagerMode() !== 'observe') {
-    //              transformControls.attach(_selectedThreeObjects[0]);
-    //         }
-    //     } else {
-    //         // If multiple objects (like from a replica), attach to a helper
-    //         // Calculate the center of all selected objects
-    //         const box = new THREE.Box3();
-    //         _selectedThreeObjects.forEach(mesh => {
-    //             box.expandByObject(mesh);
-    //         });
-    //         const center = new THREE.Vector3();
-    //         box.getCenter(center);
-            
-    //         // Position our helper object at this center
-    //         gizmoAttachmentHelper.position.copy(center);
-    //         gizmoAttachmentHelper.rotation.set(0,0,0);
-    //         gizmoAttachmentHelper.scale.set(1,1,1);
-            
-    //         if (getInteractionManagerMode() !== 'observe') {
-    //             transformControls.attach(gizmoAttachmentHelper);
-    //         }
-    //     }
-    // }
-    // else {
-    //     // If zero objects are selected, always detach the gizmo
-    //     transformControls.detach();
-    // }
 }
 
 // A simple utility to get all meshes belonging to an owner.

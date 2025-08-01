@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createPrimitiveGeometry } from './sceneManager.js';
+import { createPrimitiveGeometry } from './sceneManager.js'; 
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 import * as APIService from './apiService.js';
 import * as ExpressionInput from './expressionInput.js';
@@ -23,6 +23,9 @@ let booleanSolidB = null;
 
 // State variable for the boolean recipe
 let booleanRecipe = []; // An array of {op, solid, transform}
+
+// State variable for genericPolycone
+let rzPointsState = []; // Holds [{r: 'expr', z: 'expr'}]
 
 const editorContainer = document.getElementById('solid_preview_container');
 const modalElement = document.getElementById('solidEditorModal');
@@ -279,6 +282,7 @@ function renderParamsUI(params = {}) {
     const isBoolean = type === 'boolean';
     const isScaled = type === 'scaledSolid';
     const isReflected = type === 'reflectedSolid';
+    const isGenericPolycone = type === 'genericPolycone';
 
     if (isBoolean) {
         if (booleanRecipe.length === 0) {
@@ -380,6 +384,32 @@ function renderParamsUI(params = {}) {
         
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
+    } else if (isGenericPolycone) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+
+        // Add inputs for startphi and deltaphi
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
+        
+        // Create the container for the RZ point list
+        const rzHtml = `
+            <hr>
+            <h6>R-Z Points (at least 3 required)</h6>
+            <div id="rz-points-list"></div>
+            <button id="add-rz-point-btn" class="add_button" style="margin-top: 10px;">+ Add RZ Point</button>
+        `;
+        const rzContainer = document.createElement('div');
+        rzContainer.innerHTML = rzHtml;
+        dynamicParamsDiv.appendChild(rzContainer);
+        
+        // Initialize state
+        rzPointsState = params.rzpoints ? JSON.parse(JSON.stringify(params.rzpoints)) : [];
+        
+        // Initial render and attach listeners
+        rebuildRZPointsUI();
+        document.getElementById('add-rz-point-btn').addEventListener('click', addRZPoint);
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
     } else {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
         
@@ -440,6 +470,18 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12'), currentProjectState),
                 ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'), currentProjectState)
             ],
+            hype: () => [
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '50'), currentProjectState),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
+                ExpressionInput.create('p_inst', 'Inner Stereo Angle (rad)', p('inst', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_outst', 'Outer Stereo Angle (rad)', p('outst', 'pi/12'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '200'), currentProjectState)
+            ],
+            paraboloid: () => [
+                ExpressionInput.create('p_rlo', 'Radius at -dz (mm)', p('rlo', '50'), currentProjectState),
+                ExpressionInput.create('p_rhi', 'Radius at +dz (mm)', p('rhi', '100'), currentProjectState),
+                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '100'), currentProjectState)
+            ],
             eltube: () => [
                 ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
                 ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
@@ -456,6 +498,58 @@ function renderParamsUI(params = {}) {
         dynamicParamsDiv.addEventListener('change', updatePreview);
     }
     
+    updatePreview();
+}
+
+function rebuildRZPointsUI() {
+    const listDiv = document.getElementById('rz-points-list');
+    if (!listDiv) return;
+    listDiv.innerHTML = '';
+
+    rzPointsState.forEach((point, index) => {
+        const row = document.createElement('div');
+        row.className = 'property_item'; // A simple flex row
+
+        // Create expression input for R
+        const rComp = ExpressionInput.createInline(`rz_${index}_r`, point.r || '0', currentProjectState, (newValue) => {
+            rzPointsState[index].r = newValue;
+            updatePreview(); // Live update
+        });
+        const rLabel = document.createElement('label');
+        rLabel.textContent = `R${index}:`;
+        rLabel.style.marginRight = '5px';
+
+        // Create expression input for Z
+        const zComp = ExpressionInput.createInline(`rz_${index}_z`, point.z || '0', currentProjectState, (newValue) => {
+            rzPointsState[index].z = newValue;
+            updatePreview(); // Live update
+        });
+        const zLabel = document.createElement('label');
+        zLabel.textContent = `Z${index}:`;
+        zLabel.style.marginLeft = '15px';
+        zLabel.style.marginRight = '5px';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-op-btn';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = () => {
+            rzPointsState.splice(index, 1);
+            rebuildRZPointsUI();
+            updatePreview();
+        };
+
+        row.appendChild(rLabel);
+        row.appendChild(rComp);
+        row.appendChild(zLabel);
+        row.appendChild(zComp);
+        row.appendChild(removeBtn);
+        listDiv.appendChild(row);
+    });
+}
+
+function addRZPoint() {
+    rzPointsState.push({ r: '0', z: '0' });
+    rebuildRZPointsUI();
     updatePreview();
 }
 
@@ -733,6 +827,10 @@ function getRawParamsFromUI() {
                 x: p('p_reflect_scl_x'), y: p('p_reflect_scl_y'), z: p('p_reflect_scl_z')
             }
         };
+    } else if (type === 'genericPolycone') {
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.rzpoints = rzPointsState; // The state array is already in the correct format
     } else if (type === 'box') {
         raw_params.x = p('p_x');
         raw_params.y = p('p_y'); 
@@ -768,6 +866,16 @@ function getRawParamsFromUI() {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy'); raw_params.dz = p('p_dz');
         raw_params.alpha = p('p_alpha'); raw_params.theta = p('p_theta');
         raw_params.phi = p('p_phi');
+    } else if (type === 'hype') {
+        raw_params.rmin = p('p_rmin');
+        raw_params.rmax = p('p_rmax');
+        raw_params.inst = p('p_inst');
+        raw_params.outst = p('p_outst');
+        raw_params.dz = p('p_dz');
+    } else if (type === 'paraboloid') {
+        raw_params.rlo = p('p_rlo');
+        raw_params.rhi = p('p_rhi');
+        raw_params.dz = p('p_dz');
     } else if (type === 'eltube') {
         raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
         raw_params.dz = p('p_dz');
@@ -779,11 +887,21 @@ async function updatePreview() {
     if (transformControls.object) {
         transformControls.detach();
     }
-    if (currentSolidMesh) {
-        scene.remove(currentSolidMesh);
-        if (currentSolidMesh.geometry) currentSolidMesh.geometry.dispose();
-        if (currentSolidMesh.material) currentSolidMesh.material.dispose();
+
+    // --- Scene Cleanup ---
+    // Remove all meshes from the scene and dispose of their resources.
+    while(scene.children.length > 0){ 
+        const obj = scene.children[0];
+        if (obj.isMesh) {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+        }
+        scene.remove(obj); 
     }
+    // Re-add the camera and its light after clearing everything else.
+    scene.add(camera);
+    // Reset the current mesh handle
+    currentSolidMesh = null;
 
     const type = typeSelect.value;
     const isBoolean = type === 'boolean';
@@ -893,6 +1011,50 @@ async function updatePreview() {
                 geometry.applyMatrix4(matrix);
             }
         }
+    } else if (type === 'genericPolycone') {
+        // Evaluate startphi and deltaphi for the preview
+        const startphiExpr = document.getElementById('p_startphi').value;
+        const deltaphiExpr = document.getElementById('p_deltaphi').value;
+        
+        // Use a helper to safely evaluate, providing a default value on failure
+        const safeEval = async (expr, defaultValue) => {
+            if (!expr.trim()) return defaultValue;
+            try {
+                const response = await APIService.evaluateExpression(expr, currentProjectState);
+                return response.success ? response.result : defaultValue;
+            } catch (e) {
+                return defaultValue;
+            }
+        };
+
+        const startphi = await safeEval(startphiExpr, '0');
+        const deltaphi = await safeEval(deltaphiExpr, '2*pi');
+
+        // Evaluate all RZ points, using the safe helper
+        const evalPromises = rzPointsState.map(p => Promise.all([
+            safeEval(p.r, 0),
+            safeEval(p.z, 0)
+        ]));
+        
+        const evaluatedPairs = await Promise.all(evalPromises);
+        
+        const points = evaluatedPairs.map(pair => new THREE.Vector2(pair[0], pair[1]));
+        
+        // GDML requires at least 3 points, but three.js can draw with 2. Still require > 2.
+        if (points.length > 2) {
+            try {
+                geometry = new THREE.LatheGeometry(points, 32, startphi, deltaphi);
+                geometry.rotateX(Math.PI / 2);
+            } catch(e) {
+                console.error("Three.js LatheGeometry error:", e);
+                geometry = null; // Ensure geometry is null on failure
+            }
+        } else {
+            // If there are not enough points, explicitly ensure geometry is null.
+            // This prevents the old geometry from remaining.
+            geometry = null;
+        }
+
     } else { // It's a primitive
         const rawParams = getRawParamsFromUI();
         const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {
@@ -909,13 +1071,6 @@ async function updatePreview() {
         // Normalize values (half-lengths, degrees to rad) for Three.js
         const p = tempSolidData._evaluated_parameters;
         if (p.dz !== undefined) p.dz /= 2.0;
-        if (p.startphi !== undefined) p.startphi = p.startphi;
-        if (p.deltaphi !== undefined) p.deltaphi = p.deltaphi;
-        if (p.starttheta !== undefined) p.starttheta = p.starttheta;
-        if (p.deltatheta !== undefined) p.deltatheta = p.deltatheta;
-        if (p.alpha !== undefined) p.alpha = p.alpha;
-        if (p.theta !== undefined) p.theta = p.theta;
-        if (p.phi !== undefined) p.phi = p.phi;
         
         geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
     }
@@ -925,6 +1080,8 @@ async function updatePreview() {
         const material = new THREE.MeshLambertMaterial({ color: 0x9999ff, wireframe: false, side: THREE.DoubleSide });
         currentSolidMesh = new THREE.Mesh(geometry, material);
         scene.add(currentSolidMesh);
+    } else {
+        currentSolidMesh = null; // Ensure the handle is cleared if no geometry was created
     }
 }
 

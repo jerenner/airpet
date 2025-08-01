@@ -286,6 +286,13 @@ class ProjectManager:
                 ep['dz'] = p.get('zlen', 0) / 2.0
                 ep['dphi'] = p.get('phi', p.get('totphi', 2 * math.pi))
             
+            elif solid_type in ['genericPolycone', 'genericPolyhedra']:
+                ep['startphi'] = p.get('startphi', 0)
+                ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
+                ep['rzpoints'] = p.get('rzpoints', [])
+                if solid_type == 'genericPolyhedra':
+                    ep['numsides'] = p.get('numsides', 32)
+
             else:
                 # For all other solids, just copy the evaluated params.
                 # This is safe because their parameters are generally all required.

@@ -232,12 +232,20 @@ class GDMLWriter:
                 ET.SubElement(solid_el, "zplane", {
                     "z": str(zp['z']), "rmin": str(zp['rmin']), "rmax": str(zp['rmax'])
                 }) # Assumes zplanes params are already in output lunit (mm)
-        
+
         elif solid_obj.type == 'genericPolycone':
-            solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+            solid_el.set("startphi", str(p['startphi'])) # Write raw expression
+            solid_el.set("deltaphi", str(p['deltaphi'])) # Write raw expression
             for rzp in p.get('rzpoints', []):
-                ET.SubElement(solid_el, "rzpoint", { "r": str(rzp['r']), "z": str(rzp['z']) })
+                # Write raw expressions for r and z
+                ET.SubElement(solid_el, "rzpoint", {"r": str(rzp['r']), "z": str(rzp['z'])})
+        
+        elif solid_obj.type == 'genericPolyhedra':
+            solid_el.set("startphi", str(p['startphi']))
+            solid_el.set("deltaphi", str(p['deltaphi']))
+            solid_el.set("numsides", str(p['numsides']))
+            for rzp in p.get('rzpoints', []):
+                ET.SubElement(solid_el, "rzpoint", {"r": str(rzp['r']), "z": str(rzp['z'])})
 
         elif solid_obj.type == 'polyhedra':
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
@@ -247,13 +255,6 @@ class GDMLWriter:
                 ET.SubElement(solid_el, "zplane", {
                     "z": str(zp['z']), "rmin": str(zp['rmin']), "rmax": str(zp['rmax'])
                 })
-        
-        elif solid_obj.type == 'genericPolyhedra':
-            solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("numsides", str(p['numsides']))
-            for rzp in p.get('rzpoints', []): # For G4GenericPolyhedra (uses rzpoints)
-                ET.SubElement(solid_el, "rzpoint", { "r": str(rzp['r']), "z": str(rzp['z']) })
         
         elif solid_obj.type == 'tessellated':
             # It should have lunit and aunit attributes if vertices are not pre-defined with units
@@ -288,7 +289,12 @@ class GDMLWriter:
             solid_el.set("rmax", str(p['rmax']))
             solid_el.set("inst", str(convert_from_internal_units(p['inst'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("outst", str(convert_from_internal_units(p['outst'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("z", str(p['dz'] * 2.0)) # dz was stored as half-length
+            solid_el.set("dz", str(p['dz'] * 2.0)) # dz was stored as half-length
+        
+        elif solid_obj.type == 'paraboloid':
+            solid_el.set("rlo", str(p['rlo']))
+            solid_el.set("rhi", str(p['rhi']))
+            solid_el.set("dz", str(p['dz']))
 
         elif solid_obj.type == 'eltube':
             solid_el.set("dx", str(p['dx']))
