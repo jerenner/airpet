@@ -483,7 +483,7 @@ function renderParamsUI(params = {}) {
             tube: () => [
                 ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
                 ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
                 ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
             ],
@@ -1045,7 +1045,7 @@ function getRawParamsFromUI() {
         raw_params.z = p('p_z');
     } else if (type === 'tube') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); 
-        raw_params.dz = p('p_dz');
+        raw_params.z = p('p_z');
         raw_params.startphi = p('p_startphi');
         raw_params.deltaphi = p('p_deltaphi');
     } else if (type === 'cone') {

@@ -209,7 +209,7 @@ class ProjectManager:
             elif solid_type == 'tube':
                 ep['rmin'] = p.get('rmin', 0)
                 ep['rmax'] = p.get('rmax', 0)
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['z'] = p.get('z', 0)
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi) # Default is a full circle
 

@@ -195,7 +195,7 @@ export function initScene(callbacks) {
     const gridDivisions = 100; // Increased from 40 for more detail over a larger area
     gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x888888, 0xcccccc);
     gridHelper.position.y = -0.1;
-    gridHelper.visible = false; // Start hidden
+    gridHelper.visible = true; // Start hidden
     scene.add(gridHelper);
     isGridVisible = false;
 
@@ -518,7 +518,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
     // Define the required numeric parameters for each solid type
     if (solidType === 'box') requiredParams = ['x', 'y', 'z'];
-    else if (solidType === 'tube') requiredParams = ['rmin', 'rmax', 'dz', 'startphi', 'deltaphi'];
+    else if (solidType === 'tube') requiredParams = ['rmin', 'rmax', 'z', 'startphi', 'deltaphi'];
     else if (solidType === 'cone') requiredParams = ['rmin1', 'rmax1', 'rmin2', 'rmax2', 'dz', 'startphi', 'deltaphi'];
     else if (solidType === 'sphere') requiredParams = ['rmin', 'rmax', 'startphi', 'deltaphi', 'starttheta', 'deltatheta'];
     else if (solidType === 'orb') requiredParams = ['r'];
@@ -542,7 +542,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'tube':
             if (p.rmin <= 1e-9) { // Solid Cylinder
-                geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.dz * 2, 32, 1, false, p.startphi, p.deltaphi);
+                geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z, 32, 1, false, p.startphi, p.deltaphi);
                 geometry.rotateX(Math.PI / 2);
             } else { // Hollow Tube
                 const shape = new THREE.Shape();
@@ -551,9 +551,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 shape.lineTo(p.rmin * Math.cos(p.startphi + p.deltaphi), p.rmin * Math.sin(p.startphi + p.deltaphi));
                 shape.absarc(0, 0, p.rmin, p.startphi + p.deltaphi, p.startphi, true);
                 shape.closePath();
-                const extrudeSettings = { steps: 1, depth: p.dz * 2, bevelEnabled: false };
+                const extrudeSettings = { steps: 1, depth: p.z, bevelEnabled: false };
                 geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                geometry.translate(0, 0, -p.dz);
+                geometry.translate(0, 0, -p.z/2);
             }
             break;
         case 'cone':
@@ -937,63 +937,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 resultBrush = csgEvaluator.evaluate(resultBrush, boxBrushHigh, INTERSECTION);
 
                 geometry = resultBrush.geometry;
-            }
-            break;
-        case 'cutTube':
-            {
-                // A cutTube is a tube intersected with two half-spaces.
-                // 1. Create the basic tube geometry.
-                let tubeGeom;
-                if (!p.rmin || p.rmin <= 1e-9) { // Solid Cylinder
-                    tubeGeom = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z * 2, 32, 1, false, p.startphi, p.deltaphi);
-                    tubeGeom.rotateX(Math.PI / 2);
-                } else { // Hollow Tube
-                    const shape = new THREE.Shape();
-                    shape.moveTo(p.rmax * Math.cos(p.startphi), p.rmax * Math.sin(p.startphi));
-                    shape.absarc(0, 0, p.rmax, p.startphi, p.startphi + p.deltaphi, false);
-                    shape.lineTo(p.rmin * Math.cos(p.startphi + p.deltaphi), p.rmin * Math.sin(p.startphi + p.deltaphi));
-                    shape.absarc(0, 0, p.rmin, p.startphi + p.deltaphi, p.startphi, true);
-                    shape.closePath();
-                    const extrudeSettings = { steps: 1, depth: p.z * 2, bevelEnabled: false };
-                    tubeGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                    tubeGeom.translate(0, 0, -p.z);
-                }
-                
-                let resultBrush = new Brush(tubeGeom);
-
-                // 2. Create the two cutting planes (as very large boxes representing half-spaces)
-                const planeSize = p.rmax * 4; // A size guaranteed to be larger than the tube
-                
-                // Low normal cut
-                const lowNormal = new THREE.Vector3(p.lowX, p.lowY, p.lowZ).normalize();
-                if (lowNormal.lengthSq() > 0.5) { // A zero vector means no cut
-                    const planeGeomLow = new THREE.BoxGeometry(planeSize, planeSize, planeSize);
-                    const planeBrushLow = new Brush(planeGeomLow);
-                    
-                    // Position the box so its face is at the origin
-                    planeBrushLow.position.copy(lowNormal).multiplyScalar(planeSize / 2);
-                    // Rotate the box so its face's normal aligns with the desired cutting normal
-                    planeBrushLow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), lowNormal);
-                    planeBrushLow.updateMatrixWorld();
-                    
-                    // Intersect the tube with the half-space
-                    resultBrush = csgEvaluator.evaluate(resultBrush, planeBrushLow, INTERSECTION);
-                }
-                
-                // High normal cut
-                const highNormal = new THREE.Vector3(p.highX, p.highY, p.highZ).normalize();
-                 if (highNormal.lengthSq() > 0.5) {
-                    const planeGeomHigh = new THREE.BoxGeometry(planeSize, planeSize, planeSize);
-                    const planeBrushHigh = new Brush(planeGeomHigh);
-                    planeBrushHigh.position.copy(highNormal).multiplyScalar(planeSize / 2);
-                    planeBrushHigh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), highNormal);
-                    planeBrushHigh.updateMatrixWorld();
-                    
-                    resultBrush = csgEvaluator.evaluate(resultBrush, planeBrushHigh, INTERSECTION);
-                }
-
-                geometry = resultBrush.geometry;
-                console.log("Rendered cutTube",p)
             }
             break;
         case 'para': // Parallelepiped
@@ -1648,7 +1591,7 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             const item = recipe[i];
             const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
             if (!nextSolidGeom) continue;
-
+            
             const nextBrush = new Brush(nextSolidGeom);
             const transform = item.transform || {};
             
@@ -1808,7 +1751,7 @@ let _selectedThreeObjects = []; // Internal list of THREE.Mesh objects
 let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
 export function updateSelectionState(groupsToSelect = []) {
-    console.log("Selected groups",groupsToSelect)
+    
     // Unhighlight previously selected objects
     _selectedThreeObjects.forEach(group => {
         // Find the solid mesh, which is the first child
