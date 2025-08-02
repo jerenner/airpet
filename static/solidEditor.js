@@ -282,6 +282,8 @@ function renderParamsUI(params = {}) {
     const isGenericPolycone = type === 'genericPolycone';
     const isPolyhedra = type === 'polyhedra'; 
     const isGenericPolyhedra = type === 'genericPolyhedra';
+    const isTet = type === 'tet';
+    const isArb8 = type === 'arb8';
 
     if (isBoolean) {
         if (booleanRecipe.length === 0) {
@@ -435,6 +437,36 @@ function renderParamsUI(params = {}) {
 
         rebuildZPlanesUI();
         document.getElementById('add-zplane-btn').addEventListener('click', addZPlane);
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
+    } else if (isTet) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+
+        // Get all defines of type 'position' from the current project state
+        const positionDefines = Object.keys(currentProjectState.defines || {})
+            .filter(key => currentProjectState.defines[key].type === 'position');
+
+        if (positionDefines.length === 0) {
+            dynamicParamsDiv.innerHTML = `<p style="font-style: italic; color: #888;">
+                A Tetrahedron requires at least 4 'position' defines. Please create some in the 'Defines' tab first.
+            </p>`;
+        } else {
+            dynamicParamsDiv.appendChild(createTetDefineSelector('p_vertex1', 'Vertex 1', positionDefines, params.vertex1));
+            dynamicParamsDiv.appendChild(createTetDefineSelector('p_vertex2', 'Vertex 2', positionDefines, params.vertex2));
+            dynamicParamsDiv.appendChild(createTetDefineSelector('p_vertex3', 'Vertex 3', positionDefines, params.vertex3));
+            dynamicParamsDiv.appendChild(createTetDefineSelector('p_vertex4', 'Vertex 4', positionDefines, params.vertex4));
+        }
+
+        dynamicParamsDiv.addEventListener('change', updatePreview);
+
+    } else if (isArb8) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_dz', 'Half Length Z (mm)', params.dz || '100', currentProjectState));
+        dynamicParamsDiv.appendChild(document.createElement('hr'));
+        for (let i = 1; i <= 8; i++) {
+            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}x`, `Vertex ${i} X`, params[`v${i}x`] || `${50*(i % 2)-100}`, currentProjectState));
+            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}y`, `Vertex ${i} Y`, params[`v${i}y`] || `${50*((i+1) % 4)-100}`, currentProjectState));
+        }
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
     } else {
@@ -682,6 +714,36 @@ function addZPlane() {
     zPlanesState.push({ rmin: '0', rmax: '0', z: '0' });
     rebuildZPlanesUI();
     updatePreview();
+}
+
+// Helper function to create a labeled dropdown for selecting defines.
+function createTetDefineSelector(id, label, options, selectedValue) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'property_item';
+
+    const labelEl = document.createElement('label');
+    labelEl.htmlFor = id;
+    labelEl.textContent = `${label}:`;
+
+    const selectEl = document.createElement('select');
+    selectEl.id = id;
+    
+    // Populate the dropdown
+    options.forEach(optionName => {
+        const option = document.createElement('option');
+        option.value = optionName;
+        option.textContent = optionName;
+        selectEl.appendChild(option);
+    });
+
+    // Set the initial value if one is provided
+    if (selectedValue && options.includes(selectedValue)) {
+        selectEl.value = selectedValue;
+    }
+
+    wrapper.appendChild(labelEl);
+    wrapper.appendChild(selectEl);
+    return wrapper;
 }
 
 // Copied this helper function from uiManager.js to make it available here.
@@ -1056,6 +1118,17 @@ function getRawParamsFromUI() {
         raw_params.endouterrad = p('p_endouterrad');
         raw_params.zlen = p('p_zlen');
         raw_params.phi = p('p_phi');
+    } else if (type === 'tet') {
+        raw_params.vertex1 = p('p_vertex1');
+        raw_params.vertex2 = p('p_vertex2');
+        raw_params.vertex3 = p('p_vertex3');
+        raw_params.vertex4 = p('p_vertex4');
+    } else if (type === 'arb8') {
+        raw_params.dz = p('p_dz');
+        for (let i = 1; i <= 8; i++) {
+            raw_params[`v${i}x`] = p(`p_v${i}x`);
+            raw_params[`v${i}y`] = p(`p_v${i}y`);
+        }
     }
     return raw_params;
 }
@@ -1295,6 +1368,7 @@ async function updatePreview() {
         if (p.dz !== undefined) p.dz /= 2.0;
         
         tempSolidData._evaluated_parameters = p;
+        
         geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
     }
     

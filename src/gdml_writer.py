@@ -276,11 +276,11 @@ class GDMLWriter:
                         facet_attrs['type'] = facet['facet_type_attr']
                 ET.SubElement(solid_el, facet['type'], facet_attrs)
 
-        elif solid_obj.type == 'arb8': # G4GenericTrap
-            solid_el.set("dz", str(p['dz'] * 2.0)) # dz was stored as half-length
-            for i, vertex in enumerate(p.get('vertices', [])):
-                solid_el.set(f'v{i+1}x', str(vertex['x']))
-                solid_el.set(f'v{i+1}y', str(vertex['y']))
+        elif solid_obj.type == 'arb8':
+            solid_el.set("dz", str(p['dz']))
+            for i in range(1, 9):
+                solid_el.set(f"v{i}x", str(p[f'v{i}x']))
+                solid_el.set(f"v{i}y", str(p[f'v{i}y']))
 
         elif solid_obj.type == 'hype':
             solid_el.set("rmin", str(p['rmin']))
@@ -318,10 +318,10 @@ class GDMLWriter:
             solid_el.set("dz", str(p['dz']))
 
         elif solid_obj.type == 'tet':
-            solid_el.set("vertex1", p['vertex1_ref'])
-            solid_el.set("vertex2", p['vertex2_ref'])
-            solid_el.set("vertex3", p['vertex3_ref'])
-            solid_el.set("vertex4", p['vertex4_ref'])
+            solid_el.set("vertex1", p['vertex1'])
+            solid_el.set("vertex2", p['vertex2'])
+            solid_el.set("vertex3", p['vertex3'])
+            solid_el.set("vertex4", p['vertex4'])
 
         elif solid_obj.type == 'twistedbox':
             solid_el.set("PhiTwist", str(convert_from_internal_units(p['PhiTwist'], DEFAULT_OUTPUT_AUNIT, "angle")))
@@ -379,8 +379,7 @@ class GDMLWriter:
             solid_el.set("highY", str(p['highNormal']['y']))
             solid_el.set("highZ", str(p['highNormal']['z']))
 
-        # TODO: Add writer logic for other solid types
-        # reflectedSolid, scaledSolid
+        
 
         elif 'attributes_raw' in p: # Fallback for unhandled solids
             for key, value in p['attributes_raw'].items():

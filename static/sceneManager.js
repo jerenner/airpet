@@ -726,21 +726,21 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         case 'tet': // Tetrahedron
             {
                 const defines = projectState.defines;
-                const v1_ref = defines[p.vertex1_ref];
-                const v2_ref = defines[p.vertex2_ref];
-                const v3_ref = defines[p.vertex3_ref];
-                const v4_ref = defines[p.vertex4_ref];
+                const v1 = p.vertex1;
+                const v2 = p.vertex2;
+                const v3 = p.vertex3;
+                const v4 = p.vertex4;
                 
-                if (!v1_ref || !v2_ref || !v3_ref || !v4_ref) {
+                if (!v1 || !v2 || !v3 || !v4) {
                     console.error(`[SceneManager] Could not find all vertex definitions for tet '${solidData.name}'`);
                     return new THREE.SphereGeometry(10, 8, 8); // Placeholder
                 }
 
                 const vertices = new Float32Array([
-                    v1_ref.value.x, v1_ref.value.y, v1_ref.value.z,
-                    v2_ref.value.x, v2_ref.value.y, v2_ref.value.z,
-                    v3_ref.value.x, v3_ref.value.y, v3_ref.value.z,
-                    v4_ref.value.x, v4_ref.value.y, v4_ref.value.z,
+                    v1.x, v1.y, v1.z,
+                    v2.x, v2.y, v2.z,
+                    v3.x, v3.y, v3.z,
+                    v4.x, v4.y, v4.z,
                 ]);
 
                 // Define the 4 triangular faces using vertex indices
@@ -1027,7 +1027,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             }
             break;
         case 'trap': // General Trapezoid
-        case 'arb8': // Generic Trap (arb8 and trap can be treated similarly)
             {
                 const vertices = [];
                 if (solidData.type === 'trap') {
@@ -1084,8 +1083,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 const dy1 = p.y1 !== undefined ? p.y1 : p.y;
                 const dx2 = p.x2 !== undefined ? p.x2 : p.x;
                 const dy2 = p.y2 !== undefined ? p.y2 : p.y;
-
-                console.log("Rendering with z = ",phiTwist)
 
                 const bottomVerts = [
                     new THREE.Vector2(-dx1, -dy1),
@@ -1351,6 +1348,25 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.computeVertexNormals();
             }
             break;
+        case 'arb8':
+            {
+                const dz = p.dz; // This is the half-length
+
+                // The 8 vertices are defined by their XY coordinates on two Z planes
+                const vertices = [
+                    new THREE.Vector3(p.v1x, p.v1y, -dz),
+                    new THREE.Vector3(p.v2x, p.v2y, -dz),
+                    new THREE.Vector3(p.v3x, p.v3y, -dz),
+                    new THREE.Vector3(p.v4x, p.v4y, -dz),
+                    new THREE.Vector3(p.v5x, p.v5y,  dz),
+                    new THREE.Vector3(p.v6x, p.v6y,  dz),
+                    new THREE.Vector3(p.v7x, p.v7y,  dz),
+                    new THREE.Vector3(p.v8x, p.v8y,  dz)
+                ];
+                console.log("Vertices are",vertices)
+                geometry = new ConvexGeometry(vertices);
+            }
+            break;
         default:
             console.warn('[SceneManager] Unsupported primitive solid type for rendering:', solidData.type, solidData.name);
             // Return a placeholder sphere for unsupported types
@@ -1423,7 +1439,7 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
     // --- SCALED SOLID ---
     if (solidData.type === 'scaledSolid') {
         const p = solidData._evaluated_parameters;
-        console.log("Got eval params", p)
+
         if (p && p.solid_ref && p.scale) {
             // Recursively get the geometry of the solid that is being scaled
             const baseGeometry = _getOrBuildGeometry(p.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
