@@ -562,7 +562,7 @@ async function handleHierarchySelection(newSelection) {
                 meshesToProcess.push(...SceneManager.getMeshesForOwner(item.id));
             } else {
                 // Simple PV: get its single mesh.
-                const mesh = SceneManager.findMeshByPvId(item.id);
+                const mesh = SceneManager.findObjectByPvId(item.id);
                 if (mesh) meshesToProcess.push(mesh);
             }
         }

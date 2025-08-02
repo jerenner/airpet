@@ -1,16 +1,23 @@
 // static/sceneManager.js
 import * as THREE from 'three';
+import { AxesHelper } from 'three';
+import { EdgesGeometry, LineBasicMaterial, LineSegments } from 'three';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
+import { Line2 } from 'three/addons/lines/Line2.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 
 // --- Module-level variables ---
 let scene, camera, renderer, viewerContainer;
 let orbitControls, transformControls, flyControls;
 let clock; // For FlyControls delta time
+let sceneAxes, cameraAxes; // For axes gizmo
+let axesSize = 100; // This controls the size of the axes view
 
 const geometryGroup = new THREE.Group(); // Parent for all loaded GDML geometry
 let gridHelper;
@@ -50,7 +57,7 @@ export function initScene(callbacks) {
 
     // Basic Scene Setup
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xdddddd);
+    scene.background = new THREE.Color(0x444444);
     scene.add(gizmoAttachmentHelper); // Add it to the scene
 
     viewerContainer = document.getElementById('viewer_container');
@@ -62,18 +69,26 @@ export function initScene(callbacks) {
 
     // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(viewerContainer.clientWidth, viewerContainer.clientHeight);
+    renderer.autoClear = false; // control clearing manually
     viewerContainer.appendChild(renderer.domElement);
 
     // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Slightly brighter ambient
-    scene.add(ambientLight);
-    const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.6);
-    directionalLight1.position.set(1, 1, 1).normalize();
-    scene.add(directionalLight1);
-    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-    directionalLight2.position.set(-1, -0.5, -1).normalize();
-    scene.add(directionalLight2);
+    scene.add(new THREE.AmbientLight(0xcccccc, 1.0)); // Soft, omnipresent light
+
+    const light1 = new THREE.DirectionalLight(0xffffff, 1.5);
+    light1.position.set(1, 1, 1).normalize();
+    scene.add(light1);
+
+    const light2 = new THREE.DirectionalLight(0xffffff, 1.0);
+    light2.position.set(-1, -0.5, -1).normalize();
+    scene.add(light2);
+    
+    // Add a light from below to illuminate bottom faces
+    const light3 = new THREE.DirectionalLight(0xffffff, 0.5);
+    light3.position.set(0, -1, 0).normalize();
+    scene.add(light3);
 
 
     // Controls
@@ -82,7 +97,15 @@ export function initScene(callbacks) {
     orbitControls.dampingFactor = 0.05;
     orbitControls.enabled = true; // Default
 
+    // Transform controls
     transformControls = new TransformControls(camera, renderer.domElement);
+
+    // Increase the size of the gizmo handles for easier interaction.
+    transformControls.setSize(1.2);
+    // Tell the internal raycaster to have a larger tolerance for lines
+    // This is like giving the mouse a "fat finger" when clicking near a line
+    transformControls.getRaycaster().params.Line.threshold = 0.1;
+
     transformControls.addEventListener('dragging-changed', (event) => {
         orbitControls.enabled = !event.value; // Disable orbit while transforming
         // Optionally call a callback if main.js needs to know about drag start/stop
@@ -96,8 +119,8 @@ export function initScene(callbacks) {
         if (object === gizmoAttachmentHelper) {
             initialTransforms.set('helper', gizmoAttachmentHelper.clone());
             // Store initial transforms of all meshes controlled by the helper
-            _selectedThreeObjects.forEach(mesh => {
-                initialTransforms.set(mesh.userData.id, mesh.clone());
+            _selectedThreeObjects.forEach(group => {
+                initialTransforms.set(group.userData.id, group.clone());
             });
         } else {
             // It's a single object
@@ -154,6 +177,7 @@ export function initScene(callbacks) {
     transformControls.enabled = false; // Start disabled
 
 
+    // Camera controls
     flyControls = new FlyControls(camera, renderer.domElement);
     flyControls.movementSpeed = 300;
     flyControls.rollSpeed = Math.PI / 6;
@@ -166,18 +190,66 @@ export function initScene(callbacks) {
     // Selection box
     selectionBox = new SelectionBox(camera, geometryGroup);
 
-    // Helpers
-    axesHelper = new THREE.AxesHelper(300);
-    scene.add(axesHelper);
-    isAxesVisible = true;
-
-    const gridSize = 2000;
-    const gridDivisions = 40;
+    // Grid setup
+    const gridSize = 10000; // Increased from 2000
+    const gridDivisions = 100; // Increased from 40 for more detail over a larger area
     gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x888888, 0xcccccc);
     gridHelper.position.y = -0.1;
+    gridHelper.visible = false; // Start hidden
     scene.add(gridHelper);
-    isGridVisible = true;
+    isGridVisible = false;
 
+    // --- Setup for Corner Axes Gizmo ---
+    isAxesVisible = true;
+
+    // The axes scene
+    sceneAxes = new THREE.Scene();
+    
+    // // The axes helper itself
+    // const axes = new THREE.AxesHelper(axesSize * 0.8);
+    // axes.material.linewidth = 5;
+    // axes.material.depthTest = false; // Solves z-fighting
+    // sceneAxes.add(axes);
+
+    // The axes camera: Orthographic is better for this.
+    // We define a square viewing area.
+    cameraAxes = new THREE.OrthographicCamera(
+        -axesSize, axesSize, // left, right
+         axesSize, -axesSize, // top, bottom
+        -1000, 1000           // near, far
+    );
+    cameraAxes.up = camera.up;
+
+    // Create axes manually using Line2 for thickness control
+    const axesGroup = new THREE.Group();
+
+    const origin = [0, 0, 0];
+    const xAxisEnd = [axesSize * 0.8, 0, 0];
+    const yAxisEnd = [0, axesSize * 0.8, 0];
+    const zAxisEnd = [0, 0, axesSize * 0.8];
+    
+    // X Axis (Red)
+    const xGeo = new LineGeometry();
+    xGeo.setPositions([...origin, ...xAxisEnd]);
+    const xMat = new LineMaterial({ color: 0xff0000, linewidth: 20 }); // Linewidth is in screen units (pixels)
+    const xAxis = new Line2(xGeo, xMat);
+
+    // Y Axis (Green)
+    const yGeo = new LineGeometry();
+    yGeo.setPositions([...origin, ...yAxisEnd]);
+    const yMat = new LineMaterial({ color: 0x00ff00, linewidth: 20 });
+    const yAxis = new Line2(yGeo, yMat);
+
+    // Z Axis (Blue)
+    const zGeo = new LineGeometry();
+    zGeo.setPositions([...origin, ...zAxisEnd]);
+    const zMat = new LineMaterial({ color: 0x8888ff, linewidth: 20 });
+    const zAxis = new Line2(zGeo, zMat);
+    
+    axesGroup.add(xAxis, yAxis, zAxis);
+    sceneAxes.add(axesGroup);
+
+    // ---
 
     // Add geometry group
     scene.add(geometryGroup);
@@ -347,17 +419,19 @@ function handlePointerDownForSelection(event) {
     }
 }
 
-function findActualMesh(object) { // Helper if selection might hit sub-parts of a complex object
+function findActualMesh(object) {
     let current = object;
+    // Traverse up until we find a parent that is a direct child of `geometryGroup`.
+    // This will be the main Group object we created.
     while (current.parent && current.parent !== geometryGroup && current.parent !== scene) {
-        if (current.userData && current.userData.id) return current; // Found the main mesh with our ID
         current = current.parent;
     }
-    return (current.userData && current.userData.id) ? current : object; // Fallback to original if no ID found up chain
+    // Only return it if it has our userData, otherwise something went wrong.
+    return (current.userData && current.userData.id) ? current : object;
 }
 
 export function setPVVisibility(pvId, isVisible) {
-    const mesh = findMeshByPvId(pvId);
+    const mesh = findObjectByPvId(pvId);
     if (mesh) {
         mesh.visible = isVisible;
     }
@@ -389,14 +463,15 @@ export function setAllPVVisibility(isVisible) {
 }
 
 // Helper function to find a mesh by its PV ID
-export function findMeshByPvId(pvId) {
-    let foundMesh = null;
+export function findObjectByPvId(pvId) { // Renamed
+    let foundObject = null;
     geometryGroup.traverse(child => {
-        if (child.isMesh && child.userData && child.userData.id === pvId) {
-            foundMesh = child;
+        // We are now looking for the parent Group, not the mesh
+        if (child.isGroup && child.userData && child.userData.id === pvId) {
+            foundObject = child;
         }
     });
-    return foundMesh;
+    return foundObject;
 }
 
 // --- Object Rendering ---
@@ -1641,46 +1716,59 @@ export function renderObjects(pvDescriptions, projectState) {
         }
 
         const solidRef = pvData.solid_ref_for_threejs; // Backend should provide this direct ref
-        const cachedGeom = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
+        const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
 
-        if (!cachedGeom) {
+        if (!geometry) {
             const solidIdentifier = (typeof solidRef === 'string') ? solidRef : solidRef.name;
             console.warn(`[SceneManager] No geometry could be built for solid '${solidIdentifier}'. Skipping placement of '${pvData.name}'.`);
             return;
         }
 
-        const geometry = cachedGeom.clone(); // Use a clone for each instance
-
-        // --- Create material based on vis_attributes ---
+        // 1. Create the main solid mesh
         const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
         const color = vis.color;
-
-        const material = new THREE.MeshLambertMaterial({
+        // Use MeshPhongMaterial for better lighting interaction
+        const meshMaterial = new THREE.MeshPhongMaterial({
             color: new THREE.Color(color.r, color.g, color.b),
             transparent: color.a < 1.0,
             opacity: color.a,
             side: THREE.DoubleSide,
-            wireframe: isWireframeMode
+            shininess: 30, // Add some shininess
+            polygonOffset: true,
+            polygonOffsetFactor: 1,
+            polygonOffsetUnits: 1
         });
+        const solidMesh = new THREE.Mesh(geometry, meshMaterial);
 
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.userData = pvData; // Store the full placement data
-        mesh.name = pvData.name || `mesh_${pvData.id}`;
+        // 2. Create the edge outline
+        const edges = new EdgesGeometry(geometry, 1); // The '1' is the threshold angle for edges
+        const lineMaterial = new LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        const wireframe = new LineSegments(edges, lineMaterial);
 
-        // Apply final placement transform
-        if (pvData.position) mesh.position.set(pvData.position.x, pvData.position.y, pvData.position.z);
-        if (pvData.rotation) { // ZYX Euler angles in radians
+        // 3. Create a Group to hold both
+        const group = new THREE.Group();
+        group.add(solidMesh);
+        group.add(wireframe);
+        
+        // 4. Apply transforms and user data to the GROUP, not the individual mesh
+        group.userData = pvData;
+        group.name = pvData.name || `group_${pvData.id}`;
+
+        if (pvData.position) group.position.set(pvData.position.x, pvData.position.y, pvData.position.z);
+        if (pvData.rotation) {
             const euler = new THREE.Euler(pvData.rotation.x, pvData.rotation.y, pvData.rotation.z, 'ZYX');
-            mesh.quaternion.setFromEuler(euler);
+            group.quaternion.setFromEuler(euler);
         }
-        if (pvData.scale) mesh.scale.set(pvData.scale.x, pvData.scale.y, pvData.scale.z);
-
-        // --- Apply persistent visibility state ---
+        if (pvData.scale) {
+            group.scale.set(pvData.scale.x, pvData.scale.y, pvData.scale.z);
+        }
+        
         if (hiddenPvIds.has(pvData.id)) {
-            mesh.visible = false;
+            group.visible = false;
         }
+        
+        geometryGroup.add(group);
 
-        geometryGroup.add(mesh);
     });
 
     console.log("[SceneManager] Rendered objects. Total in group:", geometryGroup.children.length);
@@ -1719,24 +1807,29 @@ const _highlightMaterial = new THREE.MeshLambertMaterial({
 let _selectedThreeObjects = []; // Internal list of THREE.Mesh objects
 let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
-export function updateSelectionState(clickedMeshes = []) {
-
-    // Unhighlight everything first.
-    _selectedThreeObjects.forEach(obj => {
-        if (_originalMaterialsMap.has(obj.uuid)) {
-            obj.material = _originalMaterialsMap.get(obj.uuid).material;
-            _originalMaterialsMap.delete(obj.uuid);
+export function updateSelectionState(groupsToSelect = []) {
+    console.log("Selected groups",groupsToSelect)
+    // Unhighlight previously selected objects
+    _selectedThreeObjects.forEach(group => {
+        // Find the solid mesh, which is the first child
+        const solidMesh = group.children[0]; 
+        if (solidMesh && _originalMaterialsMap.has(solidMesh.uuid)) {
+            solidMesh.material = _originalMaterialsMap.get(solidMesh.uuid).material;
+            _originalMaterialsMap.delete(solidMesh.uuid);
         }
     });
 
-    // Update the internal list of selected objects
-    _selectedThreeObjects = clickedMeshes;
+    // Store the new selection of GROUPS
+    _selectedThreeObjects = groupsToSelect;
 
-    // Highlight all objects in the new selection list.
-    _selectedThreeObjects.forEach(mesh => {
-        if (mesh && mesh.isMesh && mesh.material !== _highlightMaterial) {
-            _originalMaterialsMap.set(mesh.uuid, { material: mesh.material });
-            mesh.material = _highlightMaterial;
+    // Highlight the solid mesh INSIDE each newly selected group
+    _selectedThreeObjects.forEach(group => {
+        const solidMesh = group.children[0]; // The solid mesh is always the first child
+        if (solidMesh && solidMesh.isMesh) {
+            if (!_originalMaterialsMap.has(solidMesh.uuid)) {
+                _originalMaterialsMap.set(solidMesh.uuid, { material: solidMesh.material });
+            }
+            solidMesh.material = _highlightMaterial;
         }
     });
 }
@@ -1791,24 +1884,24 @@ export function unselectAllInScene() {
 }
 
 // --- Transform Controls Management ---
-export function attachTransformControls(objects) { // `objects` is the parameter
+export function attachTransformControls(groups) { 
     transformControls.detach();
     
-    // THE FIX IS HERE: The check must be on the function's parameter `objects`.
-    if (!transformControls.enabled || !objects || objects.length === 0) {
+    // The check must be on the function's parameter `objects`.
+    if (!transformControls.enabled || !groups || groups.length === 0) {
         return;
     }
 
-    if (objects.length === 1) {
-        // Simple case: attach directly to the single mesh
-        transformControls.attach(objects[0]);
+    if (groups.length === 1) {
+        // Simple case: attach directly to the single group
+        transformControls.attach(groups[0]);
     } else {
         // Multi-object case (from a replica or user multi-select)
         const box = new THREE.Box3();
-        objects.forEach(mesh => {
+        groups.forEach(group => {
             // It's safer to check if the mesh is valid before expanding the box
-            if (mesh) {
-                box.expandByObject(mesh);
+            if (group) {
+                box.expandByObject(group);
             }
         });
         const center = new THREE.Vector3();
@@ -1821,8 +1914,8 @@ export function attachTransformControls(objects) { // `objects` is the parameter
         // must match the orientation of the object(s) it controls.
         // For a group, we can assume they all have the same orientation,
         // so we just take it from the first object in the list.
-        if (objects[0]) {
-            gizmoAttachmentHelper.quaternion.copy(objects[0].quaternion);
+        if (groups[0]) {
+            gizmoAttachmentHelper.quaternion.copy(groups[0].quaternion);
         } else {
             gizmoAttachmentHelper.rotation.set(0,0,0);
         }
@@ -1831,7 +1924,7 @@ export function attachTransformControls(objects) { // `objects` is the parameter
 
         // We only support moving one canonical item at a time (even if it's a group).
         // The first mesh's owner_pv_id will be the same for all meshes in the group.
-        gizmoAttachmentHelper.userData.controlledObjectId = objects[0].userData.owner_pv_id || objects[0].userData.id;
+        gizmoAttachmentHelper.userData.controlledObjectId = groups[0].userData.owner_pv_id || groups[0].userData.id;
         
         transformControls.attach(gizmoAttachmentHelper);
     }
@@ -1900,7 +1993,45 @@ function animate() {
     if (flyControls.enabled) flyControls.update(delta);
     // TransformControls updates internally if attached
 
+    // 1. Clear everything from the last frame.
+    renderer.clear();
+
+    // 2. Render the main scene into the full viewport.
+    renderer.setViewport(0, 0, viewerContainer.clientWidth, viewerContainer.clientHeight);
     renderer.render(scene, camera);
+
+    // --- Render the axes gizmo on top ---
+    if (isAxesVisible) {
+        // We must clear the DEPTH buffer only, so the gizmo appears on top.
+        renderer.clearDepth();
+
+        // Set a small viewport in the bottom-left corner.
+        const viewportSize = 120;
+        renderer.setViewport(10, 10, viewportSize, viewportSize);
+
+        // --- FIX for Axes Orientation ---
+        // 1. Get the direction vector of the main camera.
+        const cameraDirection = new THREE.Vector3();
+        camera.getWorldDirection(cameraDirection);
+
+        // 2. Position the axes camera along that direction vector.
+        // The distance controls the size of the gizmo.
+        cameraAxes.position.copy(cameraDirection).multiplyScalar(-200); // Move it back from the origin
+
+        // 3. Point the axes camera back at the center of the axes scene.
+        cameraAxes.lookAt(sceneAxes.position); // Look at (0,0,0)
+
+        // Update material resolution
+        sceneAxes.traverse(child => {
+            if (child.isLine2) {
+                child.material.resolution.set(viewerContainer.clientWidth, viewerContainer.clientHeight);
+            }
+        });
+
+        // Render the axes scene. Because autoClear is false, this will
+        // draw ON TOP of the main scene render.
+        renderer.render(sceneAxes, cameraAxes);
+    }
 }
 
 function onWindowResize() {
