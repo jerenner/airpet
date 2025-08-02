@@ -54,7 +54,7 @@ def parse_step_file(file_path):
     
     imported_state = GeometryState()
     
-    default_mat = Material(name="G4_STAINLESS-STEEL", density=8.0, state="solid", Z=26, A=55.845)
+    default_mat = Material(name="G4_STAINLESS-STEEL", density_expr="8.0", state="solid", Z_expr="26", A_expr="55.845")
     imported_state.add_material(default_mat)
 
     assembly_name = os.path.splitext(os.path.basename(file_path))[0].replace(" ", "_")

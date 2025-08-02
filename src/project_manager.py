@@ -91,7 +91,7 @@ class ProjectManager:
                         unit_str = define_obj.unit
                         for axis in ['x', 'y', 'z']:
                             if axis in raw_dict:
-                                expr_to_eval = raw_dict[axis]
+                                expr_to_eval = str(raw_dict[axis])
                                 # If a unit is defined on the parent tag, apply it
                                 if unit_str:
                                     expr_to_eval = f"({expr_to_eval}) * {unit_str}"
