@@ -546,6 +546,21 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'), currentProjectState)
             ],
+            cutTube: () => [
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState),
+                document.createElement('hr'),
+                ExpressionInput.create('p_lowX', 'Low Normal X', p('lowX', '0'), currentProjectState),
+                ExpressionInput.create('p_lowY', 'Low Normal Y', p('lowY', '0'), currentProjectState),
+                ExpressionInput.create('p_lowZ', 'Low Normal Z', p('lowZ', '-1'), currentProjectState),
+                document.createElement('hr'),
+                ExpressionInput.create('p_highX', 'High Normal X', p('highX', '0'), currentProjectState),
+                ExpressionInput.create('p_highY', 'High Normal Y', p('highY', '0'), currentProjectState),
+                ExpressionInput.create('p_highZ', 'High Normal Z', p('highZ', '1'), currentProjectState)
+            ],
             elcone: () => [
                 ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
                 ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
@@ -1129,6 +1144,18 @@ function getRawParamsFromUI() {
             raw_params[`v${i}x`] = p(`p_v${i}x`);
             raw_params[`v${i}y`] = p(`p_v${i}y`);
         }
+    } else if (type === 'cutTube') {
+        raw_params.rmin = p('p_rmin');
+        raw_params.rmax = p('p_rmax');
+        raw_params.z = p('p_z');
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.lowX = p('p_lowX');
+        raw_params.lowY = p('p_lowY');
+        raw_params.lowZ = p('p_lowZ');
+        raw_params.highX = p('p_highX');
+        raw_params.highY = p('p_highY');
+        raw_params.highZ = p('p_highZ');
     }
     return raw_params;
 }
@@ -1364,10 +1391,9 @@ async function updatePreview() {
         };
         
         // Normalize values (half-lengths) for Three.js
-        const p = tempSolidData._evaluated_parameters;
-        if (p.dz !== undefined) p.dz /= 2.0;
-        
-        tempSolidData._evaluated_parameters = p;
+        //const p = tempSolidData._evaluated_parameters;
+        //if (p.dz !== undefined) p.dz /= 2.0;
+        //tempSolidData._evaluated_parameters = p;
         
         geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
     }

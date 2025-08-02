@@ -811,11 +811,66 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'cutTube':
             {
+                // 1. Create the basic tube geometry.
+                let tubeGeom;
+                if (p.rmin <= 1e-9) { // Solid Cylinder
+                    tubeGeom = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z * 2, 50, 1, false, p.startphi, p.deltaphi);
+
+                    // Need to do some rotations to obtain the same orientation as the hollow tube
+                    tubeGeom.rotateX(-Math.PI / 2);
+                    tubeGeom.rotateZ(Math.PI / 2);
+                } else { // Hollow Tube
+                    const shape = new THREE.Shape();
+                    shape.moveTo(p.rmax * Math.cos(p.startphi), p.rmax * Math.sin(p.startphi));
+                    shape.absarc(0, 0, p.rmax, p.startphi, p.startphi + p.deltaphi, false);
+                    shape.lineTo(p.rmin * Math.cos(p.startphi + p.deltaphi), p.rmin * Math.sin(p.startphi + p.deltaphi));
+                    shape.absarc(0, 0, p.rmin, p.startphi + p.deltaphi, p.startphi, true);
+                    shape.closePath();
+                    const extrudeSettings = { steps: 1, depth: p.z * 2, bevelEnabled: false };
+                    tubeGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                    tubeGeom.translate(0, 0, -p.z);
+                }
+                
+                // G4CutTubs is aligned to Z axis, which matches our tube extrusion.
+                let resultBrush = new Brush(tubeGeom);
+
+                // 2. Create two large boxes representing the half-spaces to KEEP.
+                const boxSize = (p.rmax + p.z) * 4;
+                
+                // Low normal cut
+                const lowNormal = new THREE.Vector3(p.lowX, p.lowY, p.lowZ).normalize();
+                const boxGeomLow = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+                const boxBrushLow = new Brush(boxGeomLow);
+                // Position the box so one face is on the cutting plane and it extends away from the normal
+                boxBrushLow.position.copy(lowNormal).multiplyScalar(-boxSize / 2.0);
+                boxBrushLow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), lowNormal);
+                boxBrushLow.updateMatrixWorld();
+                
+                // 3. Intersect the tube with the first half-space.
+                resultBrush = csgEvaluator.evaluate(resultBrush, boxBrushLow, INTERSECTION);
+
+                // High normal cut
+                const highNormal = new THREE.Vector3(p.highX, p.highY, p.highZ).normalize();
+                const boxGeomHigh = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+                const boxBrushHigh = new Brush(boxGeomHigh);
+                // Position this box so one face is on the plane and it extends away from the normal
+                boxBrushHigh.position.copy(highNormal).multiplyScalar(boxSize / 2.0);
+                boxBrushHigh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), highNormal);
+                boxBrushHigh.updateMatrixWorld();
+                
+                // 4. Intersect the result with the second half-space.
+                resultBrush = csgEvaluator.evaluate(resultBrush, boxBrushHigh, INTERSECTION);
+
+                geometry = resultBrush.geometry;
+            }
+            break;
+        case 'cutTube':
+            {
                 // A cutTube is a tube intersected with two half-spaces.
                 // 1. Create the basic tube geometry.
                 let tubeGeom;
                 if (!p.rmin || p.rmin <= 1e-9) { // Solid Cylinder
-                    tubeGeom = new THREE.CylinderGeometry(p.rmax, p.rmax, p.dz * 2, 50, 1, false, p.startphi, p.deltaphi);
+                    tubeGeom = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z * 2, 32, 1, false, p.startphi, p.deltaphi);
                     tubeGeom.rotateX(Math.PI / 2);
                 } else { // Hollow Tube
                     const shape = new THREE.Shape();
@@ -824,9 +879,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     shape.lineTo(p.rmin * Math.cos(p.startphi + p.deltaphi), p.rmin * Math.sin(p.startphi + p.deltaphi));
                     shape.absarc(0, 0, p.rmin, p.startphi + p.deltaphi, p.startphi, true);
                     shape.closePath();
-                    const extrudeSettings = { steps: 1, depth: p.dz * 2, bevelEnabled: false };
+                    const extrudeSettings = { steps: 1, depth: p.z * 2, bevelEnabled: false };
                     tubeGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                    tubeGeom.translate(0, 0, -p.dz);
+                    tubeGeom.translate(0, 0, -p.z);
                 }
                 
                 let resultBrush = new Brush(tubeGeom);
@@ -835,7 +890,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 const planeSize = p.rmax * 4; // A size guaranteed to be larger than the tube
                 
                 // Low normal cut
-                const lowNormal = new THREE.Vector3(p.lowNormal.x, p.lowNormal.y, p.lowNormal.z).normalize();
+                const lowNormal = new THREE.Vector3(p.lowX, p.lowY, p.lowZ).normalize();
                 if (lowNormal.lengthSq() > 0.5) { // A zero vector means no cut
                     const planeGeomLow = new THREE.BoxGeometry(planeSize, planeSize, planeSize);
                     const planeBrushLow = new Brush(planeGeomLow);
@@ -851,7 +906,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 }
                 
                 // High normal cut
-                const highNormal = new THREE.Vector3(p.highNormal.x, p.highNormal.y, p.highNormal.z).normalize();
+                const highNormal = new THREE.Vector3(p.highX, p.highY, p.highZ).normalize();
                  if (highNormal.lengthSq() > 0.5) {
                     const planeGeomHigh = new THREE.BoxGeometry(planeSize, planeSize, planeSize);
                     const planeBrushHigh = new Brush(planeGeomHigh);
@@ -863,6 +918,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 }
 
                 geometry = resultBrush.geometry;
+                console.log("Rendered cutTube",p)
             }
             break;
         case 'para': // Parallelepiped

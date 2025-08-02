@@ -369,17 +369,15 @@ class GDMLWriter:
         elif solid_obj.type == "cutTube":
             solid_el.set("rmin", str(p['rmin']))
             solid_el.set("rmax", str(p['rmax']))
-            solid_el.set("z", str(p['dz'] * 2.0))
+            solid_el.set("z", str(p['z']))
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("lowX", str(p['lowNormal']['x']))
-            solid_el.set("lowY", str(p['lowNormal']['y']))
-            solid_el.set("lowZ", str(p['lowNormal']['z']))
-            solid_el.set("highX", str(p['highNormal']['x']))
-            solid_el.set("highY", str(p['highNormal']['y']))
-            solid_el.set("highZ", str(p['highNormal']['z']))
-
-        
+            solid_el.set("lowX", str(p['lowX']))
+            solid_el.set("lowY", str(p['lowY']))
+            solid_el.set("lowZ", str(p['lowZ']))
+            solid_el.set("highX", str(p['highX']))
+            solid_el.set("highY", str(p['highY']))
+            solid_el.set("highZ", str(p['highZ']))
 
         elif 'attributes_raw' in p: # Fallback for unhandled solids
             for key, value in p['attributes_raw'].items():
