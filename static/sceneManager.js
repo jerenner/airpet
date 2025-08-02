@@ -972,13 +972,58 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.computeVertexNormals();
             }
             break;
-        case 'eltube': // Elliptical Tube
+        case 'eltube':
             {
-                // Approximate with a scaled cylinder.
-                const radius = (p.dx + p.dy) / 2; // Average radius
-                geometry = new THREE.CylinderGeometry(radius, radius, p.dz * 2, 32);
-                geometry.scale(p.dx / radius, p.dy / radius, 1);
+                const dx = p.dx;
+                const dy = p.dy;
+                const halfZ = p.dz;
+
+                // Create a circular cylinder with radius dx
+                geometry = new THREE.CylinderGeometry(dx, dx, halfZ * 2, 32);
+                
+                // Scale it non-uniformly in the Y direction to make it elliptical
+                // (note since we're rotating later, we have to apply the scale to the Z-direction)
+                geometry.scale(1, 1, dy/dx);
+                
+                // Rotate to align with the Z-axis
                 geometry.rotateX(Math.PI / 2);
+            }
+            break;
+        case 'elcone':
+            {
+                const dx = p.dx;
+                const dy = p.dy;
+                const zMax = p.zmax;
+                const zCut = p.zcut;
+
+                // The radius of the circular cone at height z is: r(z) = (dx/zMax) * z
+                // For our cone geometry, we need the radius at the base (z=zMax).
+                const baseRadius = dx;
+                
+                // 1. Create a basic circular cone pointing up the Z-axis.
+                // It goes from z=0 to z=zMax.
+                const coneGeom = new THREE.ConeGeometry(baseRadius, zMax, 32);
+                
+                // 2. Translate it so its base is at z=0 and its tip is at z=zMax.
+                coneGeom.translate(0, zMax / 2, 0);
+                
+                // 3. Scale it to make it elliptical.
+                coneGeom.scale(1, 1, dy / dx); // Scale along Z-axis in this frame
+
+                // 4. Create a large box to perform the z-cut.
+                const cutBox = new THREE.BoxGeometry(dx * 4, zMax, dy * 4);
+                // Position the box so its top face is at z=zCut
+                cutBox.translate(0, (zMax + zCut) / 2, 0);
+
+                // 5. Perform the CSG subtraction.
+                const coneBrush = new Brush(coneGeom);
+                const cutBrush = new Brush(cutBox);
+                const resultBrush = csgEvaluator.evaluate(coneBrush, cutBrush, SUBTRACTION);
+
+                geometry = resultBrush.geometry;
+
+                // 6. Rotate to align with the standard GDML Z-axis.
+                geometry.rotateX(-Math.PI / 2);
             }
             break;
         case 'trap': // General Trapezoid
@@ -1182,7 +1227,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'twistedtubs':
             {
-                // The parameters from the solid editor are already normalized
+                // Get parameters from the solid editor
                 const rmin = p.endinnerrad;
                 const rmax = p.endouterrad;
                 const halfZ = p.zlen;
@@ -1255,7 +1300,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     }
                 }
 
-                // --- FIX: Add Caps and Sides for Phi Segments ---
+                // --- Add Caps and Sides for Phi Segments ---
                 if (Math.abs(dphi - 2 * Math.PI) > 1e-9) { // If it's not a full tube
                     // Add side face at phi = 0
                     for (let j = 0; j < heightSegments; j++) {

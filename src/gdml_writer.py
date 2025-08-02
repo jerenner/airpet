@@ -299,18 +299,18 @@ class GDMLWriter:
             solid_el.set("dy", str(p['dy']))
             solid_el.set("dz", str(p['dz']))
 
+        elif solid_obj.type == 'elcone':
+            solid_el.set("dx", str(p['dx']))
+            solid_el.set("dy", str(p['dy']))
+            solid_el.set("zmax", str(p['zmax']))
+            solid_el.set("zcut", str(p['zcut']))
+
         elif solid_obj.type == 'ellipsoid':
             solid_el.set("ax", str(p['ax']))
             solid_el.set("by", str(p['by']))
             solid_el.set("cz", str(p['cz']))
             if 'zcut1' in p: solid_el.set("zcut1", str(p['zcut1']))
             if 'zcut2' in p: solid_el.set("zcut2", str(p['zcut2']))
-
-        elif solid_obj.type == 'elcone':
-            solid_el.set("dx", str(p['dx'])) # ratio
-            solid_el.set("dy", str(p['dy'])) # ratio
-            solid_el.set("zmax", str(p['zmax']))
-            solid_el.set("zcut", str(p['zcut']))
 
         elif solid_obj.type == 'paraboloid':
             solid_el.set("rlo", str(p['rlo']))

@@ -514,6 +514,12 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'), currentProjectState)
             ],
+            elcone: () => [
+                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
+                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
+                ExpressionInput.create('p_zmax', 'Max Z Height (mm)', p('zmax', '200'), currentProjectState),
+                ExpressionInput.create('p_zcut', 'Upper Z Cut Plane (mm)', p('zcut', '150'), currentProjectState)
+            ],
             twistedbox: () => [
                 ExpressionInput.create('p_x', 'Full Length X (mm)', p('x', '100'), currentProjectState),
                 ExpressionInput.create('p_y', 'Full Length Y (mm)', p('y', '100'), currentProjectState),
@@ -1012,8 +1018,14 @@ function getRawParamsFromUI() {
         raw_params.numsides = p('p_numsides');
         raw_params.rzpoints = rzPointsState;
     } else if (type === 'eltube') {
-        raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy');
+        raw_params.dx = p('p_dx'); 
+        raw_params.dy = p('p_dy');
         raw_params.dz = p('p_dz');
+    } else if (type === 'elcone') {
+        raw_params.dx = p('p_dx');
+        raw_params.dy = p('p_dy');
+        raw_params.zmax = p('p_zmax');
+        raw_params.zcut = p('p_zcut');
     } else if (type === 'twistedbox') {
         raw_params.x = p('p_x');
         raw_params.y = p('p_y');
