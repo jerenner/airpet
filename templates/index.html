@@ -121,6 +121,17 @@
             color: #fecaca; /* A light red for hover on delete */
         }
 
+        /* Matrix grid */
+        #def_matrix_grid_container {
+            overflow-x: auto; /* Enable horizontal scrolling */
+            padding-bottom: 8px; /* Add some space for the scrollbar so it doesn't overlap content */
+            max-width: 100%; /* Ensure it doesn't push the modal wider */
+            border: 1px solid #e0e0e0;
+            background-color: #fdfdfd;
+            padding: 8px;
+            border-radius: 4px;
+        }
+
         #inspector_panel {
             height: 300px; /* Fixed height, or use flex-basis for proportions */
             /* flex-basis: 300px; /* Alternative to height if using flex for parent */
@@ -1063,6 +1074,7 @@
                         <option value="position">Position</option>
                         <option value="rotation">Rotation</option>
                         <option value="scale">Scale</option>
+                        <option value="matrix">Matrix</option>
                         <option value="constant">Constant</option>
                     </select>
                 </div>

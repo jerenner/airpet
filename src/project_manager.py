@@ -97,6 +97,28 @@ class ProjectManager:
                                     expr_to_eval = f"({expr_to_eval}) * {unit_str}"
                                 val_dict[axis] = aeval.eval(expr_to_eval)
                         define_obj.value = val_dict
+                    elif define_obj.type == 'matrix':
+                        raw_dict = define_obj.raw_expression
+                        coldim = int(aeval.eval(str(raw_dict['coldim'])))
+                        
+                        evaluated_values = [aeval.eval(str(v)) for v in raw_dict['values']]
+                        
+                        define_obj.value = evaluated_values # Store the flat list of numbers
+
+                        # Now, expand the matrix into the symbol table like Geant4 does
+                        if coldim <= 0:
+                            raise ValueError("Matrix coldim must be > 0")
+                        if len(evaluated_values) % coldim != 0:
+                            raise ValueError("Number of values is not a multiple of coldim")
+
+                        if len(evaluated_values) == coldim or coldim == 1: # 1D array
+                             for i, val in enumerate(evaluated_values):
+                                aeval.symtable[f"{define_obj.name}_{i}"] = val
+                        else: # 2D array
+                            num_rows = len(evaluated_values) // coldim
+                            for r in range(num_rows):
+                                for c in range(coldim):
+                                    aeval.symtable[f"{define_obj.name}_{r}_{c}"] = evaluated_values[r * coldim + c]
                     else: # constant, quantity, expression
                         expr_to_eval = str(define_obj.raw_expression)
                         unit_str = define_obj.unit
@@ -105,7 +127,8 @@ class ProjectManager:
                         define_obj.value = aeval.eval(expr_to_eval)
                     
                     # Add successfully evaluated define to the symbol table for the next ones.
-                    aeval.symtable[define_obj.name] = define_obj.value
+                    if define_obj.type not in ['matrix']:
+                        aeval.symtable[define_obj.name] = define_obj.value
                     resolved_this_pass.append(define_obj)
 
                 except (NameError, KeyError, TypeError):
