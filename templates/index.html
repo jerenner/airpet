@@ -165,13 +165,6 @@
             display: flex; /* Use flexbox for vertical layout */
             flex-direction: column; /* Stack children vertically */
         }
-        #top_section { /* A wrapper for the menu and viewer */
-            flex-grow: 1; /* This section will take up most of the space */
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-        }
         #menu_bar {
             flex-shrink: 0; /* Prevent the menu bar from shrinking */
             background-color: #333; color: white; padding: 0; z-index: 1000; display: flex;
@@ -953,93 +946,91 @@
         </div>
     </div>
     <div id="main_content_area">
-        <div id="top_section">
-            <div id="menu_bar">
-                <ul>
-                    <!-- File Menu -->
-                    <li>
-                        <button>File</button>
-                        <div class="dropdown_content">
-                            <button id="newProjectButton">New Project</button>
-                            <hr>
-                            <!-- Open entire projects -->
-                            <button id="openGdmlButton">Open Project (GDML)...</button>
-                            <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
-                            <button id="openProjectButton">Open Project (JSON)...</button>
-                            <input type="file" id="projectFile" accept=".json" style="display: none;">
-                            <hr>
-                            <!-- Import functionality -->
-                            <button id="importGdmlButton">Import Part(s) (GDML)...</button>
-                            <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
-                            <button id="importProjectButton">Import Part(s) (JSON)...</button>
-                            <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
-                            <button id="importAiResponseButton">Import AI Response (JSON)...</button>
-                            <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
-                            <button id="importStepButton">Import CAD (STEP)...</button>
-                            <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
-                            <hr>
-                            <button id="saveProjectButton">Save Project (JSON)...</button>
-                            <button id="exportGdmlButton">Export GDML...</button>
-                            <hr>
-                            <button id="setApiKeyButton">Set Gemini API Key...</button>
-                        </div>
-                    </li>
-                    <!-- Edit Menu -->
-                    <li>
-                        <button>Edit</button>
-                        <div class="dropdown_content">
-                            <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
-                            <div class="snap-settings-container">
-                                <div class="snap-input-row">
-                                    <label for="gridSnapSizeInput">Translate (mm):</label>
-                                    <input type="number" id="gridSnapSizeInput" value="10" step="any">
-                                </div>
-                                <div class="snap-input-row">
-                                    <label for="angleSnapSizeInput">Rotate (deg):</label>
-                                    <input type="number" id="angleSnapSizeInput" value="45" step="5">
-                                </div>
+        <div id="menu_bar">
+            <ul>
+                <!-- File Menu -->
+                <li>
+                    <button>File</button>
+                    <div class="dropdown_content">
+                        <button id="newProjectButton">New Project</button>
+                        <hr>
+                        <!-- Open entire projects -->
+                        <button id="openGdmlButton">Open Project (GDML)...</button>
+                        <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
+                        <button id="openProjectButton">Open Project (JSON)...</button>
+                        <input type="file" id="projectFile" accept=".json" style="display: none;">
+                        <hr>
+                        <!-- Import functionality -->
+                        <button id="importGdmlButton">Import Part(s) (GDML)...</button>
+                        <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
+                        <button id="importProjectButton">Import Part(s) (JSON)...</button>
+                        <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
+                        <button id="importAiResponseButton">Import AI Response (JSON)...</button>
+                        <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
+                        <button id="importStepButton">Import CAD (STEP)...</button>
+                        <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
+                        <hr>
+                        <button id="saveProjectButton">Save Project (JSON)...</button>
+                        <button id="exportGdmlButton">Export GDML...</button>
+                        <hr>
+                        <button id="setApiKeyButton">Set Gemini API Key...</button>
+                    </div>
+                </li>
+                <!-- Edit Menu -->
+                <li>
+                    <button>Edit</button>
+                    <div class="dropdown_content">
+                        <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
+                        <div class="snap-settings-container">
+                            <div class="snap-input-row">
+                                <label for="gridSnapSizeInput">Translate (mm):</label>
+                                <input type="number" id="gridSnapSizeInput" value="10" step="any">
+                            </div>
+                            <div class="snap-input-row">
+                                <label for="angleSnapSizeInput">Rotate (deg):</label>
+                                <input type="number" id="angleSnapSizeInput" value="45" step="5">
                             </div>
                         </div>
-                    </li>
-                    <!-- View Menu -->
-                    <li>
-                        <button>View</button>
-                        <div class="dropdown_content">
-                            <button id="toggleWireframeButton">Toggle Wireframe</button>
-                            <button id="toggleGridButton">Toggle Grid</button>
-                            <button id="toggleAxesButton">Toggle Axes</button>
-                            <hr style="margin: 5px 0;"> <!-- Separator -->
-                            <button id="cameraModeOrbitButton">Camera: Orbit</button>
-                            <button id="cameraModeFlyButton">Camera: Fly</button>
-                        </div>
-                    </li>
-                    <!-- Object Menu -->
-                    <li>
-                        <button>Object</button>
-                        <div class="dropdown_content">
-                            <!--<button id="addObjectButton">Add...</button>-->
-                            <button id="deleteSelectedObjectButton">Delete Selected</button>
-                            <button id="hideSelectedBtn">Hide Selected</button>
-                            <button id="showAllBtn">Show All</button>
-                        </div>
-                    </li>
-                    <!-- Mode Menu -->
-                    <li>
-                        <button>Mode</button>
-                        <div class="dropdown_content">
-                            <button id="modeObserveButton" class="active_mode">Observe</button>
-                            <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
-                            <button id="modeRotateButton">Rotate</button>
-                            <button id="modeScaleButton">Scale</button>
-                        </div>
-                    </li>
-                    <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
-                </ul>
-            </div>
-            <div id="viewer_container"></div>
-            <!-- The selection box element -->
-            <div id="selection_box" class="selection-box" style="display:none;"></div>
+                    </div>
+                </li>
+                <!-- View Menu -->
+                <li>
+                    <button>View</button>
+                    <div class="dropdown_content">
+                        <button id="toggleWireframeButton">Toggle Wireframe</button>
+                        <button id="toggleGridButton">Toggle Grid</button>
+                        <button id="toggleAxesButton">Toggle Axes</button>
+                        <hr style="margin: 5px 0;"> <!-- Separator -->
+                        <button id="cameraModeOrbitButton">Camera: Orbit</button>
+                        <button id="cameraModeFlyButton">Camera: Fly</button>
+                    </div>
+                </li>
+                <!-- Object Menu -->
+                <li>
+                    <button>Object</button>
+                    <div class="dropdown_content">
+                        <!--<button id="addObjectButton">Add...</button>-->
+                        <button id="deleteSelectedObjectButton">Delete Selected</button>
+                        <button id="hideSelectedBtn">Hide Selected</button>
+                        <button id="showAllBtn">Show All</button>
+                    </div>
+                </li>
+                <!-- Mode Menu -->
+                <li>
+                    <button>Mode</button>
+                    <div class="dropdown_content">
+                        <button id="modeObserveButton" class="active_mode">Observe</button>
+                        <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
+                        <button id="modeRotateButton">Rotate</button>
+                        <button id="modeScaleButton">Scale</button>
+                    </div>
+                </li>
+                <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
+            </ul>
         </div>
+        <div id="viewer_container"></div>
+        <!-- The selection box element -->
+        <div id="selection_box" class="selection-box" style="display:none;"></div>
         <!-- AI PANEL --- -->
         <div id="ai_panel">
             <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>

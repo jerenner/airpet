@@ -294,7 +294,7 @@ function onPointerDown(event) {
         selectionBoxElement.style.display = 'block';
         
         // Get coordinates relative to the viewer container
-        const rect = viewerContainer.getBoundingClientRect();
+        const rect = event.currentTarget.getBoundingClientRect();
         startPoint.set(event.clientX - rect.left, event.clientY - rect.top);
         
         selectionBoxElement.style.left = `${startPoint.x}px`;
@@ -311,7 +311,7 @@ function onPointerDown(event) {
 function onPointerMove(event) {
     if (!isBoxSelecting) return;
 
-    const rect = viewerContainer.getBoundingClientRect();
+    const rect = event.currentTarget.getBoundingClientRect();
     const currentX = event.clientX - rect.left;
     const currentY = event.clientY - rect.top;
 
@@ -325,7 +325,7 @@ function onPointerMove(event) {
 function onPointerUp(event) {
     if (!isBoxSelecting) return;
     
-    const rect = viewerContainer.getBoundingClientRect();
+    const rect = event.currentTarget.getBoundingClientRect();
     const endPoint = new THREE.Vector2();
     endPoint.x = event.clientX - rect.left;
     endPoint.y = event.clientY - rect.top;
@@ -360,7 +360,9 @@ function handlePointerDownForSelection(event) {
     if (event.button !== 0) return;
     if (transformControls.dragging) return;
 
-    const rect = renderer.domElement.getBoundingClientRect();
+    // Calculate the mouse coordinates relative to the event's target element,
+    // which is the viewerContainer itself.
+    const rect = event.currentTarget.getBoundingClientRect(); // Use currentTarget instead of renderer.domElement
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -1978,21 +1980,23 @@ function animate() {
 }
 
 function onWindowResize() {
-    const viewerRect = viewerContainer.getBoundingClientRect();
-    // Assuming menu bar is outside viewerContainer for this calculation
-    // If menu is on top of viewerContainer, adjust viewerContainer's effective height.
-    // For the provided HTML, menu_bar is outside viewer_container.
-    // We should get the actual size of the renderer's DOM element parent.
+    if (!camera || !renderer || !viewerContainer) return;
 
-    const mainContentArea = document.getElementById('main_content_area');
-    const menuBar = document.getElementById('menu_bar');
-    const effectiveWidth = mainContentArea.clientWidth; // viewer_container fills this
-    const effectiveHeight = mainContentArea.clientHeight - (menuBar ? menuBar.offsetHeight : 0);
-
-
-    if (camera && renderer) {
-        camera.aspect = effectiveWidth / effectiveHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(effectiveWidth, effectiveHeight);
+    // The viewerContainer's actual size is now the source of truth.
+    const width = viewerContainer.clientWidth;
+    const height = viewerContainer.clientHeight;
+    
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    
+    renderer.setSize(width, height);
+    
+    // Also update the axes camera and materials
+    if (sceneAxes) {
+        sceneAxes.traverse(child => {
+            if (child.isLine2) {
+                child.material.resolution.set(width, height);
+            }
+        });
     }
 }
