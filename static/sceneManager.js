@@ -1932,6 +1932,20 @@ export function setCameraMode(mode) { // mode is 'orbit' or 'fly'
 // --- Animation Loop and Resize ---
 function animate() {
     requestAnimationFrame(animate);
+
+    // --- Resize check ---
+    // This ensures the renderer and camera are always perfectly synced to the DOM element size.
+    const canvas = renderer.domElement;
+    const width = viewerContainer.clientWidth;
+    const height = viewerContainer.clientHeight;
+    if (canvas.width !== width || canvas.height !== height) {
+        // This is a simplified version of onWindowResize
+        renderer.setSize(width, height, false); // `false` prevents it from setting the canvas style, which we handle with CSS
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+    }
+    // ---  ---
+
     const delta = clock.getDelta();
 
     if (orbitControls.enabled) orbitControls.update();
@@ -1980,23 +1994,8 @@ function animate() {
 }
 
 function onWindowResize() {
-    if (!camera || !renderer || !viewerContainer) return;
-
-    // The viewerContainer's actual size is now the source of truth.
-    const width = viewerContainer.clientWidth;
-    const height = viewerContainer.clientHeight;
-    
-    camera.aspect = width / height;
+    if (!renderer || !viewerContainer) return;
+    renderer.setSize(viewerContainer.clientWidth, viewerContainer.clientHeight);
+    camera.aspect = viewerContainer.clientWidth / viewerContainer.clientHeight;
     camera.updateProjectionMatrix();
-    
-    renderer.setSize(width, height);
-    
-    // Also update the axes camera and materials
-    if (sceneAxes) {
-        sceneAxes.traverse(child => {
-            if (child.isLine2) {
-                child.material.resolution.set(width, height);
-            }
-        });
-    }
 }
