@@ -701,21 +701,23 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'xtru':
             {
+                // Use the pre-evaluated parameters, which have units already applied.
                 const twoDimVertices = p.twoDimVertices;
                 const sections = p.sections;
 
                 if (!twoDimVertices || twoDimVertices.length < 3 || !sections || sections.length < 2) {
                     console.error(`[SceneManager] xtru solid '${solidData.name}' has invalid parameters.`);
-                    return new THREE.SphereGeometry(10, 8, 8); // Placeholder
+                    return new THREE.SphereGeometry(10, 8, 8);
                 }
-                
+
                 geometry = new THREE.BufferGeometry();
                 const vertices = [];
                 const indices = [];
 
-                // Generate the vertices for each section plane
+                // Generate vertices for each section plane, applying the transform
                 const sectionVertices = sections.map(sec => {
                     return twoDimVertices.map(v => {
+                        // The evaluated 'p' object contains numeric values in the correct internal unit (mm)
                         return new THREE.Vector3(
                             v.x * sec.scalingFactor + sec.xOffset,
                             v.y * sec.scalingFactor + sec.yOffset,
@@ -724,75 +726,60 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     });
                 });
 
-                // Create the side faces by connecting the vertices between sections
-                for (let i = 0; i < sections.length - 1; i++) {
-                    const verts1 = sectionVertices[i];
-                    const verts2 = sectionVertices[i + 1];
-                    const baseIndex1 = i * twoDimVertices.length;
-                    const baseIndex2 = (i + 1) * twoDimVertices.length;
-
-                    for (let j = 0; j < twoDimVertices.length; j++) {
-                        const next_j = (j + 1) % twoDimVertices.length;
-
-                        const p1 = baseIndex1 + j;
-                        const p2 = baseIndex1 + next_j;
-                        const p3 = baseIndex2 + next_j;
-                        const p4 = baseIndex2 + j;
-                        
-                        // Quad (p1, p2, p3, p4) -> two triangles (p1, p2, p3) and (p1, p3, p4)
-                        indices.push(p1, p2, p3);
-                        indices.push(p1, p3, p4);
-                    }
-                }
-
-                // Add all the calculated vertices to one flat array
+                // Add all vertices to a single flat array for the BufferGeometry
                 sectionVertices.forEach(verts => {
                     verts.forEach(v => vertices.push(v.x, v.y, v.z));
                 });
                 
-                // --- Capping the Ends ---
-                // We need to triangulate the 2D start and end shapes
-                const capPoints = twoDimVertices.map(v => new THREE.Vector2(v.x, v.y));
+                // Create the side faces by connecting vertices between sections
+                for (let i = 0; i < sections.length - 1; i++) {
+                    const baseIndex1 = i * twoDimVertices.length;
+                    const baseIndex2 = (i + 1) * twoDimVertices.length;
+                    for (let j = 0; j < twoDimVertices.length; j++) {
+                        const next_j = (j + 1) % twoDimVertices.length;
+                        const p1 = baseIndex1 + j;
+                        const p2 = baseIndex1 + next_j;
+                        const p3 = baseIndex2 + next_j;
+                        const p4 = baseIndex2 + j;
+                        // Correct winding order for outward-facing normals
+                        indices.push(p1, p2, p3);
+                        indices.push(p1, p3, p4);
+                    }
+                }
                 
-                // --- FIX IS HERE: Use .holes instead of .getHoles() ---
-                const capTriangles = THREE.ShapeUtils.triangulateShape(capPoints, []); // GDML xtru does not define holes, so pass an empty array.
+                // --- Capping ---
+                // We must add the vertices of the caps to our main vertex array
+                // and then add the indices. Using ShapeGeometry is better.
 
-                // Add Start Cap
-                const startSection = sections[0];
-                const startMatrix = new THREE.Matrix4().compose(
-                    new THREE.Vector3(startSection.xOffset, startSection.yOffset, startSection.zPosition),
-                    new THREE.Quaternion(), // No rotation for caps
-                    new THREE.Vector3(startSection.scalingFactor, startSection.scalingFactor, 1)
-                );
+                // Let's use a more robust method with ExtrudeGeometry and a custom path.
                 
-                capTriangles.forEach(tri => {
-                    const i1 = tri[0]; const i2 = tri[1]; const i3 = tri[2];
-                    const v1 = new THREE.Vector3(twoDimVertices[i1].x, twoDimVertices[i1].y, 0).applyMatrix4(startMatrix);
-                    const v2 = new THREE.Vector3(twoDimVertices[i2].x, twoDimVertices[i2].y, 0).applyMatrix4(startMatrix);
-                    const v3 = new THREE.Vector3(twoDimVertices[i3].x, twoDimVertices[i3].y, 0).applyMatrix4(startMatrix);
-                    
-                    const newIndex = vertices.length / 3;
-                    vertices.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
-                    indices.push(newIndex + 2, newIndex + 1, newIndex); // Invert winding for start cap
+                // 1. Create the 2D base shape
+                const shapePoints = twoDimVertices.map(v => new THREE.Vector2(v.x, v.y));
+                const shape = new THREE.Shape(shapePoints);
+                
+                // 2. Define the extrusion settings. Since the path is not a simple line,
+                // we have to build the geometry manually. The previous manual logic was correct
+                // in principle, but flawed. Let's fix the manual cap triangulation.
+                
+                // Start Cap (at the first section)
+                const startCapPoints = sectionVertices[0]; // These are already transformed Vector3s
+                // We need to project them onto a 2D plane for triangulation.
+                const startCapPoints2D = startCapPoints.map(v => new THREE.Vector2(v.x, v.y));
+                const startCapTriangles = THREE.ShapeUtils.triangulateShape(startCapPoints2D, []);
+                const startBaseIndex = 0;
+                startCapTriangles.forEach(tri => {
+                    // Reversed winding order for the start cap (facing -Z)
+                    indices.push(startBaseIndex + tri[0], startBaseIndex + tri[2], startBaseIndex + tri[1]);
                 });
 
-                // Add End Cap
-                const endSection = sections[sections.length - 1];
-                const endMatrix = new THREE.Matrix4().compose(
-                    new THREE.Vector3(endSection.xOffset, endSection.yOffset, endSection.zPosition),
-                    new THREE.Quaternion(),
-                    new THREE.Vector3(endSection.scalingFactor, endSection.scalingFactor, 1)
-                );
-
-                capTriangles.forEach(tri => {
-                    const i1 = tri[0]; const i2 = tri[1]; const i3 = tri[2];
-                    const v1 = new THREE.Vector3(twoDimVertices[i1].x, twoDimVertices[i1].y, 0).applyMatrix4(endMatrix);
-                    const v2 = new THREE.Vector3(twoDimVertices[i2].x, twoDimVertices[i2].y, 0).applyMatrix4(endMatrix);
-                    const v3 = new THREE.Vector3(twoDimVertices[i3].x, twoDimVertices[i3].y, 0).applyMatrix4(endMatrix);
-                    
-                    const newIndex = vertices.length / 3;
-                    vertices.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
-                    indices.push(newIndex, newIndex + 1, newIndex + 2); // Normal winding for end cap
+                // End Cap (at the last section)
+                const endCapPoints = sectionVertices[sections.length - 1];
+                const endCapPoints2D = endCapPoints.map(v => new THREE.Vector2(v.x, v.y));
+                const endCapTriangles = THREE.ShapeUtils.triangulateShape(endCapPoints2D, []);
+                const endBaseIndex = (sections.length - 1) * twoDimVertices.length;
+                endCapTriangles.forEach(tri => {
+                    // Normal winding order for the end cap (facing +Z)
+                    indices.push(endBaseIndex + tri[0], endBaseIndex + tri[1], endBaseIndex + tri[2]);
                 });
 
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));

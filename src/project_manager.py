@@ -306,6 +306,27 @@ class ProjectManager:
                 if solid_type == 'genericPolyhedra':
                     ep['numsides'] = p.get('numsides', 32)
 
+            elif solid_type == 'xtru':
+                # Evaluate all the nested dictionaries of expressions
+                ep['twoDimVertices'] = []
+                for v in p.get('twoDimVertices', []):
+                    ep['twoDimVertices'].append({
+                        'x': aeval.eval(str(v.get('x', '0'))),
+                        'y': aeval.eval(str(v.get('y', '0')))
+                    })
+                
+                ep['sections'] = []
+                for s in p.get('sections', []):
+                    ep['sections'].append({
+                        'zOrder': int(aeval.eval(str(s.get('zOrder', '0')))),
+                        'zPosition': aeval.eval(str(s.get('zPosition', '0'))),
+                        'xOffset': aeval.eval(str(s.get('xOffset', '0'))),
+                        'yOffset': aeval.eval(str(s.get('yOffset', '0'))),
+                        'scalingFactor': aeval.eval(str(s.get('scalingFactor', '1.0')))
+                    })
+                # Sort sections by zOrder just in case
+                ep['sections'].sort(key=lambda s: s['zOrder'])
+
             else:
                 # For all other solids, just copy the evaluated params.
                 # This is safe because their parameters are generally all required.
