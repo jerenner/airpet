@@ -275,9 +275,10 @@ function initRaycaster(containerElement) {
     mouse = new THREE.Vector2();
     
     // Add event listeners
-    containerElement.addEventListener('pointerdown', onPointerDown);
-    containerElement.addEventListener('pointermove', onPointerMove);
-    containerElement.addEventListener('pointerup', onPointerUp);
+    const canvas = renderer.domElement; 
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
     
     // Prevent the default browser context menu on right-click
     containerElement.addEventListener('contextmenu', event => event.preventDefault());
@@ -293,10 +294,11 @@ function onPointerDown(event) {
 
         selectionBoxElement.style.display = 'block';
         
-        // Get coordinates relative to the viewer container
-        const rect = event.currentTarget.getBoundingClientRect();
-        startPoint.set(event.clientX - rect.left, event.clientY - rect.top);
-        
+        // Use the event's currentTarget, which is now the canvas.
+        const rect = event.currentTarget.getBoundingClientRect();        
+
+        startPoint.set(event.clientX - rect.left, event.clientY); // For some reason, we don't need to subtract rect.top from Y
+
         selectionBoxElement.style.left = `${startPoint.x}px`;
         selectionBoxElement.style.top = `${startPoint.y}px`;
         selectionBoxElement.style.width = '0px';
@@ -311,11 +313,13 @@ function onPointerDown(event) {
 function onPointerMove(event) {
     if (!isBoxSelecting) return;
 
+    // Use the event's currentTarget (the canvas) for all calculations.
     const rect = event.currentTarget.getBoundingClientRect();
-    const currentX = event.clientX - rect.left;
-    const currentY = event.clientY - rect.top;
 
-    // Update the 2D box's dimensions
+    const currentX = event.clientX - rect.left;
+    const currentY = event.clientY; // For some reason, we don't need to subtract rect.top from Y
+
+    // Update the 2D box's dimensions, applying the offset
     selectionBoxElement.style.left = `${Math.min(currentX, startPoint.x)}px`;
     selectionBoxElement.style.top = `${Math.min(currentY, startPoint.y)}px`;
     selectionBoxElement.style.width = `${Math.abs(currentX - startPoint.x)}px`;
@@ -328,26 +332,61 @@ function onPointerUp(event) {
     const rect = event.currentTarget.getBoundingClientRect();
     const endPoint = new THREE.Vector2();
     endPoint.x = event.clientX - rect.left;
-    endPoint.y = event.clientY - rect.top;
+    endPoint.y = event.clientY;
 
     // Don't select if the box is just a point (a click, not a drag)
-    if (startPoint.distanceTo(endPoint) < 5) return;
+    if (startPoint.distanceTo(endPoint) < 5) {
+        isBoxSelecting = false;
+        selectionBoxElement.style.display = 'none';
+        orbitControls.enabled = true;
+        return;
+    }
 
     // --- Perform the 3D Selection ---
     // Convert 2D screen coordinates to normalized device coordinates (-1 to +1)
-    const startNDC = new THREE.Vector3( (startPoint.x / rect.width) * 2 - 1, -(startPoint.y / rect.height) * 2 + 1, 0.5);
-    const endNDC = new THREE.Vector3( (endPoint.x / rect.width) * 2 - 1, -(endPoint.y / rect.height) * 2 + 1, 0.5);
+    // (For some reason, here we have to subtract rect.top from the y-points)
+    const startNDC = new THREE.Vector3( (startPoint.x / rect.width) * 2 - 1, -((startPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
+    const endNDC = new THREE.Vector3( (endPoint.x / rect.width) * 2 - 1, -((endPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
 
     // The SelectionBox helper does the hard work of finding meshes inside the frustum
     const allSelectedMeshes = selectionBox.select(startNDC, endNDC);
     const visibleSelectedMeshes = allSelectedMeshes.filter(mesh => mesh.visible);
 
     // Find the actual top-level mesh for each part found
-    const finalSelection = visibleSelectedMeshes.map(mesh => findActualMesh(mesh));
+    const initialSelection = visibleSelectedMeshes.map(mesh => findActualMesh(mesh));
+
+    // --- Expand procedural selections ---
+    const expandedSelection = [];
+    const processedOwnerIds = new Set();
+    const finalSelectionUUIDs = new Set(); // Use UUID to prevent adding the same THREE.Group twice
+
+    initialSelection.forEach(group => {
+        if (group.userData && group.userData.owner_pv_id) {
+            // This is part of a procedural volume.
+            const ownerId = group.userData.owner_pv_id;
+            if (!processedOwnerIds.has(ownerId)) {
+                // We haven't processed this procedural set yet.
+                processedOwnerIds.add(ownerId);
+                const allSlices = getMeshesForOwner(ownerId);
+                allSlices.forEach(slice => {
+                    if (!finalSelectionUUIDs.has(slice.uuid)) {
+                        expandedSelection.push(slice);
+                        finalSelectionUUIDs.add(slice.uuid);
+                    }
+                });
+            }
+        } else {
+            // This is a regular, non-procedural physical volume.
+            if (!finalSelectionUUIDs.has(group.uuid)) {
+                expandedSelection.push(group);
+                finalSelectionUUIDs.add(group.uuid);
+            }
+        }
+    });
     
-    // Pass the array of selected meshes to the main controller
+    // Pass the final, expanded array of selected groups to the main controller.
     if (onMultiObjectSelectedCallback) {
-        onMultiObjectSelectedCallback(finalSelection, event.ctrlKey);
+        onMultiObjectSelectedCallback(expandedSelection, event.ctrlKey);
     }
 
     // Cleanup
@@ -362,7 +401,7 @@ function handlePointerDownForSelection(event) {
 
     // Calculate the mouse coordinates relative to the event's target element,
     // which is the viewerContainer itself.
-    const rect = event.currentTarget.getBoundingClientRect(); // Use currentTarget instead of renderer.domElement
+    const rect = event.currentTarget.getBoundingClientRect();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
