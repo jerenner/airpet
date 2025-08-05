@@ -549,7 +549,7 @@ function handleModeChange(newMode) {
 
 // Replace the handleHierarchySelection function
 async function handleHierarchySelection(newSelection) {
-    console.log("Hierarchy selection changed. New selection count:", newSelection.length);
+    //console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
 
     // --- 1. Build the list of meshes to highlight/transform ---

@@ -32,6 +32,19 @@ export function initPVEditor(callbacks) {
     rotDefineSelect.addEventListener('change', handleDefineSelectionChange);
     sclDefineSelect.addEventListener('change', handleDefineSelectionChange);
 
+    // Add a listener to the LV selection dropdown to disable scaling for procedurals
+    lvSelect.addEventListener('change', () => {
+        // Only run this logic in Create mode
+        if (isEditMode) return;
+
+        const selectedLVName = lvSelect.value;
+        const selectedLV = currentProjectState.logical_volumes[selectedLVName];
+        const isProcedural = selectedLV && selectedLV.content_type !== 'physvol';
+        
+        // Re-render the scale UI with the correct disabled state
+        const sclDefines = Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'scale');
+        setupTransformUI('scale', {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines, { isDisabled: isProcedural });
+    });
     console.log("Physical Volume Editor Initialized.");
 }
 
@@ -68,7 +81,11 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         
         setupTransformUI('position', pvData.position, posDefineSelect, posDefines);
         setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines);
-        setupTransformUI('scale',    pvData.scale,    sclDefineSelect, sclDefines);
+
+        // Check LV type before setting up scale UI (procedurals cannot have scale option)
+        const placedLV = projectState.logical_volumes[pvData.volume_ref];
+        const isProcedural = placedLV && placedLV.content_type !== 'physvol';
+        setupTransformUI('scale', pvData.scale, sclDefineSelect, sclDefines, { isDisabled: isProcedural });
     } else {
         isEditMode = false;
         editingPVId = null;
@@ -79,7 +96,10 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         
         setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines);
         setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines);
-        setupTransformUI('scale',    {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines);
+
+        // Disable scale by default, enable it when a non-procedural LV is chosen
+        setupTransformUI('scale', {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines, { isDisabled: true });
+        lvSelect.dispatchEvent(new Event('change')); // Trigger change to check initially selected LV
     }
     modalElement.style.display = 'block';
 }
@@ -175,9 +195,12 @@ function handleDefineSelectionChange(event) {
 }
 
 // This function now builds the entire input block dynamically
-function setupTransformUI(type, value, select, defines) {
+function setupTransformUI(type, value, select, defines, options = {}) {
+    const { isDisabled = false } = options;
+
     const inputsContainerId = `pv_${type}_inputs`;
     let inputsContainer = document.getElementById(inputsContainerId);
+
     if (!inputsContainer) {
         // This should not happen if the HTML is correct, but as a fallback:
         inputsContainer = document.createElement('div');
@@ -199,6 +222,14 @@ function setupTransformUI(type, value, select, defines) {
         }
     }
 
+    // Apply disabled visual state to the whole container
+    const parentGroup = inputsContainer.parentElement;
+    if (parentGroup) {
+         parentGroup.style.opacity = isDisabled ? '0.5' : '1.0';
+         parentGroup.title = isDisabled ? `Scaling is not supported for procedural volumes.` : '';
+    }
+    select.disabled = isDisabled;
+
     ['x', 'y', 'z'].forEach(axis => {
         const labelText = axis.toUpperCase();
         const initialValue = displayValues[axis] || '0';
@@ -208,6 +239,10 @@ function setupTransformUI(type, value, select, defines) {
             // Create our full component for absolute expressions
             const comp = ExpressionInput.create(inputId, labelText, initialValue, currentProjectState);
             inputsContainer.appendChild(comp);
+
+            // Disable the input box if the whole container is disabled
+            const inputEl = comp.querySelector('.expression-input');
+            if (inputEl) inputEl.disabled = isDisabled;
         } else {
             // Create a grayed-out box with the evaluated value for define references
             const item = document.createElement('div');

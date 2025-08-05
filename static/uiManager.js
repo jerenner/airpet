@@ -325,9 +325,15 @@ export function updateDefineInspectorValues(defineName, newValues, isRotation = 
 }
 
 // Helper for building transform UI inside the Inspector
-function buildInspectorTransformEditor(parent, type, label, pvData, defines, projectState) {
+function buildInspectorTransformEditor(parent, type, label, pvData, defines, projectState, options = {}) {
+    const { isDisabled = false } = options; 
+
     const group = document.createElement('div');
     group.className = 'transform-group';
+    if (isDisabled) {
+        group.style.opacity = '0.5';
+        group.title = `Scaling is not supported for placements of procedural volumes (${pvData.volume_ref})`;
+    }
     
     const header = document.createElement('div');
     header.className = 'define-header';
@@ -394,10 +400,17 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
         
         // Disable inputs if a define is selected
         const inputEl = comp.querySelector('.expression-input');
-        if (inputEl) inputEl.disabled = !isAbsolute;
+        if (inputEl) inputEl.disabled = !isAbsolute || isDisabled;
     });
 
     select.addEventListener('change', (e) => {
+
+        // Prevent changes if disabled
+        if (isDisabled) { 
+            e.target.value = isAbsolute ? '[Absolute]' : data; // Revert selection
+            return;
+        }
+
         const defaultValue = (type === 'scale') ? { x: '1', y: '1', z: '1' } : { x: '0', y: '0', z: '0' };
         const newValue = e.target.value === '[Absolute]' ? defaultValue : e.target.value;
         callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, type, newValue);
@@ -428,9 +441,13 @@ export async function populateInspector(itemContext, projectState) {
             if (allDefines[defName].type === 'scale')    sclDefines[defName] = allDefines[defName];
         }
 
+        // Check if the placed LV is procedural
+        const lvData = projectState.logical_volumes[data.volume_ref];
+        const isProcedural = lvData && lvData.content_type !== 'physvol';
+
         buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState);
         buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState);
-        buildInspectorTransformEditor(inspectorContentDiv, 'scale',    'Scale',          data, sclDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
         
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";

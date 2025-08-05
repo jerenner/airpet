@@ -1767,11 +1767,10 @@ export function updateSelectionState(groupsToSelect = []) {
 }
 
 // A simple utility to get all meshes belonging to an owner.
-// This replaces the old selectProceduralPlacement.
 export function getMeshesForOwner(ownerPvId) {
     const meshes = [];
     geometryGroup.traverse(child => {
-        if (child.isMesh && child.userData && child.userData.owner_pv_id === ownerPvId) {
+        if (child.isGroup && child.userData && child.userData.owner_pv_id === ownerPvId) {
             meshes.push(child);
         }
     });
