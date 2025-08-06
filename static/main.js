@@ -336,27 +336,34 @@ async function handleSaveApiKey(apiKey) {
 }
 
 function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
+    // --- Start with the current selection if Ctrl is held ---
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
-    const currentIds = new Set(currentSelection.map(item => item.id));
+    
+    // --- Use a Map to consolidate procedural volumes and track standard PVs ---
+    // The key will be the canonical ID (either the PV's own ID or its owner's ID)
+    const consolidatedSelectionMap = new Map();
+    currentSelection.forEach(item => consolidatedSelectionMap.set(item.id, item));
 
-    // Add new items from the box selection, avoiding duplicates
     selectedMeshes.forEach(mesh => {
-        if (!currentIds.has(mesh.userData.id)) {
-            currentSelection.push({
-                type: 'physical_volume',
-                id: mesh.userData.id,
-                name: mesh.userData.name,
-                data: mesh.userData
-            });
+        // The canonical ID is the owner ID for procedural slices, or its own ID for standard PVs.
+        const canonicalId = mesh.userData.owner_pv_id || mesh.userData.id;
+        
+        // If we haven't processed this canonical object yet, add it to our map.
+        if (!consolidatedSelectionMap.has(canonicalId)) {
+            const itemContext = findItemInState(canonicalId);
+            if (itemContext) {
+                consolidatedSelectionMap.set(canonicalId, itemContext);
+            }
         }
     });
 
-    // Sync the hierarchy list UI
-    const newSelectedIds = currentSelection.map(item => item.id);
-    UIManager.setHierarchySelection(newSelectedIds);
+    // Convert the map back to an array
+    const finalSelection = Array.from(consolidatedSelectionMap.values());
 
-    // Call the main handler to update the rest of the app state
-    handleHierarchySelection(currentSelection);
+    // --- The rest of the process remains the same ---
+    // This will now correctly select the procedural parent in the hierarchy
+    // and update the inspector and gizmo state based on the consolidated list.
+    handleHierarchySelection(finalSelection);
 }
 
 async function handleOpenGdmlProject(file) {
@@ -717,8 +724,9 @@ function handleTransformLive(liveObject) {
 async function handleTransformEnd(transformedObject, initialTransforms, wasHelperTransformed) {
     if (!transformedObject) return;
 
-    const updates = [];
-    const selection = AppState.selectedHierarchyItems;
+    // This map will store the final update payload for each unique PV that needs to be updated.
+    // The key will be the PV's actual ID from the project state.
+    const updates = new Map();
 
     if (wasHelperTransformed) {
         // --- CASE 1: A GROUP was transformed via the helper gizmo ---
@@ -730,48 +738,56 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
             new THREE.Matrix4().copy(helperStart.matrixWorld).invert()
         );
 
-        for (const item of selection) {
-            if (item.type === 'physical_volume') {
-                const initialMeshState = initialTransforms.get(item.id);
+        // Iterate through ALL objects that were part of the initial transform.
+        for (const [objectId, initialMeshState] of initialTransforms.entries()) {
+            if (objectId === 'helper') continue; // Skip the helper itself
 
-                // For procedural volumes, the initialTransforms map won't have the parent PV id,
-                // but it will have the first slice. We can use that to get the initial parent transform.
-                // Or even simpler: we can get the initial transform from the item.data itself!
-                const initialPos = item.data._evaluated_position;
-                const initialRot = item.data._evaluated_rotation;
-                const initialScl = item.data._evaluated_scale;
+            // Determine the actual PV ID to update. For procedural slices, this is the owner.
+            const pvToUpdateId = initialMeshState.userData.owner_pv_id || initialMeshState.userData.id;
 
-                const initialMatrix = new THREE.Matrix4().compose(
-                    new THREE.Vector3(initialPos.x, initialPos.y, initialPos.z),
-                    new THREE.Quaternion().setFromEuler(new THREE.Euler(initialRot.x, initialRot.y, initialRot.z, 'ZYX')),
-                    new THREE.Vector3(initialScl.x, initialScl.y, initialScl.z)
-                );
-                
-                const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMatrix);
-                const pos = new THREE.Vector3(); const rot = new THREE.Quaternion(); const scl = new THREE.Vector3();
-                finalMatrix.decompose(pos, rot, scl);
-                const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
-
-                updates.push({
-                    id: item.id,
-                    position: { x: pos.x, y: pos.y, z: pos.z },
-                    rotation: { x: euler.x, y: euler.y, z: euler.z },
-                    // We keep scale, but the UI should prevent scaling procedural vols.
-                    scale: { x: scl.x, y: scl.y, z: scl.z }
-                });
+            // If we've already calculated the update for this parent PV, skip.
+            if (updates.has(pvToUpdateId)) continue;
+            
+            // Find the original PV data from our main AppState
+            const originalPvItem = findItemInState(pvToUpdateId);
+            if (!originalPvItem) {
+                console.warn(`Could not find project data for PV ID ${pvToUpdateId}. Skipping.`);
+                continue;
             }
+
+            const initialPos = originalPvItem.data._evaluated_position;
+            const initialRot = originalPvItem.data._evaluated_rotation;
+            const initialScl = originalPvItem.data._evaluated_scale;
+            
+            const initialMatrix = new THREE.Matrix4().compose(
+                new THREE.Vector3(initialPos.x, initialPos.y, initialPos.z),
+                new THREE.Quaternion().setFromEuler(new THREE.Euler(initialRot.x, initialRot.y, initialRot.z, 'ZYX')),
+                new THREE.Vector3(initialScl.x, initialScl.y, initialScl.z)
+            );
+
+            const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMatrix);
+            const pos = new THREE.Vector3(); const rot = new THREE.Quaternion(); const scl = new THREE.Vector3();
+            finalMatrix.decompose(pos, rot, scl);
+            const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+
+            updates.set(pvToUpdateId, {
+                id: pvToUpdateId,
+                position: { x: pos.x, y: pos.y, z: pos.z },
+                rotation: { x: euler.x, y: euler.y, z: euler.z },
+                scale: { x: scl.x, y: scl.y, z: scl.z }
+            });
         }
     } else if (transformedObject.userData.id) {
         // --- CASE 2: A SINGLE object was transformed directly ---
-
-        // The object's transform properties ARE its new local transform.
         const pos = transformedObject.position;
         const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
         const scale = transformedObject.scale;
         
-        updates.push({
-            type: 'physical_volume',
-            id: transformedObject.userData.id,
+        // The ID to update is either the owner's ID (for procedural) or its own.
+        const idToUpdate = transformedObject.userData.owner_pv_id || transformedObject.userData.id;
+        
+        updates.set(idToUpdate, {
+            id: idToUpdate,
             position: { x: pos.x, y: pos.y, z: pos.z },
             rotation: { x: euler.x, y: euler.y, z: euler.z },
             scale:    { x: scale.x, y: scale.y, z: scale.z }
@@ -783,7 +799,7 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
     UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
     try {
         let lastResult;
-        for (const update of updates) {
+        for (const update of updates.values()) {
             lastResult = await APIService.updatePhysicalVolume(update.id, null, update.position, update.rotation, update.scale);
 
             if (!lastResult.success) {
