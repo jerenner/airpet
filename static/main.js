@@ -552,7 +552,42 @@ async function handleHierarchySelection(newSelection) {
     //console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
 
-    // --- 1. Build the list of meshes to highlight/transform ---
+    // --- 1. Check selection type and manage UI state ---
+    let transformState = { translate: true, rotate: true, scale: true }; // Default for standard PVs
+    let reason = '';
+
+    if (newSelection.length === 1) {
+        const item = newSelection[0];
+        if (item.type === 'physical_volume') {
+            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            if (lv && lv.content_type !== 'physvol') {
+                // It's a procedural volume. Translate and Rotate are OK, Scale is NOT.
+                transformState = { translate: true, rotate: true, scale: false };
+                reason = "Scaling is not supported for procedural volumes.";
+            }
+        }
+    // For multi-selection, disable scale if any item is procedural.
+    } else if (newSelection.length > 1) {
+        const anyProcedural = newSelection.some(item => {
+            if (item.type !== 'physical_volume') return false;
+            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            return lv && lv.content_type !== 'physvol';
+        });
+        if (anyProcedural) {
+            transformState = { translate: true, rotate: true, scale: false };
+            reason = "Scaling is not supported for procedural volumes.";
+        }
+    }
+
+    UIManager.setTransformButtonsState(transformState, reason);
+
+    // If a disabled mode is currently active, switch to 'observe'
+    const currentMode = InteractionManager.getCurrentMode();
+    if (currentMode !== 'observe' && !transformState[currentMode]) {
+        handleModeChange('observe');
+    }
+
+    // --- 2. Build the list of meshes to highlight/transform ---
     const meshesToProcess = [];
     newSelection.forEach(item => {
         if (item.type === 'physical_volume') {
@@ -568,7 +603,7 @@ async function handleHierarchySelection(newSelection) {
         }
     });
 
-    // --- 2. Update the 3D Scene (Visuals and Gizmo) ---
+    // --- 3. Update the 3D Scene (Visuals and Gizmo) ---
     SceneManager.updateSelectionState(meshesToProcess);
     AppState.selectedThreeObjects = meshesToProcess;
     
@@ -578,7 +613,7 @@ async function handleHierarchySelection(newSelection) {
         SceneManager.attachTransformControls(meshesToProcess);
     }
 
-    // --- 3. Update the UI (Hierarchy List and Inspector) ---
+    // --- 4. Update the UI (Hierarchy List and Inspector) ---
     const selectedIds = newSelection.map(item => item.id);
     UIManager.setHierarchySelection(selectedIds);
 
@@ -698,44 +733,45 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
         for (const item of selection) {
             if (item.type === 'physical_volume') {
                 const initialMeshState = initialTransforms.get(item.id);
-                if (initialMeshState) {
-                    // Apply the delta to the item's initial world matrix to find its new world matrix
-                    const finalWorldMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMeshState.matrixWorld);
-                    
-                    // We need to convert this new world matrix back to a local transform
-                    // relative to its parent in the THREE.js scene.
-                    const parentWorldMatrixInv = new THREE.Matrix4();
-                    if (initialMeshState.parent) {
-                        parentWorldMatrixInv.copy(initialMeshState.parent.matrixWorld).invert();
-                    }
-                    
-                    const finalLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentWorldMatrixInv, finalWorldMatrix);
 
-                    const pos = new THREE.Vector3();
-                    const rot = new THREE.Quaternion();
-                    const scl = new THREE.Vector3();
-                    finalLocalMatrix.decompose(pos, rot, scl);
-                    const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+                // For procedural volumes, the initialTransforms map won't have the parent PV id,
+                // but it will have the first slice. We can use that to get the initial parent transform.
+                // Or even simpler: we can get the initial transform from the item.data itself!
+                const initialPos = item.data._evaluated_position;
+                const initialRot = item.data._evaluated_rotation;
+                const initialScl = item.data._evaluated_scale;
 
-                    updates.push({
-                        pvId: item.id,
-                        position: { x: pos.x, y: pos.y, z: pos.z },
-                        rotation: { x: euler.x, y: euler.y, z: euler.z },
-                        scale: { x: scl.x, y: scl.y, z: scl.z }
-                    });
-                }
+                const initialMatrix = new THREE.Matrix4().compose(
+                    new THREE.Vector3(initialPos.x, initialPos.y, initialPos.z),
+                    new THREE.Quaternion().setFromEuler(new THREE.Euler(initialRot.x, initialRot.y, initialRot.z, 'ZYX')),
+                    new THREE.Vector3(initialScl.x, initialScl.y, initialScl.z)
+                );
+                
+                const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMatrix);
+                const pos = new THREE.Vector3(); const rot = new THREE.Quaternion(); const scl = new THREE.Vector3();
+                finalMatrix.decompose(pos, rot, scl);
+                const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+
+                updates.push({
+                    id: item.id,
+                    position: { x: pos.x, y: pos.y, z: pos.z },
+                    rotation: { x: euler.x, y: euler.y, z: euler.z },
+                    // We keep scale, but the UI should prevent scaling procedural vols.
+                    scale: { x: scl.x, y: scl.y, z: scl.z }
+                });
             }
         }
     } else if (transformedObject.userData.id) {
         // --- CASE 2: A SINGLE object was transformed directly ---
-        const pvId = transformedObject.userData.id;
+
         // The object's transform properties ARE its new local transform.
         const pos = transformedObject.position;
         const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
         const scale = transformedObject.scale;
         
         updates.push({
-            pvId: pvId,
+            type: 'physical_volume',
+            id: transformedObject.userData.id,
             position: { x: pos.x, y: pos.y, z: pos.z },
             rotation: { x: euler.x, y: euler.y, z: euler.z },
             scale:    { x: scale.x, y: scale.y, z: scale.z }
@@ -748,21 +784,14 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
     try {
         let lastResult;
         for (const update of updates) {
-            // This is a direct update, so we are overwriting any defines.
-            // A more advanced version could prompt the user.
-            // Ensure we are not sending undefined values.
-            const position = update.position || null;
-            const rotation = update.rotation || null;
-            const scale = update.scale || null;
+            lastResult = await APIService.updatePhysicalVolume(update.id, null, update.position, update.rotation, update.scale);
 
-            lastResult = await APIService.updatePhysicalVolume(update.pvId, null, position, rotation, scale);
             if (!lastResult.success) {
-                UIManager.showError(`Failed to update ${update.pvId}: ${lastResult.error}`);
+                UIManager.showError(`Failed to update ${update.id}: ${lastResult.error}`);
                 break;
             }
         }
         if (lastResult) {
-            // Restore selection based on the original selection context
             syncUIWithState(lastResult, AppState.selectedHierarchyItems);
         }
     } catch (error) {

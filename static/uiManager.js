@@ -21,7 +21,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
-    borderSurfacesListRoot;
+    borderSurfacesListRoot, replicasListRoot;
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
@@ -661,6 +661,27 @@ function buildSingleTransformEditor(transformType, labelText, pvData, defines) {
     return group;
 }
 
+/**
+ * Enables or disables transformation mode buttons based on provided state.
+ * @param {object} state - An object with keys 'translate', 'rotate', 'scale' and boolean values.
+ * @param {string} [reason=''] - An optional tooltip to show when disabled.
+ */
+export function setTransformButtonsState(state, reason = '') {
+    const buttons = {
+        translate: modeTranslateButton,
+        rotate: modeRotateButton,
+        scale: modeScaleButton
+    };
+
+    for (const mode in buttons) {
+        if (buttons[mode]) {
+            const isEnabled = state[mode] === true; // Explicitly check for true
+            buttons[mode].disabled = !isEnabled;
+            buttons[mode].title = isEnabled ? `Activate ${mode.charAt(0).toUpperCase() + mode.slice(1)} Mode` : reason;
+        }
+    }
+}
+
 function populateDefineSelect(selectElement, definesArray) {
     selectElement.innerHTML = '<option value="[Absolute]">[Absolute Value]</option>';
     definesArray.forEach(name => {
@@ -796,19 +817,6 @@ export function updateHierarchy(projectState) {
         } else {
              structureTreeRoot.innerHTML = '<li>No world volume defined in project.</li>';
         }
-    }
-
-    // -- Populate Procedural Placements Tab ---
-    if (projectState.logical_volumes) {
-        Object.values(projectState.logical_volumes).forEach(lv => {
-            // Check if the LV is defined by a procedural rule
-            if (lv.content_type === 'replica' && replicasListRoot) {
-                // The 'content' is the single ReplicaVolume object
-                const itemElement = createProceduralItem(lv, lv.name); // Pass the LV itself
-                replicasListRoot.appendChild(itemElement);
-            }
-            // Add 'else if' for division, paramvol etc. here
-        });
     }
 }
 
