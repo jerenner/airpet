@@ -305,11 +305,19 @@ class PhysicalVolumePlacement:
                       [0, 0, 1, pos['z']],
                       [0, 0, 0, 1]])
 
-        # Create ZYX Euler Rotation Matrix (R)
-        Rx = np.array([[1, 0, 0], [0, math.cos(rot['x']), -math.sin(rot['x'])], [0, math.sin(rot['x']), math.cos(rot['x'])]])
-        Ry = np.array([[math.cos(rot['y']), 0, math.sin(rot['y'])], [0, 1, 0], [-math.sin(rot['y']), 0, math.cos(rot['y'])]])
-        Rz = np.array([[math.cos(rot['z']), -math.sin(rot['z']), 0], [math.sin(rot['z']), math.cos(rot['z']), 0], [0, 0, 1]])
+        # MODIFIED: Negate the angles to match the visual convention expected
+        # by Geant4's GDML parser's application order.
+        rx = -rot['x']
+        ry = -rot['y']
+        rz = -rot['z']
+
+        Rx = np.array([[1, 0, 0], [0, math.cos(rx), -math.sin(rx)], [0, math.sin(rx), math.cos(rx)]])
+        Ry = np.array([[math.cos(ry), 0, math.sin(ry)], [0, 1, 0], [-math.sin(ry), 0, math.cos(ry)]])
+        Rz = np.array([[math.cos(rz), -math.sin(rz), 0], [math.sin(rz), math.cos(rz), 0], [0, 0, 1]])
+
+        # The correct composition for intrinsic ZYX is R = Rz * Ry * Rx
         R_3x3 = Rz @ Ry @ Rx
+        
         R = np.eye(4)
         R[:3, :3] = R_3x3
         

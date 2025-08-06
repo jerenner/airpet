@@ -350,7 +350,7 @@ function onPointerUp(event) {
 
     // The SelectionBox helper does the hard work of finding meshes inside the frustum
     const allSelectedMeshes = selectionBox.select(startNDC, endNDC);
-    const visibleSelectedMeshes = allSelectedMeshes.filter(mesh => mesh.visible);
+    const visibleSelectedMeshes = allSelectedMeshes.filter(mesh => isObjectGloballyVisible(mesh));
 
     // Find the actual top-level mesh for each part found
     const initialSelection = visibleSelectedMeshes.map(mesh => findActualMesh(mesh));
@@ -501,6 +501,26 @@ export function setAllPVVisibility(isVisible) {
             }
         });
     }
+}
+
+/**
+ * Checks if a THREE.Object3D is globally visible by traversing up its parent hierarchy.
+ * An object is only visible if it and all of its ancestors are visible.
+ * @param {THREE.Object3D} object - The object to check.
+ * @returns {boolean} - True if the object is rendered in the scene, false otherwise.
+ */
+function isObjectGloballyVisible(object) {
+    let current = object;
+    // Traverse up the scene graph
+    while (current) {
+        // If any parent (or the object itself) is not visible, then it's not globally visible.
+        if (!current.visible) {
+            return false;
+        }
+        current = current.parent;
+    }
+    // If we reached the top of the scene without finding an invisible parent, it's visible.
+    return true;
 }
 
 // Helper function to find a mesh by its PV ID
