@@ -3,6 +3,7 @@
 import * as ExpressionInput from './expressionInput.js';
 
 let modalElement, titleElement, nameInput, typeSelect, confirmButton, cancelButton, dynamicParamsDiv;
+let unitContainer, unitSelect;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingDefineId = null;
@@ -19,10 +20,17 @@ export function initDefineEditor(callbacks) {
     confirmButton = document.getElementById('defineEditorConfirm');
     cancelButton = document.getElementById('defineEditorCancel');
     dynamicParamsDiv = document.getElementById('define-editor-params');
+    unitContainer = document.getElementById('defineEditorUnitContainer');
+    unitSelect = document.getElementById('defineEditorUnit');
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
     typeSelect.addEventListener('change', () => renderParamsUI());
+
+    typeSelect.addEventListener('change', () => {
+        renderParamsUI();
+        updateUnitSelector(); // Call unit updater on type change
+    });
 
     console.log("Define Editor Initialized.");
 }
@@ -55,6 +63,7 @@ export function show(defineData = null, projectState = null) {
             initialValue = null; // We've handled it
         }
         renderParamsUI(initialValue);
+        updateUnitSelector(defineData.unit);
     } else {
         // CREATE MODE
         isEditMode = false;
@@ -67,12 +76,43 @@ export function show(defineData = null, projectState = null) {
         typeSelect.disabled = false;
         confirmButton.textContent = "Create Define";
         renderParamsUI();
+        updateUnitSelector(); // NEW: Call for default state
     }
     modalElement.style.display = 'block';
 }
 
 function hide() {
     modalElement.style.display = 'none';
+}
+
+// Function to manage the unit selector's visibility and content
+function updateUnitSelector(selectedUnit = null) {
+    const type = typeSelect.value;
+    const units = {
+        position: ['mm', 'cm', 'm'],
+        rotation: ['rad', 'deg'],
+        quantity: ['mm', 'cm', 'm', 'rad', 'deg'] // For generic quantities
+    };
+
+    if (units[type]) {
+        unitContainer.style.display = 'flex';
+        unitSelect.innerHTML = '';
+        units[type].forEach(u => {
+            const option = document.createElement('option');
+            option.value = u;
+            option.textContent = u;
+            unitSelect.appendChild(option);
+        });
+        // Set the selection
+        if (selectedUnit && units[type].includes(selectedUnit)) {
+            unitSelect.value = selectedUnit;
+        } else {
+            // Set a sensible default
+            unitSelect.value = (type === 'rotation') ? 'deg' : 'mm';
+        }
+    } else {
+        unitContainer.style.display = 'none';
+    }
 }
 
 function renderParamsUI(rawExpr = null) {
@@ -198,20 +238,30 @@ async function handleConfirm() {
     const type = typeSelect.value;
     let rawExpression, unit, category;
 
-    if (type === 'constant' || type === 'quantity') {
+    if (type === 'constant') {
         rawExpression = document.getElementById('def_expr_value').value;
-        unit = (type === 'quantity') ? 'mm' : null; // This is a simplification; a unit dropdown could be added.
-        category = (type === 'quantity') ? 'length' : 'dimensionless';
-
+        unit = null;
+        category = 'dimensionless';
+    } else if (type === 'quantity') {
+        rawExpression = document.getElementById('def_expr_value').value;
+        unit = unitSelect.value;
+        category = (unit === 'rad' || unit === 'deg') ? 'angle' : 'length';
     } else if (type === 'position' || type === 'rotation' || type === 'scale') {
         rawExpression = {
             x: document.getElementById('def_expr_x').value,
             y: document.getElementById('def_expr_y').value,
             z: document.getElementById('def_expr_z').value
         };
-        if (type === 'rotation') { unit = 'deg'; category = 'angle'; }
-        else if (type === 'position') { unit = 'mm'; category = 'length'; }
-        else { unit = null; category = 'dimensionless'; }
+        if (type === 'rotation') { 
+            unit = unitSelect.value; 
+            category = 'angle'; 
+        } else if (type === 'position') { 
+            unit = unitSelect.value; 
+            category = 'length'; 
+        } else { // Scale
+            unit = null; 
+            category = 'dimensionless'; 
+        }
     } else if (type === 'matrix') { // Collect matrix data
         const coldim = parseInt(document.getElementById('def_matrix_coldim').value, 10);
         // Flatten the 2D array of expression strings into a 1D array

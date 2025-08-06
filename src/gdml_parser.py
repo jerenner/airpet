@@ -171,7 +171,13 @@ class GDMLParser:
                 raw_expression = element.text.strip() if element.text else ""
                 category = "dimensionless"
             elif tag in ['position', 'rotation', 'scale']:
-                raw_expression = {k: v for k, v in element.attrib.items() if k not in ['name', 'unit']}
+                default_val = '1' if tag == 'scale' else '0'
+                # Explicitly get each attribute with a default value
+                raw_expression = {
+                    'x': element.get('x', default_val),
+                    'y': element.get('y', default_val),
+                    'z': element.get('z', default_val)
+                }
                 unit = element.get('unit')
                 if tag == 'rotation': category = 'angle'
                 elif tag == 'position': category = 'length'
@@ -472,7 +478,17 @@ class GDMLParser:
                     continue
 
                 # Partially evaluate the expression, substituting loop variables
-                partially_eval_val = self._partially_evaluate(val, current_loop_vars)
+                processed_val = val
+                try:
+                    # If it's a string that looks like an integer but isn't a simple '0',
+                    # cast it to float to remove leading zeros, then back to string.
+                    if processed_val.startswith('0') and len(processed_val) > 1 and '.' not in processed_val:
+                         processed_val = str(float(processed_val))
+                except (ValueError, TypeError):
+                    # It's not a simple number, so it must be an expression. Leave it as is.
+                    pass
+                
+                partially_eval_val = self._partially_evaluate(processed_val, current_loop_vars)
 
                 if key in length_params and default_lunit:
                     params[key] = f"({partially_eval_val}) * {default_lunit}"

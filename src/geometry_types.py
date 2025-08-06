@@ -78,6 +78,7 @@ class Define:
         # In new projects, raw_expression might be missing, so we create it from value
         raw_expr = data.get('raw_expression')
         if raw_expr is None:
+            print(f"Warning: Reconstructing raw_expression for define '{data.get('name')}'. This may lose original units/expressions.")
             val = data.get('value')
             if isinstance(val, dict):
                  raw_expr = {k: str(v) for k, v in val.items()}

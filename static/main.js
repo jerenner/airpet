@@ -835,7 +835,6 @@ function handleAddSolid() {
 
 // Open solid editor for editing.
 function handleEditSolid(solidData) {
-    console.log("Editing solid:", solidData);
     // Pass the full project state so the editor knows about other solids
     SolidEditor.show(solidData, AppState.currentProjectState); 
 }
