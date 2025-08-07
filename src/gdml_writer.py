@@ -135,6 +135,47 @@ class GDMLWriter:
             # The result of this operation becomes the 'first' solid for the next iteration
             current_solid_ref = boolean_name
 
+    def _write_multi_union(self, solid_obj, solids_el):
+        """Writes a G4MultiUnion solid to the GDML file."""
+        recipe = solid_obj.raw_parameters.get('recipe', [])
+        
+        # Create the top-level <multiUnion> tag
+        multi_union_el = ET.SubElement(solids_el, "multiUnion", {"name": solid_obj.name})
+
+        for i, item in enumerate(recipe):
+            solid_ref = item.get('solid_ref')
+            if not solid_ref: continue
+
+            # Create the <multiUnionNode> for each part
+            node_name = f"{solid_obj.name}_node_{i}"
+            node_el = ET.SubElement(multi_union_el, "multiUnionNode", {"name": node_name})
+            ET.SubElement(node_el, "solid", {"ref": solid_ref})
+
+            # The 'base' solid (index 0) has no transform.
+            # Others might have position and/or rotation.
+            if i > 0 and 'transform' in item and item['transform']:
+                transform = item['transform']
+                
+                # Write position if it exists and is non-zero
+                pos = transform.get('position')
+                if isinstance(pos, dict) and any(float(v) != 0 for v in pos.values()):
+                    pos_attrs = {"unit": "mm"}
+                    for axis, val in pos.items():
+                        pos_attrs[axis] = str(val)
+                    ET.SubElement(node_el, "position", pos_attrs)
+                elif isinstance(pos, str):
+                    ET.SubElement(node_el, "positionref", {"ref": pos})
+
+                # Write rotation if it exists and is non-zero
+                rot = transform.get('rotation')
+                if isinstance(rot, dict) and any(float(v) != 0 for v in rot.values()):
+                    rot_attrs = {"unit": "rad"}
+                    for axis, val in rot.items():
+                        rot_attrs[axis] = str(val)
+                    ET.SubElement(node_el, "rotation", rot_attrs)
+                elif isinstance(rot, str):
+                    ET.SubElement(node_el, "rotationref", {"ref": rot})
+
     def _write_single_solid(self, solid_obj, solids_el):
         """
         Writes a single solid element. This contains the logic from your
@@ -146,10 +187,19 @@ class GDMLWriter:
             if len(recipe) < 2:
                 print(f"Warning: Skipping invalid boolean solid '{solid_obj.name}' with < 2 parts.")
                 return
+            
+            # Use multi-union if it has 3 or more total parts (1 base + 2 unions)
+            # and all operations after the base are 'union'.
+            is_pure_union = all(item.get('op') == 'union' for item in recipe[1:])
+            if len(recipe) >= 3 and is_pure_union:
+                self._write_multi_union(solid_obj, solids_el)
+            else:
+                # Fallback to the existing chained boolean writer for subtractions, intersections,
+                # or simple two-part unions.
 
-            # This function will generate the nested GDML structure
-            self._write_chained_boolean(solid_obj.name, recipe, solids_el)
-            return # We are done with this solid
+                # This function will generate the nested GDML structure
+                self._write_chained_boolean(solid_obj.name, recipe, solids_el)
+            return
 
         # --- Existing logic for all other types ---
         attrs = {"name": solid_obj.name}
@@ -170,12 +220,14 @@ class GDMLWriter:
             solid_el.set("x", str(p['x']))
             solid_el.set("y", str(p['y']))
             solid_el.set("z", str(p['z']))
+
         elif solid_obj.type == "tube":
             solid_el.set("rmin", str(p['rmin']))
             solid_el.set("rmax", str(p['rmax']))
             solid_el.set("z", str(p['dz'] * 2.0)) # dz is half-length
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+
         elif solid_obj.type == "cone":
             solid_el.set("rmin1", str(p['rmin1']))
             solid_el.set("rmax1", str(p['rmax1']))
@@ -184,6 +236,7 @@ class GDMLWriter:
             solid_el.set("z", str(p['dz'] * 2.0))
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+
         elif solid_obj.type == "sphere":
             solid_el.set("rmin", str(p['rmin']))
             solid_el.set("rmax", str(p['rmax']))
@@ -191,14 +244,17 @@ class GDMLWriter:
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("starttheta", str(convert_from_internal_units(p['starttheta'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltatheta", str(convert_from_internal_units(p['deltatheta'], DEFAULT_OUTPUT_AUNIT, "angle")))
+
         elif solid_obj.type == "orb":
             solid_el.set("r", str(p['r']))
+
         elif solid_obj.type == "torus":
             solid_el.set("rmin", str(p['rmin']))
             solid_el.set("rmax", str(p['rmax']))
             solid_el.set("rtor", str(p['rtor']))
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+
         elif solid_obj.type == "para":
             solid_el.set("x", str(p['dx'] * 2.0))
             solid_el.set("y", str(p['dy'] * 2.0))
@@ -206,12 +262,14 @@ class GDMLWriter:
             solid_el.set("alpha", str(convert_from_internal_units(p['alpha'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("theta", str(convert_from_internal_units(p['theta'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("phi", str(convert_from_internal_units(p['phi'], DEFAULT_OUTPUT_AUNIT, "angle")))
+
         elif solid_obj.type == "trd":
             solid_el.set("x1", str(p['dx1'] * 2.0))
             solid_el.set("x2", str(p['dx2'] * 2.0))
             solid_el.set("y1", str(p['dy1'] * 2.0))
             solid_el.set("y2", str(p['dy2'] * 2.0))
             solid_el.set("z", str(p['dz'] * 2.0))
+
         elif solid_obj.type == "trap":
             solid_el.set("z", str(p['dz'] * 2.0))
             solid_el.set("theta", str(convert_from_internal_units(p['theta'], DEFAULT_OUTPUT_AUNIT, "angle")))

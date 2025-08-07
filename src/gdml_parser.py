@@ -452,6 +452,39 @@ class GDMLParser:
                 temp_solids[name] = Solid(name, solid_type, params)
                 return # End processing for this element
 
+            # --- Handle multiUnion tag ---
+            if solid_type == 'multiUnion':
+                recipe = []
+                # Find all multiUnionNode children
+                nodes = solid_el.findall('multiUnionNode')
+                if not nodes:
+                    print(f"Warning: <multiUnion> solid '{name}' has no nodes. Skipping.")
+                    return
+
+                # The first node is the 'base' of our recipe
+                first_node = nodes[0]
+                base_solid_ref = first_node.find('solid').get('ref')
+                recipe.append({
+                    'op': 'base',
+                    'solid_ref': self._evaluate_name(base_solid_ref),
+                    'transform': None # Base solid has no transform relative to itself
+                })
+
+                # Subsequent nodes are 'union' operations
+                for node in nodes[1:]:
+                    solid_ref_expr = node.find('solid').get('ref')
+                    pos, rot, _ = self._resolve_transform(node) # Use existing helper
+                    recipe.append({
+                        'op': 'union',
+                        'solid_ref': self._evaluate_name(solid_ref_expr),
+                        'transform': {'position': pos, 'rotation': rot}
+                    })
+                
+                # Create a 'boolean' solid in our internal representation
+                params = {"recipe": recipe}
+                temp_solids[name] = Solid(name, "boolean", params)
+                return
+
             # Unit-aware parameters
             params = {}
 
