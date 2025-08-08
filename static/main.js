@@ -661,7 +661,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     let clickedItemCanonicalId = null;
     if (clickedMesh) {
         const userData = clickedMesh.userData;
-        
+
         // Only roll up to the owner IF it's a procedural instance.
         // Otherwise, the canonical ID is its own ID.
         if (userData.is_procedural_instance && userData.owner_pv_id) {
@@ -673,7 +673,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
     if (clickedItemCanonicalId) {
         const existingIndex = currentSelection.findIndex(item => item.id === clickedItemCanonicalId);
-
+        
         if (isCtrlHeld) {
             if (existingIndex > -1) {
                 currentSelection.splice(existingIndex, 1);
@@ -696,13 +696,29 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
 // Helper function to find a PV by its ID anywhere in the project state
 function findItemInState(itemId) {
-    // Search PVs
-    for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
+
+    if (!AppState.currentProjectState) return null;
+    const state = AppState.currentProjectState;
+    
+    // Search standard PVs
+    for (const lv of Object.values(state.logical_volumes)) {
         if (lv.content_type === 'physvol') {
             const found = lv.content.find(pv => pv.id === itemId);
-            if (found) return { type: 'physical_volume', id: found.id, name: found.name, data: found };
+            if (found) {
+                // Return the standard context object
+                return { type: 'physical_volume', id: found.id, name: found.name, data: found };
+            }
         }
     }
+
+    // Search PVs within Assemblies
+    for (const asm of Object.values(state.assemblies)) {
+        const found = asm.placements.find(pv => pv.id === itemId);
+        if (found) {
+            return { type: 'physical_volume', id: found.id, name: found.name, data: found };
+        }
+    }
+
     // Add searches for other types if needed in the future...
     return null;
 }
@@ -1108,36 +1124,47 @@ async function handleIsotopeEditorConfirm(data) {
     }
 }
 
-function handlePVVisibilityToggle(pvId, isVisible) {
-    // Update the visibility in the 3D scene
-    SceneManager.setPVVisibility(pvId, isVisible);
+function handlePVVisibilityToggle(pvId, isVisible, isRecursive = true) {
+    // 1. Get the DOM element for the primary PV
+    const pvElement = document.querySelector(`#structure_tree_root li[data-id="${pvId}"]`);
+    if (!pvElement) return;
 
-    // --- Check if the hidden object has the gizmo attached ---
-    if (!isVisible) {
-        const selectedObjects = SceneManager.getSelectedObjects();
-        if (selectedObjects.length === 1 && selectedObjects[0].userData.id === pvId) {
-            // The object we just hid is the selected one. Detach the gizmo.
-            console.log("Hiding selected object, detaching transform controls.");
-            handleModeChange('observe');
-        }
+    // 2. Find all descendant PV IDs if recursion is needed
+    let allIdsToToggle = [pvId];
+    if (isRecursive) {
+        const descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
+        allIdsToToggle = [...allIdsToToggle, ...descendantIds];
     }
+    
+    // 3. Update the state and visuals for all affected PVs
+    allIdsToToggle.forEach(id => {
+        // Update the 3D scene
+        SceneManager.setPVVisibility(id, isVisible);
+        // Update the hierarchy UI (the eye icon and dimmed text)
+        UIManager.setTreeItemVisibility(id, isVisible);
+    });
 }
 
 function handleHideSelected() {
-    if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.type === 'physical_volume') {
-        const pvId = AppState.selectedHierarchyItem.id;
-        // This function now automatically handles detaching the gizmo
-        handlePVVisibilityToggle(pvId, false);
-        UIManager.setTreeItemVisibility(pvId, false);
+    // This now works for multi-select as well
+    const selection = AppState.selectedHierarchyItems;
+    if (selection.length > 0) {
+        selection.forEach(item => {
+            if (item.type === 'physical_volume') {
+                // Call the main handler with recursion enabled
+                handlePVVisibilityToggle(item.id, false, true);
+            }
+        });
     } else {
-        UIManager.showNotification("Please select a Physical Volume to hide.");
+        UIManager.showNotification("Please select one or more Physical Volumes to hide.");
     }
 }
 
 function handleShowAll() {
+    // This just needs to call the SceneManager's bulk function
     SceneManager.setAllPVVisibility(true);
-    // Update all UI elements
-    UIManager.setAllTreeItemVisibility(true); // Need to add this helper to uiManager
+    // And then update the entire UI
+    UIManager.setAllTreeItemVisibility(true);
 }
 
 /**

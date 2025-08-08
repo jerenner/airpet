@@ -1217,7 +1217,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
             item.classList.toggle('item-hidden', !isNowVisible);
             visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
-            callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible);
+
+            // Call the main handler from main.js.
+            // The third argument (isRecursive) is true by default if not provided.
+            // If the user holds Alt, we can do a non-recursive toggle.
+            const isRecursiveToggle = !event.altKey;
+            callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible, isRecursiveToggle);
         });
 
         // Add double-click listener
@@ -1428,6 +1433,19 @@ export function setInspectorTitle(titleText) {
     } else {
         inspectorContentDiv.innerHTML = `<h4>${titleText}</h4>`;
     }
+}
+
+// Helper function to find all descendant PVs in the hierarchy view
+export function getDescendantPvIds(startElement) {
+    const ids = [];
+    // The `querySelectorAll` will find all `<li>` elements at any level of nesting inside the startElement
+    const descendants = startElement.querySelectorAll('li[data-type="physical_volume"]');
+    descendants.forEach(li => {
+        if (li.dataset.id) {
+            ids.push(li.dataset.id);
+        }
+    });
+    return ids;
 }
 
 /**

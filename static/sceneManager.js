@@ -481,35 +481,36 @@ function findActualMesh(object) {
 }
 
 export function setPVVisibility(pvId, isVisible) {
-    const mesh = findObjectByPvId(pvId);
-    if (mesh) {
-        mesh.visible = isVisible;
-    }
-    // --- Update the persistent state ---
-    if (isVisible) {
-        hiddenPvIds.delete(pvId);
-    } else {
-        hiddenPvIds.add(pvId);
+    const group = findObjectByPvId(pvId);
+    if (group) {
+        group.visible = isVisible;
+        if (isVisible) {
+            hiddenPvIds.delete(pvId);
+        } else {
+            hiddenPvIds.add(pvId);
+        }
     }
 }
 
 export function setAllPVVisibility(isVisible) {
-    geometryGroup.traverse(child => {
-        if (child.isMesh) {
-            child.visible = isVisible;
-        }
-    });
     // --- Update the persistent state ---
     if (isVisible) {
         hiddenPvIds.clear();
     } else {
         // Add all current PV IDs to the hidden set
         geometryGroup.traverse(child => {
-            if (child.isMesh && child.userData.id) {
+            if (child.isGroup && child.userData.id) {
                 hiddenPvIds.add(child.userData.id);
             }
         });
     }
+
+    // Now, apply the new state to all three.js objects
+    geometryGroup.traverse(child => {
+        if (child.isGroup && child.userData.id) {
+            child.visible = isVisible;
+        }
+    });
 }
 
 /**
@@ -1742,7 +1743,11 @@ export function renderObjects(pvDescriptions, projectState) {
                 group.add(solidMesh);
                 group.add(wireframe);
             }
-        }
+        } 
+        // else {
+        //     // Make non-renderable containers invisible.
+        //     group.visible = false;
+        // }
     });
 
     // Second pass: parent the objects and apply LOCAL transforms

@@ -1446,32 +1446,29 @@ class ProjectManager:
 
     def _find_and_remove_pv(self, pv_id):
         """
-        Helper function to find a PV by its ID anywhere in the geometry,
-        remove it from its current parent, and return the PV object and its old parent.
-        Returns (pv_object, parent_object) or (None, None).
+        Finds a PV by its ID, removes it from its parent's content list,
+        and returns the PV object and its former parent.
+        This version is more robust as it iterates through parents first.
         """
         state = self.current_geometry_state
-        # Find the PV first by iterating through all of them
-        all_pvs = [pv for lv in state.logical_volumes.values() if lv.content_type == 'physvol' for pv in lv.content] + \
-                  [pv for asm in state.assemblies.values() for pv in asm.placements]
 
-        pv_to_move = next((pv for pv in all_pvs if pv.id == pv_id), None)
-        if not pv_to_move:
-            return None, None
+        # Search in Logical Volumes
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for i, pv in enumerate(lv.content):
+                    if pv.id == pv_id:
+                        # Found it. Pop it from the list and return.
+                        return lv.content.pop(i), lv
+        
+        # Search in Assemblies
+        for asm in state.assemblies.values():
+            for i, pv in enumerate(asm.placements):
+                if pv.id == pv_id:
+                    # Found it. Pop it from the list and return.
+                    return asm.placements.pop(i), asm
 
-        # Now find its parent and remove it
-        parent_name = pv_to_move.parent_lv_name
-        parent_obj = state.logical_volumes.get(parent_name) or state.assemblies.get(parent_name)
-        if not parent_obj:
-            # This indicates a corrupted state
-            return None, None
-
-        if isinstance(parent_obj, LogicalVolume):
-            parent_obj.content.remove(pv_to_move)
-        elif isinstance(parent_obj, Assembly):
-            parent_obj.placements.remove(pv_to_move)
-            
-        return pv_to_move, parent_obj
+        # If we get here, the PV was not found in any container
+        return None, None
 
     def move_pv_to_assembly(self, pv_ids, target_assembly_name):
         """Moves a list of PVs from their current parent to a target assembly."""
