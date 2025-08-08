@@ -706,7 +706,7 @@ class GDMLParser:
             def pv_handler(pv_el, **kwargs):
                 current_assembly = kwargs.get('assembly')
                 if pv_el.tag == 'physvol':
-                    pv = self._parse_pv_element(pv_el)
+                    pv = self._parse_pv_element(pv_el, current_assembly.name)
                     if pv:
                         current_assembly.add_placement(pv)
 
@@ -718,7 +718,7 @@ class GDMLParser:
         def placement_handler(element, **kwargs):
             parent_lv_obj = kwargs.get('parent_lv')
             if element.tag == 'physvol':
-                pv = self._parse_pv_element(element)
+                pv = self._parse_pv_element(element, parent_lv_obj.name)
                 if pv:
                     parent_lv_obj.add_child(pv)
             
@@ -751,26 +751,31 @@ class GDMLParser:
         # This call now handles physvols inside loops correctly.
         self._process_children(vol_el, placement_handler, parent_lv=parent_lv)
 
-    def _parse_pv_element(self, pv_el):
+    def _parse_pv_element(self, pv_el, parent_name):
         """Helper to parse a physvol tag and return a PhysicalVolumePlacement object."""
         name_expr = pv_el.get('name') # Name can be optional in physvol
         name = self._evaluate_name(name_expr) if name_expr else f"pv_default_{uuid.uuid4().hex[:6]}"
         
         # We also need to evaluate the volumeref
         vol_ref_expr = pv_el.find('volumeref').get('ref') if pv_el.find('volumeref') is not None else None
-        asm_ref_el = pv_el.find('assemblyref')
         
-        if vol_ref_expr is None and asm_ref_el is None: return None
+        if vol_ref_expr is None: return None
 
         if vol_ref_expr:
             volume_ref = self._evaluate_name(vol_ref_expr)
-        else: # assembly ref
-            volume_ref = asm_ref_el.get('ref')
 
         copy_number_expr = pv_el.get('copynumber', '0')
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = self._resolve_transform(pv_el)
         
-        return PhysicalVolumePlacement(name, volume_ref, copy_number_expr, pos_val_or_ref, rot_val_or_ref, scale_val_or_ref)
+        return PhysicalVolumePlacement(
+            name=name,
+            volume_ref=volume_ref,
+            parent_lv_name=parent_name,
+            copy_number_expr=copy_number_expr,
+            position_val_or_ref=pos_val_or_ref,
+            rotation_val_or_ref=rot_val_or_ref,
+            scale_val_or_ref=scale_val_or_ref
+        )
 
     def _parse_replica_vol(self, replica_el):
         """Parses a <replicavol> tag and returns a ReplicaVolume object."""

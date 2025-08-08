@@ -751,63 +751,102 @@ class GeometryState:
     def get_threejs_scene_description(self):
         if not self.world_volume_ref or self.world_volume_ref not in self.logical_volumes:
             return []
+        
         threejs_objects = []
         world_lv = self.get_logical_volume(self.world_volume_ref)
+
+        # Add the world volume itself as a conceptual object (it won't be rendered)
+        # We give it a known, stable ID.
+        world_pv_id = "WORLD_PV_ID"
+        threejs_objects.append({
+            "id": world_pv_id,
+            "name": world_lv.name,
+            "is_world_volume_placement": True, # A flag to tell the frontend not to render it
+            "volume_ref": self.world_volume_ref
+        })
+
         if world_lv and world_lv.content_type == 'physvol':
-            initial_transform = np.identity(4)
             for pv in world_lv.content:
-                self._traverse(pv, initial_transform, [world_lv.name], threejs_objects)
+                self._traverse(pv, world_pv_id, [world_lv.name], threejs_objects)
+
         return threejs_objects
 
-    def _traverse(self, pv, parent_transform_matrix, path, threejs_objects, owner_pv_id=None):
+    def _traverse(self, pv, parent_pv_id, path, threejs_objects, owner_pv_id=None):
         current_owner_id = owner_pv_id or pv.id
-        local_transform_matrix = pv.get_transform_matrix()
-        world_transform_matrix = parent_transform_matrix @ local_transform_matrix
-        
+
         # Case 1: The PV places an Assembly
         assembly = self.get_assembly(pv.volume_ref)
         if assembly:
+            # Assembly placement itself is a node in the hierarchy.
+            # We treat it like a PV that doesn't render but acts as a parent.
+            assembly_placement_id = pv.id 
+            threejs_objects.append({
+                "id": assembly_placement_id,
+                "name": pv.name,
+                "parent_id": parent_pv_id, # Parent is the LV it was placed in
+                "is_assembly_placement": True, # Flag for frontend
+                "position": pv._evaluated_position,
+                "rotation": pv._evaluated_rotation,
+                "scale": pv._evaluated_scale,
+            })
             if assembly.name in path: return
             for part_pv in assembly.placements:
-                self._traverse(part_pv, world_transform_matrix, path + [assembly.name], threejs_objects, owner_pv_id=current_owner_id)
+                # Children of the assembly are parented to the assembly placement PV
+                self._traverse(part_pv, assembly_placement_id, path + [assembly.name], threejs_objects, owner_pv_id=current_owner_id)
             return
-
+        
         # Case 2: The PV places a Logical Volume
         lv = self.get_logical_volume(pv.volume_ref)
         if not lv: return
         if lv.name in path: return
 
-        # Render the LV's solid IF it's a standard volume
-        if lv.content_type not in ['replica', 'division', 'parameterised']:
-            final_pos, final_rot_rad, final_scl = PhysicalVolumePlacement.decompose_matrix(world_transform_matrix)
+        # For regular placements, add the parent_id
+        if lv.content_type == 'physvol':
             threejs_objects.append({
-                "id": pv.id, "name": pv.name, "owner_pv_id": current_owner_id,
+                "id": pv.id,
+                "name": pv.name,
+                "parent_id": parent_pv_id,
+                "owner_pv_id": current_owner_id,
+                "is_procedural_instance": False,
                 "solid_ref_for_threejs": lv.solid_ref,
-                "position": final_pos, "rotation": final_rot_rad, "scale": final_scl,
-                "vis_attributes": lv.vis_attributes, "copy_number": pv.copy_number
+                "position": pv._evaluated_position,
+                "rotation": pv._evaluated_rotation,
+                "scale": pv._evaluated_scale,
+                "vis_attributes": lv.vis_attributes,
+                "copy_number": pv.copy_number
             })
 
-        # Recurse into the content of the placed LV
-        child_placements = []
-        if lv.content_type == 'physvol':
-            child_placements = lv.content
-        elif lv.content_type == 'replica':
-            child_placements = self._unroll_replica(lv)
+            # Recurse into the content of the placed LV
+            for child_pv in lv.content:
+                self._traverse(child_pv, pv.id, path + [lv.name], threejs_objects, owner_pv_id=current_owner_id)
+        else:
+            # This is a PROCEDURAL placement. The PV itself is NOT rendered.
+            # It acts only as a rule container. We only process its generated content.
+            # We still need a non-rendered node in the hierarchy for parenting and selection.
+            threejs_objects.append({
+                "id": pv.id,
+                "name": pv.name,
+                "parent_id": parent_pv_id,
+                "is_procedural_container": True, # NEW FLAG to tell frontend not to render
+                "volume_ref": lv.name, # Pass LV info for the inspector
+                "position": pv._evaluated_position,
+                "rotation": pv._evaluated_rotation,
+                "scale": pv._evaluated_scale,
+            })
         
-        for child_pv in child_placements:
-            self._traverse(child_pv, world_transform_matrix, path + [lv.name], threejs_objects, owner_pv_id=current_owner_id)
-        
-        # Handle division separately as it renders and recurses differently
-        if lv.content_type == 'division':
-            self._unroll_division_and_traverse(lv, world_transform_matrix, path, threejs_objects, owner_id=current_owner_id)
-        elif lv.content_type == 'parameterised':
-            self._unroll_param_and_traverse(lv, world_transform_matrix, path, threejs_objects, owner_id=current_owner_id)
+            # Call the appropriate unrolling function. The unrolled instances
+            # will be parented to this non-rendered procedural node (pv.id).
+            if lv.content_type == 'replica':
+                self._unroll_replica_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
+            elif lv.content_type == 'division':
+                self._unroll_division_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
+            elif lv.content_type == 'parameterised':
+                self._unroll_param_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
 
-    def _unroll_replica(self, lv):
+    def _unroll_replica_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
         replica = lv.content
-        child_lv = self.get_logical_volume(replica.volume_ref)
-        if not child_lv:
-            return []
+        child_lv_template = self.get_logical_volume(replica.volume_ref)
+        if not child_lv_template: return
 
         placements = []
         
@@ -841,16 +880,33 @@ class GeometryState:
 
             temp_pv = PhysicalVolumePlacement(
                 name=f"{lv.name}_replica_{i}",
-                volume_ref=child_lv.name,
-                copy_number_expr=str(i)
+                volume_ref=child_lv_template.name,
+                copy_number_expr=str(i),
+                parent_lv_name=lv.name
             )
             temp_pv._evaluated_position = final_pos
             temp_pv._evaluated_rotation = final_rot_rad
-            
-            placements.append(temp_pv)
-        return placements
 
-    def _unroll_division_and_traverse(self, lv, parent_matrix, path, threejs_objects, owner_id):
+            # Add the generated replica instance itself to the list
+            threejs_objects.append({
+                "id": temp_pv.id, "name": temp_pv.name,
+                "parent_id": parent_pv_id,
+                "owner_pv_id": owner_id,
+                "is_procedural_instance": True, 
+                "solid_ref_for_threejs": child_lv_template.solid_ref,
+                "position": temp_pv._evaluated_position,
+                "rotation": temp_pv._evaluated_rotation,
+                "scale": temp_pv._evaluated_scale,
+                "vis_attributes": child_lv_template.vis_attributes,
+                "copy_number": i
+            })
+            
+            # Recurse into children of the template LV
+            if child_lv_template.content_type == 'physvol' and child_lv_template.content:
+                for child_of_child_pv in child_lv_template.content:
+                    self._traverse(child_of_child_pv, temp_pv.id, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
+
+    def _unroll_division_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
         division = lv.content
         child_lv = self.get_logical_volume(division.volume_ref)
         mother_solid = self.get_solid(lv.solid_ref)
@@ -858,41 +914,63 @@ class GeometryState:
             if mother_solid and mother_solid.type != 'box': print(f"Warning: Division of non-box solid '{mother_solid.name}' is not visually supported.")
             return
 
-        number, offset = int(division.number), division.offset
+        number, offset = division._evaluated_number, division._evaluated_offset
         axis_map = {'kxaxis': 'x', 'kyaxis': 'y', 'kzaxis': 'z'}
         axis_key = axis_map.get(division.axis.lower(), 'z')
         mother_params = mother_solid._evaluated_parameters
         mother_extent = mother_params.get(axis_key, 0)
         width = (mother_extent - (2 * offset)) / number if number > 0 else 0
-
         slice_params = mother_params.copy()
         slice_params[axis_key] = width
-        slice_solid = Solid(f"{mother_solid.name}_slice", 'box', {})
-        slice_solid._evaluated_parameters = slice_params
+
+        # slice_solid = Solid(f"{mother_solid.name}_slice", 'box', {})
+        # slice_solid._evaluated_parameters = slice_params
 
         for i in range(number):
+            # Position of the slice's center within the mother volume's local coordinates
             pos_in_mother = -mother_extent / 2.0 + offset + width / 2.0 + i * width
-            copy_pos = {'x': 0, 'y': 0, 'z': 0}; copy_pos[axis_key] = pos_in_mother
-            
-            temp_pv = PhysicalVolumePlacement(f"{lv.name}_division_{i}", child_lv.name, str(i))
+            copy_pos = {'x': 0, 'y': 0, 'z': 0}; 
+            copy_pos[axis_key] = pos_in_mother
+
+            # This temporary solid is unique to this slice
+            temp_solid = Solid(
+                name=f"{mother_solid.name}_slice_{i}",
+                solid_type='box',
+                raw_parameters={} 
+            )
+            temp_solid._evaluated_parameters = slice_params
+
+            # Create a temporary PV to hold the instance's transform
+            temp_pv = PhysicalVolumePlacement(
+                name=f"{lv.name}_division_{i}",
+                volume_ref=child_lv.name,
+                copy_number_expr=str(i),
+                parent_lv_name=lv.name
+            )
             temp_pv._evaluated_position = copy_pos
             temp_pv._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
             
-            slice_world_matrix = parent_matrix @ temp_pv.get_transform_matrix()
-            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(slice_world_matrix)
+            # Add the generated slice itself to the list of objects to be rendered.
             threejs_objects.append({
-                "id": temp_pv.id, "name": temp_pv.name, "owner_pv_id": owner_id,
-                "solid_ref_for_threejs": slice_solid.to_dict(),
-                "position": final_pos, "rotation": final_rot_rad,
-                "vis_attributes": child_lv.vis_attributes, "copy_number": i
+                "id": temp_pv.id,
+                "name": temp_pv.name,
+                "parent_id": parent_pv_id, # It's a child of the PV that holds the division rule
+                "owner_pv_id": owner_id,   # It belongs to the division rule PV
+                "is_procedural_instance": True,
+                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the unique slice solid
+                "position": temp_pv._evaluated_position,
+                "rotation": temp_pv._evaluated_rotation,
+                "scale": temp_pv._evaluated_scale,
+                "vis_attributes": child_lv.vis_attributes,
+                "copy_number": i
             })
 
-            # Recurse on the children of the ORIGINAL divided LV, placing them inside this new slice
+            # Now, recurse into the children of the template LV, parenting them to this new slice
             if child_lv.content_type == 'physvol' and child_lv.content:
                 for child_of_child_pv in child_lv.content:
-                    self._traverse(child_of_child_pv, slice_world_matrix, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
+                    self._traverse(child_of_child_pv, temp_pv.id, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
 
-    def _unroll_param_and_traverse(self, lv, parent_matrix, path, threejs_objects, owner_id):
+    def _unroll_param_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
         param_vol = lv.content
         child_lv_template = self.get_logical_volume(param_vol.volume_ref)
         if not child_lv_template: return
@@ -901,12 +979,15 @@ class GeometryState:
         if not original_solid: return
 
         for i, param_set in enumerate(param_vol.parameters):
+            new_solid_params = original_solid.raw_parameters.copy()
+            dims_type_clean = param_set.dimensions_type.replace('_dimensions', '')
+            new_solid_params.update(param_set.dimensions)
+
             # Create a temporary Solid object for this specific instance
-            # Its evaluated parameters are taken directly from the parameter set
             temp_solid = Solid(
                 name=f"{original_solid.name}_param_{i}",
-                solid_type=param_set.dimensions_type.replace('_dimensions', ''),
-                raw_parameters={} # Raw params are not needed for rendering
+                solid_type=dims_type_clean,
+                raw_parameters=new_solid_params
             )
             temp_solid._evaluated_parameters = param_set._evaluated_dimensions
             
@@ -914,30 +995,39 @@ class GeometryState:
             temp_pv = PhysicalVolumePlacement(
                 name=f"{lv.name}_param_{i}",
                 volume_ref=child_lv_template.name,
-                copy_number_expr=str(i)
+                copy_number_expr=str(i),
+                parent_lv_name=lv.name
             )
             temp_pv._evaluated_position = param_set._evaluated_position
             temp_pv._evaluated_rotation = param_set._evaluated_rotation
-            
-            # Combine the parent transform with this instance's local transform
-            instance_local_matrix = temp_pv.get_transform_matrix()
-            instance_world_matrix = parent_matrix @ instance_local_matrix
-            
-            # Decompose the final world matrix for rendering
-            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(instance_world_matrix)
 
+            # Create a temporary Logical Volume for this instance so we can recurse
+            temp_lv_instance = LogicalVolume(
+                name=f"{child_lv_template.name}_param_{i}",
+                solid_ref=temp_solid.name, # This solid doesn't exist in the main dict, so we pass the object
+                material_ref=child_lv_template.material_ref
+            )
+            temp_lv_instance.content = child_lv_template.content
+            temp_lv_instance.content_type = child_lv_template.content_type
+
+            # We need to add the solid to the description, but also need to pass the object
+            # to the recursive call. Let's create a custom object for the scene description.
             threejs_objects.append({
                 "id": temp_pv.id,
                 "name": temp_pv.name,
+                "parent_id": parent_pv_id,
                 "owner_pv_id": owner_id,
-                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temporary solid's data
-                "position": final_pos,
-                "rotation": final_rot_rad,
+                "is_procedural_instance": True,
+                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temporary solid's data directly
+                "position": temp_pv._evaluated_position,
+                "rotation": temp_pv._evaluated_rotation,
+                "scale": temp_pv._evaluated_scale,
                 "vis_attributes": child_lv_template.vis_attributes,
                 "copy_number": i
             })
 
-            # 4. Recurse into the ORIGINAL child LV's content, placed inside this new instance
+            # Recurse if the template LV had children
             if child_lv_template.content_type == 'physvol' and child_lv_template.content:
                 for child_of_child_pv in child_lv_template.content:
-                    self._traverse(child_of_child_pv, instance_world_matrix, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
+                    # Children are parented to our temporary instance PV
+                    self._traverse(child_of_child_pv, temp_pv.id, path + [lv.name], threejs_objects, owner_pv_id=owner_id)

@@ -661,9 +661,14 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     let clickedItemCanonicalId = null;
     if (clickedMesh) {
         const userData = clickedMesh.userData;
-        clickedItemCanonicalId = (userData.owner_pv_id && userData.owner_pv_id !== userData.id) 
-                                 ? userData.owner_pv_id 
-                                 : userData.id;
+        
+        // Only roll up to the owner IF it's a procedural instance.
+        // Otherwise, the canonical ID is its own ID.
+        if (userData.is_procedural_instance && userData.owner_pv_id) {
+            clickedItemCanonicalId = userData.owner_pv_id;
+        } else {
+            clickedItemCanonicalId = userData.id;
+        }
     }
 
     if (clickedItemCanonicalId) {
@@ -722,87 +727,91 @@ function handleTransformLive(liveObject) {
 }
 
 // Called by SceneManager when TransformControls finishes a transformation
-async function handleTransformEnd(transformedObject, initialTransforms, wasHelperTransformed) {
+async function handleTransformEnd(transformedObject, initialTransforms) {
     if (!transformedObject) return;
 
-    // This map will store the final update payload for each unique PV that needs to be updated.
-    // The key will be the PV's actual ID from the project state.
     const updates = new Map();
+    const selection = AppState.selectedHierarchyItems;
 
-    if (wasHelperTransformed) {
-        // --- CASE 1: A GROUP was transformed via the helper gizmo ---
-        const helperStart = initialTransforms.get('helper');
-        if (!helperStart) return;
+    // This function will now handle all cases: single, multi, and procedural,
+    // by calculating the final local transform for every affected object.
 
-        const deltaMatrix = new THREE.Matrix4().multiplyMatrices(
-            transformedObject.matrixWorld,
-            new THREE.Matrix4().copy(helperStart.matrixWorld).invert()
-        );
+    const wasHelperTransformed = initialTransforms.has('helper');
 
-        // Iterate through ALL objects that were part of the initial transform.
-        for (const [objectId, initialMeshState] of initialTransforms.entries()) {
-            if (objectId === 'helper') continue; // Skip the helper itself
+    for (const item of selection) {
+        if (item.type !== 'physical_volume') continue;
 
-            // Determine the actual PV ID to update. For procedural slices, this is the owner.
-            const pvToUpdateId = initialMeshState.userData.owner_pv_id || initialMeshState.userData.id;
+        const pvId = item.id;
+        
+        // Find the THREE.Group for the PV being updated.
+        const currentThreeJsObject = SceneManager.findObjectByPvId(pvId);
+        if (!currentThreeJsObject) continue;
 
-            // If we've already calculated the update for this parent PV, skip.
-            if (updates.has(pvToUpdateId)) continue;
-            
-            // Find the original PV data from our main AppState
-            const originalPvItem = findItemInState(pvToUpdateId);
-            if (!originalPvItem) {
-                console.warn(`Could not find project data for PV ID ${pvToUpdateId}. Skipping.`);
-                continue;
+        // Get the final world matrix directly from the transformed three.js object.
+        // For multi-select, the live-update logic already moved the individual objects.
+        const finalWorldMatrix = currentThreeJsObject.matrixWorld.clone();
+        
+        // --- Determine the Parent's World Matrix ---
+        const parentLvName = item.data.parent_lv_name;
+        let parentWorldMatrix = new THREE.Matrix4(); // Default to identity (for world volume)
+
+        if (parentLvName !== AppState.currentProjectState.world_volume_ref) {
+            // Find the physical volume that PLACES our parent logical volume.
+            const parentPvData = findPVThatPlacesLV(parentLvName, AppState.currentProjectState);
+            if (parentPvData) {
+                const parentThreeJsGroup = SceneManager.findObjectByPvId(parentPvData.id);
+                if (parentThreeJsGroup) {
+                    parentWorldMatrix = parentThreeJsGroup.matrixWorld.clone();
+                }
             }
-
-            const initialPos = originalPvItem.data._evaluated_position;
-            const initialRot = originalPvItem.data._evaluated_rotation;
-            const initialScl = originalPvItem.data._evaluated_scale;
-            
-            const initialMatrix = new THREE.Matrix4().compose(
-                new THREE.Vector3(initialPos.x, initialPos.y, initialPos.z),
-                new THREE.Quaternion().setFromEuler(new THREE.Euler(initialRot.x, initialRot.y, initialRot.z, 'ZYX')),
-                new THREE.Vector3(initialScl.x, initialScl.y, initialScl.z)
-            );
-
-            const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMatrix);
-            const pos = new THREE.Vector3(); const rot = new THREE.Quaternion(); const scl = new THREE.Vector3();
-            finalMatrix.decompose(pos, rot, scl);
-            const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
-
-            updates.set(pvToUpdateId, {
-                id: pvToUpdateId,
-                position: { x: pos.x, y: pos.y, z: pos.z },
-                rotation: { x: euler.x, y: euler.y, z: euler.z },
-                scale: { x: scl.x, y: scl.y, z: scl.z }
-            });
         }
-    } else if (transformedObject.userData.id) {
-        // --- CASE 2: A SINGLE object was transformed directly ---
-        const pos = transformedObject.position;
-        const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'ZYX');
-        const scale = transformedObject.scale;
         
-        // The ID to update is either the owner's ID (for procedural) or its own.
-        const idToUpdate = transformedObject.userData.owner_pv_id || transformedObject.userData.id;
+        // --- Calculate the New LOCAL Matrix ---
+        const parentWorldMatrixInv = parentWorldMatrix.invert();
+        const finalLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentWorldMatrixInv, finalWorldMatrix);
         
-        updates.set(idToUpdate, {
-            id: idToUpdate,
+        // --- Decompose to get local position, rotation, scale ---
+        const pos = new THREE.Vector3();
+        const rot = new THREE.Quaternion();
+        const scl = new THREE.Vector3();
+        finalLocalMatrix.decompose(pos, rot, scl);
+        const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+
+        // This update structure now works for ALL physical volumes, procedural or not.
+        // We are directly setting their new local transform.
+        updates.set(pvId, {
+            id: pvId,
             position: { x: pos.x, y: pos.y, z: pos.z },
             rotation: { x: euler.x, y: euler.y, z: euler.z },
-            scale:    { x: scale.x, y: scale.y, z: scale.z }
+            scale:    { x: scl.x, y: scl.y, z: scl.z }
         });
     }
 
-    if (updates.length === 0) return;
+    if (updates.size === 0) {
+        // This can happen if a procedural volume was moved. Procedural volumes have no PV to update.
+        // Instead, their LV content needs to be updated. Let's handle this.
+        const proceduralItem = selection.find(item => {
+            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            return lv && lv.content_type !== 'physvol';
+        });
 
-    UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
+        if (proceduralItem) {
+            // Logic for updating procedural volumes (e.g., replicavol start_position)
+            // This is a complex case we can address if needed, but the primary bug is for standard PVs.
+            // For now, let's log it.
+            console.log("Procedural volume transform detected, update logic needs to target LV content.");
+        } else {
+             return;
+        }
+    }
+    
+    UIManager.showLoading(`Updating ${updates.size} transform(s)...`);
     try {
         let lastResult;
         for (const update of updates.values()) {
+            // This now correctly sends the calculated LOCAL transform for every PV
             lastResult = await APIService.updatePhysicalVolume(update.id, null, update.position, update.rotation, update.scale);
-
+            
             if (!lastResult.success) {
                 UIManager.showError(`Failed to update ${update.id}: ${lastResult.error}`);
                 break;
@@ -816,6 +825,22 @@ async function handleTransformEnd(transformedObject, initialTransforms, wasHelpe
     } finally {
         UIManager.hideLoading();
     }
+}
+
+// Keep this helper function, it's essential
+function findPVThatPlacesLV(lvName, projectState) {
+    // This helper needs to search ALL placements, including those inside assemblies
+    const allPVs = [];
+    for (const lv of Object.values(projectState.logical_volumes)) {
+        if (lv.content_type === 'physvol') {
+            allPVs.push(...lv.content);
+        }
+    }
+    for (const asm of Object.values(projectState.assemblies)) {
+        allPVs.push(...asm.placements);
+    }
+    
+    return allPVs.find(pv => pv.volume_ref === lvName);
 }
 
 // Called by UIManager when a property is changed in the Inspector Panel

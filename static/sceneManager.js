@@ -137,7 +137,7 @@ export function initScene(callbacks) {
 
             // Pass the transformed object AND the initial state map.
             // The `wasHelperTransformed` flag tells main.js how to interpret the event.
-            onObjectTransformEndCallback(object, initialTransforms, wasHelperTransformed);
+            onObjectTransformEndCallback(object, initialTransforms);
         }
         initialTransforms.clear();
     });
@@ -443,7 +443,7 @@ function handlePointerDownForSelection(event) {
 
     // 3. Intersect ONLY the visible objects.
     const intersects = raycaster.intersectObjects(visibleObjects, true); // `true` for recursive check if objects are groups
-
+    
     if (intersects.length > 0) {
         // We found an intersection with a visible object.
         // The rest of the logic remains the same.
@@ -462,13 +462,22 @@ function handlePointerDownForSelection(event) {
 
 function findActualMesh(object) {
     let current = object;
-    // Traverse up until we find a parent that is a direct child of `geometryGroup`.
-    // This will be the main Group object we created.
-    while (current.parent && current.parent !== geometryGroup && current.parent !== scene) {
+    // Traverse up the parent chain from the clicked mesh
+    while (current) {
+        // The first ancestor (or the object itself) that has a 'userData.id' is the
+        // top-level group for our physical volume. This is the object we want to select.
+        if (current.userData && current.userData.id) {
+            return current;
+        }
+        // If we reach the top of our manageable geometry without finding a valid group, stop.
+        if (current === geometryGroup || current === scene) {
+            break;
+        }
         current = current.parent;
     }
-    // Only return it if it has our userData, otherwise something went wrong.
-    return (current.userData && current.userData.id) ? current : object;
+    // As a fallback, if no valid group was found (e.g., clicked an axis helper),
+    // return the original intersected object. This prevents errors.
+    return object;
 }
 
 export function setPVVisibility(pvId, isVisible) {
@@ -1682,87 +1691,93 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
  */
 export function renderObjects(pvDescriptions, projectState) {
     clearScene();
-
     if (!Array.isArray(pvDescriptions) || !projectState || !projectState.solids) {
         console.error("[SceneManager] Invalid data for rendering.", { pvDescriptions, projectState });
         return;
     }
 
-    // --- Stage 1: Build and Cache All Geometries ---
     const geometryCache = new Map();
-    const csgEvaluator = new Evaluator(); // CSG tool
-
+    const csgEvaluator = new Evaluator();
     for (const solidName in projectState.solids) {
         _getOrBuildGeometry(solidName, projectState.solids, projectState, geometryCache, csgEvaluator);
     }
-    console.log("[SceneManager] Geometry cache built. Total items:", geometryCache.size);
 
-    // --- Stage 2: Place Geometries in the Scene ---
+    // NEW: Use a map to build the hierarchy
+    const objectMap = new Map();
+
+    // First pass: create all THREE.Group objects
     pvDescriptions.forEach(pvData => {
-
-        // --- Check the flag and skip rendering if it's the world ---
-        if (pvData.is_world_volume_placement) {
-             console.log(`[SceneManager] Skipping render of world volume placement: ${pvData.name}`);
-             return; // 'return' inside a forEach acts like 'continue'
-        }
-
-        const solidRef = pvData.solid_ref_for_threejs; // Backend should provide this direct ref
-        const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
-
-        if (!geometry) {
-            const solidIdentifier = (typeof solidRef === 'string') ? solidRef : solidRef.name;
-            console.warn(`[SceneManager] No geometry could be built for solid '${solidIdentifier}'. Skipping placement of '${pvData.name}'.`);
-            return;
-        }
-
-        // 1. Create the main solid mesh
-        const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
-        const color = vis.color;
-        // Use MeshPhongMaterial for better lighting interaction
-        const meshMaterial = new THREE.MeshPhongMaterial({
-            color: new THREE.Color(color.r, color.g, color.b),
-            transparent: color.a < 1.0,
-            opacity: color.a,
-            side: THREE.DoubleSide,
-            shininess: 30, // Add some shininess
-            polygonOffset: true,
-            polygonOffsetFactor: 1,
-            polygonOffsetUnits: 1
-        });
-        const solidMesh = new THREE.Mesh(geometry, meshMaterial);
-
-        // 2. Create the edge outline
-        const edges = new EdgesGeometry(geometry, 1); // The '1' is the threshold angle for edges
-        const lineMaterial = new LineBasicMaterial({ color: 0x000000, linewidth: 2 });
-        const wireframe = new LineSegments(edges, lineMaterial);
-
-        // 3. Create a Group to hold both
         const group = new THREE.Group();
-        group.add(solidMesh);
-        group.add(wireframe);
-        
-        // 4. Apply transforms and user data to the GROUP, not the individual mesh
         group.userData = pvData;
         group.name = pvData.name || `group_${pvData.id}`;
 
-        if (pvData.position) group.position.set(pvData.position.x, pvData.position.y, pvData.position.z);
-        if (pvData.rotation) {
-            const euler = new THREE.Euler(pvData.rotation.x, pvData.rotation.y, pvData.rotation.z, 'ZYX');
-            group.quaternion.setFromEuler(euler);
-        }
-        if (pvData.scale) {
-            group.scale.set(pvData.scale.x, pvData.scale.y, pvData.scale.z);
-        }
-        
-        if (hiddenPvIds.has(pvData.id)) {
-            group.visible = false;
-        }
-        
-        geometryGroup.add(group);
+        // Store it in the map by its unique PV ID
+        objectMap.set(pvData.id, group);
 
+        // Only create meshes for actual, renderable volumes
+        const isRenderable = !pvData.is_world_volume_placement 
+                             && !pvData.is_assembly_placement 
+                             && !pvData.is_procedural_container;
+
+        if (isRenderable) {
+            const solidRef = pvData.solid_ref_for_threejs;
+            const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
+            if (geometry) {
+                const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
+                const color = vis.color;
+                const meshMaterial = new THREE.MeshPhongMaterial({
+                    color: new THREE.Color(color.r, color.g, color.b),
+                    transparent: color.a < 1.0,
+                    opacity: color.a,
+                    side: THREE.DoubleSide,
+                    shininess: 30,
+                    polygonOffset: true,
+                    polygonOffsetFactor: 1,
+                    polygonOffsetUnits: 1
+                });
+                const solidMesh = new THREE.Mesh(geometry, meshMaterial);
+                const edges = new EdgesGeometry(geometry, 1);
+                const lineMaterial = new LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+                const wireframe = new LineSegments(edges, lineMaterial);
+                group.add(solidMesh);
+                group.add(wireframe);
+            }
+        }
     });
 
-    console.log("[SceneManager] Rendered objects. Total in group:", geometryGroup.children.length);
+    // Second pass: parent the objects and apply LOCAL transforms
+    pvDescriptions.forEach(pvData => {
+        const obj = objectMap.get(pvData.id);
+        if (!obj) return;
+
+        // Apply LOCAL transforms, not world transforms
+        const position = pvData.position || { x: 0, y: 0, z: 0 };
+        const rotation = pvData.rotation || { x: 0, y: 0, z: 0 };
+        const scale = pvData.scale || { x: 1, y: 1, z: 1 };
+        
+        obj.position.set(position.x, position.y, position.z);
+        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');
+        obj.quaternion.setFromEuler(euler);
+        obj.scale.set(scale.x, scale.y, scale.z);
+        
+        // Find the parent and attach
+        const parentObj = objectMap.get(pvData.parent_id);
+        if (parentObj) {
+            parentObj.add(obj);
+        } else {
+            // If no parent is found in the map, it's a top-level object (child of the world)
+            geometryGroup.add(obj);
+        }
+
+        if (hiddenPvIds.has(pvData.id)) {
+            obj.visible = false;
+        }
+    });
+
+    // IMPORTANT: Update world matrices for the entire hierarchy
+    geometryGroup.updateMatrixWorld(true);
+
+    console.log("[SceneManager] Rendered objects with nested hierarchy. Total top-level:", geometryGroup.children.length);
 }
 
 export function clearScene() {

@@ -122,7 +122,7 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         pvParentLVSelect.disabled = false; // Parent LV is selectable
 
         // Populate the placeable LVs dropdown
-        const placeableLVs = allLVs.filter(lvName => lvName !== worldRef && lvName !== parentLVName);
+        const placeableLVs = allLVs.filter(lvName => lvName !== worldRef);
         populateSelect(lvSelect, placeableLVs);
         lvSelect.disabled = false;
 
