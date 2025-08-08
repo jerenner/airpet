@@ -164,7 +164,8 @@ async function initializeApp() {
 
     // Initialize solid editor
     SolidEditor.initSolidEditor({
-        onConfirm: handleSolidEditorConfirm
+        onConfirm: handleSolidEditorConfirm,
+        getSelectedParentContext: () => UIManager.getSelectedParentContext() 
     });
 
     // Initialize the optical surface editor
@@ -568,8 +569,8 @@ async function handleHierarchySelection(newSelection) {
         if (item.type === 'physical_volume') {
             const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
             if (lv && lv.content_type !== 'physvol') {
-                // It's a procedural volume. Translate and Rotate are OK, Scale is NOT.
-                transformState = { translate: true, rotate: true, scale: false };
+                // It's a procedural volume, remove all possibilites for the gizmo.
+                transformState = { translate: false, rotate: false, scale: false };
                 reason = "Scaling is not supported for procedural volumes.";
             }
         }
@@ -581,7 +582,7 @@ async function handleHierarchySelection(newSelection) {
             return lv && lv.content_type !== 'physvol';
         });
         if (anyProcedural) {
-            transformState = { translate: true, rotate: true, scale: false };
+            transformState = { translate: false, rotate: false, scale: false };
             reason = "Scaling is not supported for procedural volumes.";
         }
     }
@@ -887,11 +888,13 @@ async function handleSolidEditorConfirm(data) {
             const lvParams = data.createLV ? { material_ref: data.materialRef } : null;
             let pvParams = null;
             if (data.createLV && data.placePV) {
-                const parentContext = UIManager.getSelectedParentContext();
-                const parentName = (parentContext && parentContext.name) 
-                                   ? parentContext.name 
-                                   : AppState.currentProjectState.world_volume_ref;
-                pvParams = { parent_lv_name: parentName };
+                // Use the parent name from the dropdown box in the solid editor
+                 if (!data.parentLVName) {
+                    UIManager.showError("A parent volume must be selected for placement.");
+                    UIManager.hideLoading();
+                    return;
+                }
+                pvParams = { parent_lv_name: data.parentLVName };
             }
             
             const result = await APIService.addSolidAndPlace(solidParams, lvParams, pvParams);
@@ -943,10 +946,10 @@ function handleAddPV() {
 
     // If nothing is selected, default to the World volume
     if (!parentContext) {
-            if (AppState.currentProjectState && AppState.currentProjectState.world_volume_ref) {
-                parentContext = { name: AppState.currentProjectState.world_volume_ref };
-                console.log("No parent selected, defaulting to World.");
-            } else {
+        if (AppState.currentProjectState && AppState.currentProjectState.world_volume_ref) {
+            parentContext = { name: AppState.currentProjectState.world_volume_ref };
+            console.log("No parent selected, defaulting to World.");
+        } else {
             UIManager.showError("No world volume found to place object into.");
             return;
         }

@@ -1,14 +1,12 @@
 import * as THREE from 'three';
 import * as ExpressionInput from './expressionInput.js';
 
-let modalElement, titleElement, nameInput, lvSelect, confirmButton, cancelButton;
+let modalElement, titleElement, nameInput, lvSelect, confirmButton, cancelButton, pvParentLVSelect;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingPVId = null;
-let parentLVName = null;
 
 let posDefineSelect, rotDefineSelect, sclDefineSelect;
-let positionDefines, rotationDefines;
 let currentProjectState;
 
 export function initPVEditor(callbacks) {
@@ -17,6 +15,7 @@ export function initPVEditor(callbacks) {
     modalElement = document.getElementById('pvEditorModal');
     titleElement = document.getElementById('pvEditorTitle');
     nameInput = document.getElementById('pvEditorName');
+    pvParentLVSelect = document.getElementById('pvEditorParentLV');
     lvSelect = document.getElementById('pvEditorLV');
     confirmButton = document.getElementById('confirmPVEditor');
     cancelButton = document.getElementById('cancelPVEditor');
@@ -34,6 +33,10 @@ export function initPVEditor(callbacks) {
 
     // Add a listener to the LV selection dropdown to disable scaling for procedurals
     lvSelect.addEventListener('change', () => {
+
+        // Update parent LV candidates
+        updateParentCandidates();
+        
         // Only run this logic in Create mode
         if (isEditMode) return;
 
@@ -41,8 +44,15 @@ export function initPVEditor(callbacks) {
         const selectedLV = currentProjectState.logical_volumes[selectedLVName];
         const isProcedural = selectedLV && selectedLV.content_type !== 'physvol';
         
-        // Re-render the scale UI with the correct disabled state
-        const sclDefines = Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'scale');
+        // Get the defines for each type
+        const allDefines = currentProjectState.defines || {};
+        const posDefines = Object.keys(allDefines).filter(k => allDefines[k].type === 'position');
+        const rotDefines = Object.keys(allDefines).filter(k => allDefines[k].type === 'rotation');
+        const sclDefines = Object.keys(allDefines).filter(k => allDefines[k].type === 'scale');
+
+        // Re-render all transform UIs with the correct disabled state
+        setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines, { isDisabled: isProcedural });
+        setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
         setupTransformUI('scale', {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines, { isDisabled: isProcedural });
     });
     console.log("Physical Volume Editor Initialized.");
@@ -54,15 +64,19 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         return;
     }
     
-    parentLVName = parentContext.name;
+    
     currentProjectState = projectState;
-
     const allLVs = Object.keys(projectState.logical_volumes);
     const worldRef = projectState.world_volume_ref;
-    const placeableLVs = allLVs.filter(lvName => lvName !== worldRef && lvName !== parentLVName);
-    populateSelect(lvSelect, placeableLVs);
 
-    // Get an array of NAMES, not objects.
+    // --- Populate Parent Dropdown ---
+    // Only LVs that can contain physvols are valid parents
+    const parentCandidates = allLVs.filter(lvName => 
+        projectState.logical_volumes[lvName]?.content_type === 'physvol'
+    );
+    populateSelect(pvParentLVSelect, parentCandidates);
+
+    // --- Populate Defines ---
     const posDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'position');
     const rotDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'rotation');
     const sclDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'scale');
@@ -71,37 +85,76 @@ export function show(pvData = null, projectState = null, parentContext = null) {
     populateDefineSelect(sclDefineSelect, sclDefines);
 
     if (pvData && pvData.id) {
+        // EDIT MODE
+
         isEditMode = true;
         editingPVId = pvData.id;
-        titleElement.textContent = `Edit Placement in '${parentLVName}'`;
+
+        titleElement.textContent = `Edit Placement: '${pvData.name}'`;
         nameInput.value = pvData.name;
+        confirmButton.textContent = "Update Placement";
+
+        // Set and disable the parent LV dropdown
+        pvParentLVSelect.value = pvData.parent_lv_name;
+        pvParentLVSelect.disabled = true;
+
+        // Set and disable the placed LV dropdown
+        populateSelect(lvSelect, allLVs); // Populate with all LVs for context
         lvSelect.value = pvData.volume_ref;
         lvSelect.disabled = true;
-        confirmButton.textContent = "Update Placement";
-        
-        setupTransformUI('position', pvData.position, posDefineSelect, posDefines);
-        setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines);
 
-        // Check LV type before setting up scale UI (procedurals cannot have scale option)
+        // Check LV type before setting up UI.
         const placedLV = projectState.logical_volumes[pvData.volume_ref];
         const isProcedural = placedLV && placedLV.content_type !== 'physvol';
-        setupTransformUI('scale', pvData.scale, sclDefineSelect, sclDefines, { isDisabled: isProcedural });
+        setupTransformUI('position', pvData.position, posDefineSelect, posDefines, { isDisabled: isProcedural });
+        setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
+        setupTransformUI('scale',    pvData.scale,    sclDefineSelect, sclDefines, { isDisabled: isProcedural });
+
     } else {
+        // CREATE MODE
+
         isEditMode = false;
         editingPVId = null;
-        titleElement.textContent = `Place New Volume in '${parentLVName}'`;
-        nameInput.value = '';
-        lvSelect.disabled = false;
-        confirmButton.textContent = "Place Volume";
-        
-        setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines);
-        setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines);
 
-        // Disable scale by default, enable it when a non-procedural LV is chosen
-        setupTransformUI('scale', {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines, { isDisabled: true });
+        titleElement.textContent = `Place New Volume`;
+        nameInput.value = '';
+        confirmButton.textContent = "Place Volume";
+        pvParentLVSelect.disabled = false; // Parent LV is selectable
+
+        // Populate the placeable LVs dropdown
+        const placeableLVs = allLVs.filter(lvName => lvName !== worldRef && lvName !== parentLVName);
+        populateSelect(lvSelect, placeableLVs);
+        lvSelect.disabled = false;
+
+        // Pre-select the parent based on the context from where the dialog was opened
+        if (parentContext && parentCandidates.includes(parentContext.name)) {
+            pvParentLVSelect.value = parentContext.name;
+        } else if (worldRef) {
+            pvParentLVSelect.value = worldRef; // Fallback to world
+        }
+
         lvSelect.dispatchEvent(new Event('change')); // Trigger change to check initially selected LV
     }
     modalElement.style.display = 'block';
+}
+
+// Central function to update the list of valid parents
+function updateParentCandidates() {
+    const selectedChildLVName = lvSelect.value;
+    if (!currentProjectState || !currentProjectState.logical_volumes) return;
+
+    // A valid parent is any LV that is not the selected child.
+    // (A more advanced check would prevent cyclical placements, but this is the essential first step).
+    const parentCandidates = Object.keys(currentProjectState.logical_volumes)
+        .filter(lvName => lvName !== selectedChildLVName && currentProjectState.logical_volumes[lvName].content_type === 'physvol');
+
+    // Preserve the current selection if it's still valid
+    const currentParentSelection = pvParentLVSelect.value;
+    populateSelect(pvParentLVSelect, parentCandidates);
+
+    if (parentCandidates.includes(currentParentSelection)) {
+        pvParentLVSelect.value = currentParentSelection;
+    }
 }
 
 export function hide() {
@@ -133,6 +186,9 @@ function handleConfirm() {
     const name = nameInput.value.trim();
     const lvRef = lvSelect.value;
     if (!lvRef) { alert("Please select a Logical Volume to place."); return; }
+
+    // Get the parent LV name from the dropdown
+    const parentLVName = pvParentLVSelect.value;
 
     let position, rotation, scale;
 

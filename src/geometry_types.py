@@ -245,8 +245,8 @@ class LogicalVolume:
             "solid_ref": self.solid_ref,
             "material_ref": self.material_ref,
             "vis_attributes": self.vis_attributes,
-            "content_type": self.content_type, # NEW
-            "content": content_data           # NEW
+            "content_type": self.content_type, 
+            "content": content_data           
         }
 
     @classmethod
@@ -271,11 +271,12 @@ class LogicalVolume:
 
 class PhysicalVolumePlacement:
     """Represents a physical volume placement (physvol)."""
-    def __init__(self, name, volume_ref, copy_number_expr="0",
+    def __init__(self, name, volume_ref, parent_lv_name = None, copy_number_expr="0",
                  position_val_or_ref=None, rotation_val_or_ref=None, scale_val_or_ref=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.volume_ref = volume_ref
+        self.parent_lv_name = parent_lv_name
         ## Store copy number as a raw string expression
         self.copy_number_expr = copy_number_expr
         # This will store the final evaluated integer result
@@ -372,6 +373,7 @@ class PhysicalVolumePlacement:
             "copy_number_expr": self.copy_number_expr,
             "copy_number": self.copy_number,
             "position": self.position, "rotation": self.rotation, "scale": self.scale,
+            "parent_lv_name": self.parent_lv_name,
             "_evaluated_position": self._evaluated_position, 
             "_evaluated_rotation": self._evaluated_rotation, 
             "_evaluated_scale": self._evaluated_scale
@@ -380,7 +382,10 @@ class PhysicalVolumePlacement:
     @classmethod
     def from_dict(cls, data, all_objects_map=None):
         copy_expr = data.get('copy_number_expr', str(data.get('copy_number', '0')))
-        instance = cls(data['name'], data['volume_ref'], data.get('copy_number', 0), data.get('position'), data.get('rotation'), data.get('scale'))
+        instance = cls(
+            data['name'], data['volume_ref'], data.get('parent_lv_name'), copy_expr,
+            data.get('position'), data.get('rotation'), data.get('scale')
+        )
         instance.id = data.get('id', str(uuid.uuid4()))
         instance.copy_number = data.get('copy_number', 0)
         instance._evaluated_position = data.get('_evaluated_position', {'x':0, 'y':0, 'z':0})
@@ -420,10 +425,14 @@ class DivisionVolume:
         self.type = "division"
         self.volume_ref = volume_ref
         self.axis = axis # kXAxis, kYAxis, etc.
-        self.number = number
-        self.width = width
-        self.offset = offset
+        self.number = number # Raw expression string
+        self.width = width   # Raw expression string
+        self.offset = offset # Raw expression string
         self.unit = unit
+        # Add placeholders for evaluated values
+        self._evaluated_number = 0
+        self._evaluated_width = 0.0
+        self._evaluated_offset = 0.0
 
     def to_dict(self):
         return {
@@ -442,21 +451,30 @@ class DivisionVolume:
 
 class ReplicaVolume:
     """Represents a <replicavol> placement."""
-    def __init__(self, name, volume_ref, number, direction, width=0.0, offset=0.0):
+    def __init__(self, name, volume_ref, number, direction, width=0.0, offset=0.0, start_position=None, start_rotation=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.type = "replica"
         self.volume_ref = volume_ref
-        self.number = number
-        self.direction = direction # dict like {'x':1, 'y':0, ...}
-        self.width = width
-        self.offset = offset
+        self.direction = direction
+        self.number = number     # Raw expression string
+        self.width = width       # Raw expression string
+        self.offset = offset     # Raw expression string
+        self.start_position = start_position if start_position is not None else {'x': '0', 'y': '0', 'z': '0'}
+        self.start_rotation = start_rotation if start_rotation is not None else {'x': '0', 'y': '0', 'z': '0'}
+        # Add placeholders for all evaluated values
+        self._evaluated_number = 0
+        self._evaluated_width = 0.0
+        self._evaluated_offset = 0.0
+        self._evaluated_start_position = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_start_rotation = {'x': 0, 'y': 0, 'z': 0}
 
     def to_dict(self):
         return {
             "id": self.id, "name": self.name, "type": self.type,
             "volume_ref": self.volume_ref, "number": self.number,
-            "direction": self.direction, "width": self.width, "offset": self.offset
+            "direction": self.direction, "width": self.width, "offset": self.offset,
+            "start_position": self.start_position, "start_rotation": self.start_rotation
         }
 
     @classmethod
@@ -470,28 +488,35 @@ class ReplicaVolume:
         direction = data.get('direction', {'x': '1', 'y': '0', 'z': '0'})
         width = data.get('width', "0.0")
         offset = data.get('offset', "0.0")
+        start_position = data.get('start_position')
+        start_rotation = data.get('start_rotation')
         volume_ref = data.get('volume_ref')
-
         if not volume_ref:
             # This would be an invalid state, but we can handle it gracefully.
             raise ValueError("ReplicaVolume content data is missing 'volume_ref'")
 
-        instance = cls(name, volume_ref, number, direction, width, offset)
+        instance = cls(name, volume_ref, number, direction, width, offset, start_position, start_rotation)
         instance.id = data.get('id', instance.id) # Use provided ID if it exists
         return instance
 
 class Parameterisation:
     """Represents a single <parameters> block for a parameterised volume."""
-    def __init__(self, number, position, dimensions_type, dimensions):
+    def __init__(self, number, position, dimensions_type, dimensions, rotation=None):
         self.number = number
         self.position = position
+        self.rotation = rotation if rotation is not None else {'x': '0', 'y': '0', 'z': '0'}
         self.dimensions_type = dimensions_type # e.g., "box_dimensions"
         self.dimensions = dimensions # A dict of the dimension attrs, e.g. {'x':'10', 'y':'10'}
+
+        self._evaluated_position = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_dimensions = {}
 
     def to_dict(self):
         return {
             "number": self.number,
             "position": self.position,
+            "rotation": self.rotation,
             "dimensions_type": self.dimensions_type,
             "dimensions": self.dimensions
         }
@@ -501,7 +526,8 @@ class Parameterisation:
         return cls(data.get('number'),
                    data.get('position'),
                    data.get('dimensions_type'),
-                   data.get('dimensions'))
+                   data.get('dimensions'),
+                   data.get('rotation'))
 
 class ParamVolume:
     """Represents a <paramvol> placement."""
@@ -512,6 +538,8 @@ class ParamVolume:
         self.volume_ref = volume_ref
         self.ncopies = ncopies
         self.parameters = [] # This will be a list of Parameterisation objects
+
+        self._evaluated_ncopies = 0
 
     def add_parameter_set(self, param_set):
         self.parameters.append(param_set)
@@ -778,16 +806,47 @@ class GeometryState:
     def _unroll_replica(self, lv):
         replica = lv.content
         child_lv = self.get_logical_volume(replica.volume_ref)
-        if not child_lv: return []
+        if not child_lv:
+            return []
+
         placements = []
-        number, width, offset = int(replica.number), replica.width, replica.offset
-        axis_vec = np.array([float(replica.direction['x']), float(replica.direction['y']), float(replica.direction['z'])])
+        
+        # Use the pre-evaluated attributes from the object for ALL parameters
+        number = replica._evaluated_number
+        width = replica._evaluated_width
+        offset = replica._evaluated_offset
+        
+        # This part doesn't need evaluation as it's just direction flags
+        axis_vec = np.array([
+            float(replica.direction['x']),
+            float(replica.direction['y']),
+            float(replica.direction['z'])
+        ])
+        
+        start_pv = PhysicalVolumePlacement("temp_start", "temp_lv")
+        start_pv._evaluated_position = replica._evaluated_start_position
+        start_pv._evaluated_rotation = replica._evaluated_start_rotation
+        start_transform_matrix = start_pv.get_transform_matrix()
+
         for i in range(number):
-            translation = -width * (number - 1) * 0.5 + i * width + offset
-            copy_pos = {'x': axis_vec[0] * translation, 'y': axis_vec[1] * translation, 'z': axis_vec[2] * translation}
-            temp_pv = PhysicalVolumePlacement(f"{lv.name}_replica_{i}", child_lv.name, str(i))
-            temp_pv._evaluated_position = copy_pos
-            temp_pv._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
+            translation_dist = -width * (number - 1) * 0.5 + i * width + offset
+            
+            algo_pos = axis_vec * translation_dist
+            algo_matrix = np.identity(4)
+            algo_matrix[0:3, 3] = algo_pos
+            
+            final_local_matrix = start_transform_matrix @ algo_matrix
+
+            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(final_local_matrix)
+
+            temp_pv = PhysicalVolumePlacement(
+                name=f"{lv.name}_replica_{i}",
+                volume_ref=child_lv.name,
+                copy_number_expr=str(i)
+            )
+            temp_pv._evaluated_position = final_pos
+            temp_pv._evaluated_rotation = final_rot_rad
+            
             placements.append(temp_pv)
         return placements
 
@@ -842,40 +901,40 @@ class GeometryState:
         if not original_solid: return
 
         for i, param_set in enumerate(param_vol.parameters):
-            # 1. Create a new, temporary solid with the specified dimensions
-            new_solid_params = original_solid.raw_parameters.copy()
-            # The dimension keys in GDML don't have the '_dimensions' suffix
-            dims_type_clean = param_set.dimensions_type.replace('_dimensions', '')
+            # Create a temporary Solid object for this specific instance
+            # Its evaluated parameters are taken directly from the parameter set
+            temp_solid = Solid(
+                name=f"{original_solid.name}_param_{i}",
+                solid_type=param_set.dimensions_type.replace('_dimensions', ''),
+                raw_parameters={} # Raw params are not needed for rendering
+            )
+            temp_solid._evaluated_parameters = param_set._evaluated_dimensions
             
-            # Update the parameters with the values from this specific copy
-            new_solid_params.update(param_set.dimensions)
-
-            temp_solid = Solid(f"{original_solid.name}_param_{i}",
-                               dims_type_clean,
-                               new_solid_params)
-            # We must manually evaluate these new raw parameters
-            # This is a simplified evaluation for rendering purposes
-            temp_solid._evaluated_parameters = {k: float(v) for k, v in param_set.dimensions.items()}
-
-
-            # 2. Create a temporary PV for this copy's placement
+            # Create a temporary PhysicalVolumePlacement for this instance's transform
             temp_pv = PhysicalVolumePlacement(
                 name=f"{lv.name}_param_{i}",
                 volume_ref=child_lv_template.name,
                 copy_number_expr=str(i)
             )
-            # The position can be a ref or a dict of expressions, which should have been evaluated
-            temp_pv._evaluated_position = param_set.position 
-            temp_pv._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
-
-            # 3. Render this specific instance
-            instance_world_matrix = parent_matrix @ temp_pv.get_transform_matrix()
+            temp_pv._evaluated_position = param_set._evaluated_position
+            temp_pv._evaluated_rotation = param_set._evaluated_rotation
+            
+            # Combine the parent transform with this instance's local transform
+            instance_local_matrix = temp_pv.get_transform_matrix()
+            instance_world_matrix = parent_matrix @ instance_local_matrix
+            
+            # Decompose the final world matrix for rendering
             final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(instance_world_matrix)
+
             threejs_objects.append({
-                "id": temp_pv.id, "name": temp_pv.name, "owner_pv_id": owner_id,
-                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temp solid definition
-                "position": final_pos, "rotation": final_rot_rad,
-                "vis_attributes": child_lv_template.vis_attributes, "copy_number": i
+                "id": temp_pv.id,
+                "name": temp_pv.name,
+                "owner_pv_id": owner_id,
+                "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temporary solid's data
+                "position": final_pos,
+                "rotation": final_rot_rad,
+                "vis_attributes": child_lv_template.vis_attributes,
+                "copy_number": i
             })
 
             # 4. Recurse into the ORIGINAL child LV's content, placed inside this new instance

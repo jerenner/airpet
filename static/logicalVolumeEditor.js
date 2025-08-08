@@ -8,6 +8,7 @@ let editingLVId = null;
 let colorInput, alphaInput;
 let currentProjectState = null;
 let contentTypeRadios, proceduralParamsDiv;
+let replicaStartTransformContainer, replicaStartPosContainer, replicaStartRotContainer;
 let paramSetsState = []; // Holds the data for each <parameters> block
 
 export function initLVEditor(callbacks) {
@@ -23,6 +24,9 @@ export function initLVEditor(callbacks) {
     alphaInput = document.getElementById('lvEditorAlpha');
     contentTypeRadios = document.getElementById('lvContentTypeRadios');
     proceduralParamsDiv = document.getElementById('lv-procedural-params');
+    replicaStartTransformContainer = document.getElementById('replica_start_transform_container');
+    replicaStartPosContainer = document.getElementById('replica_start_pos_container');
+    replicaStartRotContainer = document.getElementById('replica_start_rot_container');
 
     document.getElementById('closeLVEditor').addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -141,6 +145,28 @@ function renderProceduralParams(type, data = null) {
             else if (parseFloat(data.direction.z) === 1) document.getElementById('replica_axis_z').checked = true;
             else document.getElementById('replica_axis_x').checked = true;
         }
+
+        // --- Dynamically create the start transform section ---
+        const hr1 = document.createElement('hr');
+        const title = document.createElement('h5');
+        title.textContent = 'Replica Group Transform (Optional)';
+        proceduralParamsDiv.appendChild(hr1);
+        proceduralParamsDiv.appendChild(title);
+
+        const startPos = data?.start_position || { x: '0', y: '0', z: '0' };
+        const startRot = data?.start_rotation || { x: '0', y: '0', z: '0' };
+
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_pos_x', 'Start X (mm)', startPos.x, currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_pos_y', 'Start Y (mm)', startPos.y, currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_pos_z', 'Start Z (mm)', startPos.z, currentProjectState));
+        
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_rot_x', 'Start Rot X (rad)', startRot.x, currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_rot_y', 'Start Rot Y (rad)', startRot.y, currentProjectState));
+        proceduralParamsDiv.appendChild(ExpressionInput.create('replica_start_rot_z', 'Start Rot Z (rad)', startRot.z, currentProjectState));
+        
+        const hr2 = document.createElement('hr');
+        proceduralParamsDiv.appendChild(hr2);
+
     } else if (type === 'division') {
         const allLVs = Object.keys(currentProjectState.logical_volumes);
         const availableLVs = isEditMode ? allLVs.filter(name => name !== editingLVId) : allLVs;
@@ -231,6 +257,7 @@ function addParamSet() {
     paramSetsState.push({
         number: newIndex + 1,
         position: { x: '0', y: '0', z: '0' },
+        rotation: { x: '0', y: '0', z: '0' },
         dimensions_type: '', // Will be determined by the selected LV
         dimensions: {}
     });
@@ -248,11 +275,13 @@ function buildParamSetUI(paramSet, index) {
         </div>
         <div class="transform-controls-inline">
             <div class="position-editor-container"></div>
+            <div class="rotation-editor-container"></div>
             <div class="dimensions-editor-container"></div>
         </div>
     `;
 
     const posContainer = wrapper.querySelector('.position-editor-container');
+    const rotContainer = wrapper.querySelector('.rotation-editor-container');
     const dimsContainer = wrapper.querySelector('.dimensions-editor-container');
 
     // --- Build Position Editor ---
@@ -265,6 +294,19 @@ function buildParamSetUI(paramSet, index) {
             paramSetsState[index].position[axis] = newValue;
         });
         posGroup.appendChild(comp);
+    });
+
+    // --- Build Rotation Editor ---
+    const rotGroup = document.createElement('div');
+    rotGroup.className = 'transform-group';
+    rotGroup.innerHTML = `<span>Rotation (rad)</span>`;
+    rotContainer.appendChild(rotGroup);
+    ['x', 'y', 'z'].forEach(axis => {
+        const comp = ExpressionInput.create(`param_${index}_rot_${axis}`, axis.toUpperCase(), paramSet.rotation?.[axis] || '0', currentProjectState, (newValue) => {
+            if (!paramSetsState[index].rotation) paramSetsState[index].rotation = {}; // Ensure object exists
+            paramSetsState[index].rotation[axis] = newValue;
+        });
+        rotGroup.appendChild(comp);
     });
 
     // --- Build Dimensions Editor (Dynamically) ---
@@ -373,6 +415,16 @@ function handleConfirm() {
                 x: selectedAxis === 'x' ? '1' : '0',
                 y: selectedAxis === 'y' ? '1' : '0',
                 z: selectedAxis === 'z' ? '1' : '0'
+            },
+            start_position: {
+                x: document.getElementById('replica_start_pos_x').value,
+                y: document.getElementById('replica_start_pos_y').value,
+                z: document.getElementById('replica_start_pos_z').value,
+            },
+            start_rotation: {
+                x: document.getElementById('replica_start_rot_x').value,
+                y: document.getElementById('replica_start_rot_y').value,
+                z: document.getElementById('replica_start_rot_z').value,
             }
         };
     } else if (contentType === 'division') {

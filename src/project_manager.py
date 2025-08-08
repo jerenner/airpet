@@ -374,17 +374,52 @@ class ProjectManager:
                     pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x': 0, 'y': 0, 'z': 0})
                     pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x': 1, 'y': 1, 'z': 1})
             
-            elif lv.content_type in ['replica', 'division']:
+            elif lv.content_type in ['replica', 'division', 'parameterised']:
                 # For procedural placements, we need to evaluate their parameters (width, offset, etc.)
                 proc_obj = lv.content
                 if proc_obj:
-                    # Evaluate numeric properties of the procedural object itself
+
+                    # Evaluate common procedural parameters if they exist
                     if hasattr(proc_obj, 'width'):
-                        proc_obj.width = float(aeval.eval(str(proc_obj.width)))
+                        try:
+                            proc_obj._evaluated_width = float(aeval.eval(str(proc_obj.width)))
+                        except Exception: proc_obj._evaluated_width = 0.0
                     if hasattr(proc_obj, 'offset'):
-                        proc_obj.offset = float(aeval.eval(str(proc_obj.offset)))
+                        try:
+                            proc_obj._evaluated_offset = float(aeval.eval(str(proc_obj.offset)))
+                        except Exception: proc_obj._evaluated_offset = 0.0
                     if hasattr(proc_obj, 'number'):
-                        proc_obj.number = int(aeval.eval(str(proc_obj.number)))
+                        try:
+                            proc_obj._evaluated_number = int(aeval.eval(str(proc_obj.number)))
+                        except Exception: proc_obj._evaluated_number = 0
+                    
+                    # Evaluate replica-specific transforms if they exist
+                    if hasattr(proc_obj, 'start_position'):
+                        proc_obj._evaluated_start_position = evaluate_transform_part(proc_obj.start_position, {'x': 0, 'y': 0, 'z': 0})
+                    if hasattr(proc_obj, 'start_rotation'):
+                        proc_obj._evaluated_start_rotation = evaluate_transform_part(proc_obj.start_rotation, {'x': 0, 'y': 0, 'z': 0})
+
+                    # Add evaluation logic for parameterised volumes
+                    if hasattr(proc_obj, 'ncopies'):
+                        try:
+                            proc_obj._evaluated_ncopies = int(aeval.eval(str(proc_obj.ncopies)))
+                        except Exception: proc_obj._evaluated_ncopies = 0
+
+                    if hasattr(proc_obj, 'parameters'):
+                        for param_set in proc_obj.parameters:
+                            # Evaluate the transform for this instance
+                            param_set._evaluated_position = evaluate_transform_part(param_set.position, {'x': 0, 'y': 0, 'z': 0})
+                            param_set._evaluated_rotation = evaluate_transform_part(param_set.rotation, {'x': 0, 'y': 0, 'z': 0})
+                            
+                            # Evaluate each dimension expression for this instance
+                            evaluated_dims = {}
+                            for key, raw_expr in param_set.dimensions.items():
+                                try:
+                                    evaluated_dims[key] = float(aeval.eval(str(raw_expr)))
+                                except Exception as e:
+                                    print(f"Warning: Could not eval param dimension '{key}' for '{lv.name}': {e}")
+                                    evaluated_dims[key] = 0.0
+                            param_set._evaluated_dimensions = evaluated_dims
 
 
         # Iterate through Assemblies to evaluate their placements
@@ -797,8 +832,10 @@ class ProjectManager:
             return True, None
             
         parent_lv_name = pv_params.get('parent_lv_name')
-        pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
+        if not parent_lv_name:
+             return False, "Parent logical volume for placement was not specified."
         
+        pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
         position = {'x': '0', 'y': '0', 'z': '0'} 
         rotation = {'x': '0', 'y': '0', 'z': '0'}
         scale    = {'x': '1', 'y': '1', 'z': '1'}
@@ -879,6 +916,7 @@ class ProjectManager:
 
         # position_dict and rotation_dict are assumed to be {'x':val,...} in internal units
         new_pv = PhysicalVolumePlacement(pv_name, placed_lv_ref,
+                                        parent_lv_name=parent_lv_name,
                                         position_val_or_ref=position,
                                         rotation_val_or_ref=rotation,
                                         scale_val_or_ref=scale)
@@ -1022,10 +1060,15 @@ class ProjectManager:
         assembly_placement = PhysicalVolumePlacement(
             name=assembly_pv_name,
             volume_ref=assembly_name,
+            parent_lv_name=parent_lv_name,
             position_val_or_ref={'x': '0', 'y': '0', 'z': '0'}, # Place at origin of parent
             rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'}
         )
         parent_lv.add_child(assembly_placement)
+
+        # Set the parent for the moved PVs
+        for pv in new_assembly.placements:
+            pv.parent_lv_name = assembly_name
 
         # 6. Recalculate and return
         self.recalculate_geometry_state()
@@ -1408,20 +1451,27 @@ class ProjectManager:
         Returns (pv_object, parent_object) or (None, None).
         """
         state = self.current_geometry_state
-        # Search in Logical Volumes
-        for lv in state.logical_volumes.values():
-            if lv.content_type == 'physvol':
-                for i, pv in enumerate(lv.content):
-                    if pv.id == pv_id:
-                        return lv.content.pop(i), lv
-        
-        # Search in Assemblies
-        for asm in state.assemblies.values():
-            for i, pv in enumerate(asm.placements):
-                if pv.id == pv_id:
-                    return asm.placements.pop(i), asm
-        
-        return None, None
+        # Find the PV first by iterating through all of them
+        all_pvs = [pv for lv in state.logical_volumes.values() if lv.content_type == 'physvol' for pv in lv.content] + \
+                  [pv for asm in state.assemblies.values() for pv in asm.placements]
+
+        pv_to_move = next((pv for pv in all_pvs if pv.id == pv_id), None)
+        if not pv_to_move:
+            return None, None
+
+        # Now find its parent and remove it
+        parent_name = pv_to_move.parent_lv_name
+        parent_obj = state.logical_volumes.get(parent_name) or state.assemblies.get(parent_name)
+        if not parent_obj:
+            # This indicates a corrupted state
+            return None, None
+
+        if isinstance(parent_obj, LogicalVolume):
+            parent_obj.content.remove(pv_to_move)
+        elif isinstance(parent_obj, Assembly):
+            parent_obj.placements.remove(pv_to_move)
+            
+        return pv_to_move, parent_obj
 
     def move_pv_to_assembly(self, pv_ids, target_assembly_name):
         """Moves a list of PVs from their current parent to a target assembly."""

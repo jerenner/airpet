@@ -15,7 +15,7 @@ let onConfirmCallback = null;
 let isEditMode = false;         // flag to track mode
 let editingSolidId = null;      // store the ID/name of the solid being edited
 let currentProjectState = null; // to hold the project state
-let createLVCheckbox, placePVCheckbox, lvOptionsDiv, lvMaterialSelect;
+let createLVCheckbox, placePVCheckbox, lvOptionsDiv, lvMaterialSelect, pvParentLVSelect;
 
 // State variable for the boolean recipe
 let booleanRecipe = []; // An array of {op, solid, transform}
@@ -32,8 +32,13 @@ const typeSelect = document.getElementById('solidEditorType');
 const dynamicParamsDiv = document.getElementById('solid-editor-dynamic-params');
 const confirmButton = document.getElementById('confirmSolidEditor');
 
+let callbacks = {};
+
 // --- Initialization ---
-export function initSolidEditor(callbacks) {
+export function initSolidEditor(cb) {
+
+    // Store the callbacks
+    callbacks = cb;
     onConfirmCallback = callbacks.onConfirm;
 
     // Basic Scene Setup
@@ -77,11 +82,12 @@ export function initSolidEditor(callbacks) {
     });
     scene.add(transformControls);
 
-    // Checkboxes
+    // Checkboxes and selects
     createLVCheckbox = document.getElementById('createLVCheckbox');
     placePVCheckbox = document.getElementById('placePVCheckbox');
     lvOptionsDiv = document.getElementById('lvOptions');
     lvMaterialSelect = document.getElementById('lvMaterialSelect');
+    pvParentLVSelect = document.getElementById('pvParentLVSelect');
 
     // Event Listeners
     document.getElementById('closeSolidEditor').addEventListener('click', hide);
@@ -97,6 +103,22 @@ export function initSolidEditor(callbacks) {
         placePVCheckbox.disabled = !isChecked;
         if (!isChecked) {
             placePVCheckbox.checked = false; // Uncheck it if its parent is unchecked
+        }
+    });
+
+    // Set the event listener for the 'Place PV' checkbox
+    placePVCheckbox.addEventListener('change', () => {
+        const isChecked = placePVCheckbox.checked;
+        pvParentLVSelect.style.display = isChecked ? 'inline-block' : 'none';
+
+        if(isChecked) {
+            // Populate the dropdown when it becomes visible
+            const placeableLVs = Object.keys(currentProjectState.logical_volumes || {});
+            populateSelect(pvParentLVSelect, placeableLVs);
+            // Default to world volume if available
+            if (currentProjectState.world_volume_ref) {
+                pvParentLVSelect.value = currentProjectState.world_volume_ref;
+            }
         }
     });
     
@@ -119,7 +141,6 @@ function onWindowResize() {
     renderer.setSize(clientWidth, clientHeight);
 }
 
-// --- Public API ---
 export function show(solidData = null, projectState = null) {
     currentProjectState = projectState; // Cache the state
     booleanRecipe = []; // Reset recipe
@@ -130,12 +151,20 @@ export function show(solidData = null, projectState = null) {
     } else {
         populateSelect(lvMaterialSelect, []); // Clear it if no materials
     }
+
+    // Populate the parent LV selector
+    // if (projectState && projectState.logical_volumes) {
+    //     updateParentLVSelector(); // Use a helper function
+    // } else {
+    //     populateSelect(pvParentLVSelect, []);
+    // }
     
     // Reset checkboxes when opening
     createLVCheckbox.checked = false;
     placePVCheckbox.checked = false;
     placePVCheckbox.disabled = true;
     lvOptionsDiv.style.display = 'none';
+    pvParentLVSelect.style.display = 'none';
 
     if (solidData && solidData.name) {
         // --- EDIT MODE ---
@@ -196,6 +225,39 @@ export function show(solidData = null, projectState = null) {
     // Automatically set camera: use a small timeout to ensure the preview mesh has 
     // been rendered once before trying to calculate its bounding box.
     setTimeout(recenterCamera, 50);
+}
+
+// Helper function to populate and filter the parent LV dropdown
+function updateParentLVSelector() {
+    const projectState = currentProjectState;
+    if (!projectState || !projectState.logical_volumes) {
+        populateSelect(pvParentLVSelect, []);
+        return;
+    }
+
+    let parentCandidates = Object.keys(projectState.logical_volumes);
+    
+    // If "Create LV" is checked, we must prevent self-placement.
+    if (createLVCheckbox.checked) {
+        // The new LV's name will be based on the solid's name.
+        const solidName = nameInput.value.trim();
+        // This is a prospective name; we don't know the final unique name yet,
+        // but we can filter out the base name which is the most likely conflict.
+        const prospectiveLVName = `${solidName}_lv`; 
+        parentCandidates = parentCandidates.filter(lvName => lvName !== prospectiveLVName);
+    }
+    
+    populateSelect(pvParentLVSelect, parentCandidates);
+
+    // Try to intelligently select the current parent from the hierarchy
+    const currentParentContext = callbacks.getSelectedParentContext?.() || { name: projectState.world_volume_ref };
+    console.log("Parent contexts",parentCandidates)
+    console.log("Currnet context",currentParentContext.name)
+    if (currentParentContext && parentCandidates.includes(currentParentContext.name)) {
+        pvParentLVSelect.value = currentParentContext.name;
+    } else if (projectState.world_volume_ref && parentCandidates.includes(projectState.world_volume_ref)) {
+        pvParentLVSelect.value = projectState.world_volume_ref;
+    }
 }
 
 function populateSelect(selectElement, optionsArray) {
@@ -1470,6 +1532,7 @@ function handleConfirm() {
         data.createLV = document.getElementById('createLVCheckbox').checked;
         data.placePV = document.getElementById('placePVCheckbox').checked;
         data.materialRef = data.createLV ? document.getElementById('lvMaterialSelect').value : null;
+        data.parentLVName = data.placePV ? document.getElementById('pvParentLVSelect').value : null;
     }
     
     onConfirmCallback(data);

@@ -445,8 +445,8 @@ export async function populateInspector(itemContext, projectState) {
         const lvData = projectState.logical_volumes[data.volume_ref];
         const isProcedural = lvData && lvData.content_type !== 'physvol';
 
-        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState);
-        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState);
+        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState, { isDisabled: isProcedural });
+        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState, { isDisabled: isProcedural });
         buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
         
         const otherPropsLabel = document.createElement('h5');
@@ -508,7 +508,7 @@ export async function populateInspector(itemContext, projectState) {
     }
 }
 
-// NEW: Helper to create a simple read-only property line
+// Helper to create a simple read-only property line
 function createReadOnlyProperty(parent, labelText, value) {
     const propDiv = document.createElement('div');
     propDiv.className = 'property_item readonly';
@@ -523,7 +523,7 @@ function createReadOnlyProperty(parent, labelText, value) {
 }
 
 
-// NEW: The main function to build the interactive transform editor
+// The main function to build the interactive transform editor
 async function createPVTransformEditor(parent, pvData, projectState) {
     const transformWrapper = document.createElement('div');
     
