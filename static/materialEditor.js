@@ -125,14 +125,21 @@ function rebuildComponentsUI() {
     if (!listDiv) return;
     listDiv.innerHTML = '';
 
-    const isComposite = compositeRadio.checked;
+    const isComposite = compositeRadio.checked; // Mixture by natoms
+    const isMixture = mixtureRadio.checked;     // Mixture by fraction
 
-    // Get the list of available items for the dropdown
-    const availableItems = isComposite 
-        ? Object.keys(currentProjectState.elements || {}) 
-        : Object.keys(currentProjectState.materials || {});
-
-    //const materials = Object.keys(currentProjectState.materials || {});
+    // --- Determine the correct set of available components ---
+    let availableItems = {};
+    if (isComposite) {
+        availableItems['Elements'] = Object.keys(currentProjectState.elements || {});
+    } else if (isMixture) {
+        // For mixtures, we can add both Elements and other Materials
+        availableItems['Elements'] = Object.keys(currentProjectState.elements || {});
+        // Filter out the material being edited to prevent self-reference
+        const availableMaterials = Object.keys(currentProjectState.materials || {})
+            .filter(m => m !== editingMaterialId);
+        availableItems['Materials'] = availableMaterials;
+    }
 
     materialComponents.forEach((comp, index) => {
         const row = document.createElement('div');
@@ -141,10 +148,14 @@ function rebuildComponentsUI() {
         // --- Create the select dropdown for material reference ---
         const selectLabel = document.createElement('label');
         selectLabel.textContent = "Material:";
+        
         const select = document.createElement('select');
         select.className = 'comp-ref';
-        populateSelect(select, availableItems); 
+        select.dataset.index = index;
+
+        populateSelectWithOptions(select, availableItems);
         select.value = comp.ref;
+
 
         // --- Input for fraction or number of atoms ---
         const valueLabel = document.createElement('label');
@@ -159,10 +170,14 @@ function rebuildComponentsUI() {
             initialValue,
             currentProjectState,
             (newValue) => {
-                materialComponents[index][valueKey] = newValue;
-                // If we are a mixture, we also need to clear the other key
-                if (isComposite) delete materialComponents[index].fraction;
-                else delete materialComponents[index].natoms;
+                const component = materialComponents[index];
+                if (isComposite) {
+                    component.natoms = newValue;
+                    delete component.fraction;
+                } else {
+                    component.fraction = newValue;
+                    delete component.natoms;
+                }
             }
         );
 
@@ -188,12 +203,19 @@ function rebuildComponentsUI() {
 
 function addComponentRow() {
     const isComposite = compositeRadio.checked;
-    const availableItems = isComposite 
-        ? Object.keys(currentProjectState.elements || {}) 
-        : Object.keys(currentProjectState.materials || {}).filter(m => m !== editingMaterialId);
+    const isMixture = mixtureRadio.checked;
 
-    if (availableItems.length === 0) {
-        alert(`No available ${isComposite ? 'elements' : 'materials'} to add.`);
+    let availableRefs = [];
+    if (isComposite) {
+        availableRefs = Object.keys(currentProjectState.elements || {});
+    } else if (isMixture) {
+        const elements = Object.keys(currentProjectState.elements || {});
+        const materials = Object.keys(currentProjectState.materials || {}).filter(m => m !== editingMaterialId);
+        availableRefs = [...elements, ...materials];
+    }
+
+    if (availableRefs.length === 0) {
+        alert(`No available ${isComposite ? 'elements' : 'components'} to add.`);
         return;
     }
     
@@ -222,14 +244,39 @@ function updateComponentState(event) {
     }
 }
 
-function populateSelect(selectElement, optionsArray) {
-    selectElement.innerHTML = ''; // Clear any existing options
-    optionsArray.forEach(optionText => {
-        const option = document.createElement('option');
-        option.value = optionText;
-        option.textContent = optionText;
-        selectElement.appendChild(option);
-    });
+// A more advanced populateSelect function that handles optgroups
+function populateSelectWithOptions(selectElement, optionsData) {
+    selectElement.innerHTML = ''; // Clear existing options
+    // Check if data is a simple array (for backward compatibility) or an object of groups
+    if (Array.isArray(optionsData)) {
+        optionsData.forEach(optionText => {
+            const option = document.createElement('option');
+            option.value = optionText;
+            option.textContent = optionText;
+            selectElement.appendChild(option);
+        });
+    } else { // It's an object of optgroups
+        for (const groupLabel in optionsData) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = groupLabel;
+            const items = optionsData[groupLabel];
+            if (items.length === 0) {
+                // Optionally add a disabled option to show the group is empty
+                const disabledOption = document.createElement('option');
+                disabledOption.textContent = `(No ${groupLabel} available)`;
+                disabledOption.disabled = true;
+                optgroup.appendChild(disabledOption);
+            } else {
+                items.forEach(itemText => {
+                    const option = document.createElement('option');
+                    option.value = itemText;
+                    option.textContent = itemText;
+                    optgroup.appendChild(option);
+                });
+            }
+            selectElement.appendChild(optgroup);
+        }
+    }
 }
 
 function handleConfirm() {

@@ -32,6 +32,10 @@ export function show(elData = null, projectState = null) {
     currentProjectState = projectState;
     isotopeComponents = [];
 
+    // Get the radio buttons for easy access
+    const simpleRadio = document.getElementById('el_type_simple');
+    const isotopeRadio = document.getElementById('el_type_isotope');
+
     if (elData) { // EDIT MODE
         isEditMode = true;
         editingElementId = elData.name;
@@ -41,11 +45,15 @@ export function show(elData = null, projectState = null) {
         formulaInput.value = elData.formula || '';
         confirmButton.textContent = "Update Element";
 
+        // Disable the radio buttons in edit mode
+        simpleRadio.disabled = true;
+        isotopeRadio.disabled = true;
+
         if (elData.components && elData.components.length > 0) {
-            document.getElementById('el_type_isotope').checked = true;
+            isotopeRadio.checked = true;
             isotopeComponents = JSON.parse(JSON.stringify(elData.components));
         } else {
-            document.getElementById('el_type_simple').checked = true;
+            simpleRadio.checked = true;
         }
         renderParamsUI(elData);
     } else { // CREATE MODE
@@ -55,7 +63,12 @@ export function show(elData = null, projectState = null) {
         nameInput.value = '';
         nameInput.disabled = false;
         formulaInput.value = '';
-        document.getElementById('el_type_simple').checked = true;
+
+        // Ensure the radio buttons are enabled in create mode
+        simpleRadio.disabled = false;
+        isotopeRadio.disabled = false;
+
+        simpleRadio.checked = true;
         confirmButton.textContent = "Create Element";
         renderParamsUI();
     }
@@ -73,9 +86,10 @@ function renderParamsUI(elData = null) {
         const html = `
             <h6>Isotope Fractions</h6>
             <div id="isotope-components-list"></div>
-            <p style="font-size: 11px; color: #555;"><i>Note: Isotopes must be defined in the GDML file manually for now.</i></p>
+            <button id="add-isotope-comp-btn" class="add_button" style="margin-top: 10px;">+ Add Isotope</button>
         `;
         paramsDiv.innerHTML = html;
+        document.getElementById('add-isotope-comp-btn').addEventListener('click', addIsotopeComponentRow);
         rebuildIsotopeUI();
     }
 }
@@ -84,19 +98,91 @@ function rebuildIsotopeUI() {
     const listDiv = document.getElementById('isotope-components-list');
     if (!listDiv) return;
     listDiv.innerHTML = '';
-    // For now, we assume isotopes are predefined in the project state
     const availableIsotopes = Object.keys(currentProjectState.isotopes || {});
+    
+    if (availableIsotopes.length === 0) {
+        listDiv.innerHTML = '<p style="font-style: italic; color: #888;">No isotopes defined in project. Please create some in the Properties tab first.</p>';
+    }
 
-    // This UI is read-only for now, as creating isotopes isn't implemented
-    isotopeComponents.forEach(comp => {
+    isotopeComponents.forEach((comp, index) => {
         const row = document.createElement('div');
-        row.className = 'property_item readonly';
-        row.innerHTML = `<label>${comp.ref}:</label><span>${comp.fraction}</span>`;
+        row.className = 'property_item'; // A simple flex row for alignment
+
+        // --- Isotope Selector Dropdown ---
+        const select = document.createElement('select');
+        select.className = 'comp-ref';
+        select.dataset.index = index;
+        populateSelect(select, availableIsotopes);
+        select.value = comp.ref;
+
+        // --- Fraction Input ---
+        const valueLabel = document.createElement('label');
+        valueLabel.textContent = "Fraction:";
+        valueLabel.style.marginLeft = '10px';
+        const valueInputComponent = ExpressionInput.createInline(
+            `el_iso_frac_${index}`,
+            comp.fraction || '0.0',
+            currentProjectState,
+            (newValue) => { // Live update the state
+                isotopeComponents[index].fraction = newValue;
+            }
+        );
+
+        // --- Remove Button ---
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-op-btn';
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove Isotope';
+        removeBtn.onclick = () => {
+            isotopeComponents.splice(index, 1);
+            rebuildIsotopeUI();
+        };
+
+        row.appendChild(select);
+        row.appendChild(valueLabel);
+        row.appendChild(valueInputComponent);
+        row.appendChild(removeBtn);
         listDiv.appendChild(row);
     });
+    
+    // Attach event listeners for the dropdowns
+    document.querySelectorAll('.comp-ref').forEach(el => el.addEventListener('change', (event) => {
+        const index = parseInt(event.target.dataset.index, 10);
+        isotopeComponents[index].ref = event.target.value;
+    }));
+}
 
-    if (isotopeComponents.length === 0 && availableIsotopes.length === 0) {
-        listDiv.innerHTML = '<p style="font-style: italic; color: #888;">No isotopes defined in project.</p>';
+// Helper function to add a new row to the UI
+function addIsotopeComponentRow() {
+    const availableIsotopes = Object.keys(currentProjectState.isotopes || {});
+    if (availableIsotopes.length === 0) {
+        alert("Cannot add component because no isotopes are defined in the project.");
+        return;
+    }
+    // Add a new entry to our local state
+    isotopeComponents.push({
+        ref: availableIsotopes[0], // Default to the first available isotope
+        fraction: '0.0'
+    });
+    // Re-render the entire list
+    rebuildIsotopeUI();
+}
+
+// Helper to populate a select element
+function populateSelect(selectElement, optionsArray) {
+    selectElement.innerHTML = ''; // Clear existing options
+    if (optionsArray.length === 0) {
+        const option = document.createElement('option');
+        option.textContent = "No Isotopes Available";
+        option.disabled = true;
+        selectElement.appendChild(option);
+    } else {
+        optionsArray.forEach(optionText => {
+            const option = document.createElement('option');
+            option.value = optionText;
+            option.textContent = optionText;
+            selectElement.appendChild(option);
+        });
     }
 }
 
@@ -118,6 +204,11 @@ function handleConfirm() {
         Z = document.getElementById('elEditorZ').value;
         A_expr = document.getElementById('elEditorA').value;
     } else {
+        // Use the local state populated by the interactive UI
+        if (isotopeComponents.some(c => !c.ref || c.fraction.trim() === '')) {
+            alert("All isotope components must have an isotope selected and a fraction defined.");
+            return;
+        }
         components = isotopeComponents;
     }
     
