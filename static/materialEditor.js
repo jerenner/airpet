@@ -36,6 +36,9 @@ export function show(materialData = null, projectState = null) {
     currentProjectState = projectState;
     materialComponents = []; // Reset components
 
+    // Get the radio buttons
+    const radios = [simpleRadio, mixtureRadio, compositeRadio];
+
     if (materialData && materialData.name) {
         // --- EDIT MODE ---
         isEditMode = true;
@@ -44,7 +47,11 @@ export function show(materialData = null, projectState = null) {
         nameInput.value = materialData.name;
         nameInput.disabled = true;
         confirmButton.textContent = "Update Material";
-        
+
+        // Disable the radio buttons in edit mode
+        radios.forEach(radio => radio.disabled = true);
+
+        // Check the correct radio button
         if (materialData.components && materialData.components.length > 0) {
             // Check if it's a composite (by natoms) or mixture (by fraction)
             if (materialData.components[0].natoms !== undefined) {
@@ -65,6 +72,10 @@ export function show(materialData = null, projectState = null) {
         titleElement.textContent = "Create New Material";
         nameInput.value = '';
         nameInput.disabled = false;
+
+        // Ensure the radio buttons are enabled in create mode
+        radios.forEach(radio => radio.disabled = false);
+
         simpleRadio.checked = true; // Default to simple
         confirmButton.textContent = "Create Material";
         renderParamsUI();

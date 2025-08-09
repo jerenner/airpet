@@ -556,7 +556,7 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
                 ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '360'), currentProjectState)
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
             ],
             sphere: () => [
                 ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
