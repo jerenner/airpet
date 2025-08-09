@@ -1216,7 +1216,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             const isNowVisible = wasHidden; // If it was hidden, it is now visible.
 
             item.classList.toggle('item-hidden', !isNowVisible);
-            visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
+            // visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
 
             // Call the main handler from main.js.
             // The third argument (isRecursive) is true by default if not provided.

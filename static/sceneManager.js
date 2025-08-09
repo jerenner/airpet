@@ -483,7 +483,16 @@ function findActualMesh(object) {
 export function setPVVisibility(pvId, isVisible) {
     const group = findObjectByPvId(pvId);
     if (group) {
-        group.visible = isVisible;
+        
+        // Instead of setting group.visible, we toggle the visibility
+        // of the renderable objects *inside* the group.
+        // The group itself remains visible, so it doesn't affect its children.
+        group.traverse(child => {
+            if (child.isMesh || child.isLineSegments) {
+                child.visible = isVisible;
+            }
+        });
+
         if (isVisible) {
             hiddenPvIds.delete(pvId);
         } else {
@@ -493,22 +502,32 @@ export function setPVVisibility(pvId, isVisible) {
 }
 
 export function setAllPVVisibility(isVisible) {
-    // --- Update the persistent state ---
+    // First, update the state Set. This part is correct.
     if (isVisible) {
         hiddenPvIds.clear();
     } else {
-        // Add all current PV IDs to the hidden set
-        geometryGroup.traverse(child => {
-            if (child.isGroup && child.userData.id) {
-                hiddenPvIds.add(child.userData.id);
-            }
-        });
+        const projectState = callbacks.getProjectState?.();
+        if (projectState) {
+            // This logic correctly gathers ALL pvIds.
+            Object.values(projectState.logical_volumes).forEach(lv => {
+                if (lv.content_type === 'physvol') { lv.content.forEach(pv => hiddenPvIds.add(pv.id)); }
+                // Could add traversal for assembly children here if needed, but the scene traversal below handles it visually.
+            });
+             Object.values(projectState.assemblies).forEach(asm => {
+                asm.placements.forEach(pv => hiddenPvIds.add(pv.id));
+            });
+        }
     }
 
-    // Now, apply the new state to all three.js objects
-    geometryGroup.traverse(child => {
-        if (child.isGroup && child.userData.id) {
-            child.visible = isVisible;
+    // Now, apply the new state to all three.js objects by toggling their meshes
+    geometryGroup.traverse(group => {
+        if (group.isGroup && group.userData.id) {
+            const shouldBeVisible = !hiddenPvIds.has(group.userData.id);
+            group.traverse(child => {
+                if (child.isMesh || child.isLineSegments) {
+                    child.visible = shouldBeVisible;
+                }
+            });
         }
     });
 }
@@ -1696,7 +1715,7 @@ export function renderObjects(pvDescriptions, projectState) {
         console.error("[SceneManager] Invalid data for rendering.", { pvDescriptions, projectState });
         return;
     }
-
+    
     const geometryCache = new Map();
     const csgEvaluator = new Evaluator();
     for (const solidName in projectState.solids) {
@@ -1772,10 +1791,6 @@ export function renderObjects(pvDescriptions, projectState) {
         } else {
             // If no parent is found in the map, it's a top-level object (child of the world)
             geometryGroup.add(obj);
-        }
-
-        if (hiddenPvIds.has(pvData.id)) {
-            obj.visible = false;
         }
     });
 
