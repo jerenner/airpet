@@ -308,9 +308,9 @@ class PhysicalVolumePlacement:
 
         # MODIFIED: Negate the angles to match the visual convention expected
         # by Geant4's GDML parser's application order.
-        rx = -rot['x']
-        ry = -rot['y']
-        rz = -rot['z']
+        rx = rot['x']
+        ry = rot['y']
+        rz = rot['z']
 
         Rx = np.array([[1, 0, 0], [0, math.cos(rx), -math.sin(rx)], [0, math.sin(rx), math.cos(rx)]])
         Ry = np.array([[math.cos(ry), 0, math.sin(ry)], [0, 1, 0], [-math.sin(ry), 0, math.cos(ry)]])

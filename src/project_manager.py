@@ -96,6 +96,11 @@ class ProjectManager:
                                 if unit_str:
                                     expr_to_eval = f"({expr_to_eval}) * {unit_str}"
                                 val_dict[axis] = aeval.eval(expr_to_eval)
+
+                                # NOTE: Account for an apparent difference in rotation angle sense
+                                #       in THREE.js and GDML
+                                if(define_obj.type == 'rotation'): val_dict[axis] *= -1
+
                         define_obj.value = val_dict
                     elif define_obj.type == 'matrix':
                         raw_dict = define_obj.raw_expression
