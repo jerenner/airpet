@@ -4,8 +4,7 @@ from xml.dom import minidom
 import math
 from .geometry_types import (
     GeometryState, Define, Material, Solid, LogicalVolume, PhysicalVolumePlacement,
-    UNIT_FACTORS, OUTPUT_UNIT_FACTORS, DEFAULT_OUTPUT_LUNIT, DEFAULT_OUTPUT_AUNIT, 
-    convert_from_internal_units
+    DEFAULT_OUTPUT_LUNIT, DEFAULT_OUTPUT_AUNIT, convert_from_internal_units
 )
 
 class GDMLWriter:

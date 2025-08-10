@@ -14,11 +14,11 @@ from .step_parser import parse_step_file
 from .expression_evaluator import create_configured_asteval, ExpressionEvaluator
 
 class ProjectManager:
-    def __init__(self):
+    def __init__(self, expression_evaluator):
         self.current_geometry_state = GeometryState()
         self.gdml_parser = GDMLParser()
         # Give the project manager its own evaluator instance
-        self.expression_evaluator = ExpressionEvaluator()
+        self.expression_evaluator = expression_evaluator
 
     def _generate_unique_name(self, base_name, existing_names_dict):
         if base_name not in existing_names_dict:
@@ -50,14 +50,13 @@ class ProjectManager:
             return False, "No project state to calculate."
 
         state = self.current_geometry_state
-
-        # Use our central factory to get a correctly configured interpreter.
-        aeval = create_configured_asteval()
+        evaluator = self.expression_evaluator
+        evaluator.clear_symbols() # Clear old symbols
 
         # Helper function for evaluating transforms ##
         def evaluate_transform_part(part_data, default_val):
             if isinstance(part_data, str): # It's a reference to a define
-                return aeval.symtable.get(part_data, default_val)
+                return evaluator.get_symbol(part_data, default_val)
             elif isinstance(part_data, dict): # It's a dict of expressions
                 evaluated_dict = {}
                 for axis, raw_expr in part_data.items():
@@ -66,7 +65,7 @@ class ProjectManager:
                         if isinstance(raw_expr, (int, float)):
                             evaluated_dict[axis] = raw_expr
                         else:
-                            evaluated_dict[axis] = aeval.eval(str(raw_expr))
+                            evaluated_dict[axis] = evaluator.evaluate(str(raw_expr))[1]
                     except Exception:
                         evaluated_dict[axis] = default_val.get(axis, 0)
                 return evaluated_dict
@@ -78,7 +77,7 @@ class ProjectManager:
         for _ in range(max_passes):
             if not unresolved_defines: break
             
-            resolved_this_pass = []
+            resolved_this_pass = False
             still_unresolved = []
             for define_obj in unresolved_defines:
                 try:
@@ -95,19 +94,22 @@ class ProjectManager:
                                 # If a unit is defined on the parent tag, apply it
                                 if unit_str:
                                     expr_to_eval = f"({expr_to_eval}) * {unit_str}"
-                                val_dict[axis] = aeval.eval(expr_to_eval)
+                                _, val = evaluator.evaluate(expr_to_eval)
+                                val_dict[axis] = val
 
                                 # NOTE: Account for an apparent difference in rotation angle sense
                                 #       in THREE.js and GDML
                                 if(define_obj.type == 'rotation'): val_dict[axis] *= -1
 
+                        # Set define value and add to symbol table
                         define_obj.value = val_dict
+                        evaluator.add_symbol(define_obj.name, val_dict)
+
                     elif define_obj.type == 'matrix':
                         raw_dict = define_obj.raw_expression
-                        coldim = int(aeval.eval(str(raw_dict['coldim'])))
+                        coldim = int(evaluator.evaluate(str(raw_dict['coldim']))[1])
                         
-                        evaluated_values = [aeval.eval(str(v)) for v in raw_dict['values']]
-                        
+                        evaluated_values = [evaluator.evaluate(str(v))[1] for v in raw_dict['values']]
                         define_obj.value = evaluated_values # Store the flat list of numbers
 
                         # Now, expand the matrix into the symbol table like Geant4 does
@@ -118,30 +120,32 @@ class ProjectManager:
 
                         if len(evaluated_values) == coldim or coldim == 1: # 1D array
                              for i, val in enumerate(evaluated_values):
-                                aeval.symtable[f"{define_obj.name}_{i}"] = val
+                                evaluator.add_symbol(f"{define_obj.name}_{i}", val)
                         else: # 2D array
                             num_rows = len(evaluated_values) // coldim
                             for r in range(num_rows):
                                 for c in range(coldim):
-                                    aeval.symtable[f"{define_obj.name}_{r}_{c}"] = evaluated_values[r * coldim + c]
+                                    evaluator.add_symbol(f"{define_obj.name}_{r}_{c}", evaluated_values[r * coldim + c])
+
                     else: # constant, quantity, expression
                         expr_to_eval = str(define_obj.raw_expression)
                         unit_str = define_obj.unit
                         if unit_str:
                              expr_to_eval = f"({expr_to_eval}) * {unit_str}"
-                        define_obj.value = aeval.eval(expr_to_eval)
-                    
-                    # Add successfully evaluated define to the symbol table for the next ones.
-                    if define_obj.type not in ['matrix']:
-                        aeval.symtable[define_obj.name] = define_obj.value
-                    resolved_this_pass.append(define_obj)
+                        _, val = evaluator.evaluate(expr_to_eval)
+
+                        # Set define value and add to symbol table
+                        define_obj.value = val
+                        evaluator.add_symbol(define_obj.name, val)
+
+                    resolved_this_pass = True
 
                 except (NameError, KeyError, TypeError):
                     still_unresolved.append(define_obj) # Depends on another define, try again next pass
                 except Exception as e:
                     print(f"Error evaluating define '{define_obj.name}': {e}. Setting value to None.")
                     define_obj.value = None
-                    resolved_this_pass.append(define_obj) # Consider it "resolved" to avoid infinite loops
+                    resolved_this_pass = True # Consider it "resolved" to avoid infinite loops
 
             if not resolved_this_pass and still_unresolved:
                 unresolved_names = [d.name for d in unresolved_defines]
@@ -155,11 +159,11 @@ class ProjectManager:
         for material in state.materials.values():
             try:
                 if material.Z_expr:
-                    material._evaluated_Z = aeval.eval(str(material.Z_expr))
+                    material._evaluated_Z = evaluator.evaluate(str(material.Z_expr))[1]
                 if material.A_expr:
-                    material._evaluated_A = aeval.eval(str(material.A_expr))
+                    material._evaluated_A = evaluator.evaluate(str(material.A_expr))[1]
                 if material.density_expr:
-                    material._evaluated_density = aeval.eval(str(material.density_expr))
+                    material._evaluated_density = evaluator.evaluate(str(material.density_expr))[1]
             except Exception as e:
                 print(f"Warning: Could not evaluate material property for '{material.name}': {e}")
 
@@ -185,7 +189,7 @@ class ProjectManager:
                     evaluated_scale = {}
                     for axis, axis_expr in raw_expr.items():
                         try:
-                            evaluated_scale[axis] = aeval.eval(str(axis_expr))
+                            evaluated_scale[axis] = evaluator.evaluate(str(axis_expr))[1]
                         except Exception as e:
                             print(f"Warning: Could not eval scale param '{axis}' for solid '{solid.name}': {e}")
                             evaluated_scale[axis] = 1.0 # Default to 1 on failure
@@ -203,7 +207,7 @@ class ProjectManager:
                         expr_to_eval = f"({expr_to_eval}) * {default_aunit}"
 
                     try:
-                        temp_eval_params[key] = aeval.eval(expr_to_eval)
+                        temp_eval_params[key] = evaluator.evaluate(expr_to_eval)[1]
                     except Exception as e:
                         print(f"Warning: Could not eval solid param '{key}' for solid '{solid.name}' with expression '{expr_to_eval}': {e}")
                         temp_eval_params[key] = float('nan')
@@ -339,18 +343,18 @@ class ProjectManager:
                 ep['twoDimVertices'] = []
                 for v in p.get('twoDimVertices', []):
                     ep['twoDimVertices'].append({
-                        'x': aeval.eval(str(v.get('x', '0'))),
-                        'y': aeval.eval(str(v.get('y', '0')))
+                        'x': evaluator.evaluate(str(v.get('x', '0')))[1],
+                        'y': evaluator.evaluate(str(v.get('y', '0')))[1]
                     })
                 
                 ep['sections'] = []
                 for s in p.get('sections', []):
                     ep['sections'].append({
-                        'zOrder': int(aeval.eval(str(s.get('zOrder', '0')))),
-                        'zPosition': aeval.eval(str(s.get('zPosition', '0'))),
-                        'xOffset': aeval.eval(str(s.get('xOffset', '0'))),
-                        'yOffset': aeval.eval(str(s.get('yOffset', '0'))),
-                        'scalingFactor': aeval.eval(str(s.get('scalingFactor', '1.0')))
+                        'zOrder': int(evaluator.evaluate(str(s.get('zOrder', '0')))[1]),
+                        'zPosition': evaluator.evaluate(str(s.get('zPosition', '0')))[1],
+                        'xOffset': evaluator.evaluate(str(s.get('xOffset', '0')))[1],
+                        'yOffset': evaluator.evaluate(str(s.get('yOffset', '0')))[1],
+                        'scalingFactor': evaluator.evaluate(str(s.get('scalingFactor', '1.0')))[1]
                     })
                 # Sort sections by zOrder just in case
                 ep['sections'].sort(key=lambda s: s['zOrder'])
@@ -371,7 +375,7 @@ class ProjectManager:
             if lv.content_type == 'physvol':
                 for pv in lv.content: # Use the new .content attribute
                     try:
-                        pv.copy_number = int(aeval.eval(str(pv.copy_number_expr)))
+                        pv.copy_number = int(evaluator.evaluate(str(pv.copy_number_expr))[1])
                     except Exception as e:
                         pv.copy_number = 0
                     
@@ -387,15 +391,15 @@ class ProjectManager:
                     # Evaluate common procedural parameters if they exist
                     if hasattr(proc_obj, 'width'):
                         try:
-                            proc_obj._evaluated_width = float(aeval.eval(str(proc_obj.width)))
+                            proc_obj._evaluated_width = float(evaluator.evaluate(str(proc_obj.width))[1])
                         except Exception: proc_obj._evaluated_width = 0.0
                     if hasattr(proc_obj, 'offset'):
                         try:
-                            proc_obj._evaluated_offset = float(aeval.eval(str(proc_obj.offset)))
+                            proc_obj._evaluated_offset = float(evaluator.evaluate(str(proc_obj.offset))[1])
                         except Exception: proc_obj._evaluated_offset = 0.0
                     if hasattr(proc_obj, 'number'):
                         try:
-                            proc_obj._evaluated_number = int(aeval.eval(str(proc_obj.number)))
+                            proc_obj._evaluated_number = int(evaluator.evaluate(str(proc_obj.number))[1])
                         except Exception: proc_obj._evaluated_number = 0
                     
                     # Evaluate replica-specific transforms if they exist
@@ -407,7 +411,7 @@ class ProjectManager:
                     # Add evaluation logic for parameterised volumes
                     if hasattr(proc_obj, 'ncopies'):
                         try:
-                            proc_obj._evaluated_ncopies = int(aeval.eval(str(proc_obj.ncopies)))
+                            proc_obj._evaluated_ncopies = int(evaluator.evaluate(str(proc_obj.ncopies))[1])
                         except Exception: proc_obj._evaluated_ncopies = 0
 
                     if hasattr(proc_obj, 'parameters'):
@@ -420,7 +424,7 @@ class ProjectManager:
                             evaluated_dims = {}
                             for key, raw_expr in param_set.dimensions.items():
                                 try:
-                                    evaluated_dims[key] = float(aeval.eval(str(raw_expr)))
+                                    evaluated_dims[key] = float(evaluator.evaluate(str(raw_expr))[1])
                                 except Exception as e:
                                     print(f"Warning: Could not eval param dimension '{key}' for '{lv.name}': {e}")
                                     evaluated_dims[key] = 0.0
@@ -431,7 +435,7 @@ class ProjectManager:
         for asm in all_asms:
             for pv in asm.placements:
                 try:
-                    pv.copy_number = int(aeval.eval(str(pv.copy_number_expr)))
+                    pv.copy_number = int(evaluator.evaluate(str(pv.copy_number_expr))[1])
                 except Exception as e:
                     pv.copy_number = 0
                 

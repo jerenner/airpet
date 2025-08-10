@@ -10,7 +10,7 @@ from .geometry_types import (
     GeometryState, Define, Material, Element, Isotope, Solid, LogicalVolume, PhysicalVolumePlacement, 
     Assembly, DivisionVolume, ReplicaVolume, ParamVolume, Parameterisation,
     OpticalSurface, SkinSurface, BorderSurface,
-    UNIT_FACTORS, convert_to_internal_units, get_unit_value
+    UNIT_FACTORS, DEFAULT_OUTPUT_LUNIT, DEFAULT_OUTPUT_AUNIT, get_unit_value
 )
 
 class GDMLParser:
@@ -160,7 +160,7 @@ class GDMLParser:
             if not name_expr: return
 
             # Evaluate the name
-            name = self._evaluate_name(name_expr)
+            name = name_expr
 
             tag = element.tag
             raw_expression = None
@@ -194,13 +194,28 @@ class GDMLParser:
                 if tag == 'rotation': category = 'angle'
                 elif tag == 'position': category = 'length'
                 else: category = 'dimensionless'
+            elif tag == 'matrix':
+                coldim_str = element.get('coldim', '1')
+                # Split values by whitespace and filter out empty strings
+                values_list = element.get('values', '').split()
+                
+                raw_expression = {
+                    "coldim": coldim_str,
+                    "values": values_list
+                }
+                unit = None
+                category = "matrix"
             
             if raw_expression is not None:
                 define_obj = Define(name, tag, raw_expression, unit, category)
                 self.geometry_state.add_define(define_obj)
                 # Eagerly evaluate and add to symbol table if possible
                 try:
-                    if isinstance(raw_expression, dict):
+                    if tag == 'matrix':
+                        # This logic is now handled correctly in ProjectManager.recalculate_geometry_state
+                        # We just need to make sure the Define object is created correctly.
+                        pass
+                    elif isinstance(raw_expression, dict):
                         # For vectors, just add the name. The values will be evaluated later.
                          self.aeval.symtable[name] = {k: self.aeval.eval(v) for k, v in raw_expression.items()}
                     else:
@@ -307,6 +322,7 @@ class GDMLParser:
 
     def _resolve_transform(self, parent_element):
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = None, None, None
+
         pos_el = parent_element.find('position')
         pos_ref_el = parent_element.find('positionref')
         rot_el = parent_element.find('rotation')
@@ -315,29 +331,41 @@ class GDMLParser:
         scale_ref_el = parent_element.find('scaleref')
 
         if pos_ref_el is not None:
-            pos_val_or_ref = pos_ref_el.get('ref')
+            pos_val_or_ref = self._evaluate_name(pos_ref_el.get('ref'))
         elif pos_el is not None:
-            # FIX 2: Evaluate expressions for x, y, z here
+            # Inline position: read attributes and apply unit
+            unit_str = pos_el.get('unit', DEFAULT_OUTPUT_LUNIT) # Default to 'mm' if not specified
+            unit_factor = get_unit_value(unit_str, 'length')
+
+            # For saving the raw_expression, we want to keep the unit info.
+            # Let's create an expression string that includes the unit for evaluation.
             pos_val_or_ref = {
-                'x': str(self.aeval.eval(pos_el.get('x', '0'))),
-                'y': str(self.aeval.eval(pos_el.get('y', '0'))),
-                'z': str(self.aeval.eval(pos_el.get('z', '0')))
+                'x': self.aeval.eval(f"({pos_el.get('x', '0')}) * {unit_str}"),
+                'y': self.aeval.eval(f"({pos_el.get('y', '0')}) * {unit_str}"),
+                'z': self.aeval.eval(f"({pos_el.get('z', '0')}) * {unit_str}"),
             }
         
         if rot_ref_el is not None:
-            rot_val_or_ref = rot_ref_el.get('ref')
+            rot_val_or_ref = self._evaluate_name(rot_ref_el.get('ref'))
         elif rot_el is not None:
-            # FIX 2: Evaluate expressions for x, y, z here
+            # Inline rotation: read attributes and apply unit
+            unit_str = rot_el.get('unit', DEFAULT_OUTPUT_AUNIT) # Default to 'rad'
+
             rot_val_or_ref = {
-                'x': str(self.aeval.eval(rot_el.get('x', '0'))),
-                'y': str(self.aeval.eval(rot_el.get('y', '0'))),
-                'z': str(self.aeval.eval(rot_el.get('z', '0')))
+                'x': self.aeval.eval(f"({rot_el.get('x', '0')}) * {unit_str}"),
+                'y': self.aeval.eval(f"({rot_el.get('y', '0')}) * {unit_str}"),
+                'z': self.aeval.eval(f"({rot_el.get('z', '0')}) * {unit_str}"),
             }
 
+        # --- Handle Scale (Scale is unitless) ---
         if scale_ref_el is not None:
-            scale_val_or_ref = scale_ref_el.get('ref')
+            scale_val_or_ref = self._evaluate_name(scale_ref_el.get('ref'))
         elif scale_el is not None:
-            scale_val_or_ref = {'x': scale_el.get('x'), 'y': scale_el.get('y'), 'z': scale_el.get('z')}
+            scale_val_or_ref = {
+                'x': self.aeval.eval(scale_el.get('x', '1')),
+                'y': self.aeval.eval(scale_el.get('y', '1')),
+                'z': self.aeval.eval(scale_el.get('z', '1')),
+            }
             
         return pos_val_or_ref, rot_val_or_ref, scale_val_or_ref
 

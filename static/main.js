@@ -385,7 +385,7 @@ async function handleOpenGdmlProject(file) {
     try {
         const result = await APIService.openGdmlProject(file);
         syncUIWithState(result);
-        UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
+        //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) { 
         // Show the specific error message from the backend
         UIManager.showError("Failed to open GDML Project: " + error.message);
@@ -419,7 +419,7 @@ async function handleImportGdmlPart(file) {
     try {
         const result = await APIService.importGdmlPart(file);
         syncUIWithState(result); // The sync function handles the refresh perfectly
-        UIManager.showNotification("GDML part(s) imported. Note: Any <file> or <!ENTITY> references were ignored.");
+        //UIManager.showNotification("GDML part(s) imported. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) { 
         // Show the specific error from the backend
         UIManager.showError("Failed to import GDML Part: " + error.message);

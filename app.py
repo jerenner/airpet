@@ -28,8 +28,8 @@ CORS(app)
 
 ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
-project_manager = ProjectManager()
 expression_evaluator = ExpressionEvaluator()
+project_manager = ProjectManager(expression_evaluator)
 
 # Configure Gemini client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -90,7 +90,7 @@ def create_empty_project():
 
     global project_manager
     # Re-initialize the project manager to clear everything
-    project_manager = ProjectManager() 
+    project_manager = ProjectManager(expression_evaluator) 
 
     ## Create a G4_Galactic material
     world_mat = Material(
@@ -901,14 +901,12 @@ def move_items_to_group_route():
 def evaluate_expression_route():
     data = request.get_json()
     expression = data.get('expression')
-    # The frontend will send the full current project state
-    current_state_dict = data.get('project_state') 
+    if expression is None: # Check for None, as "" is a valid (empty) expression
+        return jsonify({"success": False, "error": "Missing expression."}), 400
 
-    if not expression or not current_state_dict:
-        return jsonify({"success": False, "error": "Missing expression or project state."}), 400
-
-    project_defines = current_state_dict.get('defines', {})
-    success, result = expression_evaluator.evaluate(expression, project_defines)
+    # Evaluate the expression (the current project state has been set up in
+    # the expression evaluator in ProjectManager's recalculate_geometry_state).
+    success, result = expression_evaluator.evaluate(expression)
 
     if success:
         return jsonify({"success": True, "result": result})

@@ -1,5 +1,6 @@
 import math
 import asteval
+import re
 
 def create_configured_asteval():
     """
@@ -25,52 +26,74 @@ def create_configured_asteval():
     return aeval
 
 class ExpressionEvaluator:
-    """A centralized, safe expression evaluator using asteval."""
-
+    """A centralized, stateful expression evaluator using asteval."""
     def __init__(self):
-        """Initializes the evaluator using the central factory."""
-        # This creates our own instance of a configured interpreter
         self.interpreter = create_configured_asteval()
 
-    def evaluate(self, expression, project_defines=None):
-        """
-        Safely evaluates an expression string with optional context from project defines.
+    def clear_symbols(self):
+        """Resets the symbol table to its initial state."""
+        self.interpreter = create_configured_asteval()
 
-        Args:
-            expression (str): The string expression to evaluate.
-            project_defines (dict, optional): A dictionary of defines from the current project state.
+    def add_symbol(self, name, value):
+        """Adds a single variable or value to the symbol table."""
+        self.interpreter.symtable[name] = value
 
-        Returns:
-            tuple: A tuple containing (bool, result).
-                   - If successful: (True, evaluated_value)
-                   - If failed: (False, error_message_string)
+    def get_symbol(self, name, default_val):
+        """Gets a symbol from the symbol table, returning default_val if it does not exist"""
+        return self.interpreter.symtable.get(name,default_val)
+    
+    def _preprocess_gdml_indexing(self, expression):
         """
-        # We don't need to create a temporary symbol table from scratch.
-        # We will add the project defines to our interpreter's existing symbol table.
-        # To ensure thread safety and no state leakage, we'll save and restore the state.
+        Converts GDML-style array indexing like 'm[i,j]' into 'm_i_j'.
+        It uses the currently loaded symbol table to evaluate the indices.
+        """
+        pattern = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)(\[([^\]]+)\])')
         
-        # Save original state of symbols that might be overwritten
-        saved_symbols = {}
-        if project_defines:
-            for name, define_data in project_defines.items():
-                if define_data and define_data.get('value') is not None:
-                     if name in self.interpreter.symtable:
-                         saved_symbols[name] = self.interpreter.symtable[name]
-                     self.interpreter.symtable[name] = define_data['value']
-        
+        processed_expression = expression
+        # Loop to handle potentially nested expressions in indices
+        for _ in range(5):
+            match = pattern.search(processed_expression)
+            if not match:
+                break
+
+            var_name, _, indices_str = match.groups()
+            
+            # The indices can be comma-separated expressions themselves
+            indices = indices_str.split(',')
+            
+            try:
+                evaluated_indices = []
+                for index_expr in indices:
+                    # Evaluate the index using the current state of the interpreter
+                    value = self.interpreter.eval(index_expr.strip())
+                    # GDML is 1-based, our flattened names are 0-based.
+                    evaluated_indices.append(str(int(value) - 1))
+                
+                transformed_var = f"{var_name}_{'_'.join(evaluated_indices)}"
+                processed_expression = processed_expression.replace(match.group(0), transformed_var, 1)
+
+            except Exception as e:
+                # If an index can't be evaluated (e.g., uses a variable not yet defined),
+                # stop processing this expression and let the main evaluation handle the error.
+                return expression # Return the original string on failure
+
+        return processed_expression
+
+    def evaluate(self, expression):
+        """
+        Safely evaluates an expression string using the current symbol table.
+        The symbol table should be prepared beforehand by ProjectManager.
+        """
+        if not isinstance(expression, str):
+            return True, expression # It's already a number
+            
         try:
-            # Call the eval method on our configured interpreter instance
-            result = self.interpreter.eval(expression, show_errors=False, raise_errors=True)
+            # First, process GDML-style array indexing
+            processed_expression = self._preprocess_gdml_indexing(expression)
+            
+            # Then, evaluate the final processed string
+            result = self.interpreter.eval(processed_expression, show_errors=False, raise_errors=True)
             return True, result
         except Exception as e:
-            # asteval exceptions are descriptive and safe to show the user.
-            return False, str(e)
-        finally:
-            # Clean up: remove the temporary project defines and restore any originals
-            if project_defines:
-                for name in project_defines:
-                    if name in saved_symbols:
-                        self.interpreter.symtable[name] = saved_symbols[name]
-                    elif name in self.interpreter.symtable:
-                        # Don't let defines from one call leak into the next
-                        del self.interpreter.symtable[name]
+            print(f"ERROR: {str(e)}")
+            return False, 0
