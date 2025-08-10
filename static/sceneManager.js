@@ -1831,42 +1831,34 @@ let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
 export function updateSelectionState(groupsToSelect = []) {
     
-    // 1. Unhighlight previously selected objects
+    // 1. Unhighlight all previously selected objects
     _selectedThreeObjects.forEach(group => {
-        // Find the solid mesh, which is the first child
-        const solidMesh = group.children[0]; 
-        if (solidMesh && _originalMaterialsMap.has(solidMesh.uuid)) {
-            solidMesh.material = _originalMaterialsMap.get(solidMesh.uuid).material;
-            _originalMaterialsMap.delete(solidMesh.uuid);
-        }
+        // This is a robust way to find all meshes, wherever they are nested
+        group.traverse(child => {
+            if (child.isMesh && _originalMaterialsMap.has(child.uuid)) {
+                child.material = _originalMaterialsMap.get(child.uuid).material;
+                _originalMaterialsMap.delete(child.uuid);
+            }
+        });
     });
 
-    // Store the new selection of GROUPS
-    //_selectedThreeObjects = groupsToSelect;
-    // 2. Clear the list of selected three.js objects
-    _selectedThreeObjects = [];
+    // 2. The groups passed in ARE the selected objects. No need to clear and re-populate.
+    _selectedThreeObjects = groupsToSelect;
 
-    if (!groupsToSelect || groupsToSelect.length === 0) {
+    if (!_selectedThreeObjects || _selectedThreeObjects.length === 0) {
         return; // Nothing to select
     }
 
-    // 3. Find ALL instances that match the canonical IDs of the selected groups
-    const canonicalIdsToSelect = new Set(groupsToSelect.map(g => g.userData.id));
-    geometryGroup.traverse(child => {
-        if (child.isGroup && child.userData.id && canonicalIdsToSelect.has(child.userData.id)) {
-            _selectedThreeObjects.push(child);
-        }
-    });
-
-    // 4. Highlight the solid mesh INSIDE each newly selected group
+    // 3. Highlight all renderable meshes within the selected groups and their descendants.
     _selectedThreeObjects.forEach(group => {
-        const solidMesh = group.children[0]; // The solid mesh is always the first child
-        if (solidMesh && solidMesh.isMesh) {
-            if (!_originalMaterialsMap.has(solidMesh.uuid)) {
-                _originalMaterialsMap.set(solidMesh.uuid, { material: solidMesh.material });
+        group.traverse(child => {
+            if (child.isMesh) { // Find every mesh inside the selected group
+                if (!_originalMaterialsMap.has(child.uuid)) {
+                    _originalMaterialsMap.set(child.uuid, { material: child.material });
+                }
+                child.material = _highlightMaterial;
             }
-            solidMesh.material = _highlightMaterial;
-        }
+        });
     });
 }
 
