@@ -331,40 +331,40 @@ class GDMLParser:
         scale_ref_el = parent_element.find('scaleref')
 
         if pos_ref_el is not None:
-            pos_val_or_ref = self._evaluate_name(pos_ref_el.get('ref'))
+            pos_val_or_ref = pos_ref_el.get('ref')
+            print(pos_val_or_ref)
         elif pos_el is not None:
             # Inline position: read attributes and apply unit
             unit_str = pos_el.get('unit', DEFAULT_OUTPUT_LUNIT) # Default to 'mm' if not specified
-            unit_factor = get_unit_value(unit_str, 'length')
 
             # For saving the raw_expression, we want to keep the unit info.
             # Let's create an expression string that includes the unit for evaluation.
             pos_val_or_ref = {
-                'x': self.aeval.eval(f"({pos_el.get('x', '0')}) * {unit_str}"),
-                'y': self.aeval.eval(f"({pos_el.get('y', '0')}) * {unit_str}"),
-                'z': self.aeval.eval(f"({pos_el.get('z', '0')}) * {unit_str}"),
+                'x': str(self.aeval.eval(f"({pos_el.get('x', '0')}) * {unit_str}")),
+                'y': str(self.aeval.eval(f"({pos_el.get('y', '0')}) * {unit_str}")),
+                'z': str(self.aeval.eval(f"({pos_el.get('z', '0')}) * {unit_str}")),
             }
         
         if rot_ref_el is not None:
-            rot_val_or_ref = self._evaluate_name(rot_ref_el.get('ref'))
+            rot_val_or_ref = rot_ref_el.get('ref')
         elif rot_el is not None:
             # Inline rotation: read attributes and apply unit
             unit_str = rot_el.get('unit', DEFAULT_OUTPUT_AUNIT) # Default to 'rad'
 
             rot_val_or_ref = {
-                'x': self.aeval.eval(f"({rot_el.get('x', '0')}) * {unit_str}"),
-                'y': self.aeval.eval(f"({rot_el.get('y', '0')}) * {unit_str}"),
-                'z': self.aeval.eval(f"({rot_el.get('z', '0')}) * {unit_str}"),
+                'x': str(self.aeval.eval(f"({rot_el.get('x', '0')}) * {unit_str}")),
+                'y': str(self.aeval.eval(f"({rot_el.get('y', '0')}) * {unit_str}")),
+                'z': str(self.aeval.eval(f"({rot_el.get('z', '0')}) * {unit_str}")),
             }
 
         # --- Handle Scale (Scale is unitless) ---
         if scale_ref_el is not None:
-            scale_val_or_ref = self._evaluate_name(scale_ref_el.get('ref'))
+            scale_val_or_ref = scale_ref_el.get('ref')
         elif scale_el is not None:
             scale_val_or_ref = {
-                'x': self.aeval.eval(scale_el.get('x', '1')),
-                'y': self.aeval.eval(scale_el.get('y', '1')),
-                'z': self.aeval.eval(scale_el.get('z', '1')),
+                'x': str(self.aeval.eval(scale_el.get('x', '1'))),
+                'y': str(self.aeval.eval(scale_el.get('y', '1'))),
+                'z': str(self.aeval.eval(scale_el.get('z', '1'))),
             }
             
         return pos_val_or_ref, rot_val_or_ref, scale_val_or_ref

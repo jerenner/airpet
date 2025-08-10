@@ -872,7 +872,7 @@ function buildSingleTransformUI(index, type, label, defines, transformData) {
     ['x', 'y', 'z'].forEach(axis => {
         const item = document.createElement('div');
         item.className = 'property_item';
-        // FIX #4: Add the label
+        // Add the label
         item.innerHTML = `<label>${axis.toUpperCase()}:</label>`;
         
         // Use the full expression component if absolute, otherwise a simple disabled input
@@ -890,7 +890,7 @@ function buildSingleTransformUI(index, type, label, defines, transformData) {
             );
             item.appendChild(exprComp);
         } else {
-            // FIX #3: Show grayed-out evaluated values for defines
+            // Show grayed-out evaluated values for defines
             const disabledInput = document.createElement('input');
             disabledInput.type = 'text';
             disabledInput.disabled = true;
