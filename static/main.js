@@ -657,8 +657,8 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     if (isShiftHeld) return; // Shift-select is still deferred
 
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
-    
     let clickedItemCanonicalId = null;
+    
     if (clickedMesh) {
         const userData = clickedMesh.userData;
 
@@ -667,7 +667,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
         if (userData.is_procedural_instance && userData.owner_pv_id) {
             clickedItemCanonicalId = userData.owner_pv_id;
         } else {
-            clickedItemCanonicalId = userData.id;
+            clickedItemCanonicalId = userData.id; // userData.canonical_id;
         }
     }
 

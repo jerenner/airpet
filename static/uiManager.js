@@ -943,7 +943,7 @@ function buildVolumeNode(pvData, projectState) {
         if (isAssemblyPlacement) {
             // --- This PV is an Assembly Placement ---
             const assembly = isAssemblyPlacement;
-            displayName = `<span class="assembly-icon" title="Assembly">📁</span> ` + displayName;
+            displayName = `<span class="assembly-icon" title="Assembly">⚙️</span> ` + displayName;
             displayName += ` (Assembly: ${pvData.volume_ref})`;
 
             // The main item represents the PV that places the assembly

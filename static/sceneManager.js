@@ -131,12 +131,8 @@ export function initScene(callbacks) {
         if (onObjectTransformEndCallback) {
             const object = transformControls.object;
             if (!object) return;
-            
-            // Determine if the helper was transformed
-            const wasHelperTransformed = (object === gizmoAttachmentHelper);
 
             // Pass the transformed object AND the initial state map.
-            // The `wasHelperTransformed` flag tells main.js how to interpret the event.
             onObjectTransformEndCallback(object, initialTransforms);
         }
         initialTransforms.clear();
@@ -557,7 +553,7 @@ export function findObjectByPvId(pvId) { // Renamed
     let foundObject = null;
     geometryGroup.traverse(child => {
         // We are now looking for the parent Group, not the mesh
-        if (child.isGroup && child.userData && child.userData.id === pvId) {
+        if (child.isGroup && child.userData && child.userData.canonical_id === pvId) {
             foundObject = child;
         }
     });
@@ -1835,7 +1831,7 @@ let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
 export function updateSelectionState(groupsToSelect = []) {
     
-    // Unhighlight previously selected objects
+    // 1. Unhighlight previously selected objects
     _selectedThreeObjects.forEach(group => {
         // Find the solid mesh, which is the first child
         const solidMesh = group.children[0]; 
@@ -1846,9 +1842,23 @@ export function updateSelectionState(groupsToSelect = []) {
     });
 
     // Store the new selection of GROUPS
-    _selectedThreeObjects = groupsToSelect;
+    //_selectedThreeObjects = groupsToSelect;
+    // 2. Clear the list of selected three.js objects
+    _selectedThreeObjects = [];
 
-    // Highlight the solid mesh INSIDE each newly selected group
+    if (!groupsToSelect || groupsToSelect.length === 0) {
+        return; // Nothing to select
+    }
+
+    // 3. Find ALL instances that match the canonical IDs of the selected groups
+    const canonicalIdsToSelect = new Set(groupsToSelect.map(g => g.userData.id));
+    geometryGroup.traverse(child => {
+        if (child.isGroup && child.userData.id && canonicalIdsToSelect.has(child.userData.id)) {
+            _selectedThreeObjects.push(child);
+        }
+    });
+
+    // 4. Highlight the solid mesh INSIDE each newly selected group
     _selectedThreeObjects.forEach(group => {
         const solidMesh = group.children[0]; // The solid mesh is always the first child
         if (solidMesh && solidMesh.isMesh) {
@@ -1887,21 +1897,6 @@ function unhighlightObject(obj) {
 
 function unhighlightAll() {
     _selectedThreeObjects.forEach(obj => unhighlightObject(obj));
-}
-
-export function selectObjectInSceneByPvId(pvId) {
-    let foundMesh = null;
-    geometryGroup.traverse(child => {
-        if (child.isMesh && child.userData && child.userData.id === pvId) {
-            foundMesh = child;
-        }
-    });
-    updateSelectionState(foundMesh ? [foundMesh] : []);
-    if (foundMesh) { // If found, also set orbit target
-        const targetPosition = new THREE.Vector3();
-        foundMesh.getWorldPosition(targetPosition);
-        //orbitControls.target.copy(targetPosition);
-    }
 }
 
 export function unselectAllInScene() {
@@ -1947,7 +1942,6 @@ export function attachTransformControls(groups) {
         
         gizmoAttachmentHelper.scale.set(1,1,1);
 
-        // We only support moving one canonical item at a time (even if it's a group).
         // The first mesh's owner_pv_id will be the same for all meshes in the group.
         gizmoAttachmentHelper.userData.controlledObjectId = groups[0].userData.owner_pv_id || groups[0].userData.id;
         

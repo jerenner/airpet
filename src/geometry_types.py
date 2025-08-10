@@ -291,6 +291,28 @@ class PhysicalVolumePlacement:
         self._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
         self._evaluated_scale = {'x': 1, 'y': 1, 'z': 1}
 
+    # Function to clone the PV for Assembly placements
+    def clone(self):
+        # Creates a shallow copy. This is sufficient as we only modify the ID and parent.
+        # The referenced objects (position, rotation dicts) can be shared.
+        new_pv = PhysicalVolumePlacement(
+            name=self.name,
+            volume_ref=self.volume_ref,
+            parent_lv_name=self.parent_lv_name,
+            copy_number_expr=self.copy_number_expr,
+            position_val_or_ref=self.position,
+            rotation_val_or_ref=self.rotation,
+            scale_val_or_ref=self.scale
+        )
+        # Copy evaluated properties as well
+        new_pv.id = self.id
+        new_pv._evaluated_position = self._evaluated_position.copy()
+        new_pv._evaluated_rotation = self._evaluated_rotation.copy()
+        new_pv._evaluated_scale = self._evaluated_scale.copy()
+        new_pv.copy_number = self.copy_number
+        
+        return new_pv
+    
     def get_transform_matrix(self):
         """
         Returns a 4x4 numpy transformation matrix for this placement,
@@ -761,38 +783,64 @@ class GeometryState:
         threejs_objects.append({
             "id": world_pv_id,
             "name": world_lv.name,
+            "parent_id": None,
             "is_world_volume_placement": True, # A flag to tell the frontend not to render it
-            "volume_ref": self.world_volume_ref
+            "volume_ref": self.world_volume_ref,
+            "position": {'x': 0, 'y': 0, 'z': 0},
+            "rotation": {'x': 0, 'y': 0, 'z': 0},
+            "scale": {'x': 1, 'y': 1, 'z': 1}
         })
 
         if world_lv and world_lv.content_type == 'physvol':
             for pv in world_lv.content:
-                self._traverse(pv, world_pv_id, [world_lv.name], threejs_objects)
+                # Initial call starts with the world as the parent
+                self._traverse(pv, parent_pv_id=world_pv_id, path=[world_lv.name], threejs_objects=threejs_objects)
 
         return threejs_objects
 
-    def _traverse(self, pv, parent_pv_id, path, threejs_objects, owner_pv_id=None):
+    def _traverse(self, pv, parent_pv_id, path, threejs_objects, owner_pv_id=None, instance_prefix=""):
+        
+        # The instance_id is unique for every single object in the 3D scene.
+        current_instance_id = f"{instance_prefix}{pv.id}"
+        # The canonical_id is the original ID from the project's state definition.
+        current_canonical_id = pv.id
+        # The owner_id is the top-level selectable object in the hierarchy.
         current_owner_id = owner_pv_id or pv.id
 
         # Case 1: The PV places an Assembly
         assembly = self.get_assembly(pv.volume_ref)
         if assembly:
-            # Assembly placement itself is a node in the hierarchy.
-            # We treat it like a PV that doesn't render but acts as a parent.
-            assembly_placement_id = pv.id 
+            
+            # Add a non-renderable node for this assembly instance.
             threejs_objects.append({
-                "id": assembly_placement_id,
+                "id": current_instance_id,
+                "canonical_id": current_canonical_id,
                 "name": pv.name,
-                "parent_id": parent_pv_id, # Parent is the LV it was placed in
-                "is_assembly_placement": True, # Flag for frontend
+                "parent_id": parent_pv_id,
+                "is_assembly_placement": True,
                 "position": pv._evaluated_position,
                 "rotation": pv._evaluated_rotation,
                 "scale": pv._evaluated_scale,
+                "owner_pv_id": current_owner_id
             })
-            if assembly.name in path: return
-            for part_pv in assembly.placements:
-                # Children of the assembly are parented to the assembly placement PV
-                self._traverse(part_pv, assembly_placement_id, path + [assembly.name], threejs_objects, owner_pv_id=current_owner_id)
+            
+            if assembly.name in path: return # Prevent infinite recursion
+            
+            for part_pv_template in assembly.placements:
+                # Create a clone of the template PV
+                part_pv_instance = part_pv_template.clone()
+
+                # The new instance's parent is this assembly instance.
+                # The owner is still the top-level owner.
+                # We pass down a new instance_prefix to ensure its children are also unique.
+                self._traverse(
+                    part_pv_instance,
+                    parent_pv_id=current_instance_id,
+                    path=path + [assembly.name],
+                    threejs_objects=threejs_objects,
+                    owner_pv_id=current_owner_id,
+                    instance_prefix=f"{current_instance_id}::" # Use a clear separator
+                )
             return
         
         # Case 2: The PV places a Logical Volume
@@ -800,48 +848,44 @@ class GeometryState:
         if not lv: return
         if lv.name in path: return
 
-        # For regular placements, add the parent_id
+        # This physvol (pv) is the container for the LV's content.
+        # It gets a single entry in the scene description with its unique instance ID.
+        threejs_objects.append({
+            "id": current_instance_id,
+            "canonical_id": current_canonical_id,
+            "name": pv.name,
+            "parent_id": parent_pv_id,
+            "owner_pv_id": current_owner_id,
+            "is_procedural_container": lv.content_type != 'physvol',
+            "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
+            "solid_ref_for_threejs": lv.solid_ref,
+            "position": pv._evaluated_position,
+            "rotation": pv._evaluated_rotation,
+            "scale": pv._evaluated_scale,
+            "vis_attributes": lv.vis_attributes,
+            "copy_number": pv.copy_number
+        })
+        
         if lv.content_type == 'physvol':
-            threejs_objects.append({
-                "id": pv.id,
-                "name": pv.name,
-                "parent_id": parent_pv_id,
-                "owner_pv_id": current_owner_id,
-                "is_procedural_instance": False,
-                "solid_ref_for_threejs": lv.solid_ref,
-                "position": pv._evaluated_position,
-                "rotation": pv._evaluated_rotation,
-                "scale": pv._evaluated_scale,
-                "vis_attributes": lv.vis_attributes,
-                "copy_number": pv.copy_number
-            })
-
             # Recurse into the content of the placed LV
             for child_pv in lv.content:
-                self._traverse(child_pv, pv.id, path + [lv.name], threejs_objects, owner_pv_id=current_owner_id)
-        else:
-            # This is a PROCEDURAL placement. The PV itself is NOT rendered.
-            # It acts only as a rule container. We only process its generated content.
-            # We still need a non-rendered node in the hierarchy for parenting and selection.
-            threejs_objects.append({
-                "id": pv.id,
-                "name": pv.name,
-                "parent_id": parent_pv_id,
-                "is_procedural_container": True, # NEW FLAG to tell frontend not to render
-                "volume_ref": lv.name, # Pass LV info for the inspector
-                "position": pv._evaluated_position,
-                "rotation": pv._evaluated_rotation,
-                "scale": pv._evaluated_scale,
-            })
-        
-            # Call the appropriate unrolling function. The unrolled instances
-            # will be parented to this non-rendered procedural node (pv.id).
+                self._traverse(
+                    child_pv, 
+                    parent_pv_id=current_instance_id, # Children are parented to this instance
+                    path=path + [lv.name], 
+                    threejs_objects=threejs_objects, 
+                    owner_pv_id=current_owner_id
+                )
+        else: # It's a procedural LV
+            # The owner of the unrolled instances is the current instance ID itself.
+            owner_id_for_children = current_instance_id
+
             if lv.content_type == 'replica':
-                self._unroll_replica_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
+                self._unroll_replica_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
             elif lv.content_type == 'division':
-                self._unroll_division_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
+                 self._unroll_division_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
             elif lv.content_type == 'parameterised':
-                self._unroll_param_and_traverse(lv, pv.id, path, threejs_objects, owner_id=pv.id)
+                 self._unroll_param_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
 
     def _unroll_replica_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
         replica = lv.content
