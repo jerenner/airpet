@@ -819,7 +819,7 @@
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
-            <button class="tab_button" data-tab="tab_lvolumes">LVs</button>
+            <button class="tab_button" data-tab="tab_volumes">Volumes</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_properties">Properties</button>
             <button class="tab_button" data-tab="tab_solids">Solids</button>
@@ -830,19 +830,42 @@
                 <div class="tab_header">
                     <span class="tab-title">World Structure</span>
                     <div>
-                        <button id="addAssemblyButton" title="Create a new Assembly from selected placements">+ Assembly</button>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
                 </div>
                 <ul id="structure_tree_root"></ul>
             </div>
-            <div id="tab_lvolumes" class="tab_pane">
-                <div class="tab_header">
-                    <span class="tab-title">Logical Volumes</span>
-                    <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
-                    <button id="addLVButton" title="Create a new Logical Volume">+ Add LV</button>
+            <div id="tab_volumes" class="tab_pane">
+                <div class="accordion">
+                    <!-- Logical Volumes Accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[-]</span>
+                            <span>&nbsp;Logical Volumes</span>
+                        </div>
+                        <div class="accordion-content active">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="logical_volume" title="Create a new Logical Volume">+ Add</button>
+                            </div>
+                            <ul id="lvolumes_list_root"></ul>
+                        </div>
+                    </div>
+                    <!-- Assemblies Accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Assemblies</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="tab_header">
+                                <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="assembly" title="Add new Assembly Definition">+ Add</button>
+                            </div>
+                            <ul id="assemblies_list_root"></ul>
+                        </div>
+                    </div>
                 </div>
-                <ul id="lvolumes_list_root"></ul>
             </div>
             <div id="tab_defines" class="tab_pane">
                 <div class="tab_header">
@@ -1481,6 +1504,30 @@
                 <!-- Add a close button -->
                 <button id="cancelPVEditor">Cancel</button>
                 <button id="confirmPVEditor" class="confirm-button">Place Volume</button>
+            </div>
+        </div>
+    </div>
+    <!-- Editor modal for Assemblies -->
+    <div id="assemblyEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 900px; height: 70vh;">
+            <div class="modal-header">
+                <h4 id="assemblyEditorTitle">Create New Assembly</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="assemblyEditorName">Name:</label>
+                    <input type="text" id="assemblyEditorName" placeholder="e.g., DetectorModule">
+                </div>
+                <hr>
+                <h6>Placements within Assembly</h6>
+                <div id="assembly-placements-list" style="flex-grow: 1; overflow-y: auto; border: 1px solid #ccc; padding: 5px;">
+                    <!-- Placements will be dynamically generated here -->
+                </div>
+                <button id="add-assembly-placement-btn" class="add_button" style="margin-top: 10px;">+ Add Placement</button>
+            </div>
+            <div class="modal-footer">
+                <button id="assemblyEditorCancel">Cancel</button>
+                <button id="assemblyEditorConfirm" class="confirm-button">Create Assembly</button>
             </div>
         </div>
     </div>

@@ -25,7 +25,7 @@ let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, ma
 let inspectorContentDiv;
 
 // Buttons for adding LVs, PVs, and assemblies
-let addLVButton, addPVButton, addAssemblyButton;
+let addPVButton;
 
 // Keep track of selected parent LV in structure hierarchy and last selected item
 let selectedParentContext = null;
@@ -113,9 +113,7 @@ export function initUI(cb) {
 
     // Add buttons
     const addButtons = document.querySelectorAll('.add_button');
-    addLVButton = document.getElementById('addLVButton');
     addPVButton = document.getElementById('addPVButton');
-    addAssemblyButton = document.getElementById('addAssemblyButton');
 
     // Mode Buttons
     modeObserveButton = document.getElementById('modeObserveButton');
@@ -211,6 +209,10 @@ export function initUI(cb) {
                 callbacks.onAddSolidClicked();
             } else if (type.startsWith('material')) {
                 callbacks.onAddMaterialClicked();
+            } else if (type.startsWith('logical_volume')) {
+                callbacks.onAddLVClicked();
+            } else if (type.startsWith('assembly')) {
+                callbacks.onAddAssemblyClicked();
             } else if (type.startsWith('element')) {
                 callbacks.onAddElementClicked();
             } else if (type.startsWith('isotope')) {
@@ -228,11 +230,8 @@ export function initUI(cb) {
     });
 
     // Add listeners for add logical and physical volume buttons
-    addLVButton.addEventListener('click', callbacks.onAddLVClicked);
-    addLVButton.disabled = false;
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
-    addAssemblyButton.addEventListener('click', callbacks.onGroupIntoAssemblyClicked);
 
     // AI Panel Listener
     aiGenerateButton.addEventListener('click', () => {
@@ -771,13 +770,13 @@ export function updateHierarchy(projectState) {
     if(borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
 
     // --- Grouped Population ---
-    populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies), 'assembly');
-    populateListWithGrouping(lvolumesListRoot, Object.values(projectState.logical_volumes), 'logical_volume');
-    populateListWithGrouping(definesListRoot, Object.values(projectState.defines), 'define');
-    populateListWithGrouping(materialsListRoot, Object.values(projectState.materials), 'material');
+    populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies || {}), 'assembly');
+    populateListWithGrouping(lvolumesListRoot, Object.values(projectState.logical_volumes || {}), 'logical_volume');
+    populateListWithGrouping(definesListRoot, Object.values(projectState.defines || {}), 'define');
+    populateListWithGrouping(materialsListRoot, Object.values(projectState.materials || {}), 'material');
     populateListWithGrouping(elementsListRoot, Object.values(projectState.elements || {}), 'element');
     populateListWithGrouping(isotopesListRoot, Object.values(projectState.isotopes || {}), 'isotope');
-    populateListWithGrouping(solidsListRoot, Object.values(projectState.solids), 'solid');
+    populateListWithGrouping(solidsListRoot, Object.values(projectState.solids || {}), 'solid');
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
     populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
@@ -1095,39 +1094,6 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     item.dataset.name = displayName;
     item.appData = {...fullItemData, ...additionalData};
 
-    // --- DROP LOGIC (NEW) ---
-    // An item can be a drop target if it's an LV that can contain PVs, or a PV that represents an Assembly.
-    const isStandardLV = itemType === 'logical_volume' && fullItemData.content_type === 'physvol';
-    const isAssemblyPlacement = itemType === 'physical_volume' && (callbacks.getProjectState()?.assemblies || {})[fullItemData.volume_ref];
-
-    if (isStandardLV || isAssemblyPlacement) {
-        item.addEventListener('dragover', e => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            item.classList.add('drop-target-hover');
-        });
-        item.addEventListener('dragleave', () => item.classList.remove('drop-target-hover'));
-        item.addEventListener('drop', (event) => {
-            event.preventDefault();
-            event.stopPropagation(); // Prevent event bubbling up to parent drop targets
-            item.classList.remove('drop-target-hover');
-            const data = JSON.parse(event.dataTransfer.getData('application/json'));
-
-            // We only handle dropping physical volumes for now
-            if (data.itemType !== 'physical_volume') return;
-
-            const pvIds = (data.type === 'multi-selection') ? data.items.map(i => i.id) : [data.id];
-
-            if (isAssemblyPlacement) {
-                const assemblyName = fullItemData.volume_ref;
-                callbacks.onMovePvToAssembly(pvIds, assemblyName);
-            } else { // isStandardLV
-                const lvName = fullItemData.name;
-                callbacks.onMovePvToLv(pvIds, lvName);
-            }
-        });
-    }
-
     // Main click listener for selection
     item.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -1266,6 +1232,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditLVClicked(item.appData);
+        });
+    } else if (itemType === 'assembly') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            callbacks.onEditAssemblyClicked(item.appData);
         });
     } else if (itemType === 'optical_surface') {
         item.addEventListener('dblclick', (event) => {

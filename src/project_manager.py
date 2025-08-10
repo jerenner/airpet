@@ -508,12 +508,20 @@ class ProjectManager:
         state = self.current_geometry_state
         obj = None
 
-        if object_type == "define": obj = state.defines.get(object_name_or_id)
-        elif object_type == "material": obj = state.materials.get(object_name_or_id)
-        elif object_type == "element": obj = state.elements.get(object_name_or_id)
-        elif object_type == "isotope": obj = state.isotopes.get(object_name_or_id)
-        elif object_type == "solid": obj = state.solids.get(object_name_or_id)
-        elif object_type == "logical_volume": obj = state.logical_volumes.get(object_name_or_id)
+        if object_type == "define": 
+            obj = state.defines.get(object_name_or_id)
+        elif object_type == "material": 
+            obj = state.materials.get(object_name_or_id)
+        elif object_type == "element": 
+            obj = state.elements.get(object_name_or_id)
+        elif object_type == "isotope": 
+            obj = state.isotopes.get(object_name_or_id)
+        elif object_type == "solid": 
+            obj = state.solids.get(object_name_or_id)
+        elif object_type == "logical_volume": 
+            obj = state.logical_volumes.get(object_name_or_id)
+        elif object_type == "assembly":
+            obj = state.assemblies.get(object_name_or_id)
         elif object_type == "optical_surface":
             obj = state.optical_surfaces.get(object_name_or_id)
         elif object_type == "skin_surface":
@@ -968,116 +976,38 @@ class ProjectManager:
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
 
-    def add_assembly_placement(self, parent_lv_name, assembly_name, placement_name_suggestion, position, rotation):
-        """
-        'Imprints' an assembly into a parent logical volume.
-        This iterates through all placements within the assembly and adds them as
-        physical volumes to the parent, applying the given transform.
-        """
+    def add_assembly(self, name_suggestion, placements_data):
         if not self.current_geometry_state:
-            return None, "No project loaded."
-
-        parent_lv = self.current_geometry_state.get_logical_volume(parent_lv_name)
-        if not parent_lv:
-            return None, f"Parent Logical Volume '{parent_lv_name}' not found."
-
-        assembly = self.current_geometry_state.get_assembly(assembly_name)
-        if not assembly:
-            return None, f"Assembly '{assembly_name}' not found."
-
-        # Create the root transformation for the entire assembly placement
-        assembly_transform = PhysicalVolumePlacement("temp", "temp", 0, position, rotation).get_transform_matrix()
-
-        # Get a starting copy number for this group of placements
-        start_copy_no = self._get_next_copy_number(parent_lv)
-
-        placed_pvs = []
-
-        for i, pv_in_assembly in enumerate(assembly.placements):
-            # Get the transformation of the part within the assembly
-            part_transform = pv_in_assembly.get_transform_matrix()
-
-            # Combine it with the overall assembly placement transform
-            # Final Transform = Assembly Placement Transform * Part's Local Transform
-            final_transform_matrix = assembly_transform @ part_transform
-            
-            # Decompose the final matrix back into position and rotation dicts
-            final_pos, final_rot_rad, _ = PhysicalVolumePlacement.decompose_matrix(final_transform_matrix)
-
-            # Create a new physical volume placement inside the parent LV
-            # We use a unique name for each imprinted part
-            unique_pv_name = f"{placement_name_suggestion}_{i}"
-            
-            new_pv = PhysicalVolumePlacement(
-                name=unique_pv_name,
-                volume_ref=pv_in_assembly.volume_ref,
-                copy_number=start_copy_no + i,
-                position_val_or_ref=final_pos,
-                rotation_val_or_ref=final_rot_rad
-            )
-            parent_lv.add_child(new_pv)
-            placed_pvs.append(new_pv.to_dict())
-
+            return None, "No project loaded"
+        
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.assemblies)
+        new_assembly = Assembly(name)
+        
+        # Convert placement dicts into PhysicalVolumePlacement objects
+        placements = [PhysicalVolumePlacement.from_dict(p_data) for p_data in placements_data]
+        new_assembly.placements = placements
+        
+        self.current_geometry_state.add_assembly(new_assembly)
         self.recalculate_geometry_state()
-        return placed_pvs, None
+        return new_assembly.to_dict(), None
 
-    def create_assembly_from_pvs(self, pv_ids, assembly_name_suggestion, parent_lv_name):
-        """
-        Groups existing PVs into a new assembly, removes them from their original parent,
-        and places the new assembly back into that parent.
-        """
+    def update_assembly(self, assembly_name, new_placements_data):
         if not self.current_geometry_state:
-            return None, "No project loaded."
+            return False, "No project loaded"
         
-        state = self.current_geometry_state
-        parent_lv = state.logical_volumes.get(parent_lv_name)
-        if not parent_lv or parent_lv.content_type != 'physvol':
-            return None, f"Parent volume '{parent_lv_name}' not found or is not a standard volume."
+        print(f"{len(self.current_geometry_state.assemblies)} assemblies")
+        for asm in self.current_geometry_state.assemblies:
+            print(f"We have {asm.name}")
+        target_assembly = self.current_geometry_state.assemblies.get(assembly_name)
+        if not target_assembly:
+            return False, f"Assembly '{assembly_name}' not found."
+            
+        # Convert dicts to objects
+        new_placements = [PhysicalVolumePlacement.from_dict(p_data) for p_data in new_placements_data]
+        target_assembly.placements = new_placements
 
-        # 1. Find and collect the PV objects to be moved
-        pvs_to_move = []
-        pvs_to_keep = []
-        pv_id_set = set(pv_ids)
-
-        for pv in parent_lv.content:
-            if pv.id in pv_id_set:
-                pvs_to_move.append(pv)
-            else:
-                pvs_to_keep.append(pv)
-
-        if len(pvs_to_move) != len(pv_id_set):
-            return None, "Some physical volumes to be assembled were not found in the specified parent."
-        
-        # 2. Create the new assembly
-        assembly_name = self._generate_unique_name(assembly_name_suggestion, state.assemblies)
-        new_assembly = Assembly(name=assembly_name)
-        
-        # 3. Move the PVs from the parent LV to the new assembly
-        new_assembly.placements = pvs_to_move
-        parent_lv.content = pvs_to_keep
-
-        # 4. Add the assembly to the project state
-        state.add_assembly(new_assembly)
-
-        # 5. Create a new physical volume to place the assembly back into the parent LV
-        assembly_pv_name = self._generate_unique_name(f"{assembly_name}_placement", 
-                                                      {pv.name for pv in parent_lv.content})
-        assembly_placement = PhysicalVolumePlacement(
-            name=assembly_pv_name,
-            volume_ref=assembly_name,
-            parent_lv_name=parent_lv_name,
-            position_val_or_ref={'x': '0', 'y': '0', 'z': '0'}, # Place at origin of parent
-            rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'}
-        )
-        parent_lv.add_child(assembly_placement)
-
-        # Set the parent for the moved PVs
-        for pv in new_assembly.placements:
-            pv.parent_lv_name = assembly_name
-
-        # 6. Recalculate and return
-        self.recalculate_geometry_state()
-        return assembly_placement.to_dict(), None
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
 
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"

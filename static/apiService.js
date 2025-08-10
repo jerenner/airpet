@@ -467,11 +467,32 @@ export async function importStepFile(stepFile) {
     return handleResponse(response);
 }
 
-export async function addAssemblyPlacement(parent_lv_name, assembly_name, placement_name, position, rotation) {
-    const response = await fetch(`${API_BASE_URL}/add_assembly_placement`, {
+/**
+ * Creates a new assembly definition.
+ * @param {string} name - The user-suggested name for the assembly.
+ * @param {Array} placements - An array of placement objects defining the assembly's content.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function addAssembly(name, placements) {
+    const response = await fetch(`${API_BASE_URL}/add_assembly`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent_lv_name, assembly_name, placement_name, position, rotation })
+        body: JSON.stringify({ name, placements })
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Updates an existing assembly definition.
+ * @param {string} id - The name of the assembly to update.
+ * @param {Array} placements - The new array of placement objects for the assembly.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function updateAssembly(id, placements) {
+    const response = await fetch(`${API_BASE_URL}/update_assembly`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, placements })
     });
     return handleResponse(response);
 }
@@ -532,35 +553,6 @@ export async function evaluateExpression(expression, projectState) {
         })
     });
     // This uses handleResponse, which will throw an error on non-OK responses
-    return handleResponse(response);
-}
-
-/**
- * Creates a new assembly from a list of existing physical volumes.
- * @param {string[]} pvIds - Array of UUIDs for the physical volumes to group.
- * @param {string} assemblyName - The desired name for the new assembly.
- * @param {string} parentLvName - The name of the LV where the new assembly will be placed.
- * @returns {Promise<Object>} A promise that resolves to the backend's response.
- */
-export async function createAssemblyFromPVs(pvIds, assemblyName, parentLvName) {
-    const response = await fetch(`${API_BASE_URL}/create_assembly_from_pvs`, { // New endpoint
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            pv_ids: pvIds,
-            assembly_name: assemblyName,
-            parent_lv_name: parentLvName
-        })
-    });
-    return handleResponse(response);
-}
-
-export async function movePvToAssembly(pvIds, targetAssemblyName) { // Changed to pvIds
-    const response = await fetch(`${API_BASE_URL}/move_pv_to_assembly`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pv_ids: pvIds, target_assembly_name: targetAssemblyName }) // Changed to pv_ids
-    });
     return handleResponse(response);
 }
 

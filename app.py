@@ -813,26 +813,27 @@ def import_step_route():
         traceback.print_exc()
         return jsonify({"error": "An unexpected error occurred on the server while importing the STEP file."}), 500
 
-@app.route('/add_assembly_placement', methods=['POST'])
-def add_assembly_placement_route():
+@app.route('/add_assembly', methods=['POST'])
+def add_assembly_route():
     data = request.get_json()
-    parent_lv_name = data.get('parent_lv_name')
-    assembly_name = data.get('assembly_name')
-    placement_name = data.get('placement_name')
-    position = data.get('position')
-    rotation = data.get('rotation')
-    
-    if not all([parent_lv_name, assembly_name]):
-        return jsonify({"success": False, "error": "Missing parent LV or assembly name."}), 400
-
-    new_pvs, error_msg = project_manager.add_assembly_placement(
-        parent_lv_name, assembly_name, placement_name, position, rotation
-    )
-    
-    if error_msg:
-        return jsonify({"success": False, "error": error_msg}), 500
+    name = data.get('name')
+    placements = data.get('placements', [])
+    new_asm, error_msg = project_manager.add_assembly(name, placements)
+    if new_asm:
+        return create_success_response("Assembly created.")
     else:
-        return create_success_response(f"Assembly '{assembly_name}' placed successfully.")
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/update_assembly', methods=['POST'])
+def update_assembly_route():
+    data = request.get_json()
+    asm_name = data.get('id')
+    placements = data.get('placements', [])
+    success, error_msg = project_manager.update_assembly(asm_name, placements)
+    if success:
+        return create_success_response(f"Assembly '{asm_name}' updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/create_group', methods=['POST'])
 def create_group_route():

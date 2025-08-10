@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 
 import * as APIService from './apiService.js';
+import * as AssemblyEditor from './assemblyEditor.js';
 import * as BorderSurfaceEditor from './borderSurfaceEditor.js';
 import * as DefineEditor from './defineEditor.js';
 import * as InteractionManager from './interactionManager.js';
@@ -79,8 +80,10 @@ async function initializeApp() {
         onAddPVClicked: handleAddPV,
         onEditPVClicked: handleEditPV,
         onGroupIntoAssemblyClicked: handleGroupIntoAssembly,
-        // Add assembly
+        // Add/edit assemblies
         onAddAssemblyClicked: handleAddAssembly,
+        onEditAssemblyClicked: handleEditAssembly,
+
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
         onDeleteSpecificItemClicked: handleDeleteSpecificItem,
@@ -140,6 +143,11 @@ async function initializeApp() {
     // Initialize logical volume editor
     LVEditor.initLVEditor({
         onConfirm: handleLVEditorConfirm
+    });
+
+    // Initialize the assembly editor
+    AssemblyEditor.initAssemblyEditor({
+        onConfirm: handleAssemblyEditorConfirm
     });
 
     // Initialize the materials editor
@@ -1256,37 +1264,32 @@ async function handleImportStep(file) {
     }
 }
 
-async function handleAddAssembly() {
-    const selectionContexts = getSelectionContext();
-    if (!selectionContexts || selectionContexts.length !== 1 || selectionContexts[0].type !== 'assembly') {
-        UIManager.showError("Please select a single Assembly to place.");
-        return;
-    }
-    const assemblyName = selectionContexts[0].name;
+// NEW Handlers for the Assembly Definition Editor
+function handleAddAssembly() {
+    AssemblyEditor.show(null, AppState.currentProjectState);
+}
 
-    let parentContext = UIManager.getSelectedParentContext();
-    if (!parentContext) {
-        parentContext = { name: AppState.currentProjectState.world_volume_ref };
-    }
-    const parentLVName = parentContext.name;
+function handleEditAssembly(assemblyData) {
+    AssemblyEditor.show(assemblyData, AppState.currentProjectState);
+}
 
-    const placementName = prompt(`Enter a base name for this placement of '${assemblyName}':`, `${assemblyName}_placement`);
-    if (!placementName) return;
-
-    UIManager.showLoading(`Placing assembly '${assemblyName}' into '${parentLVName}'...`);
-    try {
-        const result = await APIService.addAssemblyPlacement(
-            parentLVName,
-            assemblyName,
-            placementName,
-            { x: 0, y: 0, z: 0 }, // Default placement at origin
-            { x: 0, y: 0, z: 0 }
-        );
-        syncUIWithState(result, [{ type: 'logical_volume', id: parentLVName }]); // Reselect parent
-    } catch (error) {
-        UIManager.showError("Failed to place assembly: " + error.message);
-    } finally {
-        UIManager.hideLoading();
+async function handleAssemblyEditorConfirm(data) {
+    const selectionContext = getSelectionContext();
+    if (data.isEdit) {
+        UIManager.showLoading("Updating Assembly...");
+        try {
+            const result = await APIService.updateAssembly(data.id, data.placements);
+            syncUIWithState(result, selectionContext);
+        } catch (error) { UIManager.showError("Error updating assembly: " + error.message); }
+        finally { UIManager.hideLoading(); }
+    } else {
+        UIManager.showLoading("Creating Assembly...");
+        try {
+            const result = await APIService.addAssembly(data.name, data.placements);
+            const newSelection = [{ type: 'assembly', id: data.name, name: data.name }];
+            syncUIWithState(result, newSelection);
+        } catch (error) { UIManager.showError("Error creating assembly: " + error.message); }
+        finally { UIManager.hideLoading(); }
     }
 }
 
