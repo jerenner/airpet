@@ -75,6 +75,18 @@ class GDMLParser:
     def parse_gdml_string(self, gdml_content_string):
         self.aeval = create_configured_asteval()
         self.geometry_state = GeometryState()
+
+        # --- Pre-parse check for unsupported <!ENTITY> tags ---
+        if "<!ENTITY" in gdml_content_string:
+            raise ValueError("GDML files with external entity references (<!ENTITY ...>) are not supported. "
+                             "Please use a single, self-contained GDML file.")
+
+        try:
+            root = self._strip_namespace(gdml_content_string)
+        except ET.ParseError as e:
+            # This is a fallback, but the check above should catch the entity issue first.
+            raise Exception(f"Failed to parse GDML XML: {e}")
+        
         root = self._strip_namespace(gdml_content_string)
         self._parse_defines(root.find('define'))
         self._parse_materials(root.find('materials'))
@@ -756,13 +768,26 @@ class GDMLParser:
         name_expr = pv_el.get('name') # Name can be optional in physvol
         name = self._evaluate_name(name_expr) if name_expr else f"pv_default_{uuid.uuid4().hex[:6]}"
         
-        # We also need to evaluate the volumeref
-        vol_ref_expr = pv_el.find('volumeref').get('ref') if pv_el.find('volumeref') is not None else None
-        
-        if vol_ref_expr is None: return None
+        # --- Check for and ignore unsupported <file> tags ---
+        file_el = pv_el.find('file')
+        if file_el is not None:
+            file_name = file_el.get('name', 'unknown')
+            print(f"WARNING: GDML <file> tag found for '{file_name}'. "
+                  f"Modular file references are not supported. "
+                  f"This physical volume placement ('{name}') will be ignored.")
+            return None # Skip this physical volume
 
-        if vol_ref_expr:
-            volume_ref = self._evaluate_name(vol_ref_expr)
+        # Get the volumeref
+        volumeref_el = pv_el.find('volumeref')
+        if volumeref_el is None:
+            # This can happen if the only reference was a <file> tag we are ignoring
+            return None 
+        
+        # We also need to evaluate the volumeref
+        vol_ref_expr = volumeref_el.get('ref') if pv_el.find('volumeref') is not None else None
+        if vol_ref_expr is None: 
+            return None
+        volume_ref = self._evaluate_name(vol_ref_expr)
 
         copy_number_expr = pv_el.get('copynumber', '0')
         pos_val_or_ref, rot_val_or_ref, scale_val_or_ref = self._resolve_transform(pv_el)
