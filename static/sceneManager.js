@@ -553,7 +553,7 @@ export function findObjectByPvId(pvId) { // Renamed
     let foundObject = null;
     geometryGroup.traverse(child => {
         // We are now looking for the parent Group, not the mesh
-        if (child.isGroup && child.userData && child.userData.canonical_id === pvId) {
+        if (child.isGroup && child.userData && child.userData.id === pvId) {
             foundObject = child;
         }
     });
