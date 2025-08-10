@@ -63,18 +63,25 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         alert("Cannot open PV Editor without project state and a parent volume.");
         return;
     }
-    
-    
     currentProjectState = projectState;
+    
+    // Populate the placeable volumes dropdown with both LVs and Assemblies
     const allLVs = Object.keys(projectState.logical_volumes);
+    const allAssemblies = Object.keys(projectState.assemblies);
     const worldRef = projectState.world_volume_ref;
 
     // --- Populate Parent Dropdown ---
-    // Only LVs that can contain physvols are valid parents
     const parentCandidates = allLVs.filter(lvName => 
         projectState.logical_volumes[lvName]?.content_type === 'physvol'
     );
-    populateSelect(pvParentLVSelect, parentCandidates);
+    populateSelect(pvParentLVSelect, parentCandidates); // Use the simple populateSelect here
+
+    // We can place any LV (except the world) or any Assembly.
+    const placeableItems = {
+        "Logical Volumes": allLVs.filter(lvName => lvName !== worldRef),
+        "Assemblies": allAssemblies
+    };
+    populateSelectWithOptions(lvSelect, placeableItems); // Use the optgroup helper
 
     // --- Populate Defines ---
     const posDefines = Object.keys(projectState.defines).filter(k => projectState.defines[k].type === 'position');
@@ -99,13 +106,15 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         pvParentLVSelect.disabled = true;
 
         // Set and disable the placed LV dropdown
-        populateSelect(lvSelect, allLVs); // Populate with all LVs for context
+        //populateSelectWithOptions(lvSelect, placeableItems); // Populate with all LVs for context
         lvSelect.value = pvData.volume_ref;
         lvSelect.disabled = true;
 
         // Check LV type before setting up UI.
-        const placedLV = projectState.logical_volumes[pvData.volume_ref];
-        const isProcedural = placedLV && placedLV.content_type !== 'physvol';
+        const placedLV = projectState.logical_volumes[pvData.volume_ref] || projectState.assemblies[pvData.volume_ref];
+        const isProcedural = placedLV && placedLV.content_type && placedLV.content_type !== 'physvol';
+
+        // Desable all transform UIs for procedurals
         setupTransformUI('position', pvData.position, posDefineSelect, posDefines, { isDisabled: isProcedural });
         setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
         setupTransformUI('scale',    pvData.scale,    sclDefineSelect, sclDefines, { isDisabled: isProcedural });
@@ -119,17 +128,14 @@ export function show(pvData = null, projectState = null, parentContext = null) {
         titleElement.textContent = `Place New Volume`;
         nameInput.value = '';
         confirmButton.textContent = "Place Volume";
+
         pvParentLVSelect.disabled = false; // Parent LV is selectable
+        lvSelect.disabled = false;         // LV is selectable
 
-        // Populate the placeable LVs dropdown
-        const placeableLVs = allLVs.filter(lvName => lvName !== worldRef);
-        populateSelect(lvSelect, placeableLVs);
-        lvSelect.disabled = false;
-
-        // Pre-select the parent based on the context from where the dialog was opened
+        // Correctly check if the parentContext name exists in the list of valid parents.
         if (parentContext && parentCandidates.includes(parentContext.name)) {
             pvParentLVSelect.value = parentContext.name;
-        } else if (worldRef) {
+        } else if (worldRef && parentCandidates.includes(worldRef)) {
             pvParentLVSelect.value = worldRef; // Fallback to world
         }
 
@@ -169,6 +175,24 @@ function populateSelect(selectElement, optionsArray) {
         option.textContent = optionText;
         selectElement.appendChild(option);
     });
+}
+
+function populateSelectWithOptions(selectElement, optionsData) {
+    selectElement.innerHTML = '';
+    for (const groupLabel in optionsData) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = groupLabel;
+        const items = optionsData[groupLabel];
+        if (items.length > 0) {
+            items.forEach(itemText => {
+                const option = document.createElement('option');
+                option.value = itemText;
+                option.textContent = itemText;
+                optgroup.appendChild(option);
+            });
+        }
+        selectElement.appendChild(optgroup);
+    }
 }
 
 function populateDefineSelect(selectElement, definesArray) {

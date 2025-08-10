@@ -1008,11 +1008,16 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     const item = document.createElement('li');
 
     // --- DRAG LOGIC ---
-    const draggableTypes = ['physical_volume', 'solid', 'material', 'element', 'define', 
-                            'optical_surface', 'skin_surface', 'border_surface'];
+    // Define types that should be draggable in the Properties/Solids/Volumes tabs
+    const draggableInLists = [
+        'logical_volume', 'assembly', // Added for the Volumes tab
+        'solid', 'define', 'material', 'element', 'isotope',
+        'optical_surface', 'skin_surface', 'border_surface'
+    ];
 
-    // Make the item draggable if it's a type that can be moved or grouped
-    if (draggableTypes.includes(itemType)) {
+    // Only make the item draggable if its type is in our list.
+    // This automatically excludes 'physical_volume' from the Structure tab.
+    if (draggableInLists.includes(itemType)) {
         item.draggable = true; // Make the item draggable!
         
         // --- Add dragstart listener ---

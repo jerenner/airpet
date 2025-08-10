@@ -916,11 +916,18 @@ class ProjectManager:
     def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation, scale):
         if not self.current_geometry_state: return None, "No project loaded"
         
-        parent_lv = self.current_geometry_state.logical_volumes.get(parent_lv_name)
+        state = self.current_geometry_state
+
+        # Find the parent LV
+        parent_lv = state.logical_volumes.get(parent_lv_name)
         if not parent_lv:
             return None, f"Parent Logical Volume '{parent_lv_name}' not found."
-        if placed_lv_ref not in self.current_geometry_state.logical_volumes:
-            return None, f"Placed Logical Volume '{placed_lv_ref}' not found."
+        
+        # A placed reference can be either a Logical Volume OR an Assembly.
+        is_lv = placed_lv_ref in state.logical_volumes
+        is_assembly = placed_lv_ref in state.assemblies
+        if not is_lv and not is_assembly:
+            return None, f"Placed Volume or Assembly '{placed_lv_ref}' not found."
 
         # Generate a unique name for this PV *within its parent* (GDML PV names are not global)
         # For simplicity, we'll use a globally unique suggested name for now.

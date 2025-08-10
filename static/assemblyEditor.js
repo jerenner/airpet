@@ -59,9 +59,12 @@ function rebuildPlacementsUI() {
     placementsListDiv.innerHTML = '';
 
     // Create a combined list of placeable items: LVs and other Assemblies
+    const worldRef = currentProjectState.world_volume_ref;
     const availableVolumes = {
-        "Logical Volumes": Object.keys(currentProjectState.logical_volumes || {}),
-        "Assemblies": Object.keys(currentProjectState.assemblies || {}).filter(name => name !== editingAssemblyId) // Prevent self-nesting
+        "Logical Volumes": Object.keys(currentProjectState.logical_volumes || {})
+            .filter(name => name !== worldRef), // MODIFIED: Filter out the world volume
+        "Assemblies": Object.keys(currentProjectState.assemblies || {})
+            .filter(name => name !== editingAssemblyId)
     };
 
     if (assemblyPlacements.length === 0) {
