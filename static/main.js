@@ -1141,25 +1141,26 @@ async function handleIsotopeEditorConfirm(data) {
     }
 }
 
-function handlePVVisibilityToggle(pvId, isVisible, isRecursive = true) {
+function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
     // 1. Get the DOM element for the primary PV
     const pvElement = document.querySelector(`#structure_tree_root li[data-id="${pvId}"]`);
     if (!pvElement) return;
 
-    // 2. Find all descendant PV IDs if recursion is needed
-    let allIdsToToggle = [pvId];
-    if (isRecursive) {
-        const descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
-        allIdsToToggle = [...allIdsToToggle, ...descendantIds];
-    }
+    // 2. Toggle visibility for selected element
+    SceneManager.setPVVisibility(pvId, isVisible);
+
+    // 3. Find all descendant PV IDs
+    let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
     
-    // 3. Update the state and visuals for all affected PVs
-    allIdsToToggle.forEach(id => {
-        // Update the 3D scene
-        SceneManager.setPVVisibility(id, isVisible);
-        // Update the hierarchy UI (the eye icon and dimmed text)
-        UIManager.setTreeItemVisibility(id, isVisible);
-    });
+    // 4. If not recursive, we have to toggle back the visibility of descendants
+    if(!isRecursive && !isVisible) {
+        descendantIds.forEach(id => {
+            // Update the 3D scene
+            SceneManager.setPVVisibility(id, !isVisible);
+            // Update the hierarchy UI (the eye icon and dimmed text)
+            UIManager.setTreeItemVisibility(id, !isVisible);
+        });
+    }
 }
 
 function handleHideSelected() {

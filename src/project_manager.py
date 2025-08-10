@@ -247,16 +247,16 @@ class ProjectManager:
 
             elif solid_type == 'cone':
                 ep['rmin1'] = p.get('rmin1', 0)
-                ep['rmax1'] = p.get('rmax1', 0)
+                ep['rmax1'] = p.get('rmax1', 10)
                 ep['rmin2'] = p.get('rmin2', 0)
-                ep['rmax2'] = p.get('rmax2', 0)
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['rmax2'] = p.get('rmax2', 10)
+                ep['z']     = p.get('z', 0)
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
 
             elif solid_type == 'sphere':
                 ep['rmin'] = p.get('rmin', 0)
-                ep['rmax'] = p.get('rmax', 0)
+                ep['rmax'] = p.get('rmax', 10)
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi)
                 ep['starttheta'] = p.get('starttheta', 0)
@@ -270,9 +270,9 @@ class ProjectManager:
                 ep['dz'] = p.get('z', 0) / 2.0
 
             elif solid.type == 'para':
-                ep['dx'] = p.get('dx', 0) / 2.0
-                ep['dy'] = p.get('dy', 0) / 2.0
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['x'] = p.get('x', 0)
+                ep['y'] = p.get('y', 0)
+                ep['z'] = p.get('z', 0)
                 ep['alpha'] = p.get('alpha', 0)
                 ep['theta'] = p.get('theta', 0)
                 ep['phi'] = p.get('phi', 0)

@@ -232,7 +232,7 @@ class GDMLWriter:
             solid_el.set("rmax1", str(p['rmax1']))
             solid_el.set("rmin2", str(p['rmin2']))
             solid_el.set("rmax2", str(p['rmax2']))
-            solid_el.set("z", str(p['dz'] * 2.0))
+            solid_el.set("z", str(p['z']))
             solid_el.set("startphi", str(convert_from_internal_units(p['startphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
 
@@ -255,9 +255,9 @@ class GDMLWriter:
             solid_el.set("deltaphi", str(convert_from_internal_units(p['deltaphi'], DEFAULT_OUTPUT_AUNIT, "angle")))
 
         elif solid_obj.type == "para":
-            solid_el.set("x", str(p['dx'] * 2.0))
-            solid_el.set("y", str(p['dy'] * 2.0))
-            solid_el.set("z", str(p['dz'] * 2.0))
+            solid_el.set("x", str(p['x']))
+            solid_el.set("y", str(p['y']))
+            solid_el.set("z", str(p['z']))
             solid_el.set("alpha", str(convert_from_internal_units(p['alpha'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("theta", str(convert_from_internal_units(p['theta'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("phi", str(convert_from_internal_units(p['phi'], DEFAULT_OUTPUT_AUNIT, "angle")))

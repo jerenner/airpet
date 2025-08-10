@@ -8,9 +8,15 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
+import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+
+// We must extend the THREE.js objects with the BVH functionality.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 // --- Module-level variables ---
 let scene, camera, renderer, viewerContainer;
@@ -429,27 +435,25 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    //raycaster.setFromCamera(mouse, camera);
     
-    // 1. Create a list of only the visible objects to be considered for intersection.
-    const visibleObjects = geometryGroup.children.filter(child => child.visible);
+    // 1. Raycast against the *entire* geometry group, recursively. Do NOT pre-filter.
+    // We don't need firstHitOnly because we need to check visibility on all hits.
+    raycaster.firstHitOnly = false; 
+    const intersects = raycaster.intersectObject(geometryGroup, true);
 
-    // 2. Set the raycaster to only check for the first hit, for maximum speed.
-    raycaster.firstHitOnly = true;
-
-    // 3. Intersect ONLY the visible objects.
-    const intersects = raycaster.intersectObjects(visibleObjects, true); // `true` for recursive check if objects are groups
+    // 2. Find the first intersected object that is globally visible.
+    // Our isObjectGloballyVisible function correctly checks the entire chain up to the scene root.
+    const firstVisibleIntersect = intersects.find(intersect => isObjectGloballyVisible(intersect.object));
     
-    if (intersects.length > 0) {
-        // We found an intersection with a visible object.
-        // The rest of the logic remains the same.
-        const firstIntersected = findActualMesh(intersects[0].object);
-        
+    // 3. Process the result
+    if (firstVisibleIntersect) {
+        // We found a valid, visible object.
+        const firstIntersectedGroup = findActualMesh(firstVisibleIntersect.object);
         if (onObjectSelectedCallback) {
-            onObjectSelectedCallback(firstIntersected, event.ctrlKey, event.shiftKey);
+            onObjectSelectedCallback(firstIntersectedGroup, event.ctrlKey, event.shiftKey);
         }
     } else {
-        // The user clicked on empty space. Deselect all IF ctrl is not held.
+        // The user clicked on empty space or only on hidden objects.
         if (!event.ctrlKey && onObjectSelectedCallback) {
             onObjectSelectedCallback(null, false, false);
         }
@@ -605,7 +609,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     // Define the required numeric parameters for each solid type
     if (solidType === 'box') requiredParams = ['x', 'y', 'z'];
     else if (solidType === 'tube') requiredParams = ['rmin', 'rmax', 'z', 'startphi', 'deltaphi'];
-    else if (solidType === 'cone') requiredParams = ['rmin1', 'rmax1', 'rmin2', 'rmax2', 'dz', 'startphi', 'deltaphi'];
+    else if (solidType === 'cone') requiredParams = ['rmin1', 'rmax1', 'rmin2', 'rmax2', 'z', 'startphi', 'deltaphi'];
     else if (solidType === 'sphere') requiredParams = ['rmin', 'rmax', 'startphi', 'deltaphi', 'starttheta', 'deltatheta'];
     else if (solidType === 'orb') requiredParams = ['r'];
     else if (solidType === 'torus') requiredParams = ['rmin', 'rmax', 'rtor', 'startphi', 'deltaphi'];
@@ -643,8 +647,58 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             }
             break;
         case 'cone':
-             geometry = new THREE.CylinderGeometry(p.rmax2, p.rmax1, p.dz*2, 32, 1, false, p.startphi, p.deltaphi);
-             geometry.rotateX(Math.PI / 2); // Also align to Z-axis
+            {
+                console.log("drawing with ",p)
+                // Create the outer cone shape
+                const outerConeGeom = new THREE.CylinderGeometry(
+                    p.rmax2,           // radiusTop
+                    p.rmax1,           // radiusBottom
+                    p.z,               // height
+                    50,                // radialSegments (increased for smoothness)
+                    1,                 // heightSegments
+                    false,             // openEnded
+                    p.startphi,
+                    p.deltaphi
+                );
+                
+                // If there's no inner radius, we are done.
+                if (p.rmin1 <= 1e-9 && p.rmin2 <= 1e-9) {
+                    geometry = outerConeGeom;
+                } else {
+                    // There is an inner radius, so we must perform a CSG subtraction.
+                    
+                    // Create the inner cone shape to subtract
+                    const innerConeGeom = new THREE.CylinderGeometry(
+                        p.rmin2,       // radiusTop
+                        p.rmin1,       // radiusBottom
+                        p.z     + 0.1, // height (make it slightly taller to ensure a clean cut)
+                        50,            // radialSegments
+                        1,
+                        false,
+                        p.startphi,
+                        p.deltaphi
+                    );
+
+                    // Ensure both geometries have a BVH for the CSG operation
+                    if (!outerConeGeom.boundsTree) {
+                        outerConeGeom.computeBoundsTree();
+                    }
+                    if (!innerConeGeom.boundsTree) {
+                        innerConeGeom.computeBoundsTree();
+                    }
+
+                    const outerBrush = new Brush(outerConeGeom);
+                    const innerBrush = new Brush(innerConeGeom);
+
+                    // Perform the subtraction
+                    const resultBrush = csgEvaluator.evaluate(outerBrush, innerBrush, SUBTRACTION);
+                    geometry = resultBrush.geometry;
+                }
+                
+                // All G4Cons are aligned with the Z-axis. THREE.CylinderGeometry is aligned with Y.
+                // We must rotate it into the correct orientation.
+                geometry.rotateX(Math.PI / 2);
+            }
             break;
         case 'sphere':
             geometry = new THREE.SphereGeometry(p.rmax, 32, 16, p.startphi, p.deltaphi, p.starttheta, p.deltatheta);
@@ -1014,54 +1068,18 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'para': // Parallelepiped
             {
-                // A G4Para is a sheared box. We create a box and apply a shear matrix.
-                geometry = new THREE.BoxGeometry(p.dx * 2, p.dy * 2, p.dz * 2);
-                const alpha = p.alpha;
-                const theta = p.theta;
-                const phi = p.phi;
+                // p.x, p.y, p.z from the evaluator are the FULL lengths from GDML.
+                // The vertex formula requires HALF-lengths.
+                const dx = p.x / 2.0;
+                const dy = p.y / 2.0;
+                const dz = p.z / 2.0;
 
-                const st = Math.sin(theta);
-                const ct = Math.cos(theta);
-                const sp = Math.sin(phi);
-                const cp = Math.cos(phi);
-                const sa = Math.sin(alpha);
-                const ca = Math.cos(alpha);
-
-                const matrix = new THREE.Matrix4();
-                matrix.set(
-                    1,  st*cp,      st*sp,      0,
-                    0,  ct,         -st,        0,
-                    0,  ca*st*sp,   ca*ct,      0,
-                    0,  0,          0,          1
-                );
-                // The above matrix is based on G4Para implementation, but GDML shearing
-                // is often simpler. Let's use a simpler shear matrix for now.
-                // It can be adjusted if precise G4Para shearing is needed.
-                const shearMatrix = new THREE.Matrix4().makeShear(
-                    Math.tan(alpha) * Math.cos(theta) * Math.cos(phi), // xy
-                    Math.tan(alpha) * Math.cos(theta) * Math.sin(phi), // xz
-                    0, // yx
-                    0, // yz
-                    0, // zx
-                    0  // zy
-                );
-                // Note: THREE.Matrix4.makeShear is not standard.
-                // We will manually create the shear matrix.
-                const manualShearMatrix = new THREE.Matrix4().set(
-                    1, Math.tan(p.alpha), 0, 0,
-                    0, 1, 0, 0,
-                    0, 0, 1, 0,
-                    0, 0, 0, 1
-                );
-                // A full G4Para matrix is more complex, involving theta and phi as well.
-                // For a basic visual representation, a simple shear might suffice initially.
-                // Let's create from vertices for accuracy.
-                const dx = p.dx; const dy = p.dy; const dz = p.dz;
                 const t_alpha = Math.tan(p.alpha);
                 const t_theta_cp = Math.tan(p.theta) * Math.cos(p.phi);
                 const t_theta_sp = Math.tan(p.theta) * Math.sin(p.phi);
 
                 const vertices = [
+                    // This vertex calculation formula is based on half-lengths and is correct.
                     -dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz, // 0
                      dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz, // 1
                      dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz, // 2
@@ -1071,6 +1089,8 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                      dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz, // 6
                     -dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz  // 7
                 ];
+                
+                // The indices for the faces are correct.
                 const indices = [
                     0, 1, 2,  0, 2, 3, // bottom
                     4, 6, 5,  4, 7, 6, // top
@@ -1081,7 +1101,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 ];
 
                 geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
             }
@@ -1641,51 +1661,60 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             return null;
         }
 
-        // Get the base solid's geometry
-        const baseGeom = _getOrBuildGeometry(recipe[0].solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
-        if (!baseGeom) {
-             console.error(`Could not build base solid '${recipe[0].solid_ref}' for boolean '${solidName}'.`);
-             return null;
-        }
-        let resultBrush = new Brush(baseGeom);
+        try {
+            // Get the base solid's geometry
+            const baseGeom = _getOrBuildGeometry(recipe[0].solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+            if (!baseGeom) {
+                console.error(`Could not build base solid '${recipe[0].solid_ref}' for boolean '${solidName}'.`);
+                return null;
+            }
 
-        const baseTransform = recipe[0].transform;
-        if (baseTransform) {
-            // Base transform needs to use evaluated values if they exist
-            const pos = baseTransform._evaluated_position || {x:0, y:0, z:0};
-            const rot = baseTransform._evaluated_rotation || {x:0, y:0, z:0};
-            resultBrush.position.set(pos.x, pos.y, pos.z);
-            resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
-            resultBrush.updateMatrixWorld();
-        }
+            let resultBrush = new Brush(baseGeom);
+            const baseTransform = recipe[0].transform;
+            if (baseTransform) {
+                // Base transform needs to use evaluated values if they exist
+                const pos = baseTransform._evaluated_position || {x:0, y:0, z:0};
+                const rot = baseTransform._evaluated_rotation || {x:0, y:0, z:0};
+                resultBrush.position.set(pos.x, pos.y, pos.z);
+                resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+                resultBrush.updateMatrixWorld();
+            }
 
-        // Iteratively apply the subsequent operations
-        for (let i = 1; i < recipe.length; i++) {
-            const item = recipe[i];
-            const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
-            if (!nextSolidGeom) continue;
+            // Iteratively apply the subsequent operations
+            for (let i = 1; i < recipe.length; i++) {
+                const item = recipe[i];
+                const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
+                if (!nextSolidGeom) continue;
+                
+                const nextBrush = new Brush(nextSolidGeom);
+                const transform = item.transform || {};
+                
+                // Use evaluated values for CSG operations
+                const pos = transform._evaluated_position || {x:0, y:0, z:0};
+                const rot = transform._evaluated_rotation || {x:0, y:0, z:0};
+                nextBrush.position.set(pos.x, pos.y, pos.z);
+                nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+                nextBrush.updateMatrixWorld();
+
+                const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
+                resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
+            }
             
-            const nextBrush = new Brush(nextSolidGeom);
-            const transform = item.transform || {};
+            finalGeometry = resultBrush.geometry;
             
-            // Use evaluated values for CSG operations
-            const pos = transform._evaluated_position || {x:0, y:0, z:0};
-            const rot = transform._evaluated_rotation || {x:0, y:0, z:0};
-
-            nextBrush.position.set(pos.x, pos.y, pos.z);
-            nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
-            nextBrush.updateMatrixWorld();
-
-            const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
-            resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
+            // After a CSG operation, the geometry's bounding box/sphere is often incorrect.
+            // Re-computing it ensures the camera and renderer behave as expected.
+            finalGeometry.computeBoundingSphere();
+            finalGeometry.computeBoundingBox();
+        } catch(e) {
+            // --- CATCH BLOCK ---
+            console.error(`CSG evaluation failed for boolean solid '${solidName}'. The operation will be skipped and a placeholder shown. Error:`, e);
+            
+            // Create a box as a visual error indicator.
+            finalGeometry = new THREE.BoxGeometry(100, 100, 100); 
+            // We can also add a property to the geometry's userData to indicate it's an error placeholder
+            finalGeometry.userData.isErrorPlaceholder = true; 
         }
-        
-        finalGeometry = resultBrush.geometry;
-        
-        // After a CSG operation, the geometry's bounding box/sphere is often incorrect.
-        // Re-computing it ensures the camera and renderer behave as expected.
-        finalGeometry.computeBoundingSphere();
-        finalGeometry.computeBoundingBox();
 
     } else {
         finalGeometry = createPrimitiveGeometry(solidData, projectState, csgEvaluator);

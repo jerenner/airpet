@@ -554,7 +554,7 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_rmax1', 'Outer Radius 1 (mm)', p('rmax1', '50'), currentProjectState),
                 ExpressionInput.create('p_rmin2', 'Inner Radius 2 (mm)', p('rmin2', '0'), currentProjectState),
                 ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Full Length Z (mm)', p('dz', '200'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
                 ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
                 ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
             ],
@@ -584,9 +584,9 @@ function renderParamsUI(params = {}) {
                 ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'), currentProjectState)
             ],
             para: () => [
-                ExpressionInput.create('p_dx', 'X Half-Length (mm)', p('dx', '50'), currentProjectState),
-                ExpressionInput.create('p_dy', 'Y Half-Length (mm)', p('dy', '60'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '70'), currentProjectState),
+                ExpressionInput.create('p_x', 'X Full-Length (mm)', p('x', '50'), currentProjectState),
+                ExpressionInput.create('p_y', 'Y Full-Length (mm)', p('y', '60'), currentProjectState),
+                ExpressionInput.create('p_z', 'Z Full-Length (mm)', p('z', '70'), currentProjectState),
                 ExpressionInput.create('p_alpha', 'Alpha (rad)', p('alpha', 'pi/12'), currentProjectState),
                 ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12'), currentProjectState),
                 ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'), currentProjectState)
@@ -1113,7 +1113,7 @@ function getRawParamsFromUI() {
     } else if (type === 'cone') {
         raw_params.rmin1 = p('p_rmin1'); raw_params.rmax1 = p('p_rmax1');
         raw_params.rmin2 = p('p_rmin2'); raw_params.rmax2 = p('p_rmax2');
-        raw_params.dz = p('p_dz');
+        raw_params.z = p('p_z');
         raw_params.startphi = p('p_startphi');
         raw_params.deltaphi = p('p_deltaphi');
     } else if (type === 'sphere') {
@@ -1133,7 +1133,7 @@ function getRawParamsFromUI() {
         raw_params.dy1 = p('p_dy1'); raw_params.dy2 = p('p_dy2');
         raw_params.dz = p('p_dz');
     } else if (type === 'para') {
-        raw_params.dx = p('p_dx'); raw_params.dy = p('p_dy'); raw_params.dz = p('p_dz');
+        raw_params.x = p('p_x'); raw_params.y = p('p_y'); raw_params.z = p('p_z');
         raw_params.alpha = p('p_alpha'); raw_params.theta = p('p_theta');
         raw_params.phi = p('p_phi');
     } else if (type === 'hype') {

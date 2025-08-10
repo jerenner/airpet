@@ -1192,7 +1192,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             // Call the main handler from main.js.
             // The third argument (isRecursive) is true by default if not provided.
             // If the user holds Alt, we can do a non-recursive toggle.
-            const isRecursiveToggle = !event.altKey;
+            const isRecursiveToggle = event.altKey;
             callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible, isRecursiveToggle);
         });
 

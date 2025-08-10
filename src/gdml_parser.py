@@ -32,6 +32,11 @@ class GDMLParser:
         """
         if not isinstance(name_expr, str):
             return name_expr
+        
+        # If the name expression exactly matches a known define, DO NOT evaluate it.
+        # This preserves references like "P" or "V".
+        if name_expr in self.geometry_state.defines:
+            return name_expr
 
         # Find all substrings that look like variables/expressions inside brackets or on their own
         parts = re.split(r'(\[.*?\])', name_expr)
@@ -168,7 +173,7 @@ class GDMLParser:
             category = None
 
             if tag == 'constant' or tag == 'quantity' or tag == 'variable':
-                raw_expression = element.get('value')
+                raw_expression = element.get('value').strip()
                 unit = element.get('unit')
                 if tag == 'variable':
                     category = "loop_variable"
@@ -186,9 +191,9 @@ class GDMLParser:
                 default_val = '1' if tag == 'scale' else '0'
                 # Explicitly get each attribute with a default value
                 raw_expression = {
-                    'x': element.get('x', default_val),
-                    'y': element.get('y', default_val),
-                    'z': element.get('z', default_val)
+                    'x': element.get('x', default_val).strip(),
+                    'y': element.get('y', default_val).strip(),
+                    'z': element.get('z', default_val).strip()
                 }
                 unit = element.get('unit')
                 if tag == 'rotation': category = 'angle'
@@ -197,7 +202,7 @@ class GDMLParser:
             elif tag == 'matrix':
                 coldim_str = element.get('coldim', '1')
                 # Split values by whitespace and filter out empty strings
-                values_list = element.get('values', '').split()
+                values_list = element.get('values', '').strip().split()
                 
                 raw_expression = {
                     "coldim": coldim_str,
@@ -331,7 +336,7 @@ class GDMLParser:
         scale_ref_el = parent_element.find('scaleref')
 
         if pos_ref_el is not None:
-            pos_val_or_ref = pos_ref_el.get('ref')
+            pos_val_or_ref = self._evaluate_name(pos_ref_el.get('ref'))
             print(pos_val_or_ref)
         elif pos_el is not None:
             # Inline position: read attributes and apply unit
@@ -340,31 +345,31 @@ class GDMLParser:
             # For saving the raw_expression, we want to keep the unit info.
             # Let's create an expression string that includes the unit for evaluation.
             pos_val_or_ref = {
-                'x': str(self.aeval.eval(f"({pos_el.get('x', '0')}) * {unit_str}")),
-                'y': str(self.aeval.eval(f"({pos_el.get('y', '0')}) * {unit_str}")),
-                'z': str(self.aeval.eval(f"({pos_el.get('z', '0')}) * {unit_str}")),
+                'x': str(self.aeval.eval(f"({pos_el.get('x', '0').strip()}) * {unit_str}")),
+                'y': str(self.aeval.eval(f"({pos_el.get('y', '0').strip()}) * {unit_str}")),
+                'z': str(self.aeval.eval(f"({pos_el.get('z', '0').strip()}) * {unit_str}")),
             }
         
         if rot_ref_el is not None:
-            rot_val_or_ref = rot_ref_el.get('ref')
+            rot_val_or_ref = self._evaluate_name(rot_ref_el.get('ref'))
         elif rot_el is not None:
             # Inline rotation: read attributes and apply unit
             unit_str = rot_el.get('unit', DEFAULT_OUTPUT_AUNIT) # Default to 'rad'
 
             rot_val_or_ref = {
-                'x': str(self.aeval.eval(f"({rot_el.get('x', '0')}) * {unit_str}")),
-                'y': str(self.aeval.eval(f"({rot_el.get('y', '0')}) * {unit_str}")),
-                'z': str(self.aeval.eval(f"({rot_el.get('z', '0')}) * {unit_str}")),
+                'x': str(self.aeval.eval(f"({rot_el.get('x', '0').strip()}) * {unit_str}")),
+                'y': str(self.aeval.eval(f"({rot_el.get('y', '0').strip()}) * {unit_str}")),
+                'z': str(self.aeval.eval(f"({rot_el.get('z', '0').strip()}) * {unit_str}")),
             }
 
         # --- Handle Scale (Scale is unitless) ---
         if scale_ref_el is not None:
-            scale_val_or_ref = scale_ref_el.get('ref')
+            scale_val_or_ref = self._evaluate_name(scale_ref_el.get('ref'))
         elif scale_el is not None:
             scale_val_or_ref = {
-                'x': str(self.aeval.eval(scale_el.get('x', '1'))),
-                'y': str(self.aeval.eval(scale_el.get('y', '1'))),
-                'z': str(self.aeval.eval(scale_el.get('z', '1'))),
+                'x': str(self.aeval.eval(scale_el.get('x', '1').strip())),
+                'y': str(self.aeval.eval(scale_el.get('y', '1').strip())),
+                'z': str(self.aeval.eval(scale_el.get('z', '1').strip())),
             }
             
         return pos_val_or_ref, rot_val_or_ref, scale_val_or_ref
@@ -625,6 +630,7 @@ class GDMLParser:
                     'transform_first': {'position': first_pos, 'rotation': first_rot}
                 }
             
+            print(f"Solid {solid_type} with {params}")
             temp_solids[name] = Solid(name, solid_type, params)
         
         self._process_children(solids_element, solid_handler)
