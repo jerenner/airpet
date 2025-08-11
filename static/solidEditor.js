@@ -76,7 +76,7 @@ export function initSolidEditor(cb) {
     transformControls.addEventListener('objectChange', () => {
         // When the gizmo moves the object, update the UI and the preview
         if (transformControls.object) {
-            updateTransformUIFromGizmo();
+            //updateTransformUIFromGizmo();
             updatePreview();
         }
     });
@@ -194,7 +194,7 @@ export function show(solidData = null, projectState = null) {
         }
         
         // Populate parameters after the UI is rendered
-        renderParamsUI(solidData.raw_parameters);
+        renderParamsUI(solidData);
 
     } else {
         // --- CREATE MODE ---
@@ -335,9 +335,27 @@ function attachLiveEvaluation(inputId, resultId) {
     evaluate(); // Trigger initial evaluation
 }
 
-function renderParamsUI(params = {}) {
+function renderParamsUI(solidData = {}) {
+    const params = solidData.raw_parameters || {};
+
     dynamicParamsDiv.innerHTML = '';
-    const type = typeSelect.value;
+    const type = typeSelect.value || solidData.type;
+    console.log("Type is",type)
+    console.log("Params are",params)
+    
+    // Handle types that are currently read-only in the editor
+    const nonEditableTypes = ['tessellated', 'xtru'];
+    if (nonEditableTypes.includes(type)) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        dynamicParamsDiv.innerHTML = `<p style="padding: 10px; font-style: italic; color: #555;">
+            Direct editing of <strong>${type}</strong> solid parameters is not yet supported. 
+            </p>`;
+        // We still call updatePreview to render the existing solid
+        updatePreview();
+        return; // Stop further UI creation for this type
+    }
+
+    // Supported types
     const isBoolean = type === 'boolean';
     const isScaled = type === 'scaledSolid';
     const isReflected = type === 'reflectedSolid';
@@ -897,9 +915,9 @@ function buildSingleTransformUI(index, type, label, defines, transformData) {
             disabledInput.className = 'expression-result'; // Style like a result box
             let val = displayValues[axis] || 0;
             // Convert radians to degrees for rotation display
-            if (type === 'rotation') {
-                val = THREE.MathUtils.radToDeg(val);
-            }
+            // if (type === 'rotation') {
+            //     val = THREE.MathUtils.radToDeg(val);
+            // }
             disabledInput.value = val.toPrecision(4);
             item.appendChild(disabledInput);
         }
@@ -972,7 +990,7 @@ function rebuildBooleanUI() {
             const rotDefines = currentProjectState.defines ? Object.keys(currentProjectState.defines).filter(k => currentProjectState.defines[k].type === 'rotation') : [];
             
             const posEditor = buildSingleTransformUI(index, 'position', 'Position (mm)', posDefines, item.transform.position);
-            const rotEditor = buildSingleTransformUI(index, 'rotation', 'Rotation (deg)', rotDefines, item.transform.rotation);
+            const rotEditor = buildSingleTransformUI(index, 'rotation', 'Rotation (rad)', rotDefines, item.transform.rotation);
 
             transformWrapper.appendChild(posEditor);
             transformWrapper.appendChild(rotEditor);
@@ -1242,12 +1260,50 @@ async function updatePreview() {
     // Reset the current mesh handle
     currentSolidMesh = null;
 
-    const type = typeSelect.value;
+    // If it's an unsupported solid but we're in editing mode, get the type from the project state.
+    const type = typeSelect.value || currentProjectState.solids[editingSolidId].type;
     const isBoolean = type === 'boolean';
     let geometry = null;
     const csgEvaluator = new Evaluator();
 
+    // --- Get parameters differently for editable vs. non-editable types ---
+    let solidDataForPreview;
+
+    if (isEditMode && ['tessellated', 'xtru'].includes(type)) {
+        // In edit mode for a non-editable type, use the original solid's data directly.
+        solidDataForPreview = {
+            name: editingSolidId,
+            type: type,
+            // We need the *evaluated* parameters for rendering.
+            _evaluated_parameters: currentProjectState.solids[editingSolidId]._evaluated_parameters
+        };
+    } else {
+        // For all other cases (create mode, or editable types), build the data from the UI.
+        const rawParams = getRawParamsFromUI();
+        // This part requires an API call to evaluate the expressions from the UI.
+        const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {
+            // Skip non-evaluatable properties
+            if (['recipe', 'facets', 'zplanes', 'rzpoints', 'solid_ref', 'transform'].includes(key)) {
+                return [key, expr];
+            }
+            const response = await APIService.evaluateExpression(String(expr), currentProjectState);
+            return [key, response.success ? response.result : 0];
+        });
+        const evaluatedEntries = await Promise.all(evalPromises);
+        
+        solidDataForPreview = {
+            name: 'preview',
+            type: type,
+            raw_parameters: rawParams, // Needed for boolean builder
+            _evaluated_parameters: Object.fromEntries(evaluatedEntries)
+        };
+    }
+
     if (isBoolean) {
+
+        // Get the pre-fetched recipe
+        //const recipe = solidDataForPreview.raw_parameters.recipe;
+
         if (booleanRecipe.length === 0 || !booleanRecipe[0].solid) return;
         
         // ## NEW HELPER FUNCTION to resolve defines before evaluation ##
@@ -1278,7 +1334,7 @@ async function updatePreview() {
                     
                     const transform = item.transform || {};
                     
-                    // ## FIX: Use the new helper to get the actual expressions ##
+                    // ## Use the new helper to get the actual expressions ##
                     const pos_expr_dict = getExpressionsForTransform(transform.position);
                     const rot_expr_dict = getExpressionsForTransform(transform.rotation);
                     
@@ -1440,24 +1496,7 @@ async function updatePreview() {
         }
 
     } else { // It's a primitive
-        const rawParams = getRawParamsFromUI();
-        const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {
-            const response = await APIService.evaluateExpression(expr, currentProjectState);
-            return [key, response.success ? response.result : 0];
-        });
-        const evaluatedEntries = await Promise.all(evalPromises);
-        const tempSolidData = {
-            name: 'preview',
-            type: type,
-            _evaluated_parameters: Object.fromEntries(evaluatedEntries)
-        };
-        
-        // Normalize values (half-lengths) for Three.js
-        //const p = tempSolidData._evaluated_parameters;
-        //if (p.dz !== undefined) p.dz /= 2.0;
-        //tempSolidData._evaluated_parameters = p;
-        
-        geometry = createPrimitiveGeometry(tempSolidData, currentProjectState, csgEvaluator);
+        geometry = createPrimitiveGeometry(solidDataForPreview, currentProjectState, csgEvaluator);
     }
     
     if (geometry) {
