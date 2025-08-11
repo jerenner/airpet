@@ -344,7 +344,7 @@ class GDMLWriter:
             solid_el.set("rmax", str(p['rmax']))
             solid_el.set("inst", str(convert_from_internal_units(p['inst'], DEFAULT_OUTPUT_AUNIT, "angle")))
             solid_el.set("outst", str(convert_from_internal_units(p['outst'], DEFAULT_OUTPUT_AUNIT, "angle")))
-            solid_el.set("dz", str(p['dz'] * 2.0)) # dz was stored as half-length
+            solid_el.set("z", str(p['z'])) # dz was stored as half-length
         
         elif solid_obj.type == 'paraboloid':
             solid_el.set("rlo", str(p['rlo']))

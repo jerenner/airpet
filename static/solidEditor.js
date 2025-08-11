@@ -360,7 +360,8 @@ function renderParamsUI(solidData = {}) {
     const isScaled = type === 'scaledSolid';
     const isReflected = type === 'reflectedSolid';
     const isGenericPolycone = type === 'genericPolycone';
-    const isPolyhedra = type === 'polyhedra'; 
+    const isPolyhedra = type === 'polyhedra';
+    const isPolycone = type === 'polycone';
     const isGenericPolyhedra = type === 'genericPolyhedra';
     const isTet = type === 'tet';
     const isArb8 = type === 'arb8';
@@ -465,6 +466,25 @@ function renderParamsUI(solidData = {}) {
         
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
+    } else if (isPolycone) {
+        document.getElementById('solid-ingredients-panel').style.display = 'none';
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
+        
+        const zplaneHtml = `
+            <hr>
+            <h6>Z-Planes (at least 2 required)</h6>
+            <div id="zplanes-list"></div>
+            <button id="add-zplane-btn-polycone" class="add_button" style="margin-top: 10px;">+ Add Z-Plane</button>
+        `;
+        const zplaneContainer = document.createElement('div');
+        zplaneContainer.innerHTML = zplaneHtml;
+        dynamicParamsDiv.appendChild(zplaneContainer);
+        
+        zPlanesState = params.zplanes ? JSON.parse(JSON.stringify(params.zplanes)) : [];
+        rebuildZPlanesUI();
+        document.getElementById('add-zplane-btn-polycone').addEventListener('click', addZPlane);
+        dynamicParamsDiv.addEventListener('change', updatePreview);
     } else if (isGenericPolycone || isGenericPolyhedra) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
 
@@ -587,6 +607,13 @@ function renderParamsUI(solidData = {}) {
             orb: () => [
                 ExpressionInput.create('p_r', 'Radius (mm)', p('r', '100'), currentProjectState)
             ],
+            ellipsoid: () => [
+                ExpressionInput.create('p_ax', 'Semi-Axis X (mm)', p('ax', '50'), currentProjectState),
+                ExpressionInput.create('p_by', 'Semi-Axis Y (mm)', p('by', '75'), currentProjectState),
+                ExpressionInput.create('p_cz', 'Semi-Axis Z (mm)', p('cz', '100'), currentProjectState),
+                ExpressionInput.create('p_zcut1', 'Bottom Z Cut (mm)', p('zcut1', '-100'), currentProjectState),
+                ExpressionInput.create('p_zcut2', 'Top Z Cut (mm)', p('zcut2', '100'), currentProjectState),
+            ],
             torus: () => [
                 ExpressionInput.create('p_rmin', 'Min Radius (mm)', p('rmin', '20'), currentProjectState),
                 ExpressionInput.create('p_rmax', 'Max Radius (mm)', p('rmax', '30'), currentProjectState),
@@ -601,6 +628,21 @@ function renderParamsUI(solidData = {}) {
                 ExpressionInput.create('p_dy2', 'Y Half-Length 2 (mm)', p('dy2', '75'), currentProjectState),
                 ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'), currentProjectState)
             ],
+            trap: () => [
+                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '100'), currentProjectState),
+                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', '0'), currentProjectState),
+                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', '0'), currentProjectState),
+                document.createElement('hr'),
+                ExpressionInput.create('p_dy1', 'Y Half-Length at -z (mm)', p('dy1', '50'), currentProjectState),
+                ExpressionInput.create('p_dx1', 'X Half-Length 1 at -z (mm)', p('dx1', '50'), currentProjectState),
+                ExpressionInput.create('p_dx2', 'X Half-Length 2 at -z (mm)', p('dx2', '50'), currentProjectState),
+                ExpressionInput.create('p_alpha1', 'Alpha 1 at -z (rad)', p('alpha1', '0'), currentProjectState),
+                document.createElement('hr'),
+                ExpressionInput.create('p_dy2', 'Y Half-Length at +z (mm)', p('dy2', '50'), currentProjectState),
+                ExpressionInput.create('p_dx3', 'X Half-Length 1 at +z (mm)', p('dx3', '50'), currentProjectState),
+                ExpressionInput.create('p_dx4', 'X Half-Length 2 at +z (mm)', p('dx4', '50'), currentProjectState),
+                ExpressionInput.create('p_alpha2', 'Alpha 2 at +z (rad)', p('alpha2', '0'), currentProjectState),
+            ],
             para: () => [
                 ExpressionInput.create('p_x', 'X Full-Length (mm)', p('x', '50'), currentProjectState),
                 ExpressionInput.create('p_y', 'Y Full-Length (mm)', p('y', '60'), currentProjectState),
@@ -614,7 +656,7 @@ function renderParamsUI(solidData = {}) {
                 ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
                 ExpressionInput.create('p_inst', 'Inner Stereo Angle (rad)', p('inst', 'pi/12'), currentProjectState),
                 ExpressionInput.create('p_outst', 'Outer Stereo Angle (rad)', p('outst', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '200'), currentProjectState)
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState)
             ],
             paraboloid: () => [
                 ExpressionInput.create('p_rlo', 'Radius at -dz (mm)', p('rlo', '50'), currentProjectState),
@@ -1142,6 +1184,9 @@ function getRawParamsFromUI() {
         raw_params.deltatheta = p('p_deltatheta');
     } else if (type === 'orb') {
         raw_params.r = p('p_r');
+    } else if (type === 'ellipsoid') {
+        raw_params.ax = p('p_ax'); raw_params.by = p('p_by'); raw_params.cz = p('p_cz');
+        raw_params.zcut1 = p('p_zcut1'); raw_params.zcut2 = p('p_zcut2');
     } else if (type === 'torus') {
         raw_params.rmin = p('p_rmin'); raw_params.rmax = p('p_rmax'); raw_params.rtor = p('p_rtor');
         raw_params.startphi = p('p_startphi');
@@ -1159,7 +1204,7 @@ function getRawParamsFromUI() {
         raw_params.rmax = p('p_rmax');
         raw_params.inst = p('p_inst');
         raw_params.outst = p('p_outst');
-        raw_params.dz = p('p_dz');
+        raw_params.z = p('p_z');
     } else if (type === 'paraboloid') {
         raw_params.rlo = p('p_rlo');
         raw_params.rhi = p('p_rhi');
@@ -1236,6 +1281,16 @@ function getRawParamsFromUI() {
         raw_params.highX = p('p_highX');
         raw_params.highY = p('p_highY');
         raw_params.highZ = p('p_highZ');
+    } else if (type === 'polycone') {
+        raw_params.startphi = p('p_startphi');
+        raw_params.deltaphi = p('p_deltaphi');
+        raw_params.zplanes = zPlanesState;
+    } else if (type === 'trap') {
+        raw_params.dz = p('p_dz'); raw_params.theta = p('p_theta'); raw_params.phi = p('p_phi');
+        raw_params.dy1 = p('p_dy1'); raw_params.dx1 = p('p_dx1'); raw_params.dx2 = p('p_dx2');
+        raw_params.alpha1 = p('p_alpha1');
+        raw_params.dy2 = p('p_dy2'); raw_params.dx3 = p('p_dx3'); raw_params.dx4 = p('p_dx4');
+        raw_params.alpha2 = p('p_alpha2');
     }
     return raw_params;
 }

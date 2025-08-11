@@ -278,7 +278,7 @@ class ProjectManager:
                 ep['phi'] = p.get('phi', 0)
             
             elif solid.type == 'hype':
-                 ep['dz'] = p.get('dz', 0) / 2.0
+                 ep['z'] = p.get('z', 0)
                  ep['rmin'] = p.get('rmin', 0)
                  ep['rmax'] = p.get('rmax', 0)
                  ep['inst'] = p.get('inst', 0)

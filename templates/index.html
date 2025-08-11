@@ -1354,16 +1354,29 @@
                     <div class="property_item">
                         <label for="solidEditorType">Type:</label>
                         <select id="solidEditorType">
-                            <optgroup label="Primitives">
+                            <!-- Common solids -->
+                            <optgroup label="Common Solids">
                                 <option value="box">Box</option>
                                 <option value="tube">Tube</option>
                                 <option value="cone">Cone</option>
                                 <option value="sphere">Sphere</option>
-                                <option value="orb">Orb (Sphere)</option>
+                                <option value="orb">Orb (Simplified Sphere)</option>
                                 <option value="torus">Torus</option>
                                 <option value="trd">Trd (Trapezoid)</option>
+                            </optgroup>
+                            <!-- Composites -->
+                            <optgroup label="Composites">
+                                <option value="boolean">Boolean</option>
+                                <option value="scaledSolid">Scaled Solid</option>
+                                <option value="reflectedSolid">Reflected Solid</option>
+                            </optgroup>
+                            <!-- Additional solids -->
+                            <optgroup label="More Solids">
+                                <option value="trap">Trap (General Trapezoid)</option>
                                 <option value="para">Para (Parallelepiped)</option>
+                                <option value="ellipsoid">Ellipsoid</option>
                                 <option value="eltube">Elliptical Tube</option>
+                                <option value="polycone">Polycone</option>
                                 <option value="genericPolycone">Generic Polycone</option>
                                 <option value="hype">Hype (Hyperboloid)</option>
                                 <option value="paraboloid">Paraboloid</option>
@@ -1378,12 +1391,6 @@
                                 <option value="tet">Tet (Tetrahedron)</option>
                                 <option value="arb8">Arb8 (Arbitrary Hexahedron)</option>
                                 <option value="cutTube">Cut Tube</option>
-                            </optgroup>
-                            <!-- Composites -->
-                            <optgroup label="Composites">
-                                <option value="boolean">Boolean</option>
-                                <option value="scaledSolid">Scaled Solid</option>
-                                <option value="reflectedSolid">Reflected Solid</option>
                             </optgroup>
                         </select>
                     </div>

@@ -713,6 +713,41 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         case 'orb':
             geometry = new THREE.SphereGeometry(p.r, 32, 16);
             break;
+        case 'ellipsoid':
+            {
+                // An ellipsoid is a scaled sphere. To handle z-cuts, we must use CSG.
+                const sphereGeom = new THREE.SphereGeometry(1, 48, 24); // Unit sphere
+                let resultBrush = new Brush(sphereGeom);
+                
+                // Apply non-uniform scaling to create the ellipsoid shape
+                resultBrush.scale.set(p.ax, p.by, p.cz);
+                resultBrush.updateMatrixWorld(); // Apply the scale
+
+                // Z-Cut 1 (bottom)
+                if (p.zcut1 !== undefined && p.zcut1 > -p.cz) { // Check if a cut is necessary
+                    const planeGeom = new THREE.PlaneGeometry(p.ax * 2.1, p.by * 2.1);
+                    const planeBrush = new Brush(planeGeom);
+                    planeBrush.position.set(0, 0, p.zcut1 - 0.05); // Position the plane
+                    // We need a box to subtract the entire lower portion
+                    const cutBoxGeom = new THREE.BoxGeometry(p.ax * 2.2, p.by * 2.2, p.cz * 2);
+                    const cutBoxBrush = new Brush(cutBoxGeom);
+                    cutBoxBrush.position.set(0, 0, p.zcut1 - p.cz); // Position center of box
+                    cutBoxBrush.updateMatrixWorld();
+                    resultBrush = csgEvaluator.evaluate(resultBrush, cutBoxBrush, SUBTRACTION);
+                }
+
+                // Z-Cut 2 (top)
+                if (p.zcut2 !== undefined && p.zcut2 < p.cz) {
+                    const cutBoxGeom = new THREE.BoxGeometry(p.ax * 2.2, p.by * 2.2, p.cz * 2);
+                    const cutBoxBrush = new Brush(cutBoxGeom);
+                    cutBoxBrush.position.set(0, 0, p.zcut2 + p.cz);
+                    cutBoxBrush.updateMatrixWorld();
+                    resultBrush = csgEvaluator.evaluate(resultBrush, cutBoxBrush, SUBTRACTION);
+                }
+                
+                geometry = resultBrush.geometry;
+            }
+            break;
         case 'torus':
             geometry = new THREE.TorusGeometry(p.rtor, p.rmax, 16, 100, p.deltaphi);
             if(p.startphi !== 0) geometry.rotateZ(p.startphi);
@@ -758,7 +793,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             {
                 const rmin = p.rmin;
                 const rmax = p.rmax;
-                const halfZ = p.dz; // This should be the half-length
+                const halfZ = p.z / 2; // This should be the half-length
                 const tanInnerStereo = Math.tan(p.inst);
                 const tanOuterStereo = Math.tan(p.outst);
 
@@ -795,6 +830,29 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             }
             break;
         case 'polycone':
+            {
+                const zplanes = p.zplanes || [];
+                const points = [];
+                if (zplanes.length > 1) {
+                    // Sort planes by Z just in case they are out of order
+                    zplanes.sort((a, b) => a.z - b.z);
+                    
+                    // Trace the outer profile from bottom to top
+                    for (let i = 0; i < zplanes.length; i++) {
+                        points.push(new THREE.Vector2(zplanes[i].rmax, zplanes[i].z));
+                    }
+                    // Trace the inner profile from top to bottom
+                    for (let i = zplanes.length - 1; i >= 0; i--) {
+                        points.push(new THREE.Vector2(zplanes[i].rmin, zplanes[i].z));
+                    }
+                    
+                    geometry = new THREE.LatheGeometry(points, 50, p.startphi, p.deltaphi);
+                    geometry.rotateX(Math.PI / 2); // Align with Z-axis
+                } else {
+                    geometry = new THREE.SphereGeometry(10, 8, 8); // Placeholder
+                }
+            }
+            break;
         case 'genericPolycone':
         case 'polyhedra':
         case 'genericPolyhedra':
@@ -1196,32 +1254,25 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         case 'trap': // General Trapezoid
             {
                 const vertices = [];
-                if (solidData.type === 'trap') {
-                    const dz = p.dz; const th = p.theta; const ph = p.phi;
-                    const dy1 = p.dy1; const dx1 = p.dx1; const dx2 = p.dx2;
-                    const dy2 = p.dy2; const dx3 = p.dx3; const dx4 = p.dx4;
-                    const a1 = p.alpha1; const a2 = p.alpha2;
-                    const tth_cp = Math.tan(th) * Math.cos(ph);
-                    const tth_sp = Math.tan(th) * Math.sin(ph);
-                    const ta1 = Math.tan(a1);
-                    const ta2 = Math.tan(a2);
-                    
-                    vertices.push(
-                        -dz*tth_cp - dy1*ta1 - dx1, -dz*tth_sp - dy1, -dz,
-                        -dz*tth_cp - dy1*ta1 + dx1, -dz*tth_sp - dy1, -dz,
-                        -dz*tth_cp + dy1*ta1 - dx2, -dz*tth_sp + dy1, -dz,
-                        -dz*tth_cp + dy1*ta1 + dx2, -dz*tth_sp + dy1, -dz,
-                         dz*tth_cp - dy2*ta2 - dx3,  dz*tth_sp - dy2,  dz,
-                         dz*tth_cp - dy2*ta2 + dx3,  dz*tth_sp - dy2,  dz,
-                         dz*tth_cp + dy2*ta2 - dx4,  dz*tth_sp + dy2,  dz,
-                         dz*tth_cp + dy2*ta2 + dx4,  dz*tth_sp + dy2,  dz
-                    );
-                } else { // arb8
-                    const dz = p.dz;
-                    p.vertices.forEach((v, i) => {
-                        vertices.push(v.x, v.y, (i < 4) ? -dz : dz);
-                    });
-                }
+                const dz = p.dz; const th = p.theta; const ph = p.phi;
+                const dy1 = p.dy1; const dx1 = p.dx1; const dx2 = p.dx2;
+                const dy2 = p.dy2; const dx3 = p.dx3; const dx4 = p.dx4;
+                const a1 = p.alpha1; const a2 = p.alpha2;
+                const tth_cp = Math.tan(th) * Math.cos(ph);
+                const tth_sp = Math.tan(th) * Math.sin(ph);
+                const ta1 = Math.tan(a1);
+                const ta2 = Math.tan(a2);
+                
+                vertices.push(
+                    -dz*tth_cp - dy1*ta1 - dx1, -dz*tth_sp - dy1, -dz,
+                    -dz*tth_cp - dy1*ta1 + dx1, -dz*tth_sp - dy1, -dz,
+                    -dz*tth_cp + dy1*ta1 - dx2, -dz*tth_sp + dy1, -dz,
+                    -dz*tth_cp + dy1*ta1 + dx2, -dz*tth_sp + dy1, -dz,
+                        dz*tth_cp - dy2*ta2 - dx3,  dz*tth_sp - dy2,  dz,
+                        dz*tth_cp - dy2*ta2 + dx3,  dz*tth_sp - dy2,  dz,
+                        dz*tth_cp + dy2*ta2 - dx4,  dz*tth_sp + dy2,  dz,
+                        dz*tth_cp + dy2*ta2 + dx4,  dz*tth_sp + dy2,  dz
+                );
                 
                 const indices = [
                     0, 1, 2,  0, 2, 3, // bottom
