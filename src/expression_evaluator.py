@@ -18,12 +18,14 @@ def create_configured_asteval():
     # Add constants and units
     aeval.symtable.update({
         'pi': math.pi, 'PI': math.pi,
-        'mm': 1.0, 'cm': 10.0, 'm': 1000.0,
+        'nm': 1.0e-6, 'um': 1.0e-3, 'mm': 1.0, 'cm': 10.0, 'm': 1000.0, 'km': 1.0e6,
         'mm2': 1.0, 'cm2': 100.0, 'm2': 1000000.0,
         'mm3': 1.0, 'cm3': 1000.0, 'm3': 1000000000.0,
-        'rad': 1.0, 'radian': 1.0, 'deg': math.pi / 180.0, 'degree': math.pi / 180.0,
-        'eV': 1.0,
-        'g': 1.0
+        'urad': 1.0e-6, 'mrad': 1.0e-3, 'rad': 1.0, 'radian': 1.0, 
+        'deg': math.pi / 180.0, 'degree': math.pi / 180.0,
+        'eV': 1.0e-3, 'keV': 1.0, 'MeV': 1000.0,
+        'g': 1.0, 'kg': 1000.0,
+        'ns': 1.0e-9, 'us': 1.0e-6, 'ms': 1.0e-3, 's': 1.0
     })
     
     return aeval
