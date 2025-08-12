@@ -648,7 +648,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'cone':
             {
-                console.log("drawing with ",p)
                 // Create the outer cone shape
                 const outerConeGeom = new THREE.CylinderGeometry(
                     p.rmax2,           // radiusTop
@@ -1581,7 +1580,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     new THREE.Vector3(p.v7x, p.v7y,  dz),
                     new THREE.Vector3(p.v8x, p.v8y,  dz)
                 ];
-                console.log("Vertices are",vertices)
+                
                 geometry = new ConvexGeometry(vertices);
             }
             break;

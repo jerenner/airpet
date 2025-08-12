@@ -1113,12 +1113,19 @@ class ProjectManager:
             return False, f"Physical Volume with ID {pv_id} not found"
 
         if new_position_dict is not None:
-            # Directly overwrite the position property with the absolute numeric dictionary.
-            # This "breaks the link" to any previous define reference.
-            found_pv_object.position = new_position_dict
+            # When updating from the 3D view, the new values are already evaluated numbers.
+            # We must convert them back to strings for the raw_expression.
+            if isinstance(new_position_dict, dict):
+                 found_pv_object.position = {k: str(v) for k, v in new_position_dict.items()}
+            else:
+                 found_pv_object.position = new_position_dict # It's a define ref
 
         if new_rotation_dict is not None:
-            found_pv_object.rotation = new_rotation_dict
+            # Same for rotation.
+            if isinstance(new_rotation_dict, dict):
+                 found_pv_object.rotation = {k: str(v) for k, v in new_rotation_dict.items()}
+            else:
+                found_pv_object.rotation = new_rotation_dict
 
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg

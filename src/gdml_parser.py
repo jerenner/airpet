@@ -60,7 +60,7 @@ class GDMLParser:
                     pass
         
         # Final cleanup for common GDML artifacts that are not filesystem-friendly
-        return evaluated_name.replace('[','_').replace(']','_').replace('__','_').strip('_')
+        return evaluated_name.replace('[','_').replace(']','_').strip('_')
 
     def _partially_evaluate(self, expression_str, loop_vars):
         """
@@ -95,9 +95,12 @@ class GDMLParser:
         root = self._strip_namespace(gdml_content_string)
         self._parse_defines(root.find('define'))
         self._parse_materials(root.find('materials'))
-        self._parse_solids(root.find('solids'))
+        intermediate_booleans = self._parse_solids(root.find('solids'))
         self._parse_structure(root.find('structure'))
         self._parse_setup(root.find('setup'))
+
+        # Remove intermediate boolean solids.
+        self._prune_intermediate_solids(intermediate_booleans)
 
         # Clean up loop variables after parsing is complete
         self.geometry_state.defines = {
@@ -119,6 +122,31 @@ class GDMLParser:
             return False
         except ValueError:
             return True
+        
+    def _prune_intermediate_solids(self, intermediate_booleans):
+        """Removes solid definitions that are only used as intermediates in boolean operations."""
+
+        # --- 1. Build a complete reference count for all solids.
+        solid_ref_counts = {name: 0 for name in intermediate_booleans}
+    
+        # Count references from logical volumes
+        for lv in self.geometry_state.logical_volumes.values():
+            if lv.solid_ref in solid_ref_counts:
+                solid_ref_counts[lv.solid_ref] += 1
+        # Count references from within other solids (booleans, scaled, etc.)
+        for solid in self.geometry_state.solids.values():
+            if solid.type == 'boolean':
+                for item in solid.raw_parameters.get('recipe', []):
+                    if item['solid_ref'] in solid_ref_counts:
+                        solid_ref_counts[item['solid_ref']] += 1
+            elif solid.type in ['scaledSolid', 'reflectedSolid']:
+                if solid.raw_parameters.get('solid_ref') in solid_ref_counts:
+                    solid_ref_counts[solid.raw_parameters['solid_ref']] += 1
+
+        # 2. Prune the intermediate solids from the final list.
+        for name_to_remove in intermediate_booleans:
+            if name_to_remove in self.geometry_state.solids and solid_ref_counts[name_to_remove] == 0:
+                del self.geometry_state.solids[name_to_remove]
 
     def _process_children(self, element, handler, **kwargs):
         """
@@ -337,18 +365,24 @@ class GDMLParser:
 
         if pos_ref_el is not None:
             pos_val_or_ref = self._evaluate_name(pos_ref_el.get('ref'))
-            print(pos_val_or_ref)
         elif pos_el is not None:
             # Inline position: read attributes and apply unit
             unit_str = pos_el.get('unit', DEFAULT_OUTPUT_LUNIT) # Default to 'mm' if not specified
 
             # For saving the raw_expression, we want to keep the unit info.
             # Let's create an expression string that includes the unit for evaluation.
-            pos_val_or_ref = {
-                'x': str(self.aeval.eval(f"({pos_el.get('x', '0').strip()}) * {unit_str}")),
-                'y': str(self.aeval.eval(f"({pos_el.get('y', '0').strip()}) * {unit_str}")),
-                'z': str(self.aeval.eval(f"({pos_el.get('z', '0').strip()}) * {unit_str}")),
-            }
+            if(unit_str != DEFAULT_OUTPUT_LUNIT):
+                pos_val_or_ref = {
+                    'x': str(self.aeval.eval(f"({pos_el.get('x', '0').strip()}) * {unit_str}")),
+                    'y': str(self.aeval.eval(f"({pos_el.get('y', '0').strip()}) * {unit_str}")),
+                    'z': str(self.aeval.eval(f"({pos_el.get('z', '0').strip()}) * {unit_str}")),
+                }
+            else:
+                pos_val_or_ref = {
+                    'x': str(self.aeval.eval(f"{pos_el.get('x', '0').strip()}")),
+                    'y': str(self.aeval.eval(f"{pos_el.get('y', '0').strip()}")),
+                    'z': str(self.aeval.eval(f"{pos_el.get('z', '0').strip()}")),
+                }
         
         if rot_ref_el is not None:
             rot_val_or_ref = self._evaluate_name(rot_ref_el.get('ref'))
@@ -356,11 +390,18 @@ class GDMLParser:
             # Inline rotation: read attributes and apply unit
             unit_str = rot_el.get('unit', DEFAULT_OUTPUT_AUNIT) # Default to 'rad'
 
-            rot_val_or_ref = {
-                'x': str(self.aeval.eval(f"({rot_el.get('x', '0').strip()}) * {unit_str}")),
-                'y': str(self.aeval.eval(f"({rot_el.get('y', '0').strip()}) * {unit_str}")),
-                'z': str(self.aeval.eval(f"({rot_el.get('z', '0').strip()}) * {unit_str}")),
-            }
+            if(unit_str != DEFAULT_OUTPUT_AUNIT):
+                rot_val_or_ref = {
+                    'x': str(self.aeval.eval(f"({rot_el.get('x', '0').strip()}) * {unit_str}")),
+                    'y': str(self.aeval.eval(f"({rot_el.get('y', '0').strip()}) * {unit_str}")),
+                    'z': str(self.aeval.eval(f"({rot_el.get('z', '0').strip()}) * {unit_str}")),
+                }
+            else:
+                rot_val_or_ref = {
+                    'x': str(self.aeval.eval(f"{rot_el.get('x', '0').strip()}")),
+                    'y': str(self.aeval.eval(f"{rot_el.get('y', '0').strip()}")),
+                    'z': str(self.aeval.eval(f"{rot_el.get('z', '0').strip()}")),
+                }
 
         # --- Handle Scale (Scale is unitless) ---
         if scale_ref_el is not None:
@@ -534,15 +575,16 @@ class GDMLParser:
             params = {}
 
             # Get default units from the solid's tag
-            default_lunit = solid_el.get('lunit')
-            default_aunit = solid_el.get('aunit')
+            lunit_str = solid_el.get('lunit')
+            aunit_str = solid_el.get('aunit')
 
             # Define which parameters are lengths and which are angles
-            length_params = ['x', 'y', 'z', 'rmin', 'rmax', 'r', 'dx', 'dy', 'dz', 
-                            'dx1', 'dx2', 'dy1', 'dy2', 'rtor', 'ax', 'by', 'cz', 
-                            'zcut1', 'zcut2', 'zmax', 'zcut', 'rlo', 'rhi']
-            angle_params = ['startphi', 'deltaphi', 'starttheta', 'deltatheta', 'alpha', 
-                            'theta', 'phi', 'inst', 'outst', 'PhiTwist', 'alpha1', 'alpha2', 
+            length_params = ['x', 'y', 'z', 'rmin', 'rmax', 'r', 'dx', 'dy', 'dz',
+                         'x1', 'x2', 'y1', 'y2', 'dx1', 'dx2', 'dy1', 'dy2',
+                         'rtor', 'ax', 'by', 'cz', 'zcut1', 'zcut2',
+                         'zmax', 'zcut', 'rlo', 'rhi', 'rmin1', 'rmax1', 'rmin2', 'rmax2', 'x3', 'x4']
+            angle_params = ['startphi', 'deltaphi', 'starttheta', 'deltatheta', 'alpha',
+                            'theta', 'phi', 'inst', 'outst', 'PhiTwist', 'alpha1', 'alpha2',
                             'Alph', 'Theta', 'Phi', 'twistedangle']
             
             # Get current values of loop variables from the asteval instance
@@ -568,10 +610,16 @@ class GDMLParser:
                 
                 partially_eval_val = self._partially_evaluate(processed_val, current_loop_vars)
 
-                if key in length_params and default_lunit:
-                    params[key] = f"({partially_eval_val}) * {default_lunit}"
-                elif key in angle_params and default_aunit:
-                    params[key] = f"({partially_eval_val}) * {default_aunit}"
+                if key in length_params and lunit_str:
+                    if(lunit_str != DEFAULT_OUTPUT_LUNIT):
+                        params[key] = f"({partially_eval_val}) * {lunit_str}"
+                    else:
+                        params[key] = f"{partially_eval_val}"
+                elif key in angle_params and aunit_str:
+                    if(aunit_str != DEFAULT_OUTPUT_AUNIT):
+                        params[key] = f"({partially_eval_val}) * {aunit_str}"
+                    else:
+                        params[key] = f"{partially_eval_val}"
                 else:
                     params[key] = partially_eval_val
 
@@ -630,22 +678,26 @@ class GDMLParser:
                     'transform_first': {'position': first_pos, 'rotation': first_rot}
                 }
             
-            print(f"Solid {solid_type} with {params}")
             temp_solids[name] = Solid(name, solid_type, params)
         
         self._process_children(solids_element, solid_handler)
 
+        # Post-process booleans to create clean recipes and handle consumed solids
         final_solids = {}
-        consumed_solids = set()
+        intermediate_booleans = set() # Solids that are ONLY used as boolean intermediates
         for name, solid_obj in temp_solids.items():
-            if name in consumed_solids:
-                continue
             if solid_obj.type in ['union', 'subtraction', 'intersection']:
                 try:
-                    recipe, consumed_names = self._build_boolean_recipe(solid_obj, temp_solids)
-                    virtual_boolean = Solid(name, "boolean", {"recipe": recipe})
-                    final_solids[name] = virtual_boolean
-                    consumed_solids.update(consumed_names)
+                    recipe, consumed_names_in_chain = self._build_boolean_recipe(solid_obj, temp_solids)
+                    
+                    # Save all boolean solids that appear as references in boolean chains.
+                    for consumed_name in consumed_names_in_chain:
+                        if(consumed_name != name):  # The final solid is not intermediate in its own recipe
+                            intermediate_booleans.add(consumed_name)
+                    
+                    # The final solid in the chain is kept as a 'boolean' type
+                    final_boolean_solid = Solid(name, "boolean", {"recipe": recipe})
+                    final_solids[name] = final_boolean_solid
                 except (ValueError, KeyError) as e:
                     print(f"Warning: Could not process boolean solid '{name}'. It may be malformed or reference a missing solid. Error: {e}")
                     if name not in final_solids:
@@ -654,6 +706,9 @@ class GDMLParser:
                 final_solids[name] = solid_obj
 
         self.geometry_state.solids = final_solids
+
+        # Return the list of potential intermediate booleans for later processing
+        return intermediate_booleans
 
     def _parse_structure(self, structure_element):
         if structure_element is None: return
