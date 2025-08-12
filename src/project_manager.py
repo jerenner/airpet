@@ -3,7 +3,6 @@ import json
 import math
 import tempfile
 import os
-import asteval
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
@@ -11,14 +10,52 @@ from .geometry_types import GeometryState, Solid, Define, Material, Element, Iso
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
-from .expression_evaluator import create_configured_asteval, ExpressionEvaluator
 
 class ProjectManager:
     def __init__(self, expression_evaluator):
         self.current_geometry_state = GeometryState()
         self.gdml_parser = GDMLParser()
-        # Give the project manager its own evaluator instance
+        
+        # Give the project manager an evaluator instance
         self.expression_evaluator = expression_evaluator
+
+        # --- History Management ---
+        self.history = []
+        self.history_index = -1
+        self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
+
+    def _capture_history_state(self, description=""):
+        """Captures the current state for undo/redo."""
+        # If we undo and then make a change, invalidate the "redo" stack
+        if self.history_index < len(self.history) - 1:
+            self.history = self.history[:self.history_index + 1]
+
+        # Use the state's to_dict method for a deep copy
+        state_copy = GeometryState.from_dict(self.current_geometry_state.to_dict())
+        self.history.append(state_copy)
+
+        # Cap the history size
+        if len(self.history) > self.MAX_HISTORY_SIZE:
+            self.history.pop(0)
+        
+        self.history_index = len(self.history) - 1
+        print(f"History captured. Index: {self.history_index}, Size: {len(self.history)}")
+
+    def undo(self):
+        """Reverts to the previous state in history."""
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.current_geometry_state = GeometryState.from_dict(self.history[self.history_index].to_dict())
+            return True, "Undo successful."
+        return False, "Nothing to undo."
+
+    def redo(self):
+        """Applies the next state in history."""
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.current_geometry_state = GeometryState.from_dict(self.history[self.history_index].to_dict())
+            return True, "Redo successful."
+        return False, "Nothing to redo."
 
     def _generate_unique_name(self, base_name, existing_names_dict):
         if base_name not in existing_names_dict:
@@ -468,6 +505,11 @@ class ProjectManager:
         if not success:
             print(f"Warning after parsing GDML: {error_msg}")
             # Even if it fails, we return the partially evaluated state for debugging.
+
+        # --- Reset history on load ---
+        self.history = []
+        self.history_index = -1
+        self._capture_history_state("Loaded project from GDML")
         
         return self.current_geometry_state
 
@@ -487,6 +529,12 @@ class ProjectManager:
         success, error_msg = self.recalculate_geometry_state()
         if not success:
             print(f"Warning after loading JSON project: {error_msg}")
+
+        # --- Reset history on load ---
+        self.history = []
+        self.history_index = -1
+        self._capture_history_state("Loaded project from JSON")
+
         return self.current_geometry_state
 
     def export_to_gdml_string(self):
@@ -616,6 +664,9 @@ class ProjectManager:
                 setattr(current_level_obj, final_key, new_value)
         except (AttributeError, KeyError) as e:
             return False, f"Invalid property path '{property_path}': {e}"
+        
+        # Capture the new state
+        self._capture_history_state(f"Updated {property_path} of {object_type} {object_id}")
 
         success, error_msg = self.recalculate_geometry_state()
         if not success:
@@ -629,6 +680,10 @@ class ProjectManager:
         new_define = Define(name, define_type, raw_expression, unit, category)
         self.current_geometry_state.add_define(new_define)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added define {name}")
+
         return new_define.to_dict(), None
 
     def update_define(self, define_name, new_raw_expression, new_unit=None, new_category=None):
@@ -646,6 +701,9 @@ class ProjectManager:
         if new_category is not None: 
             target_define.category = new_category
 
+        # Capture the new state
+        self._capture_history_state(f"Updated define {define_name}")
+
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
 
@@ -656,6 +714,10 @@ class ProjectManager:
         new_material = Material(name, **properties_dict)
         self.current_geometry_state.add_material(new_material)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added material {name}")
+
         return new_material.to_dict(), None
 
     def update_material(self, mat_name, new_properties):
@@ -670,6 +732,9 @@ class ProjectManager:
         # if 'components' in new_properties: target_mat.components = new_properties['components']
         for key, value in new_properties.items(): setattr(target_mat, key, value)
         
+        # Capture the new state
+        self._capture_history_state(f"Updated material {mat_name}")
+
         self.recalculate_geometry_state()
         return True, None
 
@@ -690,6 +755,9 @@ class ProjectManager:
         
         self.current_geometry_state.add_element(new_element)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added element {name}")
         
         return new_element.to_dict(), None
 
@@ -707,6 +775,9 @@ class ProjectManager:
         target_element.A_expr = new_params.get('A_expr', target_element.A_expr)
         target_element.components = new_params.get('components', target_element.components)
 
+        # Capture the new state
+        self._capture_history_state(f"Updated element {element_name}")
+
         self.recalculate_geometry_state()
         return True, None
 
@@ -716,6 +787,10 @@ class ProjectManager:
         new_isotope = Isotope(name, Z=params.get('Z'), N=params.get('N'), A_expr=params.get('A_expr'))
         self.current_geometry_state.add_isotope(new_isotope)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added isotope {name}")
+
         return new_isotope.to_dict(), None
 
     def update_isotope(self, isotope_name, new_params):
@@ -726,6 +801,10 @@ class ProjectManager:
         target_isotope.N = new_params.get('N', target_isotope.N)
         target_isotope.A_expr = new_params.get('A_expr', target_isotope.A_expr)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated isotope {isotope_name}")
+
         return True, None
 
     def add_solid(self, name_suggestion, solid_type, raw_parameters):
@@ -738,6 +817,9 @@ class ProjectManager:
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
         new_solid = Solid(name, solid_type, raw_parameters)
         self.current_geometry_state.add_solid(new_solid)
+
+        # Capture the new state
+        self._capture_history_state(f"Added solid {name}")
         
         return new_solid.to_dict(), None
 
@@ -754,6 +836,9 @@ class ProjectManager:
             return False, "Boolean solids must be updated via the 'update_boolean_solid' method."
             
         target_solid.raw_parameters = new_raw_parameters
+
+        # Capture the new state
+        self._capture_history_state(f"Added standard solid {solid_id}")
         
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
@@ -775,6 +860,9 @@ class ProjectManager:
         params = {"recipe": recipe}
         new_solid = Solid(name, "boolean", params)
         self.current_geometry_state.add_solid(new_solid)
+
+        # Capture the new state
+        self._capture_history_state(f"Added boolean solid {name}")
         
         return new_solid.to_dict(), None
 
@@ -796,12 +884,11 @@ class ProjectManager:
 
         target_solid.raw_parameters['recipe'] = new_recipe
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated boolean solid {solid_name}")
+
         return True, None
-    
-    def add_solid_object(self, solid_obj):
-        """Helper to add an already-created Solid object."""
-        self.current_geometry_state.solids[solid_obj.name] = solid_obj
-        self.recalculate_geometry_state()
 
     def add_solid_and_place(self, solid_params, lv_params, pv_params):
         """
@@ -831,6 +918,10 @@ class ProjectManager:
 
         # --- 2. Add the Logical Volume (if requested) ---
         if not lv_params:
+            
+            # Capture the new state
+            self._capture_history_state(f"Added solid {new_solid_name}, no LV or PV")
+
             self.recalculate_geometry_state() # Recalculate just before returning
             return True, None
             
@@ -845,6 +936,10 @@ class ProjectManager:
 
         # --- 3. Add the Physical Volume Placement (if requested) ---
         if not pv_params:
+
+            # Capture the new state
+            self._capture_history_state(f"Added solid {new_solid_name} and LV {new_lv_name}, no PV")
+
             self.recalculate_geometry_state()
             return True, None
             
@@ -857,9 +952,14 @@ class ProjectManager:
         rotation = {'x': '0', 'y': '0', 'z': '0'}
         scale    = {'x': '1', 'y': '1', 'z': '1'}
 
-        _, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation, scale)
+        new_pv_dict, pv_error = self.add_physical_volume(parent_lv_name, pv_name_sugg, new_lv_name, position, rotation, scale)
         if pv_error:
             return False, f"Failed to place physical volume: {pv_error}"
+        
+        new_pv_name = new_pv_dict['name']
+        
+        # Capture the new state
+        self._capture_history_state(f"Added solid {new_solid_name}, LV {new_lv_name}, PV {new_pv_name}")
         
         self.recalculate_geometry_state()
         return True, None
@@ -884,6 +984,10 @@ class ProjectManager:
 
         self.current_geometry_state.add_logical_volume(new_lv)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added LV {name}")
+
         return new_lv.to_dict(), None        
 
     def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None, new_content_type=None, new_content=None):
@@ -913,6 +1017,9 @@ class ProjectManager:
             else: # physvol
                 # This could be more complex, might need to update existing children
                 lv.content = [] 
+
+        # Capture the new state
+        self._capture_history_state(f"Updated LV {lv_name}")
         
         self.recalculate_geometry_state()
         return True, None
@@ -945,7 +1052,9 @@ class ProjectManager:
                                         rotation_val_or_ref=rotation,
                                         scale_val_or_ref=scale)
         parent_lv.add_child(new_pv)
-        print(f"Added Physical Volume: {pv_name} into {parent_lv_name}")
+        
+        # Capture the new state
+        self._capture_history_state(f"Added PV {pv_name}")
 
         self.recalculate_geometry_state()
         return new_pv.to_dict(), None
@@ -985,6 +1094,10 @@ class ProjectManager:
         if new_scale is not None: pv_to_update.scale = new_scale
         
         success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated PV {pv_to_update.name} ({pv_id})")
+
         return success, error_msg
 
     def add_assembly(self, name_suggestion, placements_data):
@@ -1000,6 +1113,10 @@ class ProjectManager:
         
         self.current_geometry_state.add_assembly(new_assembly)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added assembly {name}")
+
         return new_assembly.to_dict(), None
 
     def update_assembly(self, assembly_name, new_placements_data):
@@ -1018,6 +1135,10 @@ class ProjectManager:
         target_assembly.placements = new_placements
 
         success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated assembly {assembly_name}")
+
         return success, error_msg
 
     def delete_object(self, object_type, object_id):
@@ -1080,6 +1201,10 @@ class ProjectManager:
 
         if deleted:
             success, calc_error = self.recalculate_geometry_state()
+
+            # Capture the new state
+            self._capture_history_state(f"Deleted {object_type} {object_id}")
+
             # If there's an error during recalculation, it should be reported
             return success, calc_error or error_msg
         else:
@@ -1128,6 +1253,10 @@ class ProjectManager:
                 found_pv_object.rotation = new_rotation_dict
 
         success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated transform of {found_pv_object.name} ({pv_id})")
+
         return success, error_msg
 
 
@@ -1226,6 +1355,10 @@ class ProjectManager:
             self.current_geometry_state.add_assembly(assembly)
 
         success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"State merge")
+
         return success, error_msg
 
     def process_ai_response(self, ai_data: dict):
@@ -1284,6 +1417,10 @@ class ProjectManager:
 
         # --- 3. Recalculate everything once at the end ---
         success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Incorporated AI response")
+
         return success, error_msg
 
     def import_step_file(self, step_file_stream):
@@ -1307,6 +1444,10 @@ class ProjectManager:
                 return False, f"Failed to merge STEP geometry: {error_msg}"
                 
             self.recalculate_geometry_state()
+
+            # Capture the new state
+            self._capture_history_state(f"Imported STEP file {temp_path}")
+
             return True, None
             
         except Exception as e:
@@ -1331,6 +1472,10 @@ class ProjectManager:
             "name": group_name,
             "members": []
         })
+        
+        # Capture the new state
+        self._capture_history_state(f"Created {group_type} group {group_name}")
+
         return True, None
 
     def rename_group(self, group_type, old_name, new_name):
@@ -1351,6 +1496,10 @@ class ProjectManager:
             return False, f"Group '{old_name}' not found."
             
         target_group['name'] = new_name
+
+        # Capture the new state
+        self._capture_history_state(f"Renamed {group_type} group {old_name} to {new_name}")
+
         return True, None
 
     def delete_group(self, group_type, group_name):
@@ -1367,6 +1516,10 @@ class ProjectManager:
             return False, f"Group '{group_name}' not found."
             
         self.current_geometry_state.ui_groups[group_type] = [g for g in groups if g['name'] != group_name]
+
+        # Capture the new state
+        self._capture_history_state(f"Deleted {group_type} group {group_name}")
+
         return True, None
 
     def move_items_to_group(self, group_type, item_ids, target_group_name):
@@ -1394,67 +1547,10 @@ class ProjectManager:
                 if item_id not in target_group['members']:
                     target_group['members'].append(item_id)
         
+        # Capture the new state
+        self._capture_history_state(f"Moved items to {group_type} group {target_group_name}")
+
         # If target_group_name is None, the items are effectively moved to "ungrouped".
-        return True, None
-
-    def _find_and_remove_pv(self, pv_id):
-        """
-        Finds a PV by its ID, removes it from its parent's content list,
-        and returns the PV object and its former parent.
-        This version is more robust as it iterates through parents first.
-        """
-        state = self.current_geometry_state
-
-        # Search in Logical Volumes
-        for lv in state.logical_volumes.values():
-            if lv.content_type == 'physvol':
-                for i, pv in enumerate(lv.content):
-                    if pv.id == pv_id:
-                        # Found it. Pop it from the list and return.
-                        return lv.content.pop(i), lv
-        
-        # Search in Assemblies
-        for asm in state.assemblies.values():
-            for i, pv in enumerate(asm.placements):
-                if pv.id == pv_id:
-                    # Found it. Pop it from the list and return.
-                    return asm.placements.pop(i), asm
-
-        # If we get here, the PV was not found in any container
-        return None, None
-
-    def move_pv_to_assembly(self, pv_ids, target_assembly_name):
-        """Moves a list of PVs from their current parent to a target assembly."""
-        state = self.current_geometry_state
-        target_assembly = state.assemblies.get(target_assembly_name)
-        if not target_assembly:
-            return False, f"Target assembly '{target_assembly_name}' not found."
-
-        for pv_id in pv_ids:
-            pv_to_move, old_parent = self._find_and_remove_pv(pv_id)
-            if not pv_to_move:
-                return False, f"Physical Volume with ID '{pv_id}' not found."
-            target_assembly.placements.append(pv_to_move)
-
-        self.recalculate_geometry_state()
-        return True, None
-
-    def move_pv_to_lv(self, pv_ids, target_lv_name):
-        """Moves a list of PVs from their current parent to a target logical volume."""
-        state = self.current_geometry_state
-        target_lv = state.logical_volumes.get(target_lv_name)
-        if not target_lv:
-            return False, f"Target logical volume '{target_lv_name}' not found."
-        if target_lv.content_type != 'physvol':
-            return False, f"Target '{target_lv_name}' is a procedural volume and cannot accept direct placements."
-
-        for pv_id in pv_ids:
-            pv_to_move, old_parent = self._find_and_remove_pv(pv_id)
-            if not pv_to_move:
-                return False, f"Physical Volume with ID '{pv_id}' not found."
-            target_lv.content.append(pv_to_move)
-
-        self.recalculate_geometry_state()
         return True, None
 
     def add_optical_surface(self, name_suggestion, params):
@@ -1475,6 +1571,9 @@ class ProjectManager:
         
         self.current_geometry_state.add_optical_surface(new_surface)
         self.recalculate_geometry_state() # Recalculate if any values are expressions
+
+        # Capture the new state
+        self._capture_history_state(f"Added optical surface {name}")
         
         return new_surface.to_dict(), None
 
@@ -1495,6 +1594,10 @@ class ProjectManager:
         target_surface.properties = new_params.get('properties', target_surface.properties)
 
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated optical surface {surface_name}")
+
         return True, None
 
     def add_skin_surface(self, name_suggestion, volume_ref, surface_ref):
@@ -1521,6 +1624,9 @@ class ProjectManager:
         state.add_skin_surface(new_skin_surface)
         # No recalculation is needed as this is just a link, but we'll do it for consistency.
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added skin surface {name}")
         
         return new_skin_surface.to_dict(), None
 
@@ -1545,6 +1651,10 @@ class ProjectManager:
         target_surface.surfaceproperty_ref = new_surface_ref
 
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated skin surface {surface_name}")
+
         return True, None
 
     def _find_pv_by_id(self, pv_id):
@@ -1589,6 +1699,9 @@ class ProjectManager:
         
         state.add_border_surface(new_border_surface)
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Added border surface {name}")
         
         return new_border_surface.to_dict(), None
 
@@ -1616,4 +1729,8 @@ class ProjectManager:
         target_surface.surfaceproperty_ref = new_surface_ref
 
         self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated border surface {surface_name}")
+
         return True, None

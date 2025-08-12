@@ -20,6 +20,7 @@ import * as UIManager from './uiManager.js';
 // --- Global Application State (Keep this minimal) ---
 const AppState = {
     currentProjectState: null,    // Full state dict from backend (defines, materials, solids, LVs, world_ref)
+    currentProjectName: "UntitledProject",
     selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
     selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
     selectedPVContext: {
@@ -51,6 +52,12 @@ async function initializeApp() {
         onExportGdmlClicked: handleExportGdml,
         onSetApiKeyClicked: handleSetApiKey,
         onSaveApiKeyClicked: handleSaveApiKey,
+        // Project history and undo/redo
+        onUndoClicked: handleUndo,
+        onRedoClicked: handleRedo,
+        onHistoryButtonClicked: handleShowHistory,
+        onProjectRenamed: (newName) => { AppState.currentProjectName = newName; },
+        onLoadVersionClicked: handleLoadVersion,
         // Add/edit solids
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
@@ -213,6 +220,29 @@ async function initializeApp() {
         UIManager.showError("Failed to retrieve a valid project state from the server.");
     }
 
+    // --- Global Keyboard Listener ---
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Delete') {
+            // Prevent the browser's default back navigation on Backspace
+            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                event.preventDefault();
+                handleDeleteSelected();
+            }
+        }
+        if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            handleUndo();
+        }
+        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            handleRedo();
+        }
+        if (event.ctrlKey && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            handleSaveVersion(); // New save handler
+        }
+    });
+
     console.log("Application Initialized.");
     
     // Example: Fetch initial empty state or last saved state if implemented
@@ -306,6 +336,11 @@ function syncUIWithState(responseData, selectionToRestore = []) {
         UIManager.clearHierarchySelection();
         SceneManager.unselectAllInScene();
     }
+
+    // 5. Update Undo/Redo button states
+    if (responseData.history_status) {
+        UIManager.updateUndoRedoButtons(responseData.history_status);
+    }
 }
 
 // --- Handler Functions (Act as Controllers/Mediators) ---
@@ -384,6 +419,9 @@ async function handleOpenGdmlProject(file) {
     UIManager.showLoading("Opening GDML Project...");
     try {
         const result = await APIService.openGdmlProject(file);
+        // Set project name from file
+        AppState.currentProjectName = file.name.replace(/\.[^/.]+$/, "");
+        UIManager.setProjectName(AppState.currentProjectName);
         syncUIWithState(result);
         //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) { 
@@ -472,6 +510,7 @@ async function handleNewProject() {
 
 async function handleSaveProject() {
     UIManager.showLoading("Saving project...");
+    handleSaveVersion();
     try {
         await APIService.saveProject();
     } catch (error) { UIManager.showError("Failed to save project: " + (error.message || error)); }
@@ -483,6 +522,57 @@ async function handleExportGdml() {
     try {
         await APIService.exportGdml(); // APIService handles the download
     } catch (error) { UIManager.showError("Failed to export GDML: " + (error.message || error)); }
+    finally { UIManager.hideLoading(); }
+}
+
+async function handleUndo() {
+    UIManager.showLoading("Undoing...");
+    try {
+        const result = await APIService.undo();
+        syncUIWithState(result, AppState.selectedHierarchyItems); // Restore selection after undo
+    } catch (error) { UIManager.showError(error.message); }
+    finally { UIManager.hideLoading(); }
+}
+
+async function handleRedo() {
+    UIManager.showLoading("Redoing...");
+    try {
+        const result = await APIService.redo();
+        syncUIWithState(result, AppState.selectedHierarchyItems); // Restore selection after redo
+    } catch (error) { UIManager.showError(error.message); }
+    finally { UIManager.hideLoading(); }
+}
+
+async function handleShowHistory() {
+    UIManager.showLoading("Fetching history...");
+    try {
+        const result = await APIService.getProjectHistory(AppState.currentProjectName);
+        if (result.success) {
+            UIManager.populateHistoryPanel(result.history, AppState.currentProjectName);
+            UIManager.showHistoryPanel();
+        } else {
+            UIManager.showError(result.error);
+        }
+    } catch (error) { UIManager.showError(error.message); }
+    finally { UIManager.hideLoading(); }
+}
+
+async function handleLoadVersion(projectName, versionId) {
+    UIManager.showLoading(`Loading version ${versionId}...`);
+    try {
+        const result = await APIService.loadVersion(projectName, versionId);
+        syncUIWithState(result); // This will update the whole app to the restored state
+        UIManager.hideHistoryPanel();
+    } catch (error) { UIManager.showError(error.message); }
+    finally { UIManager.hideLoading(); }
+}
+
+async function handleSaveVersion() {
+    UIManager.showLoading("Saving version...");
+    try {
+        const result = await APIService.saveVersion(AppState.currentProjectName);
+        UIManager.showNotification(result.message);
+    } catch (error) { UIManager.showError("Failed to save version: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
 

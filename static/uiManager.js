@@ -24,6 +24,10 @@ let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, ma
     borderSurfacesListRoot, replicasListRoot;
 let inspectorContentDiv;
 
+// Project, history and undo/redo
+let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
+    undoButton, redoButton;
+
 // Buttons for adding LVs, PVs, and assemblies
 let addPVButton;
 
@@ -46,6 +50,11 @@ let callbacks = {
     onNewProjectClicked: () => {},
     onSaveProjectClicked: () => {},
     onExportGdmlClicked: () => {},
+    onUndoClicked: () => {},
+    onRedoClicked: () => {},
+    onHistoryButtonClicked: () => {},
+    onProjectRenamed: (newName) => { },
+    onLoadVersionClicked: () => {},
     onEditSolidClicked: (solidData) => {},
     onAddDefineClicked: () => {},
     onEditDefineClicked: (defineData) => {},
@@ -133,6 +142,15 @@ export function initUI(cb) {
     toggleSnapToGridButton = document.getElementById('toggleSnapToGridButton');
     gridSnapSizeInput = document.getElementById('gridSnapSizeInput');
     angleSnapSizeInput = document.getElementById('angleSnapSizeInput');
+
+    // History and undo/redo buttons
+    projectNameDisplay = document.getElementById('projectNameDisplay');
+    historyButton = document.getElementById('historyButton');
+    historyPanel = document.getElementById('history_panel');
+    closeHistoryPanel = document.getElementById('closeHistoryPanel');
+    historyListContainer = document.getElementById('history_list_container');
+    undoButton = document.getElementById('undoButton');
+    redoButton = document.getElementById('redoButton');
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
@@ -233,6 +251,15 @@ export function initUI(cb) {
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
 
+    // Project history and undo/redo listeners
+    historyButton.addEventListener('click', callbacks.onHistoryButtonClicked);
+    closeHistoryPanel.addEventListener('click', hideHistoryPanel);
+    undoButton.addEventListener('click', callbacks.onUndoClicked);
+    redoButton.addEventListener('click', callbacks.onRedoClicked);
+    projectNameDisplay.addEventListener('blur', () => {
+        callbacks.onProjectRenamed(projectNameDisplay.textContent);
+    });
+
     // AI Panel Listener
     aiGenerateButton.addEventListener('click', () => {
         const promptText = aiPromptInput.value.trim();
@@ -259,17 +286,6 @@ export function initUI(cb) {
         });
     });
     activateTab('tab_structure'); // Default tab
-
-    // --- Global Keyboard Listener ---
-    window.addEventListener('keydown', (event) => {
-        if (event.key === 'Delete' || event.key === 'Backspace') {
-            // Prevent the browser's default back navigation on Backspace
-            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-                event.preventDefault();
-                callbacks.onDeleteSelectedClicked();
-            }
-        }
-    });
 
     // Add listeners for the new "+ Group" buttons
     document.querySelectorAll('.add-group-btn').forEach(button => {
@@ -302,6 +318,58 @@ export function initUI(cb) {
     });
 
     console.log("UIManager initialized.");
+}
+
+export function updateUndoRedoButtons(historyStatus) {
+    if (!historyStatus) return;
+    undoButton.disabled = !historyStatus.can_undo;
+    redoButton.disabled = !historyStatus.can_redo;
+}
+
+export function showHistoryPanel() {
+    historyPanel.style.display = 'flex';
+}
+
+export function hideHistoryPanel() {
+    historyPanel.style.display = 'none';
+}
+
+export function populateHistoryPanel(history, projectName) {
+    historyListContainer.innerHTML = '';
+    if (history.length === 0) {
+        historyListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:10px;">No saved versions.</p>';
+        return;
+    }
+    history.forEach(version => {
+        const item = document.createElement('div');
+        item.className = 'history-item'; // Add CSS for this
+        item.style.padding = '8px 12px';
+        item.style.borderBottom = '1px solid #ddd';
+        item.style.cursor = 'pointer';
+        item.innerHTML = `
+            <div style="font-weight:bold;">${formatTimestamp(version.timestamp)}</div>
+            <div style="font-size:11px; color:#666;">${version.id}</div>
+        `;
+        item.addEventListener('click', () => {
+            if (confirmAction(`Restore version from ${formatTimestamp(version.timestamp)}? This will add a new state to your history.`)) {
+                callbacks.onLoadVersionClicked(projectName, version.id);
+            }
+        });
+        historyListContainer.appendChild(item);
+    });
+}
+
+function formatTimestamp(ts) {
+    // 2024-07-15T10-30-00 -> 2024-07-15 10:30:00
+    return ts.replace('T', ' ').replace(/-/g, ':').replace(/(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+}
+
+export function getProjectName() {
+    return projectNameDisplay.textContent.trim();
+}
+
+export function setProjectName(name) {
+    projectNameDisplay.textContent = name;
 }
 
 export function updateDefineInspectorValues(defineName, newValues, isRotation = false) {

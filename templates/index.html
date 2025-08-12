@@ -815,7 +815,7 @@
 
     </style>
 </head>
-<body>
+<body style="display: flex; width: 100vw; height: 100vh;">
     <div id="left_panel_container">
         <div class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
@@ -1014,6 +1014,9 @@
                 <li>
                     <button>Edit</button>
                     <div class="dropdown_content">
+                        <button id="undoButton" disabled>Undo (Ctrl+Z)</button>
+                        <button id="redoButton" disabled>Redo (Ctrl+Shift+Z)</button>
+                        <hr>
                         <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
                         <div class="snap-settings-container">
                             <div class="snap-input-row">
@@ -1060,6 +1063,12 @@
                     </div>
                 </li>
                 <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
+                <li>
+                    <button id="historyButton" title="Show Version History" style="padding: 2px 2px; font-size: 15pt;">🕒</button>
+                </li>
+                <li>
+                    <span id="projectNameDisplay" style="padding: 8px 12px; font-weight: bold; cursor: text;" contenteditable="true">MyProject</span>
+                </li>
             </ul>
         </div>
         <div id="viewer_container"></div>
@@ -1078,6 +1087,16 @@
                 <span class="button-text">➤</span>
                 <div class="loader"></div>
             </button>
+        </div>
+    </div>
+    <!-- History panel -->
+     <div id="history_panel" style="display:none; width: 450px; height: 100vh; background-color: #f0f2f5; border-left: 1px solid #ccc; display: flex; flex-direction: column;">
+        <div class="tab_header" style="flex-shrink: 0;">
+            <span class="tab-title">Version History</span>
+            <button id="closeHistoryPanel" style="font-size: 18px; line-height: 1;">×</button>
+        </div>
+        <div id="history_list_container" style="flex-grow: 1; overflow-y: auto;">
+            <!-- History items will be populated here -->
         </div>
     </div>
     <!-- Editor for defines -->

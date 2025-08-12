@@ -106,6 +106,43 @@ export async function saveProject() {
     await handleBlobResponse(response, 'project.json');
 }
 
+// --- History/Versioning Functions ---
+
+export async function undo() {
+    const response = await fetch(`${API_BASE_URL}/api/undo`, { method: 'POST' });
+    return handleResponse(response);
+}
+
+export async function redo() {
+    const response = await fetch(`${API_BASE_URL}/api/redo`, { method: 'POST' });
+    return handleResponse(response);
+}
+
+export async function saveVersion(projectName) {
+    const response = await fetch(`${API_BASE_URL}/api/save_version`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_name: projectName })
+    });
+    return handleResponse(response); // Returns simple success/error message
+}
+
+export async function getProjectHistory(projectName) {
+    const response = await fetch(`${API_BASE_URL}/api/get_project_history?project_name=${projectName}`);
+    return handleResponse(response);
+}
+
+export async function loadVersion(projectName, versionId) {
+    const response = await fetch(`${API_BASE_URL}/api/load_version`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_name: projectName, version_id: versionId })
+    });
+    return handleResponse(response);
+}
+
+// --
+
 /**
  * Requests the GDML representation of the current project state and triggers a download.
  * @returns {Promise<void>}

@@ -1,13 +1,13 @@
 # FILE: gdml-studio/app.py
 
+import glob
 import json
-import math
 import os
 import requests
 import traceback
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
-import asteval
 
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
@@ -26,14 +26,20 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-ai_model = "gemma3:12b"
-ai_timeout = 3000 # in seconds
+# Expression evaluator object to be used in backend and project manager
 expression_evaluator = ExpressionEvaluator()
 project_manager = ProjectManager(expression_evaluator)
 
-# Configure Gemini client
+# Projects directory
+PROJECTS_BASE_DIR = os.path.join(os.getcwd(), "projects")
+os.makedirs(PROJECTS_BASE_DIR, exist_ok=True)
+project_manager.projects_dir = PROJECTS_BASE_DIR # Give PM access
+
+# AI setup
+ai_model = "gemma3:12b"
+ai_timeout = 3000 # in seconds
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client: client.Client | None = None
+gemini_client: client.Client | None = None # Configure Gemini client
 
 def configure_gemini_client():
     """Initializes or re-initializes the Gemini client with the current API key."""
@@ -73,8 +79,7 @@ def load_system_prompt():
 # Function for Consistent API Responses
 def create_success_response(message="Success"):
     """
-    Helper to create a standard success response object. It packages the
-    entire current project state for the frontend to re-render.
+    Helper to create a standard success response object, including history state.
     """
     state = project_manager.get_full_project_state_dict()
     scene = project_manager.get_threejs_description()
@@ -82,13 +87,93 @@ def create_success_response(message="Success"):
         "success": True,
         "message": message,
         "project_state": state,
-        "scene_update": scene
+        "scene_update": scene,
+        # --- Add history status to every successful response ---
+        "history_status": {
+            "can_undo": project_manager.history_index > 0,
+            "can_redo": project_manager.history_index < len(project_manager.history) - 1
+        }
     })
+
+@app.route('/api/undo', methods=['POST'])
+def undo_route():
+    success, message = project_manager.undo()
+    if success:
+        return create_success_response(message)
+    else:
+        return jsonify({"success": False, "error": message}), 400
+
+@app.route('/api/redo', methods=['POST'])
+def redo_route():
+    success, message = project_manager.redo()
+    if success:
+        return create_success_response(message)
+    else:
+        return jsonify({"success": False, "error": message}), 400
+
+@app.route('/api/save_version', methods=['POST'])
+def save_version_route():
+    data = request.get_json()
+    project_name = data.get('project_name')
+    if not project_name:
+        return jsonify({"success": False, "error": "Project name is required."}), 400
+
+    project_path = os.path.join(PROJECTS_BASE_DIR, project_name)
+    versions_path = os.path.join(project_path, "versions")
+    os.makedirs(versions_path, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    version_filename = f"{timestamp}.json"
+    version_filepath = os.path.join(versions_path, version_filename)
+
+    try:
+        json_string = project_manager.save_project_to_json_string()
+        with open(version_filepath, 'w') as f:
+            f.write(json_string)
+        return jsonify({"success": True, "message": f"Version saved as {version_filename}"})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to save version: {e}"}), 500
+
+@app.route('/api/get_project_history', methods=['GET'])
+def get_project_history_route():
+    project_name = request.args.get('project_name')
+    if not project_name:
+        return jsonify({"success": False, "error": "Project name is required."}), 400
+    
+    versions_path = os.path.join(PROJECTS_BASE_DIR, project_name, "versions")
+    if not os.path.isdir(versions_path):
+        return jsonify({"success": True, "history": []})
+
+    version_files = sorted(glob.glob(os.path.join(versions_path, "*.json")), reverse=True)
+    history = [{"id": os.path.basename(f), "timestamp": os.path.basename(f).replace('.json','')} for f in version_files]
+    
+    return jsonify({"success": True, "history": history})
+
+@app.route('/api/load_version', methods=['POST'])
+def load_version_route():
+    data = request.get_json()
+    project_name = data.get('project_name')
+    version_id = data.get('version_id') # This is the filename
+    
+    if not project_name or not version_id:
+        return jsonify({"success": False, "error": "Project name and version ID are required."}), 400
+
+    version_filepath = os.path.join(PROJECTS_BASE_DIR, project_name, "versions", version_id)
+    try:
+        with open(version_filepath, 'r') as f:
+            json_string = f.read()
+        project_manager.load_project_from_json_string(json_string)
+        return create_success_response(f"Loaded version {version_id}")
+    except FileNotFoundError:
+        return jsonify({"success": False, "error": "Version file not found."}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
 # Function to define a new project
 def create_empty_project():
 
     global project_manager
+    
     # Re-initialize the project manager to clear everything
     project_manager = ProjectManager(expression_evaluator) 
 
