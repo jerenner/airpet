@@ -1253,9 +1253,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         case 'trap': // General Trapezoid
             {
                 const vertices = [];
-                const dz = p.dz; const th = p.theta; const ph = p.phi;
-                const dy1 = p.dy1; const dx1 = p.dx1; const dx2 = p.dx2;
-                const dy2 = p.dy2; const dx3 = p.dx3; const dx4 = p.dx4;
+                const dz = p.z; const th = p.theta; const ph = p.phi;
+                const dy1 = p.y1; const dx1 = p.x1; const dx2 = p.x2;
+                const dy2 = p.y2; const dx3 = p.x3; const dx4 = p.x4;
                 const a1 = p.alpha1; const a2 = p.alpha2;
                 const tth_cp = Math.tan(th) * Math.cos(ph);
                 const tth_sp = Math.tan(th) * Math.sin(ph);
@@ -1876,6 +1876,12 @@ export function renderObjects(pvDescriptions, projectState) {
 }
 
 export function clearScene() {
+
+    // --- Detach the gizmo first. ---
+    if (transformControls && transformControls.object) {
+        transformControls.detach();
+    }
+
     unselectAllInScene(); // Detach transform controls and clear selection arrays
     while (geometryGroup.children.length > 0) {
         const object = geometryGroup.children[0];

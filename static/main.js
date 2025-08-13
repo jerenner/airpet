@@ -123,7 +123,7 @@ async function initializeApp() {
     SceneManager.initScene({
         onObjectSelectedIn3D: handle3DSelection,          // Callback when object clicked in 3D scene
         onObjectTransformEnd: handleTransformEnd,          // Callback when TransformControls drag/rotate/scale ends
-        onObjectTransformLive: handleTransformLive,       // Live transformations
+        //onObjectTransformLive: handleTransformLive,       // Live transformations
         onMultiObjectSelected: handle3DMultiSelection, // Selector box
         getInspectorSnapSettings: () => { // Provide snap settings to SceneManager/TransformControls
             return { 
@@ -305,7 +305,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
     // 1. Update the global AppState cache
     AppState.currentProjectState = responseData.project_state;
-    AppState.selectedHierarchyItem = null; // Clear old selections
+    AppState.selectedHierarchyItems = []; // Clear old selections
     AppState.selectedThreeObjects = [];
     AppState.selectedPVContext.pvId = null;
 
@@ -319,27 +319,30 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // 3. Re-render the hierarchy panels
     UIManager.updateHierarchy(responseData.project_state);
 
-    // 4. Restore selection and repopulate inspector ---
-    if (selectionToRestore && selectionToRestore.length > 0) {
-        // Extract just the IDs to pass to the UI manager
-        const idsToSelect = selectionToRestore.map(item => item.id);
-        UIManager.setHierarchySelection(idsToSelect); // Use the existing function!
-
-        // After setting the visual selection, we still need to trigger the main
-        // handler to update the inspector, gizmo, etc.
-        // We'll pass the full context array to it.
-        handleHierarchySelection(selectionToRestore);
-        
-    } else {
-        // If no selection to restore, clear everything
-        UIManager.clearInspector();
-        UIManager.clearHierarchySelection();
-        SceneManager.unselectAllInScene();
-    }
-
-    // 5. Update Undo/Redo button states
+    // 4. Update Undo/Redo button states
     if (responseData.history_status) {
         UIManager.updateUndoRedoButtons(responseData.history_status);
+    }
+
+    // 5. Restore selection and repopulate inspector ---
+    let validatedSelectionToRestore = [];
+    if (selectionToRestore && selectionToRestore.length > 0) {
+
+        // Filter the old selection, keeping only items that still exist in the new state.
+        validatedSelectionToRestore = selectionToRestore.filter(item =>
+            doesItemExistInState(item, responseData.project_state)
+        );
+
+        if (validatedSelectionToRestore.length > 0) {
+            const idsToSelect = validatedSelectionToRestore.map(item => item.id);
+            UIManager.setHierarchySelection(idsToSelect); // Visually select in the hierarchy
+            handleHierarchySelection(validatedSelectionToRestore); // Update inspector, gizmo, etc.
+        } else {
+            // If no valid selection remains (or there was none to begin with), clear everything.
+            UIManager.clearInspector();
+            UIManager.clearHierarchySelection();
+            SceneManager.unselectAllInScene();
+        }  
     }
 }
 
@@ -526,19 +529,21 @@ async function handleExportGdml() {
 }
 
 async function handleUndo() {
+    const selectionBeforeUndo = [...AppState.selectedHierarchyItems]; // Make a copy
     UIManager.showLoading("Undoing...");
     try {
         const result = await APIService.undo();
-        syncUIWithState(result, AppState.selectedHierarchyItems); // Restore selection after undo
+        syncUIWithState(result, selectionBeforeUndo); // Restore selection after undo
     } catch (error) { UIManager.showError(error.message); }
     finally { UIManager.hideLoading(); }
 }
 
 async function handleRedo() {
+    const selectionBeforeRedo = [...AppState.selectedHierarchyItems]; // Make a copy
     UIManager.showLoading("Redoing...");
     try {
         const result = await APIService.redo();
-        syncUIWithState(result, AppState.selectedHierarchyItems); // Restore selection after redo
+        syncUIWithState(result, selectionBeforeRedo); // Restore selection after redo
     } catch (error) { UIManager.showError(error.message); }
     finally { UIManager.hideLoading(); }
 }
@@ -830,24 +835,24 @@ function findItemInState(itemId) {
     return null;
 }
 
-function handleTransformLive(liveObject) {
-    // 1. Update the PV's own inspector (if it has inline values)
-    if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === liveObject.userData.id) {
-        UIManager.updateInspectorTransform(liveObject);
-    }
+// function handleTransformLive(liveObject) {
+//     // 1. Update the PV's own inspector (if it has inline values)
+//     if (AppState.selectedHierarchyItem && AppState.selectedHierarchyItem.id === liveObject.userData.id) {
+//         UIManager.updateInspectorTransform(liveObject);
+//     }
 
-    // 2. If the transform is linked to a define, update THAT define's inspector
-    const euler = new THREE.Euler().setFromQuaternion(liveObject.quaternion, 'ZYX');
-    const newPosition = { x: liveObject.position.x, y: liveObject.position.y, z: liveObject.position.z };
-    const newRotation = { x: euler.x, y: euler.y, z: euler.z };
+//     // 2. If the transform is linked to a define, update THAT define's inspector
+//     const euler = new THREE.Euler().setFromQuaternion(liveObject.quaternion, 'ZYX');
+//     const newPosition = { x: liveObject.position.x, y: liveObject.position.y, z: liveObject.position.z };
+//     const newRotation = { x: euler.x, y: euler.y, z: euler.z };
 
-    if (AppState.selectedPVContext.positionDefineName) {
-        UIManager.updateDefineInspectorValues(AppState.selectedPVContext.positionDefineName, newPosition);
-    }
-    if (AppState.selectedPVContext.rotationDefineName) {
-        UIManager.updateDefineInspectorValues(AppState.selectedPVContext.rotationDefineName, newRotation, true); // true for rotation
-    }
-}
+//     if (AppState.selectedPVContext.positionDefineName) {
+//         UIManager.updateDefineInspectorValues(AppState.selectedPVContext.positionDefineName, newPosition);
+//     }
+//     if (AppState.selectedPVContext.rotationDefineName) {
+//         UIManager.updateDefineInspectorValues(AppState.selectedPVContext.rotationDefineName, newRotation, true); // true for rotation
+//     }
+// }
 
 // Called by SceneManager when TransformControls finishes a transformation
 async function handleTransformEnd(transformedObject, initialTransforms) {
@@ -1626,5 +1631,57 @@ async function handleElementEditorConfirm(data) {
         UIManager.showError("Error processing Element: " + (error.message || error));
     } finally {
         UIManager.hideLoading();
+    }
+}
+
+/**
+ * Checks if a given item from a selection context still exists in a new project state.
+ * @param {object} itemContext - The item to check { type, id, name, data }.
+ * @param {object} newState - The full project state object to check against.
+ * @returns {boolean} - True if the item exists, false otherwise.
+ */
+function doesItemExistInState(itemContext, newState) {
+    const { type, id, name } = itemContext; // 'name' and 'id' are often the same
+    if (!newState || !type || !id) return false;
+
+    switch (type) {
+        case 'physical_volume':
+            // Must search all possible parents for the PV's ID
+            for (const lv of Object.values(newState.logical_volumes || {})) {
+                if (lv.content_type === 'physvol' && lv.content.some(pv => pv.id === id)) {
+                    return true;
+                }
+            }
+            for (const asm of Object.values(newState.assemblies || {})) {
+                if (asm.placements.some(pv => pv.id === id)) {
+                    return true;
+                }
+            }
+            return false; // Not found in any LV or Assembly
+
+        // For all other types, the ID is the name, so we can do a direct lookup.
+        case 'logical_volume':
+            return !!newState.logical_volumes?.[name];
+        case 'assembly':
+            return !!newState.assemblies?.[name];
+        case 'solid':
+            return !!newState.solids?.[name];
+        case 'material':
+            return !!newState.materials?.[name];
+        case 'element':
+            return !!newState.elements?.[name];
+        case 'isotope':
+            return !!newState.isotopes?.[name];
+        case 'define':
+            return !!newState.defines?.[name];
+        case 'optical_surface':
+            return !!newState.optical_surfaces?.[name];
+        case 'skin_surface':
+            return !!newState.skin_surfaces?.[name];
+        case 'border_surface':
+            return !!newState.border_surfaces?.[name];
+
+        default:
+            return false;
     }
 }

@@ -351,7 +351,7 @@ export function populateHistoryPanel(history, projectName) {
             <div style="font-size:11px; color:#666;">${version.id}</div>
         `;
         item.addEventListener('click', () => {
-            if (confirmAction(`Restore version from ${formatTimestamp(version.timestamp)}? This will add a new state to your history.`)) {
+            if (confirmAction(`Restore version from ${formatTimestamp(version.timestamp)}?`)) {
                 callbacks.onLoadVersionClicked(projectName, version.id);
             }
         });

@@ -340,8 +340,6 @@ function renderParamsUI(solidData = {}) {
 
     dynamicParamsDiv.innerHTML = '';
     const type = typeSelect.value || solidData.type;
-    console.log("Type is",type)
-    console.log("Params are",params)
     
     // Handle types that are currently read-only in the editor
     const nonEditableTypes = ['tessellated', 'xtru'];
@@ -629,18 +627,18 @@ function renderParamsUI(solidData = {}) {
                 ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'), currentProjectState)
             ],
             trap: () => [
-                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '100'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
                 ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', '0'), currentProjectState),
                 ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', '0'), currentProjectState),
                 document.createElement('hr'),
-                ExpressionInput.create('p_dy1', 'Y Half-Length at -z (mm)', p('dy1', '50'), currentProjectState),
-                ExpressionInput.create('p_dx1', 'X Half-Length 1 at -z (mm)', p('dx1', '50'), currentProjectState),
-                ExpressionInput.create('p_dx2', 'X Half-Length 2 at -z (mm)', p('dx2', '50'), currentProjectState),
+                ExpressionInput.create('p_y1', 'Y Full-Length at -z (mm)', p('y1', '50'), currentProjectState),
+                ExpressionInput.create('p_x1', 'X Full-Length 1 at -z (mm)', p('x1', '50'), currentProjectState),
+                ExpressionInput.create('p_x2', 'X Full-Length 2 at -z (mm)', p('x2', '50'), currentProjectState),
                 ExpressionInput.create('p_alpha1', 'Alpha 1 at -z (rad)', p('alpha1', '0'), currentProjectState),
                 document.createElement('hr'),
-                ExpressionInput.create('p_dy2', 'Y Half-Length at +z (mm)', p('dy2', '50'), currentProjectState),
-                ExpressionInput.create('p_dx3', 'X Half-Length 1 at +z (mm)', p('dx3', '50'), currentProjectState),
-                ExpressionInput.create('p_dx4', 'X Half-Length 2 at +z (mm)', p('dx4', '50'), currentProjectState),
+                ExpressionInput.create('p_y2', 'Y Full-Length at +z (mm)', p('y2', '50'), currentProjectState),
+                ExpressionInput.create('p_x3', 'X Full-Length 1 at +z (mm)', p('x3', '50'), currentProjectState),
+                ExpressionInput.create('p_x4', 'X Full-Length 2 at +z (mm)', p('x4', '50'), currentProjectState),
                 ExpressionInput.create('p_alpha2', 'Alpha 2 at +z (rad)', p('alpha2', '0'), currentProjectState),
             ],
             para: () => [
@@ -1286,10 +1284,16 @@ function getRawParamsFromUI() {
         raw_params.deltaphi = p('p_deltaphi');
         raw_params.zplanes = zPlanesState;
     } else if (type === 'trap') {
-        raw_params.dz = p('p_dz'); raw_params.theta = p('p_theta'); raw_params.phi = p('p_phi');
-        raw_params.dy1 = p('p_dy1'); raw_params.dx1 = p('p_dx1'); raw_params.dx2 = p('p_dx2');
+        raw_params.z = p('p_z'); 
+        raw_params.theta = p('p_theta'); 
+        raw_params.phi = p('p_phi');
+        raw_params.y1 = p('p_y1'); 
+        raw_params.x1 = p('p_x1'); 
+        raw_params.x2 = p('p_x2');
         raw_params.alpha1 = p('p_alpha1');
-        raw_params.dy2 = p('p_dy2'); raw_params.dx3 = p('p_dx3'); raw_params.dx4 = p('p_dx4');
+        raw_params.y2 = p('p_y2'); 
+        raw_params.x3 = p('p_x3'); 
+        raw_params.x4 = p('p_x4');
         raw_params.alpha2 = p('p_alpha2');
     }
     return raw_params;

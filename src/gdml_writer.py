@@ -539,7 +539,7 @@ class GDMLWriter:
         position_data = pv_obj.position
         if isinstance(position_data, str):
             ET.SubElement(pv_el, "positionref", {"ref": position_data})
-        elif isinstance(position_data, dict) and any(abs(v) > 1e-9 for v in position_data.values()):
+        elif isinstance(position_data, dict) and any(abs(float(v)) > 1e-9 for v in position_data.values()):
             pos_attrs = {"unit": DEFAULT_OUTPUT_LUNIT}
             for axis, val in position_data.items():
                 pos_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_LUNIT, "length"))
@@ -548,7 +548,7 @@ class GDMLWriter:
         rotation_data = pv_obj.rotation
         if isinstance(rotation_data, str):
             ET.SubElement(pv_el, "rotationref", {"ref": rotation_data})
-        elif isinstance(rotation_data, dict) and any(abs(v) > 1e-9 for v in rotation_data.values()):
+        elif isinstance(rotation_data, dict) and any(abs(float(v)) > 1e-9 for v in rotation_data.values()):
             rot_attrs = {"unit": DEFAULT_OUTPUT_AUNIT}
             for axis, val in rotation_data.items():
                 rot_attrs[axis] = str(convert_from_internal_units(val, DEFAULT_OUTPUT_AUNIT, "angle"))
@@ -557,7 +557,7 @@ class GDMLWriter:
         scale_data = pv_obj.scale
         if isinstance(scale_data, str): # It's a ref
             ET.SubElement(pv_el, "scaleref", {"ref": scale_data})
-        elif isinstance(scale_data, dict) and not all(abs(v - 1.0) < 1e-9 for v in scale_data.values()): # Non-identity scale
+        elif isinstance(scale_data, dict) and not all(abs(float(v) - 1.0) < 1e-9 for v in scale_data.values()): # Non-identity scale
             scale_attrs = {} # Scale has no unit attribute in GDML
             for axis, val in scale_data.items():
                 scale_attrs[axis] = str(val) # Scale factors are unitless

@@ -322,16 +322,16 @@ class ProjectManager:
                  ep['outst'] = p.get('outst', 0)
 
             elif solid_type == 'trap':
-                ep['dz'] = p.get('dz', 0) / 2.0
+                ep['z'] = p.get('z', 0) / 2.0
                 ep['theta'] = p.get('theta', 0)
                 ep['phi'] = p.get('phi', 0)
-                ep['dy1'] = p.get('dy1', 0) / 2.0
-                ep['dx1'] = p.get('dx1', 0) / 2.0
-                ep['dx2'] = p.get('dx2', 0) / 2.0
+                ep['y1'] = p.get('y1', 0) / 2.0
+                ep['x1'] = p.get('x1', 0) / 2.0
+                ep['x2'] = p.get('x2', 0) / 2.0
                 ep['alpha1'] = p.get('alpha1', 0)
-                ep['dy2'] = p.get('dy2', 0) / 2.0
-                ep['dx3'] = p.get('dx3', 0) / 2.0
-                ep['dx4'] = p.get('dx4', 0) / 2.0
+                ep['y2'] = p.get('y2', 0) / 2.0
+                ep['x3'] = p.get('x3', 0) / 2.0
+                ep['x4'] = p.get('x4', 0) / 2.0
                 ep['alpha2'] = p.get('alpha2', 0)
                 
             elif solid_type == 'twistedbox':
