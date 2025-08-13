@@ -63,7 +63,7 @@ export function initScene(callbacks) {
 
     // Basic Scene Setup
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x444444);
+    scene.background = new THREE.Color(0x222222);
     scene.add(gizmoAttachmentHelper); // Add it to the scene
 
     viewerContainer = document.getElementById('viewer_container');
@@ -501,12 +501,36 @@ export function setPVVisibility(pvId, isVisible) {
     }
 }
 
-export function setAllPVVisibility(isVisible) {
-    // First, update the state Set. This part is correct.
+// Sets the visibility to the inverse of the current value
+export function togglePVVisibility(pvId) {
+    const group = findObjectByPvId(pvId);
+    if (group) {
+        
+        let isVisible = false;
+
+        // Instead of setting group.visible, we toggle the visibility
+        // of the renderable objects *inside* the group.
+        // The group itself remains visible, so it doesn't affect its children.
+        group.traverse(child => {
+            if (child.isMesh || child.isLineSegments) {
+                isVisible = !child.visible;
+                child.visible = isVisible;
+            }
+        });
+
+        if (isVisible) {
+            hiddenPvIds.delete(pvId);
+        } else {
+            hiddenPvIds.add(pvId);
+        }
+    }
+}
+
+export function setAllPVVisibility(isVisible, projectState) {
+    // First, update the state Set.
     if (isVisible) {
         hiddenPvIds.clear();
     } else {
-        const projectState = callbacks.getProjectState?.();
         if (projectState) {
             // This logic correctly gathers ALL pvIds.
             Object.values(projectState.logical_volumes).forEach(lv => {

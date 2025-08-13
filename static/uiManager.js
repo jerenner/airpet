@@ -256,7 +256,21 @@ export function initUI(cb) {
     closeHistoryPanel.addEventListener('click', hideHistoryPanel);
     undoButton.addEventListener('click', callbacks.onUndoClicked);
     redoButton.addEventListener('click', callbacks.onRedoClicked);
+    projectNameDisplay.addEventListener('keydown', (event) => {
+        // Check if the Enter key was pressed
+        if (event.key === 'Enter') {
+            event.preventDefault();    // This stops it from creating a new line
+            projectNameDisplay.blur(); // Trigger the blur event, which saves the name
+        }
+    });
     projectNameDisplay.addEventListener('blur', () => {
+        // Remove any potential HTML tags from pasting
+        const cleanName = projectNameDisplay.textContent.trim();
+        if (cleanName === "") {
+            projectNameDisplay.textContent = "UntitledProject"; // Revert if empty
+        } else {
+            projectNameDisplay.textContent = cleanName;
+        }
         callbacks.onProjectRenamed(projectNameDisplay.textContent);
     });
 
@@ -994,7 +1008,7 @@ function createFolderElement(name, itemType, isDroppable) {
     return folderLi;
 }
 
-function buildVolumeNode(pvData, projectState) {
+function buildVolumeNode(pvData, projectState, isInsideAssembly = false) {
         if (!pvData) return null;
 
         const allLVs = projectState.logical_volumes || {};
@@ -1014,14 +1028,17 @@ function buildVolumeNode(pvData, projectState) {
             displayName += ` (Assembly: ${pvData.volume_ref})`;
 
             // The main item represents the PV that places the assembly
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData);
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { 
+                lvData: null, 
+                hideControls: isInsideAssembly 
+            });
             
             // Its children are the PVs inside the assembly
             if (assembly.placements && assembly.placements.length > 0) {
                 const childrenUl = document.createElement('ul');
                 assembly.placements.forEach(nestedPvData => {
                     // Recursively build nodes for each PV inside the assembly
-                    const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                    const nestedNode = buildVolumeNode(nestedPvData, projectState, true);
                     if (nestedNode) childrenUl.appendChild(nestedNode);
                 });
                 if (childrenUl.hasChildNodes()) {
@@ -1033,14 +1050,18 @@ function buildVolumeNode(pvData, projectState) {
             // --- This PV is a standard Logical Volume Placement ---
             displayName += ` (LV: ${pvData.volume_ref})`;
 
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { lvData: childLVData });
+            // Pass the `childLVData` and `isInsideAssembly` flag to `createTreeItem`
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { 
+                lvData: childLVData, 
+                hideControls: isInsideAssembly 
+            });
 
             // Its children are the PVs inside the placed LV
             const children_to_process = (childLVData.content_type === 'physvol') ? childLVData.content : [];
             if (children_to_process && children_to_process.length > 0) {
                 const childrenUl = document.createElement('ul');
                 children_to_process.forEach(nestedPvData => {
-                    const nestedNode = buildVolumeNode(nestedPvData, projectState);
+                    const nestedNode = buildVolumeNode(nestedPvData, projectState, false);
                     if (nestedNode) childrenUl.appendChild(nestedNode);
                 });
                 if (childrenUl.hasChildNodes()) {
@@ -1051,7 +1072,9 @@ function buildVolumeNode(pvData, projectState) {
         } else {
             // This is a broken reference, but we can still show the placement
             displayName += ` (Broken Ref: ${pvData.volume_ref})`;
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData);
+            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, {
+            hideControls: isInsideAssembly // Also respect the isInsideAssembly flag for broken refs
+        });
             itemElement.style.color = 'red';
         }
 
@@ -1073,6 +1096,8 @@ function addToggle(parentLi, childrenUl) {
 }
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
+
+    const { lvData = null, hideControls = false } = additionalData;
     const item = document.createElement('li');
 
     // --- DRAG LOGIC ---
@@ -1146,6 +1171,15 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     }
 
     // --- Add a container for the name and buttons ---
+
+    // Conditionally create the buttons based on the new 'hideControls' flag
+    const controlsHTML = hideControls ? '' : `
+        <div class="item-controls">
+            ${itemType === 'physical_volume' ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
+            <button class="delete-item-btn" title="Delete Item">×</button>
+        </div>
+    `;
+
     let finalDisplayName = displayName; // Start with the passed name
     // Add an icon for procedural volumes in the main hierarchy view
     if (itemType === 'logical_volume' && fullItemData.content_type && fullItemData.content_type !== 'physvol') {
@@ -1156,16 +1190,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     item.innerHTML = `
         <div class="tree-item-content">
             <span class="item-name">${finalDisplayName}</span>
-            <div class="item-controls">
-                ${itemType === 'physical_volume' ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
-                <button class="delete-item-btn" title="Delete Item">×</button>
-            </div>
+            ${controlsHTML} 
         </div>
     `;
     item.dataset.type = itemType;
     item.dataset.id = itemIdForBackend;
     item.dataset.name = displayName;
-    item.appData = {...fullItemData, ...additionalData};
+    item.appData = {...fullItemData, ...lvData};
 
     // Main click listener for selection
     item.addEventListener('click', (event) => {
@@ -1230,39 +1261,42 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
     // Listener for the new delete button
     const deleteBtn = item.querySelector('.delete-item-btn');
-    deleteBtn.addEventListener('click', (event) => {
-        event.stopPropagation(); // Prevent the item from being selected
-        // We manually call the main delete handler after confirming
-        if (confirmAction(`Are you sure you want to delete ${itemType}: ${displayName}?`)) {
-            // We need to tell main.js *what* to delete
-            callbacks.onDeleteSpecificItemClicked(itemType, itemIdForBackend);
-        }
-    });
+    if (deleteBtn) {
+        deleteBtn.addEventListener('click', (event) => {
+            event.stopPropagation(); // Prevent the item from being selected
+            // We manually call the main delete handler after confirming
+            if (confirmAction(`Are you sure you want to delete ${itemType}: ${displayName}?`)) {
+                // We need to tell main.js *what* to delete
+                callbacks.onDeleteSpecificItemClicked(itemType, itemIdForBackend);
+            }
+        });
+    }
 
     // For double-clicking physical volumes
     if (itemType === 'physical_volume') {
 
         // Add visibility button
         const visBtn = item.querySelector('.visibility-btn');
-        const isHidden = SceneManager.isPvHidden(itemIdForBackend);
-        item.classList.toggle('item-hidden', isHidden);
-        visBtn.style.opacity = isHidden ? '0.4' : '1.0';
-        visBtn.addEventListener('click', (event) => {
-            event.stopPropagation();
+        if(visBtn) {
 
-            // Toggle the current state.
-            const wasHidden = item.classList.contains('item-hidden');
-            const isNowVisible = wasHidden; // If it was hidden, it is now visible.
+            const isHidden = SceneManager.isPvHidden(itemIdForBackend);
+            item.classList.toggle('item-hidden', isHidden);
+            //visBtn.style.opacity = isHidden ? '0.4' : '1.0';
+            
+            visBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
 
-            item.classList.toggle('item-hidden', !isNowVisible);
-            // visBtn.style.opacity = isNowVisible ? '1.0' : '0.4';
+                // Toggle the current state.
+                const wasHidden = item.classList.contains('item-hidden');
+                const isNowVisible = wasHidden; // If it was hidden, it is now visible.
 
-            // Call the main handler from main.js.
-            // The third argument (isRecursive) is true by default if not provided.
-            // If the user holds Alt, we can do a non-recursive toggle.
-            const isRecursiveToggle = event.altKey;
-            callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible, isRecursiveToggle);
-        });
+                // Call the main handler from main.js (handles object and GUI visibility).
+                // The third argument (isRecursive) is false by default if not provided.
+                // If the user holds Alt, we can do a recursive toggle.
+                const isRecursiveToggle = event.altKey;
+                callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible, isRecursiveToggle);
+            });
+        }
 
         // Add double-click listener
         item.addEventListener('dblclick', (event) => {
@@ -1675,16 +1709,16 @@ export function confirmAction(message) {
 export function setTreeItemVisibility(pvId, isVisible) {
     const item = document.querySelector(`li[data-id="${pvId}"]`);
     if (item) {
-        const visBtn = item.querySelector('.visibility-btn');
+        //const visBtn = item.querySelector('.visibility-btn');
         item.classList.toggle('item-hidden', !isVisible);
-        if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
+        //if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
     }
 }
 export function setAllTreeItemVisibility(isVisible) {
     document.querySelectorAll('#tab_structure li[data-type="physical_volume"]').forEach(item => {
-        const visBtn = item.querySelector('.visibility-btn');
+        //const visBtn = item.querySelector('.visibility-btn');
         item.classList.toggle('item-hidden', !isVisible);
-        if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
+        //if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
     });
 }
 

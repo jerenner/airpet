@@ -199,7 +199,7 @@ async function initializeApp() {
     });
 
     // Add menu listeners
-    document.getElementById('hideSelectedBtn').addEventListener('click', handleHideSelected);
+    document.getElementById('hideAllBtn').addEventListener('click', handleHideAll);
     document.getElementById('showAllBtn').addEventListener('click', handleShowAll);
 
     // --- Check AI service status on startup ---
@@ -1243,17 +1243,33 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
 
     // 2. Toggle visibility for selected element
     SceneManager.setPVVisibility(pvId, isVisible);
+    UIManager.setTreeItemVisibility(pvId, isVisible);
 
     // 3. Find all descendant PV IDs
     let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
     
-    // 4. If not recursive, we have to toggle back the visibility of descendants
-    if(!isRecursive && !isVisible) {
+    // 4. If recursive, toggle visibility of all descendants.
+    if(isRecursive) {
         descendantIds.forEach(id => {
             // Update the 3D scene
-            SceneManager.setPVVisibility(id, !isVisible);
+            SceneManager.setPVVisibility(id, isVisible);
             // Update the hierarchy UI (the eye icon and dimmed text)
-            UIManager.setTreeItemVisibility(id, !isVisible);
+            UIManager.setTreeItemVisibility(id, isVisible);
+        });
+    }
+
+    // 5. * If NOT recursive and toggling to a visibility opposite of the descendant, 
+    // we actually have to un-toggle the scene visibility of the descendants because 
+    // they were automatically also toggled to invisible.
+    if(!isRecursive) {
+        descendantIds.forEach(id => {
+            const item = document.querySelector(`li[data-id="${id}"]`);
+            if (item) {
+                const descendantVis = item.classList.contains('item-hidden');
+                if(descendantVis == isVisible) {
+                    SceneManager.setPVVisibility(id, !descendantVis);
+                }
+            }
         });
     }
 }
@@ -1273,10 +1289,17 @@ function handleHideSelected() {
     }
 }
 
+function handleHideAll() {
+    // 1. Tell the SceneManager to hide all 3D objects.
+    SceneManager.setAllPVVisibility(false, AppState.currentProjectState);
+    // 2. Tell the UIManager to update the visual state of all hierarchy items.
+    UIManager.setAllTreeItemVisibility(false);
+}
+
 function handleShowAll() {
-    // This just needs to call the SceneManager's bulk function
-    SceneManager.setAllPVVisibility(true);
-    // And then update the entire UI
+    // 1. Tell the SceneManager to show all 3D objects.
+    SceneManager.setAllPVVisibility(true, AppState.currentProjectState);
+    // 2. Tell the UIManager to update the visual state of all hierarchy items.
     UIManager.setAllTreeItemVisibility(true);
 }
 

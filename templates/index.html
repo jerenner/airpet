@@ -180,12 +180,12 @@
             flex-shrink: 0; /* Prevent the menu bar from shrinking */
             background-color: #333; color: white; padding: 0; z-index: 1000; display: flex;
         }
-        #menu_bar ul { list-style-type: none; margin: 0; padding: 0; display: flex; }
+        #menu_bar ul { list-style-type: none; margin: 0; padding: 1px; display: flex; }
         #menu_bar li { position: relative; }
         #menu_bar li > button, #menu_bar li > span {
             display: block; color: white; text-align: center; padding: 8px 12px;
             text-decoration: none; border: none; background-color: transparent;
-            cursor: pointer; font-size: 14px;
+            cursor: pointer; font-size: 16px;
         }
         #menu_bar li > button:hover, #menu_bar li .dropdown_content button:hover { background-color: #555; }
         #menu_bar .dropdown_content {
@@ -209,7 +209,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 13px;
+            font-size: 14px;
             color: #333; /* Text color for the label */
             margin-bottom: 5px;
         }
@@ -226,6 +226,40 @@
             width: 60px;
             padding: 2px;
             border: 1px solid #ccc;
+        }
+        /* Styles for the project controls on the right */
+        #project_controls {
+            display: flex;
+            align-items: center;
+            gap: 20px; /* Space between name and button */
+        }
+        #projectNameDisplay {
+            padding: 6px 10px;
+            font-weight: bold;
+            cursor: text;
+            background-color: #444; /* Slightly different background */
+            border-radius: 4px;
+            border: 1px solid transparent; /* Placeholder for focus state */
+            white-space: nowrap; /* Prevent line breaks */
+            outline: none; /* Remove default outline on focus */
+        }
+        #projectNameDisplay:focus {
+            background-color: #555;
+            border-color: #777;
+        }
+        #historyButton {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 10px;
+            line-height: 1;
+            margin-right: 10px;
+        }
+        #historyButton:hover {
+            background-color: #555;
+            border-radius: 4px;
         }
 
         #viewer_container { /* Now relative within main_content_area */
@@ -643,12 +677,15 @@
             background-color: rgba(0,0,0,0.1);
         }
 
-        .item-hidden .item-name {
+        li.item-hidden > .tree-item-content > .item-name {
+            /* ...target the item-name span inside its direct content div. */
             color: #999;
             font-style: italic;
         }
-        .item-hidden .visibility-btn {
-            opacity: 0.4 !important; /* Ensure hidden eye is always dim */
+
+        li.item-hidden > .tree-item-content > .item-controls > .visibility-btn {
+            /* ...and target the visibility button inside its direct content div. */
+            opacity: 0.4 !important; /* Force the opacity for this specific button */
         }
 
         /* Toggle for expanding/collapsing */
@@ -1048,7 +1085,7 @@
                     <div class="dropdown_content">
                         <!--<button id="addObjectButton">Add...</button>-->
                         <button id="deleteSelectedObjectButton">Delete Selected</button>
-                        <button id="hideSelectedBtn">Hide Selected</button>
+                        <button id="hideAllBtn">Hide All</button>
                         <button id="showAllBtn">Show All</button>
                     </div>
                 </li>
@@ -1063,13 +1100,11 @@
                     </div>
                 </li>
                 <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
-                <li>
-                    <button id="historyButton" title="Show Version History" style="padding: 2px 2px; font-size: 15pt;">🕒</button>
-                </li>
-                <li>
-                    <span id="projectNameDisplay" style="padding: 8px 12px; font-weight: bold; cursor: text;" contenteditable="true">MyProject</span>
-                </li>
             </ul>
+            <div id="project_controls" style="display: flex; align-items: center; margin-left: auto;">
+                <span id="projectNameDisplay" contenteditable="true">MyProject</span>
+                <button id="historyButton" title="Show Project History">🕒</button>
+            </div>
         </div>
         <div id="viewer_container"></div>
         <!-- The selection box element -->
@@ -1092,7 +1127,7 @@
     <!-- History panel -->
      <div id="history_panel" style="display:none; width: 450px; height: 100vh; background-color: #f0f2f5; border-left: 1px solid #ccc; flex-direction: column;">
         <div class="tab_header" style="flex-shrink: 0;">
-            <span class="tab-title">Version History</span>
+            <span class="tab-title">History</span>
             <button id="closeHistoryPanel" style="font-size: 18px; line-height: 1;">×</button>
         </div>
         <div id="history_list_container" style="flex-grow: 1; overflow-y: auto;">
