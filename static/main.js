@@ -681,7 +681,7 @@ async function handleHierarchySelection(newSelection) {
                 reason = "Scaling is not supported for procedural volumes.";
             }
         }
-    // For multi-selection, disable rotation and scale if any item is procedural.
+    // For multi-selection, disable scale if any item is procedural.
     } else if (newSelection.length > 1) {
         const anyProcedural = newSelection.some(item => {
             if (item.type !== 'physical_volume') return false;
@@ -689,7 +689,7 @@ async function handleHierarchySelection(newSelection) {
             return lv && lv.content_type !== 'physvol';
         });
         if (anyProcedural) {
-            transformState = { translate: false, rotate: false, scale: false };
+            transformState = { translate: true, rotate: true, scale: false };
             reason = "Scaling is not supported for procedural volumes.";
         }
     }

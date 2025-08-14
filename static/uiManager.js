@@ -1721,10 +1721,7 @@ export function setTreeItemVisibility(pvId, isVisible) {
 }
 export function setAllTreeItemVisibility(isVisible) {
     document.querySelectorAll('#tab_structure li[data-type="physical_volume"]').forEach(item => {
-        //const visBtn = item.querySelector('.visibility-btn');
         item.classList.toggle('item-hidden', !isVisible);
-        console.log("Setting visibility for",item)
-        //if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
     });
 }
 

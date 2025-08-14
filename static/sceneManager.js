@@ -119,17 +119,23 @@ export function initScene(callbacks) {
         const object = transformControls.object;
         if (!object) return;
 
-        // Check if we are controlling the helper (a group)
+        // The logic is the same for all selection types now.
+        // We store the initial state of the gizmo's helper...
         if (object === gizmoAttachmentHelper) {
             initialTransforms.set('helper', gizmoAttachmentHelper.clone());
-            // Store initial transforms of all meshes controlled by the helper
-            _selectedThreeObjects.forEach(group => {
-                initialTransforms.set(group.userData.id, group.clone());
-            });
-        } else {
-            // It's a single object
-            initialTransforms.set(object.userData.id, object.clone());
         }
+
+        // ...and the initial state of EVERY selected top-level object.
+        // For a procedural volume, its container IS the top-level object.
+        _selectedThreeObjects.forEach(group => {
+            // We need to find the canonical top-level selectable item for this group.
+            // For a procedural instance, it's the container PV. For a standard PV, it's itself.
+            const ownerId = group.userData.owner_pv_id || group.userData.id;
+            const ownerObject = findObjectByPvId(ownerId);
+            if (ownerObject && !initialTransforms.has(ownerId)) {
+                initialTransforms.set(ownerId, ownerObject.clone());
+            }
+        });
     });
     transformControls.addEventListener('mouseUp', () => {
         if (onObjectTransformEndCallback) {
@@ -146,44 +152,43 @@ export function initScene(callbacks) {
         const object = transformControls.object;
         if (!object) return;
 
-        if (object === gizmoAttachmentHelper) {
-            const controlledId = object.userData.controlledObjectId;
-            
-            if (controlledId && controlledId !== 'multi-select') {
-                // PROCEDURAL CASE: This is simple. The gizmo moves the container.
-                const container = findObjectByPvId(controlledId);
-                if (container) {
-                    container.position.copy(gizmoAttachmentHelper.position);
-                    container.quaternion.copy(gizmoAttachmentHelper.quaternion);
-                    // The children instances follow automatically via the scene graph.
-                }
-            } else if (initialTransforms.has('helper')) {
-                // MULTI-SELECT CASE: This logic correctly transforms multiple independent objects.
-                const helperStart = initialTransforms.get('helper');
-                const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
-                const deltaMatrix = new THREE.Matrix4().multiplyMatrices(gizmoAttachmentHelper.matrixWorld, helperStartMatrixInv);
+        // This single block now handles all cases: single, multi, procedural, and mixed.
+        if (object === gizmoAttachmentHelper && initialTransforms.has('helper')) {
+            // --- This is a multi-object or procedural transform ---
+            const helperStart = initialTransforms.get('helper');
+            const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
+            const deltaMatrix = new THREE.Matrix4().multiplyMatrices(gizmoAttachmentHelper.matrixWorld, helperStartMatrixInv);
 
-                _selectedThreeObjects.forEach(mesh => {
-                    const initialMesh = initialTransforms.get(mesh.userData.id);
-                    if (initialMesh) {
-                        const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
-                        
-                        // Apply this final world matrix to the object's matrixWorld
-                        // Then, let three.js figure out the local position/rotation from that.
-                        const parentInverse = new THREE.Matrix4();
-                        if (mesh.parent) {
-                           parentInverse.copy(mesh.parent.matrixWorld).invert();
-                        }
-                        mesh.matrix.multiplyMatrices(parentInverse, finalMatrix);
-                        mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+            // Iterate over the initial transforms we stored. The keys are the unique IDs
+            // of the top-level objects we are transforming.
+            initialTransforms.forEach((initialObjectState, objectId) => {
+                if (objectId === 'helper') return; // Skip the helper's own state
+
+                const liveObject = findObjectByPvId(objectId);
+                if (liveObject) {
+                    // Apply the delta to the initial world matrix of the object
+                    const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialObjectState.matrixWorld);
+
+                    // Decompose the new world matrix back into a LOCAL matrix
+                    // relative to the object's parent.
+                    const parentInverse = new THREE.Matrix4();
+                    if (liveObject.parent) {
+                       parentInverse.copy(liveObject.parent.matrixWorld).invert();
                     }
-                });
+                    liveObject.matrix.multiplyMatrices(parentInverse, finalMatrix);
+                    
+                    // Update the object's local properties from the new local matrix
+                    liveObject.matrix.decompose(liveObject.position, liveObject.quaternion, liveObject.scale);
+                }
+            });
+
+        } else if (initialTransforms.has(object.userData.id)) {
+            // --- This is a single-object transform ---
+            // The gizmo is directly manipulating the object.
+            // No extra logic is needed for the live update, but we can call the inspector updater.
+            if (onObjectTransformLiveCallback) {
+                onObjectTransformLiveCallback(object);
             }
-        }
-        
-        // Live update the inspector for single objects
-        if (object !== gizmoAttachmentHelper && onObjectTransformLiveCallback) {
-            onObjectTransformLiveCallback(object);
         }
     });
 
