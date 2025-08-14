@@ -106,8 +106,6 @@ export function initScene(callbacks) {
     // Transform controls
     transformControls = new TransformControls(camera, renderer.domElement);
 
-    // Increase the size of the gizmo handles for easier interaction.
-    transformControls.setSize(1.2);
     // Tell the internal raycaster to have a larger tolerance for lines
     // This is like giving the mouse a "fat finger" when clicking near a line
     transformControls.getRaycaster().params.Line.threshold = 0.1;
@@ -148,30 +146,44 @@ export function initScene(callbacks) {
         const object = transformControls.object;
         if (!object) return;
 
-        // Check if we are controlling the helper (i.e., a group)
-        if (object === gizmoAttachmentHelper && initialTransforms.has('helper')) {
-            const helperStart = initialTransforms.get('helper');
-            const helperCurrent = gizmoAttachmentHelper;
-
-            // Calculate the delta transform
-            const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
-            const deltaMatrix = new THREE.Matrix4().multiplyMatrices(helperCurrent.matrixWorld, helperStartMatrixInv);
-
-            // Apply this delta to all meshes that were part of the initial selection
-            _selectedThreeObjects.forEach(mesh => {
-                const initialMesh = initialTransforms.get(mesh.userData.id);
-                if (initialMesh) {
-                    const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
-                    
-                    const pos = new THREE.Vector3();
-                    const rot = new THREE.Quaternion();
-                    const scl = new THREE.Vector3();
-                    finalMatrix.decompose(pos, rot, scl);
-                    
-                    mesh.position.copy(pos);
-                    mesh.quaternion.copy(rot);
+        if (object === gizmoAttachmentHelper) {
+            const controlledId = object.userData.controlledObjectId;
+            
+            if (controlledId && controlledId !== 'multi-select') {
+                // PROCEDURAL CASE: This is simple. The gizmo moves the container.
+                const container = findObjectByPvId(controlledId);
+                if (container) {
+                    container.position.copy(gizmoAttachmentHelper.position);
+                    container.quaternion.copy(gizmoAttachmentHelper.quaternion);
+                    // The children instances follow automatically via the scene graph.
                 }
-            });
+            } else if (initialTransforms.has('helper')) {
+                // MULTI-SELECT CASE: This logic correctly transforms multiple independent objects.
+                const helperStart = initialTransforms.get('helper');
+                const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
+                const deltaMatrix = new THREE.Matrix4().multiplyMatrices(gizmoAttachmentHelper.matrixWorld, helperStartMatrixInv);
+
+                _selectedThreeObjects.forEach(mesh => {
+                    const initialMesh = initialTransforms.get(mesh.userData.id);
+                    if (initialMesh) {
+                        const finalMatrix = new THREE.Matrix4().multiplyMatrices(deltaMatrix, initialMesh.matrixWorld);
+                        
+                        // Apply this final world matrix to the object's matrixWorld
+                        // Then, let three.js figure out the local position/rotation from that.
+                        const parentInverse = new THREE.Matrix4();
+                        if (mesh.parent) {
+                           parentInverse.copy(mesh.parent.matrixWorld).invert();
+                        }
+                        mesh.matrix.multiplyMatrices(parentInverse, finalMatrix);
+                        mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+                    }
+                });
+            }
+        }
+        
+        // Live update the inspector for single objects
+        if (object !== gizmoAttachmentHelper && onObjectTransformLiveCallback) {
+            onObjectTransformLiveCallback(object);
         }
     });
 
@@ -2017,34 +2029,54 @@ export function attachTransformControls(groups) {
         // Simple case: attach directly to the single group
         transformControls.attach(groups[0]);
     } else {
-        // Multi-object case (from a replica or user multi-select)
-        const box = new THREE.Box3();
-        groups.forEach(group => {
-            // It's safer to check if the mesh is valid before expanding the box
-            if (group) {
-                box.expandByObject(group);
-            }
-        });
-        const center = new THREE.Vector3();
-        box.getCenter(center);
+        // Multi-object case: either a user multi-select or a procedural volume.
         
-        // Position our helper object at this center
-        gizmoAttachmentHelper.position.copy(center);
-        
-        // For rotation to work correctly, the helper's initial orientation
-        // must match the orientation of the object(s) it controls.
-        // For a group, we can assume they all have the same orientation,
-        // so we just take it from the first object in the list.
-        if (groups[0]) {
-            gizmoAttachmentHelper.quaternion.copy(groups[0].quaternion);
-        } else {
-            gizmoAttachmentHelper.rotation.set(0,0,0);
-        }
-        
-        gizmoAttachmentHelper.scale.set(1,1,1);
+        // --- Check if this is a procedural volume ---
+        // All groups in a procedural set will have the same owner_pv_id.
+        const firstGroup = groups[0];
+        const isProcedural = firstGroup && firstGroup.userData.is_procedural_instance;
 
-        // The first mesh's owner_pv_id will be the same for all meshes in the group.
-        gizmoAttachmentHelper.userData.controlledObjectId = groups[0].userData.owner_pv_id || groups[0].userData.id;
+        if (isProcedural) {
+            // It's a procedural volume. The gizmo should be at the parent's origin,
+            // but oriented with the procedural volume's placement rotation.
+            const proceduralContainer = findObjectByPvId(firstGroup.userData.owner_pv_id);
+            if (proceduralContainer) {
+                // Set the helper's position and rotation to match the container PV.
+                // This places the gizmo at the procedural's true pivot point.
+                gizmoAttachmentHelper.position.copy(proceduralContainer.position);
+                gizmoAttachmentHelper.quaternion.copy(proceduralContainer.quaternion);
+                gizmoAttachmentHelper.scale.set(1, 1, 1); // Scale should not be inherited by the gizmo
+            } else {
+                // Fallback in case the container isn't found (should not happen)
+                gizmoAttachmentHelper.position.set(0, 0, 0);
+                gizmoAttachmentHelper.quaternion.identity();
+                gizmoAttachmentHelper.scale.set(1, 1, 1);
+            }
+        } else {
+            // It's a standard user multi-select. Use the bounding box center.
+            const box = new THREE.Box3();
+            groups.forEach(group => {
+                if (group) {
+                    box.expandByObject(group);
+                }
+            });
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            
+            gizmoAttachmentHelper.position.copy(center);
+            // For rotation, using the first object's orientation is a reasonable default.
+            if (groups[0]) {
+                gizmoAttachmentHelper.quaternion.copy(groups[0].quaternion);
+            } else {
+                gizmoAttachmentHelper.quaternion.identity();
+            }
+            gizmoAttachmentHelper.scale.set(1, 1, 1);
+        }
+
+        // The controlledObjectId is used to know which PV to update on transform end.
+        gizmoAttachmentHelper.userData.controlledObjectId = isProcedural
+            ? firstGroup.userData.owner_pv_id
+            : 'multi-select'; // A special key for multi-select
         
         transformControls.attach(gizmoAttachmentHelper);
     }

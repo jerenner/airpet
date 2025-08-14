@@ -526,8 +526,8 @@ export async function populateInspector(itemContext, projectState) {
         const lvData = projectState.logical_volumes[data.volume_ref];
         const isProcedural = lvData && lvData.content_type !== 'physvol';
 
-        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState, { isDisabled: isProcedural });
-        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState, { isDisabled: isProcedural });
+        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState, { isDisabled: false });
+        buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState, { isDisabled: false });
         buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
         
         const otherPropsLabel = document.createElement('h5');
@@ -1707,7 +1707,7 @@ export function confirmAction(message) {
 }
 
 export function setTreeItemVisibility(pvId, isVisible) {
-    
+
     // Use querySelectorAll to find ALL items that match the pvId.
     // This correctly handles cases where an assembly is placed multiple times.
     const items = document.querySelectorAll(`#structure_tree_root li[data-id="${pvId}"]`);

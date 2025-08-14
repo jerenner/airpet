@@ -676,12 +676,12 @@ async function handleHierarchySelection(newSelection) {
         if (item.type === 'physical_volume') {
             const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
             if (lv && lv.content_type !== 'physvol') {
-                // It's a procedural volume, remove all possibilites for the gizmo.
-                transformState = { translate: false, rotate: false, scale: false };
+                // It's a procedural volume, remove gizmo transformations.
+                transformState = { translate: true, rotate: true, scale: false };
                 reason = "Scaling is not supported for procedural volumes.";
             }
         }
-    // For multi-selection, disable scale if any item is procedural.
+    // For multi-selection, disable rotation and scale if any item is procedural.
     } else if (newSelection.length > 1) {
         const anyProcedural = newSelection.some(item => {
             if (item.type !== 'physical_volume') return false;

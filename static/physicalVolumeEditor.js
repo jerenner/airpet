@@ -51,8 +51,8 @@ export function initPVEditor(callbacks) {
         const sclDefines = Object.keys(allDefines).filter(k => allDefines[k].type === 'scale');
 
         // Re-render all transform UIs with the correct disabled state
-        setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines, { isDisabled: isProcedural });
-        setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
+        setupTransformUI('position', {x:'0',y:'0',z:'0'}, posDefineSelect, posDefines, { isDisabled: false });
+        setupTransformUI('rotation', {x:'0',y:'0',z:'0'}, rotDefineSelect, rotDefines, { isDisabled: false });
         setupTransformUI('scale', {x:'1',y:'1',z:'1'}, sclDefineSelect, sclDefines, { isDisabled: isProcedural });
     });
     console.log("Physical Volume Editor Initialized.");
