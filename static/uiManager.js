@@ -1707,17 +1707,23 @@ export function confirmAction(message) {
 }
 
 export function setTreeItemVisibility(pvId, isVisible) {
-    const item = document.querySelector(`li[data-id="${pvId}"]`);
-    if (item) {
-        //const visBtn = item.querySelector('.visibility-btn');
-        item.classList.toggle('item-hidden', !isVisible);
-        //if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
+    
+    // Use querySelectorAll to find ALL items that match the pvId.
+    // This correctly handles cases where an assembly is placed multiple times.
+    const items = document.querySelectorAll(`#structure_tree_root li[data-id="${pvId}"]`);
+    
+    if (items.length > 0) {
+        items.forEach(item => {
+            // The CSS handles styling the inner content based on this class on the <li>
+            item.classList.toggle('item-hidden', !isVisible);
+        });
     }
 }
 export function setAllTreeItemVisibility(isVisible) {
     document.querySelectorAll('#tab_structure li[data-type="physical_volume"]').forEach(item => {
         //const visBtn = item.querySelector('.visibility-btn');
         item.classList.toggle('item-hidden', !isVisible);
+        console.log("Setting visibility for",item)
         //if (visBtn) visBtn.style.opacity = isVisible ? '1.0' : '0.4';
     });
 }

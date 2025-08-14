@@ -1247,9 +1247,11 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
 
     // 3. Find all descendant PV IDs
     let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
+    console.log("Descendants are",descendantIds)
     
-    // 4. If recursive, toggle visibility of all descendants.
-    if(isRecursive) {
+    // 4. If recursive, toggle visibility of all descendants. All assembly placements must
+    // set visibility recursively.
+    if(isRecursive || isAssemblyPlacement(pvId)) {
         descendantIds.forEach(id => {
             // Update the 3D scene
             SceneManager.setPVVisibility(id, isVisible);
@@ -1272,6 +1274,24 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
             }
         });
     }
+}
+
+/**
+ * Checks if a given Physical Volume ID corresponds to a placement of an Assembly.
+ * @param {string} pvId - The unique ID of the physical volume to check.
+ * @returns {boolean} - True if the PV places an assembly, false otherwise.
+ */
+function isAssemblyPlacement(pvId) {
+    if (!AppState.currentProjectState) return false;
+    
+    const pvContext = findItemInState(pvId);
+    if (!pvContext || pvContext.type !== 'physical_volume') {
+        return false;
+    }
+
+    const placedVolumeName = pvContext.data.volume_ref;
+    // Check if the referenced volume exists in the assemblies dictionary
+    return !!AppState.currentProjectState.assemblies[placedVolumeName];
 }
 
 function handleHideSelected() {
