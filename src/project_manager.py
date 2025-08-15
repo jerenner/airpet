@@ -23,9 +23,34 @@ class ProjectManager:
         self.history = []
         self.history_index = -1
         self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
+        self._is_transaction_open = False
+        self._pre_transaction_state = None
+
+    def begin_transaction(self):
+        """Starts a transaction, preventing intermediate history captures."""
+        if not self._is_transaction_open:
+            print("Beginning transaction...")
+            self._is_transaction_open = True
+            # Store the state *before* the transaction starts, in case we need to revert.
+            self._pre_transaction_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+
+    def end_transaction(self, description=""):
+        """Ends a transaction and captures the final state to the history stack."""
+        if self._is_transaction_open:
+            print("Ending transaction.")
+            self._is_transaction_open = False
+            self._pre_transaction_state = None
+            # Now, capture the single, final state of the entire operation.
+            self._capture_history_state(description)
 
     def _capture_history_state(self, description=""):
         """Captures the current state for undo/redo."""
+
+        # --- Don't capture state if transaction is open ---
+        if self._is_transaction_open:
+            # print("Transaction open, skipping intermediate history capture.")
+            return # Do nothing if a transaction is in progress
+        
         # If we undo and then make a change, invalidate the "redo" stack
         if self.history_index < len(self.history) - 1:
             self.history = self.history[:self.history_index + 1]
@@ -1061,6 +1086,16 @@ class ProjectManager:
 
     def update_physical_volume(self, pv_id, new_name, new_position, new_rotation, new_scale):
         if not self.current_geometry_state: return False, "No project loaded"
+        
+        pv_name = self._update_single_pv(pv_id, new_name, new_position, new_rotation, new_scale)
+        success, error_msg = self.recalculate_geometry_state()
+
+        # Capture the new state
+        self._capture_history_state(f"Updated PV {pv_name} ({pv_id})")
+
+        return success, error_msg
+    
+    def _update_single_pv(self, pv_id, new_name, new_position, new_rotation, new_scale):
         pv_to_update = None
 
         # Search through all logical volumes and their new 'content' list
@@ -1092,13 +1127,39 @@ class ProjectManager:
         if new_position is not None: pv_to_update.position = new_position
         if new_rotation is not None: pv_to_update.rotation = new_rotation
         if new_scale is not None: pv_to_update.scale = new_scale
+
+        return new_name
+    
+    def update_physical_volume_batch(self, updates_list):
+        """
+        Updates a batch of physical volumes' transforms in a single transaction.
+        updates_list: A list of dictionaries, each with 'id', 'position', 'rotation', 'scale'.
+        """
+        if not self.current_geometry_state:
+            return False, "No project loaded."
         
-        success, error_msg = self.recalculate_geometry_state()
+        try:
+            # Apply all updates.
+            for update_data in updates_list:
+                pv_id = update_data.get('id')
+                new_name = update_data.get('name')
+                new_position = update_data.get('position')
+                new_rotation = update_data.get('rotation')
+                new_scale = update_data.get('scale')
 
-        # Capture the new state
-        self._capture_history_state(f"Updated PV {pv_to_update.name} ({pv_id})")
+                self._update_single_pv(pv_id, new_name, new_position, new_rotation, new_scale)
+                
+            # After all updates are applied, recalculate the entire state
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                return False, error_msg
 
-        return success, error_msg
+        except Exception as e:
+            return False, str(e)
+        
+        # If everything succeeded, capture the final state and return
+        self._capture_history_state(f"PV batch update")
+        return True, "Batch update successful."
 
     def add_assembly(self, name_suggestion, placements_data):
         if not self.current_geometry_state:
@@ -1206,56 +1267,6 @@ class ProjectManager:
             return success, calc_error or error_msg
         else:
             return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
-          
-    def update_physical_volume_transform(self, pv_id, new_position_dict, new_rotation_dict):
-        if not self.current_geometry_state or not self.current_geometry_state.world_volume_ref:
-            return False, "No project loaded"
-
-        found_pv_object = None
-        # Iterate through LVs and Assemblies using the new data model
-        all_lvs = list(self.current_geometry_state.logical_volumes.values())
-        for lv in all_lvs:
-            if lv.content_type == 'physvol':
-                for pv in lv.content:
-                    if pv.id == pv_id:
-                        found_pv_object = pv
-                        break
-            if found_pv_object: break
-
-        if not found_pv_object:
-            all_asms = list(self.current_geometry_state.assemblies.values())
-            for asm in all_asms:
-                for pv in asm.placements:
-                    if pv.id == pv_id:
-                        found_pv_object = pv
-                        break
-                if found_pv_object: break
-
-        if not found_pv_object:
-            return False, f"Physical Volume with ID {pv_id} not found"
-
-        if new_position_dict is not None:
-            # When updating from the 3D view, the new values are already evaluated numbers.
-            # We must convert them back to strings for the raw_expression.
-            if isinstance(new_position_dict, dict):
-                 found_pv_object.position = {k: str(v) for k, v in new_position_dict.items()}
-            else:
-                 found_pv_object.position = new_position_dict # It's a define ref
-
-        if new_rotation_dict is not None:
-            # Same for rotation.
-            if isinstance(new_rotation_dict, dict):
-                 found_pv_object.rotation = {k: str(v) for k, v in new_rotation_dict.items()}
-            else:
-                found_pv_object.rotation = new_rotation_dict
-
-        success, error_msg = self.recalculate_geometry_state()
-
-        # Capture the new state
-        self._capture_history_state(f"Updated transform of {found_pv_object.name} ({pv_id})")
-
-        return success, error_msg
-
 
     def merge_from_state(self, incoming_state: GeometryState):
         """

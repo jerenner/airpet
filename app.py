@@ -95,6 +95,21 @@ def create_success_response(message="Success"):
         }
     })
 
+@app.route('/api/begin_transaction', methods=['POST'])
+def begin_transaction_route():
+    project_manager.begin_transaction()
+    return jsonify({"success": True, "message": "Transaction started."})
+
+@app.route('/api/end_transaction', methods=['POST'])
+def end_transaction_route():
+    data = request.get_json() or {}
+    description = data.get('description', 'User action')
+    project_manager.end_transaction(description)
+    # The final state is captured on the backend, but the frontend needs
+    # the updated history status (canUndo/canRedo).
+    # We will return the full response so the UI updates correctly.
+    return create_success_response("Transaction ended.") # Use your full response helper
+
 @app.route('/api/undo', methods=['POST'])
 def undo_route():
     success, message = project_manager.undo()
@@ -173,7 +188,7 @@ def load_version_route():
 def create_empty_project():
 
     global project_manager
-    
+
     # Re-initialize the project manager to clear everything
     project_manager = ProjectManager(expression_evaluator) 
 
@@ -610,6 +625,24 @@ def update_physical_volume_route():
         return create_success_response(f"Physical Volume '{pv_id}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+    
+@app.route('/api/update_physical_volume_batch', methods=['POST'])
+def update_physical_volume_batch_route():
+    data = request.get_json()
+    updates_list = data.get('updates')
+    if not isinstance(updates_list, list):
+        return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
+
+    # The project manager will handle the transaction and recalculation internally
+    success, message = project_manager.update_physical_volume_batch(updates_list)
+
+    if success:
+        # After a successful batch update, send back the complete new state
+        return create_success_response(message)
+    else:
+        # If it fails, send back an error and the (potentially partially modified) state
+        # A more advanced implementation might revert the changes on failure.
+        return jsonify({"success": False, "error": message}), 500
 
 @app.route('/delete_object', methods=['POST'])
 def delete_object_route():

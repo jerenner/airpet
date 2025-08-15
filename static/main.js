@@ -855,16 +855,18 @@ function findItemInState(itemId) {
 // }
 
 // Called by SceneManager when TransformControls finishes a transformation
-async function handleTransformEnd(transformedObject, initialTransforms) {
-    if (!transformedObject) return;
+async function handleTransformEnd(transformedObject) {
+    if (!transformedObject) {
+        // If nothing was transformed, we should still end the transaction cleanly.
+        try { await APIService.endTransaction("Empty transform"); } catch(e) { console.error(e); }
+        return;
+    }
 
-    const updates = new Map();
     const selection = AppState.selectedHierarchyItems;
+    const updates = [];
 
     // This function will now handle all cases: single, multi, and procedural,
     // by calculating the final local transform for every affected object.
-
-    const wasHelperTransformed = initialTransforms.has('helper');
 
     for (const item of selection) {
         if (item.type !== 'physical_volume') continue;
@@ -907,8 +909,9 @@ async function handleTransformEnd(transformedObject, initialTransforms) {
 
         // This update structure now works for ALL physical volumes, procedural or not.
         // We are directly setting their new local transform.
-        updates.set(pvId, {
+        updates.push({
             id: pvId,
+            name: null,
             position: { x: pos.x, y: pos.y, z: pos.z },
             rotation: { x: euler.x, y: euler.y, z: euler.z },
             scale:    { x: scl.x, y: scl.y, z: scl.z }
@@ -916,40 +919,17 @@ async function handleTransformEnd(transformedObject, initialTransforms) {
     }
 
     if (updates.size === 0) {
-        // This can happen if a procedural volume was moved. Procedural volumes have no PV to update.
-        // Instead, their LV content needs to be updated. Let's handle this.
-        const proceduralItem = selection.find(item => {
-            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
-            return lv && lv.content_type !== 'physvol';
-        });
-
-        if (proceduralItem) {
-            // Logic for updating procedural volumes (e.g., replicavol start_position)
-            // This is a complex case we can address if needed, but the primary bug is for standard PVs.
-            // For now, let's log it.
-            console.log("Procedural volume transform detected, update logic needs to target LV content.");
-        } else {
-             return;
-        }
+        UIManager.hideLoading();
+        return;
     }
     
     UIManager.showLoading(`Updating ${updates.size} transform(s)...`);
     try {
-        let lastResult;
-        for (const update of updates.values()) {
-            // This now correctly sends the calculated LOCAL transform for every PV
-            lastResult = await APIService.updatePhysicalVolume(update.id, null, update.position, update.rotation, update.scale);
-            
-            if (!lastResult.success) {
-                UIManager.showError(`Failed to update ${update.id}: ${lastResult.error}`);
-                break;
-            }
-        }
-        if (lastResult) {
-            syncUIWithState(lastResult, AppState.selectedHierarchyItems);
-        }
+        const result = await APIService.updatePhysicalVolumeBatch(updates);
+        syncUIWithState(result, AppState.selectedHierarchyItems);
     } catch (error) {
         UIManager.showError("Error saving transform: " + error.message);
+        // Optional: Revert frontend visuals to initialTransforms on error
     } finally {
         UIManager.hideLoading();
     }

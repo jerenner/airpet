@@ -118,6 +118,29 @@ export async function redo() {
     return handleResponse(response);
 }
 
+/**
+ * Tells the backend to start a transaction, suspending history captures.
+ * @returns {Promise<Object>}
+ */
+export async function beginTransaction() {
+    const response = await fetch(`${API_BASE_URL}/api/begin_transaction`, { method: 'POST' });
+    return handleResponse(response);
+}
+
+/**
+ * Tells the backend to end a transaction, capturing the final state.
+ * @param {string} description - A description of the operation for the history log.
+ * @returns {Promise<Object>} A promise resolving to the full, updated project state.
+ */
+export async function endTransaction(description = "Transform objects") {
+    const response = await fetch(`${API_BASE_URL}/api/end_transaction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: description })
+    });
+    return handleResponse(response); // Returns the full state for UI sync
+}
+
 export async function saveVersion(projectName) {
     const response = await fetch(`${API_BASE_URL}/api/save_version`, {
         method: 'POST',
@@ -392,6 +415,21 @@ export async function updatePhysicalVolume(id, name, position, rotation, scale) 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, position, rotation, scale })
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Sends a batch of physical volume transform updates to the backend.
+ * This is treated as a single operation for the undo/redo history.
+ * @param {Array<Object>} updates - An array of update objects, e.g., [{id, position, rotation, scale}, ...]
+ * @returns {Promise<Object>} A promise resolving to the full, updated project state.
+ */
+export async function updatePhysicalVolumeBatch(updates) {
+    const response = await fetch(`${API_BASE_URL}/api/update_physical_volume_batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: updates })
     });
     return handleResponse(response);
 }

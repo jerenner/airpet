@@ -1,6 +1,6 @@
 // static/sceneManager.js
+
 import * as THREE from 'three';
-import { AxesHelper } from 'three';
 import { EdgesGeometry, LineBasicMaterial, LineSegments } from 'three';
 import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -8,7 +8,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
-import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
@@ -110,11 +110,11 @@ export function initScene(callbacks) {
     // This is like giving the mouse a "fat finger" when clicking near a line
     transformControls.getRaycaster().params.Line.threshold = 0.1;
 
-    transformControls.addEventListener('mouseDown', () => {
-        // 1. Disable orbit controls immediately to prevent event conflicts.
+    transformControls.addEventListener('mouseDown', async () => {
+        // Disable orbit controls immediately to prevent event conflicts.
         orbitControls.enabled = false;
 
-        // 2. Capture the initial state of the object(s) for transform calculations.
+        // Capture the initial state of the object(s) for transform calculations.
         initialTransforms.clear();
         const object = transformControls.object;
         if (!object) return;
@@ -139,8 +139,8 @@ export function initScene(callbacks) {
             const object = transformControls.object;
             if (!object) return;
 
-            // Pass the transformed object AND the initial state map.
-            onObjectTransformEndCallback(object, initialTransforms);
+            // Pass the transformed object.
+            onObjectTransformEndCallback(object);
         }
         initialTransforms.clear();
     });
