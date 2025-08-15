@@ -1123,9 +1123,6 @@ class ProjectManager:
         if not self.current_geometry_state:
             return False, "No project loaded"
         
-        print(f"{len(self.current_geometry_state.assemblies)} assemblies")
-        for asm in self.current_geometry_state.assemblies:
-            print(f"We have {asm.name}")
         target_assembly = self.current_geometry_state.assemblies.get(assembly_name)
         if not target_assembly:
             return False, f"Assembly '{assembly_name}' not found."
