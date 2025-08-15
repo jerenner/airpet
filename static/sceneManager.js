@@ -1850,7 +1850,7 @@ export function renderObjects(pvDescriptions, projectState) {
 
         // Only create meshes for actual, renderable volumes
         const isRenderable = !pvData.is_world_volume_placement 
-                             && !pvData.is_assembly_placement 
+                             && !pvData.is_assembly_container 
                              && !pvData.is_procedural_container;
 
         if (isRenderable) {

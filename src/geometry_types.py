@@ -817,8 +817,8 @@ class GeometryState:
                 "canonical_id": current_canonical_id,
                 "name": pv.name,
                 "parent_id": parent_pv_id,
-                "is_assembly_instance": True,
-                "is_procedural_container": lv.content_type != 'physvol',
+                "is_assembly_container": True,
+                "is_procedural_container": False,
                 "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
                 "position": pv._evaluated_position,
                 "rotation": pv._evaluated_rotation,
@@ -858,7 +858,7 @@ class GeometryState:
             "name": pv.name,
             "parent_id": parent_pv_id,
             "owner_pv_id": current_owner_id,
-            "is_assembly_instance": False,
+            "is_assembly_container": False,
             "is_procedural_container": lv.content_type != 'physvol',
             "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
             "solid_ref_for_threejs": lv.solid_ref,
@@ -872,12 +872,17 @@ class GeometryState:
         if lv.content_type == 'physvol':
             # Recurse into the content of the placed LV
             for child_pv in lv.content:
+
+                # For a standard PV, only pass down the owner if it is not the current PV.
+                pass_down_owner = None
+                if(current_owner_id == pv.id): pass_down_owner = None
+
                 self._traverse(
                     child_pv, 
                     parent_pv_id=current_instance_id, # Children are parented to this instance
                     path=path + [lv.name], 
                     threejs_objects=threejs_objects, 
-                    owner_pv_id=current_owner_id
+                    owner_pv_id=pass_down_owner
                 )
         else: # It's a procedural LV
             # The owner of the unrolled instances is the current instance ID itself.

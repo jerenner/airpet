@@ -769,15 +769,17 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     if (clickedMesh) {
         const userData = clickedMesh.userData;
 
-        // Always roll up to the owner for procedurals and assemblies if it exists. 
+        // Always roll up to the owner if it exists. 
         // The owner is the top-level selectable item from the hierarchy 
         // (e.g., the assembly placement). If there's no owner, it's a top-level item itself.
-        if(userData.owner_pv_id && (userData.is_procedural_instance || userData.is_assembly_instance)) {
-            clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
-        }
-        else {
-            clickedItemCanonicalId = userData.canonical_id;
-        }
+        //console.log("userdata",userData)
+        clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
+        // if(userData.is_procedural_instance || userData.is_assembly_instance) {
+        //     clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
+        // }
+        // else {
+        //     clickedItemCanonicalId = userData.canonical_id;
+        // }
 
     }
 
