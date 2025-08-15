@@ -1342,7 +1342,7 @@ async function updatePreview() {
         // This part requires an API call to evaluate the expressions from the UI.
         const evalPromises = Object.entries(rawParams).map(async ([key, expr]) => {
             // Skip non-evaluatable properties
-            if (['recipe', 'facets', 'zplanes', 'rzpoints', 'solid_ref', 'transform'].includes(key)) {
+            if (['recipe', 'facets', 'zplanes', 'rzpoints', 'solid_ref', 'scale', 'transform'].includes(key)) {
                 return [key, expr];
             }
             const response = await APIService.evaluateExpression(String(expr), currentProjectState);

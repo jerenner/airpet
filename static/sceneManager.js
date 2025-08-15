@@ -215,9 +215,9 @@ export function initScene(callbacks) {
     const gridDivisions = 100; // Increased from 40 for more detail over a larger area
     gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x888888, 0xcccccc);
     gridHelper.position.y = -0.1;
-    gridHelper.visible = true; // Start hidden
+    gridHelper.visible = true;
     scene.add(gridHelper);
-    isGridVisible = false;
+    isGridVisible = true;
 
     // --- Setup for Corner Axes Gizmo ---
     isAxesVisible = true;
