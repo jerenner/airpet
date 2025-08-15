@@ -15,7 +15,11 @@ async function handleResponse(response) {
             // Not a JSON response
             throw new Error(`Network error: ${response.status} ${response.statusText}`);
         }
-        throw new Error(errorData.error || `Request failed with status ${response.status}`);
+        
+        // --- Custom error object ---
+        const error = new Error(errorData.error || `Request failed with status ${response.status}`);
+        error.type = errorData.error_type || 'generic'; // Add the error type if it exists
+        throw error;
     }
     return response.json(); // Assumes all successful responses are JSON
 }

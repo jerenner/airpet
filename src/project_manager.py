@@ -1201,6 +1201,13 @@ class ProjectManager:
 
     def delete_object(self, object_type, object_id):
         if not self.current_geometry_state: return False, "No project loaded"
+
+        # --- Pre-deletion validation ---
+        dependencies = self._find_dependencies(object_type, object_id)
+        if dependencies:
+            dep_list_str = "\n - " + "\n - ".join(dependencies)
+            error_msg = f"Cannot delete {object_type} '{object_id}' because it is still in use by:{dep_list_str}"
+            return False, error_msg
         
         state = self.current_geometry_state
         deleted = False
@@ -1267,6 +1274,160 @@ class ProjectManager:
             return success, calc_error or error_msg
         else:
             return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
+        
+    def _find_dependencies(self, object_type, object_id):
+        """
+        Finds all objects that reference a given object.
+        Returns a list of strings describing the dependencies.
+        """
+        dependencies = []
+        state = self.current_geometry_state
+
+        if object_type == 'solid':
+            # Check Logical Volumes
+            for lv in state.logical_volumes.values():
+                if lv.solid_ref == object_id:
+                    dependencies.append(f"Logical Volume '{lv.name}'")
+            # Check Boolean Solids
+            for solid in state.solids.values():
+                if solid.type == 'boolean':
+                    for item in solid.raw_parameters.get('recipe', []):
+                        if item.get('solid_ref') == object_id:
+                            dependencies.append(f"Boolean Solid '{solid.name}'")
+                            break # Only need to report once per solid
+
+        elif object_type == 'material':
+            # Check Logical Volumes
+            for lv in state.logical_volumes.values():
+                if lv.material_ref == object_id:
+                    dependencies.append(f"Logical Volume '{lv.name}'")
+
+        elif object_type == 'define':
+            search_str = object_id
+            
+            # --- 1. Check for usage in other Defines ---
+            for define_obj in state.defines.values():
+                if define_obj.name == search_str: continue # Don't check against self
+                
+                # Check raw_expression, which can be a string or a dict
+                raw_expr = define_obj.raw_expression
+                if isinstance(raw_expr, str):
+                    if re.search(r'\b' + re.escape(search_str) + r'\b', raw_expr):
+                        dependencies.append(f"Define '{define_obj.name}'")
+                elif isinstance(raw_expr, dict):
+                    for val in raw_expr.values():
+                        if isinstance(val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', val):
+                            dependencies.append(f"Define '{define_obj.name}'")
+                            break # Found in this dict, no need to check other keys
+
+            # --- 2. Check for usage in Solids ---
+            for solid in state.solids.values():
+                is_found_in_solid = False
+                for key, val in solid.raw_parameters.items():
+                    if isinstance(val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', val):
+                        dependencies.append(f"Solid '{solid.name}' (parameter '{key}')")
+                        is_found_in_solid = True
+                        break # Only report once per solid
+                    elif isinstance(val, dict): # For nested structures like boolean transforms
+                        for sub_val in val.values():
+                            if isinstance(sub_val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', sub_val):
+                                dependencies.append(f"Solid '{solid.name}' (parameter '{key}')")
+                                is_found_in_solid = True
+                                break
+                    if is_found_in_solid: break
+                if is_found_in_solid: continue
+                # Also check boolean recipes
+                if solid.type == 'boolean':
+                    for item in solid.raw_parameters.get('recipe', []):
+                        transform = item.get('transform', {})
+                        if transform:
+                            pos = transform.get('position', {})
+                            rot = transform.get('rotation', {})
+                            if (isinstance(pos, str) and pos == search_str) or \
+                               (isinstance(rot, str) and rot == search_str):
+                                dependencies.append(f"Solid '{solid.name}' (transform reference)")
+                                break
+
+            # --- 3. Check for usage in all Placements (Standard, Assembly, Procedural) ---
+            all_lvs = list(state.logical_volumes.values())
+            all_asms = list(state.assemblies.values())
+            
+            # Standard LV placements
+            for lv in all_lvs:
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.position == search_str: dependencies.append(f"Placement '{pv.name}' (position)")
+                        if pv.rotation == search_str: dependencies.append(f"Placement '{pv.name}' (rotation)")
+                        if pv.scale == search_str: dependencies.append(f"Placement '{pv.name}' (scale)")
+            
+            # Assembly placements
+            for asm in all_asms:
+                for pv in asm.placements:
+                    if pv.position == search_str: dependencies.append(f"Placement '{pv.name}' (position)")
+                    if pv.rotation == search_str: dependencies.append(f"Placement '{pv.name}' (rotation)")
+                    if pv.scale == search_str: dependencies.append(f"Placement '{pv.name}' (scale)")
+
+            # --- 4. Check for usage in Procedural Volume parameters ---
+            for lv in all_lvs:
+                if lv.content_type in ['replica', 'division', 'parameterised']:
+                    proc_obj = lv.content
+                    # Check number/ncopies, width, offset
+                    for attr in ['number', 'width', 'offset', 'ncopies']:
+                        if hasattr(proc_obj, attr):
+                            attr_val = getattr(proc_obj, attr)
+                            if isinstance(attr_val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', attr_val):
+                                dependencies.append(f"Procedural Volume in '{lv.name}' (parameter '{attr}')")
+                                break
+                    # Check parameterised volume dimensions
+                    if hasattr(proc_obj, 'parameters'):
+                        for param_set in proc_obj.parameters:
+                            for dim_val in param_set.dimensions.values():
+                                if isinstance(dim_val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', dim_val):
+                                    dependencies.append(f"Parameterised Volume in '{lv.name}' (dimensions)")
+                                    break
+                            if param_set.position == search_str:
+                                dependencies.append(f"Parameterised Volume in '{lv.name}' (position ref)")
+                            if param_set.rotation == search_str:
+                                dependencies.append(f"Parameterised Volume in '{lv.name}' (rotation ref)")
+
+            # --- 5. Check for usage in Optical/Skin/Border Surfaces ---
+            for surf in state.optical_surfaces.values():
+                for key, val in surf.properties.items():
+                    if val == search_str:
+                        dependencies.append(f"Optical Surface '{surf.name}' (property '{key}')")
+
+        elif object_type == 'logical_volume':
+            # Check for placements in other LVs
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.volume_ref == object_id:
+                            dependencies.append(f"Placement '{pv.name}' in Logical Volume '{lv.name}'")
+            # Check for placements in Assemblies
+            for asm in state.assemblies.values():
+                for pv in asm.placements:
+                    if pv.volume_ref == object_id:
+                        dependencies.append(f"Placement '{pv.name}' in Assembly '{asm.name}'")
+            # Check for skin surfaces
+            for skin in state.skin_surfaces.values():
+                if skin.volume_ref == object_id:
+                    dependencies.append(f"Skin Surface '{skin.name}'")
+
+        elif object_type == 'assembly':
+            # Check for placements in other LVs
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.volume_ref == object_id:
+                            dependencies.append(f"Placement '{pv.name}' in Logical Volume '{lv.name}'")
+            # Check for placements in other Assemblies (nested assemblies)
+            for asm in state.assemblies.values():
+                for pv in asm.placements:
+                    if pv.volume_ref == object_id:
+                        dependencies.append(f"Placement '{pv.name}' in Assembly '{asm.name}'")
+
+        # Add more checks for elements, isotopes, optical_surfaces etc. as needed.
+        return sorted(list(set(dependencies)))
 
     def merge_from_state(self, incoming_state: GeometryState):
         """

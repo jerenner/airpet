@@ -649,15 +649,32 @@ def delete_object_route():
     data = request.get_json()
     obj_type = data.get('object_type')
     obj_id = data.get('object_id')
+
+    # --- Check for non-deletable special case items first ---
+    # Check if the PV is part of an assembly's placement list.
+    if obj_type == 'physical_volume':
+        is_in_assembly = False
+        for asm in project_manager.current_geometry_state.assemblies.values():
+            if any(pv.id == obj_id for pv in asm.placements):
+                is_in_assembly = True
+                break
+        if is_in_assembly:
+            error_msg = f"Cannot directly delete Physical Volume '{obj_id}'. It is part of an assembly and must be removed using the Assembly Editor."
+            return jsonify({"success": False, "error": error_msg, "error_type": "dependency"}), 409 # 409 Conflict is a good code here
     
+    # Main deletion logic.
     deleted, error_msg = project_manager.delete_object(obj_type, obj_id)
+
     if deleted:
         return create_success_response("Object deleted.")
     else:
-        return jsonify({"success": False, "error": error_msg or "Failed to delete object"}), 500
+        # Check if the error message indicates a dependency issue
+        if "in use by" in (error_msg or ""):
+            return jsonify({"success": False, "error": error_msg, "error_type": "dependency"}), 409 # 409 Conflict
+        else:
+            return jsonify({"success": False, "error": error_msg or "Failed to delete object"}), 500
 
-# --- Read-only and Export Routes (Do not need full state response) ---
-
+# --- Read-only and Export Routes ---
 @app.route('/get_project_state', methods=['GET'])
 def get_project_state_route():
     """

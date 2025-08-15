@@ -634,8 +634,15 @@ async function handleDeleteSelected() {
              UIManager.hideLoading();
         }
 
-    } catch (error) { 
-        UIManager.showError("An error occurred during deletion: " + error.message); 
+    } catch (error) {
+        // --- Check the error type ---
+        if (error.type === 'dependency') {
+            // Use a more detailed alert for dependency issues
+            UIManager.showDependencyError(error.message);
+        } else {
+            UIManager.showError("Error deleting object: " + error.message);
+        }
+    } finally {
         UIManager.hideLoading();
     }
 }
@@ -646,8 +653,17 @@ async function handleDeleteSpecificItem(type, id) {
     try {
         const result = await APIService.deleteObject(type, id);
         syncUIWithState(result);
-    } catch (error) { UIManager.showError("Error deleting object: " + error.message); }
-    finally { UIManager.hideLoading(); }
+    } catch (error) {
+        // --- Check the error type ---
+        if (error.type === 'dependency') {
+            // Use a more detailed alert for dependency issues
+            UIManager.showDependencyError(error.message);
+        } else {
+            UIManager.showError("Error deleting object: " + error.message);
+        }
+    } finally {
+        UIManager.hideLoading();
+    }
 }
 
 function handleModeChange(newMode) {

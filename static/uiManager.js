@@ -1686,6 +1686,12 @@ export function showError(message) {
     console.error("[UI Error] " + message);
     alert("Error: " + message);
 }
+export function showDependencyError(message) {
+    console.warn("[UI Dependency Error] " + message);
+    // Replace the "- " with a newline and proper indentation for readability in an alert box.
+    const formattedMessage = message.replace(/:\n - /g, ':\n\n • ').replace(/\n - /g, '\n • ');
+    alert(formattedMessage);
+}
 export function showNotification(message) {
     console.log("[UI Notification] " + message);
     alert(message);
