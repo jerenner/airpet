@@ -110,26 +110,20 @@ export function initScene(callbacks) {
     // This is like giving the mouse a "fat finger" when clicking near a line
     transformControls.getRaycaster().params.Line.threshold = 0.1;
 
-    transformControls.addEventListener('dragging-changed', (event) => {
-        orbitControls.enabled = !event.value; // Disable orbit while transforming
-        // Optionally call a callback if main.js needs to know about drag start/stop
-    });
     transformControls.addEventListener('mouseDown', () => {
+        // 1. Disable orbit controls immediately to prevent event conflicts.
+        orbitControls.enabled = false;
+
+        // 2. Capture the initial state of the object(s) for transform calculations.
         initialTransforms.clear();
         const object = transformControls.object;
         if (!object) return;
 
-        // The logic is the same for all selection types now.
-        // We store the initial state of the gizmo's helper...
         if (object === gizmoAttachmentHelper) {
             initialTransforms.set('helper', gizmoAttachmentHelper.clone());
         }
-
-        // ...and the initial state of EVERY selected top-level object.
-        // For a procedural volume, its container IS the top-level object.
+        
         _selectedThreeObjects.forEach(group => {
-            // We need to find the canonical top-level selectable item for this group.
-            // For a procedural instance, it's the container PV. For a standard PV, it's itself.
             const ownerId = group.userData.owner_pv_id || group.userData.id;
             const ownerObject = findObjectByPvId(ownerId);
             if (ownerObject && !initialTransforms.has(ownerId)) {
@@ -138,6 +132,9 @@ export function initScene(callbacks) {
         });
     });
     transformControls.addEventListener('mouseUp', () => {
+        // Re-enable orbit controls so the user can navigate the camera again.
+        orbitControls.enabled = true;
+
         if (onObjectTransformEndCallback) {
             const object = transformControls.object;
             if (!object) return;
@@ -146,6 +143,10 @@ export function initScene(callbacks) {
             onObjectTransformEndCallback(object, initialTransforms);
         }
         initialTransforms.clear();
+    });
+    transformControls.addEventListener('dragging-changed', (event) => {
+        orbitControls.enabled = !event.value; // Disable orbit while transforming
+        // Optionally call a callback if main.js needs to know about drag start/stop
     });
     // Listener for live dragging
     transformControls.addEventListener('objectChange', () => {
@@ -499,16 +500,24 @@ function findActualMesh(object) {
 
 export function setPVVisibility(pvId, isVisible) {
     const group = findObjectByPvId(pvId);
+
     if (group) {
-        
-        // Instead of setting group.visible, we toggle the visibility
-        // of the renderable objects *inside* the group.
-        // The group itself remains visible, so it doesn't affect its children.
-        group.traverse(child => {
+
+        // If it's procedural, we have to traverse to handle the PVs it generates.
+        if(group.userData.is_procedural_container) {
+            group.traverse(child => {
+                if (child.isMesh || child.isLineSegments) {
+                    child.visible = isVisible;
+                }
+            });
+        } else {
+            group.children.forEach(child => {
             if (child.isMesh || child.isLineSegments) {
                 child.visible = isVisible;
             }
         });
+        }
+        
 
         if (isVisible) {
             hiddenPvIds.delete(pvId);
@@ -518,59 +527,48 @@ export function setPVVisibility(pvId, isVisible) {
     }
 }
 
-// Sets the visibility to the inverse of the current value
-export function togglePVVisibility(pvId) {
-    const group = findObjectByPvId(pvId);
-    if (group) {
-        
-        let isVisible = false;
-
-        // Instead of setting group.visible, we toggle the visibility
-        // of the renderable objects *inside* the group.
-        // The group itself remains visible, so it doesn't affect its children.
-        group.traverse(child => {
-            if (child.isMesh || child.isLineSegments) {
-                isVisible = !child.visible;
-                child.visible = isVisible;
-            }
-        });
-
-        if (isVisible) {
-            hiddenPvIds.delete(pvId);
-        } else {
-            hiddenPvIds.add(pvId);
-        }
-    }
-}
 
 export function setAllPVVisibility(isVisible, projectState) {
-    // First, update the state Set.
+    
+    // We need to traverse the entire geometry in each case to catch all PVs (including procedurals).
+    // At the same time, we need to populate the hiddenPvIds list correctly (including all PVs
+    // except the ones that are children of procedurals).
     if (isVisible) {
         hiddenPvIds.clear();
+
+        // Set all three.js objects to invisible
+        geometryGroup.traverse(group => {
+            if (group.isGroup && group.userData.id) {
+                group.traverse(child => {
+                    if (child.isMesh || child.isLineSegments) {
+                        child.visible = true;
+                    }
+                });
+            }
+        });
     } else {
         if (projectState) {
+
             // This logic correctly gathers ALL pvIds.
             Object.values(projectState.logical_volumes).forEach(lv => {
                 if (lv.content_type === 'physvol') { lv.content.forEach(pv => hiddenPvIds.add(pv.id)); }
-                // Could add traversal for assembly children here if needed, but the scene traversal below handles it visually.
             });
              Object.values(projectState.assemblies).forEach(asm => {
                 asm.placements.forEach(pv => hiddenPvIds.add(pv.id));
             });
-        }
-    }
 
-    // Now, apply the new state to all three.js objects by toggling their meshes
-    geometryGroup.traverse(group => {
-        if (group.isGroup && group.userData.id) {
-            const shouldBeVisible = !hiddenPvIds.has(group.userData.id);
-            group.traverse(child => {
-                if (child.isMesh || child.isLineSegments) {
-                    child.visible = shouldBeVisible;
+            // Set all three.js objects to visible
+            geometryGroup.traverse(group => {
+                if (group.isGroup && group.userData.id) {
+                    group.traverse(child => {
+                        if (child.isMesh || child.isLineSegments) {
+                            child.visible = false;
+                        }
+                    });
                 }
             });
         }
-    });
+    }
 }
 
 /**
@@ -1879,10 +1877,6 @@ export function renderObjects(pvDescriptions, projectState) {
                 group.add(wireframe);
             }
         } 
-        // else {
-        //     // Make non-renderable containers invisible.
-        //     group.visible = false;
-        // }
     });
 
     // Second pass: parent the objects and apply LOCAL transforms
@@ -1912,6 +1906,24 @@ export function renderObjects(pvDescriptions, projectState) {
 
     // IMPORTANT: Update world matrices for the entire hierarchy
     geometryGroup.updateMatrixWorld(true);
+
+    // --- Re-apply persistent visibility state ---
+    // After the entire scene has been constructed from the new description,
+    // iterate through our master list of hidden IDs and apply the visibility state.
+    if (hiddenPvIds.size > 0) {
+        console.log("[SceneManager] Re-applying visibility state for", hiddenPvIds.size, "objects.");
+        hiddenPvIds.forEach(pvId => {
+            const group = findObjectByPvId(pvId);
+            if (group) {
+                // Hide the meshes within the group        
+                group.children.forEach(child => {
+                    if (child.isMesh || child.isLineSegments) {
+                        child.visible = false;
+                    }
+                });
+            }
+        });
+    }
 
     console.log("[SceneManager] Rendered objects with nested hierarchy. Total top-level:", geometryGroup.children.length);
 }

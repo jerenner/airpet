@@ -817,7 +817,9 @@ class GeometryState:
                 "canonical_id": current_canonical_id,
                 "name": pv.name,
                 "parent_id": parent_pv_id,
-                "is_assembly_placement": True,
+                "is_assembly_instance": True,
+                "is_procedural_container": lv.content_type != 'physvol',
+                "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
                 "position": pv._evaluated_position,
                 "rotation": pv._evaluated_rotation,
                 "scale": pv._evaluated_scale,
@@ -856,6 +858,7 @@ class GeometryState:
             "name": pv.name,
             "parent_id": parent_pv_id,
             "owner_pv_id": current_owner_id,
+            "is_assembly_instance": False,
             "is_procedural_container": lv.content_type != 'physvol',
             "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
             "solid_ref_for_threejs": lv.solid_ref,
@@ -891,8 +894,6 @@ class GeometryState:
         replica = lv.content
         child_lv_template = self.get_logical_volume(replica.volume_ref)
         if not child_lv_template: return
-
-        placements = []
         
         # Use the pre-evaluated attributes from the object for ALL parameters
         number = replica._evaluated_number

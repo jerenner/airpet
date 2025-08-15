@@ -769,18 +769,16 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     if (clickedMesh) {
         const userData = clickedMesh.userData;
 
-        // Always roll up to the owner if it exists. The owner is the top-level
-        // selectable item from the hierarchy (e.g., the assembly placement).
-        // If there's no owner, it's a top-level item itself.
-        clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
+        // Always roll up to the owner for procedurals and assemblies if it exists. 
+        // The owner is the top-level selectable item from the hierarchy 
+        // (e.g., the assembly placement). If there's no owner, it's a top-level item itself.
+        if(userData.owner_pv_id && (userData.is_procedural_instance || userData.is_assembly_instance)) {
+            clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
+        }
+        else {
+            clickedItemCanonicalId = userData.canonical_id;
+        }
 
-        // Only roll up to the owner IF it's a procedural instance.
-        // Otherwise, the canonical ID is its own ID.
-        // if (userData.is_procedural_instance && userData.owner_pv_id) {
-        //     clickedItemCanonicalId = userData.owner_pv_id;
-        // } else {
-        //     clickedItemCanonicalId = userData.id; // userData.canonical_id;
-        // }
     }
 
     if (clickedItemCanonicalId) {
@@ -1247,7 +1245,6 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
 
     // 3. Find all descendant PV IDs
     let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
-    console.log("Descendants are",descendantIds)
     
     // 4. If recursive, toggle visibility of all descendants. All assembly placements must
     // set visibility recursively.
@@ -1263,17 +1260,17 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
     // 5. * If NOT recursive and toggling to a visibility opposite of the descendant, 
     // we actually have to un-toggle the scene visibility of the descendants because 
     // they were automatically also toggled to invisible.
-    if(!isRecursive) {
-        descendantIds.forEach(id => {
-            const item = document.querySelector(`li[data-id="${id}"]`);
-            if (item) {
-                const descendantVis = item.classList.contains('item-hidden');
-                if(descendantVis == isVisible) {
-                    SceneManager.setPVVisibility(id, !descendantVis);
-                }
-            }
-        });
-    }
+    // if(!isRecursive) {
+    //     descendantIds.forEach(id => {
+    //         const item = document.querySelector(`li[data-id="${id}"]`);
+    //         if (item) {
+    //             const descendantVis = item.classList.contains('item-hidden');
+    //             if(descendantVis == isVisible) {
+    //                 SceneManager.setPVVisibility(id, !descendantVis);
+    //             }
+    //         }
+    //     });
+    // }
 }
 
 /**

@@ -55,6 +55,7 @@ export function setMode(newMode, selectedSceneObject = null) {
             if (transformControlsInstance) transformControlsInstance.detach();
             break;
         case 'translate':
+            if (orbitControlsInstance) orbitControlsInstance.enabled = true;
             if (transformControlsInstance) {
                 transformControlsInstance.setMode('translate');
                 transformControlsInstance.enabled = true;
@@ -62,6 +63,7 @@ export function setMode(newMode, selectedSceneObject = null) {
             }
             break;
         case 'rotate':
+            if (orbitControlsInstance) orbitControlsInstance.enabled = true;
             if (transformControlsInstance) {
                 transformControlsInstance.setMode('rotate');
                 transformControlsInstance.enabled = true;
@@ -69,6 +71,7 @@ export function setMode(newMode, selectedSceneObject = null) {
             }
             break;
         case 'scale':
+            if (orbitControlsInstance) orbitControlsInstance.enabled = true;
             if (transformControlsInstance) {
                 transformControlsInstance.setMode('scale');
                 transformControlsInstance.enabled = true;

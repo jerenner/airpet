@@ -21,7 +21,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
-    borderSurfacesListRoot, replicasListRoot;
+    borderSurfacesListRoot;
 let inspectorContentDiv;
 
 // Project, history and undo/redo
