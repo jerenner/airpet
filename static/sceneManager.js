@@ -2,7 +2,6 @@
 
 import * as THREE from 'three';
 import { EdgesGeometry, LineBasicMaterial, LineSegments } from 'three';
-import { FlyControls } from 'three/addons/controls/FlyControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
@@ -20,8 +19,7 @@ THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 // --- Module-level variables ---
 let scene, camera, renderer, viewerContainer;
-let orbitControls, transformControls, flyControls;
-let clock; // For FlyControls delta time
+let orbitControls, transformControls;
 let sceneAxes, cameraAxes; // For axes gizmo
 let axesSize = 100; // This controls the size of the axes view
 
@@ -195,17 +193,6 @@ export function initScene(callbacks) {
 
     scene.add(transformControls);
     transformControls.enabled = false; // Start disabled
-
-
-    // Camera controls
-    flyControls = new FlyControls(camera, renderer.domElement);
-    flyControls.movementSpeed = 300;
-    flyControls.rollSpeed = Math.PI / 6;
-    flyControls.autoForward = false;
-    flyControls.dragToLook = true; // Mouse down + move to look
-    flyControls.enabled = false;
-
-    clock = new THREE.Clock();
 
     // Selection box
     selectionBox = new SelectionBox(camera, geometryGroup);
@@ -2100,7 +2087,6 @@ export function attachTransformControls(groups) {
 }
 export function getTransformControls() { return transformControls; }
 export function getOrbitControls() { return orbitControls; }
-export function getFlyControls() { return flyControls; }
 export function getSelectedObjects() { return _selectedThreeObjects; } // Expose the list of selected THREE.Mesh
 
 // --- Viewer Options ---
@@ -2138,20 +2124,6 @@ export function toggleAxesVisibility() {
     }
 }
 
-export function setCameraMode(mode) { // mode is 'orbit' or 'fly'
-    currentCameraMode = mode; // Internal state for SceneManager if needed
-    
-    // InteractionManager's setMode will typically handle OrbitControls.enabled
-    // This function is more about activating/deactivating FlyControls
-    if (orbitControls) orbitControls.enabled = (mode === 'orbit');
-    if (flyControls) flyControls.enabled = (mode === 'fly');
-    
-    if (transformControls && transformControls.enabled && mode === 'fly') {
-        // If switching to fly mode while transforming, detach gizmo
-        // InteractionManager.setMode should handle detaching transformControls before enabling fly.
-    }
-    console.log("[SceneManager] Camera control set to:", mode);
-}
 
 // --- Animation Loop and Resize ---
 function animate() {
@@ -2170,10 +2142,7 @@ function animate() {
     }
     // ---  ---
 
-    const delta = clock.getDelta();
-
     if (orbitControls.enabled) orbitControls.update();
-    if (flyControls.enabled) flyControls.update(delta);
     // TransformControls updates internally if attached
 
     // 1. Clear everything from the last frame.
@@ -2215,6 +2184,42 @@ function animate() {
         // draw ON TOP of the main scene render.
         renderer.render(sceneAxes, cameraAxes);
     }
+}
+
+/**
+ * Centers the OrbitControls target on a specific point or object.
+ * @param {THREE.Object3D | THREE.Vector3 | null} target - The object to focus on, a specific point, or null to reset to origin.
+ */
+export function centerCameraOn(target = null) {
+    if (!orbitControls) return;
+
+    let newTargetPosition = new THREE.Vector3(0, 0, 0); // Default to origin
+
+    if (target instanceof THREE.Object3D) {
+        // If it's an object, find its bounding box center in world space.
+        const box = new THREE.Box3().setFromObject(target);
+        box.getCenter(newTargetPosition);
+    } else if (target instanceof THREE.Vector3) {
+        // If it's already a vector, just use it.
+        newTargetPosition.copy(target);
+    }
+
+    // --- Smooth Transition (Optional but recommended) ---
+    // Instead of snapping, we can animate the camera and target moving.
+    // This requires a tweening library like TWEEN.js, or a manual animation loop.
+    // For simplicity, we will do an instant snap for now.
+    
+    // Get the current camera offset from the old target
+    const offset = new THREE.Vector3().subVectors(camera.position, orbitControls.target);
+    
+    // Set the new target for the controls
+    orbitControls.target.copy(newTargetPosition);
+    
+    // Apply the same offset to the camera's position relative to the new target
+    camera.position.copy(newTargetPosition).add(offset);
+    
+    // You must call update for the changes to take effect immediately
+    orbitControls.update();
 }
 
 function onWindowResize() {

@@ -100,7 +100,7 @@ async function initializeApp() {
         onModeChangeClicked: handleModeChange, // Passes mode to InteractionManager
         onSnapToggleClicked: InteractionManager.toggleSnap, // Direct call if no complex logic
         onSnapSettingsChanged: InteractionManager.updateSnapSettings,
-        onCameraModeChangeClicked: SceneManager.setCameraMode,
+        onCameraModeChangeClicked: handleCameraModeChange,
         onWireframeToggleClicked: SceneManager.toggleGlobalWireframe,
         onGridToggleClicked: SceneManager.toggleGridVisibility,
         onAxesToggleClicked: SceneManager.toggleAxesVisibility,
@@ -138,7 +138,6 @@ async function initializeApp() {
     InteractionManager.initInteractionManager(
         SceneManager.getTransformControls(), // Pass the TransformControls instance
         SceneManager.getOrbitControls(),     // Pass the OrbitControls instance
-        SceneManager.getFlyControls()        // Pass the FlyControls instance
     );
 
     // Initialize define editor
@@ -222,24 +221,39 @@ async function initializeApp() {
 
     // --- Global Keyboard Listener ---
     window.addEventListener('keydown', (event) => {
-        if (event.key === 'Delete') {
+        
+        // Undo
+        if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            handleUndo();
+        }
+        // Redo
+        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            handleRedo();
+        }
+
+        // Save version
+        if (event.ctrlKey && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            handleSaveVersion();
+        }
+
+        // Focus camera
+        if (event.key.toLowerCase() === 'f') {
+            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                event.preventDefault();
+                handleCameraModeChange('selected'); // Trigger the "focus selected" action
+            }
+        }
+
+        // Delete
+        if (event.key === 'Delete' || event.key === 'Backspace') {
             // Prevent the browser's default back navigation on Backspace
             if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
                 event.preventDefault();
                 handleDeleteSelected();
             }
-        }
-        if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
-            event.preventDefault();
-            handleUndo();
-        }
-        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'z') {
-            event.preventDefault();
-            handleRedo();
-        }
-        if (event.ctrlKey && event.key.toLowerCase() === 's') {
-            event.preventDefault();
-            handleSaveVersion(); // New save handler
         }
     });
 
@@ -1254,21 +1268,6 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
             UIManager.setTreeItemVisibility(id, isVisible);
         });
     }
-
-    // 5. * If NOT recursive and toggling to a visibility opposite of the descendant, 
-    // we actually have to un-toggle the scene visibility of the descendants because 
-    // they were automatically also toggled to invisible.
-    // if(!isRecursive) {
-    //     descendantIds.forEach(id => {
-    //         const item = document.querySelector(`li[data-id="${id}"]`);
-    //         if (item) {
-    //             const descendantVis = item.classList.contains('item-hidden');
-    //             if(descendantVis == isVisible) {
-    //                 SceneManager.setPVVisibility(id, !descendantVis);
-    //             }
-    //         }
-    //     });
-    // }
 }
 
 /**
@@ -1721,5 +1720,47 @@ function doesItemExistInState(itemContext, newState) {
 
         default:
             return false;
+    }
+}
+
+function handleCameraModeChange(mode) {
+    if (mode === 'origin') {
+        // Center the camera on the world origin
+        SceneManager.centerCameraOn(null); // Passing null resets to (0,0,0)
+        UIManager.setActiveCameraModeButton('origin');
+    } else if (mode === 'selected') {
+        const selection = AppState.selectedThreeObjects;
+        
+        if (selection && selection.length > 0) {
+            let target; // This will be either a single object or a Vector3 for the center
+
+            if (selection.length === 1) {
+                // If only one object is selected, target it directly.
+                target = selection[0];
+            } else {
+                // --- NEW ROBUST LOGIC for MULTI-SELECT ---
+                // If multiple objects are selected, calculate their collective center.
+                // This works regardless of the current mode or if the gizmo is visible.
+                const multiSelectBox = new THREE.Box3();
+                
+                selection.forEach(obj => {
+                    // Important: Ensure the object's bounding box is up-to-date with its world matrix
+                    const box = new THREE.Box3().setFromObject(obj);
+                    multiSelectBox.union(box); // Expand the main box to include this object's box
+                });
+                
+                // The target is now the center of this combined bounding box.
+                target = new THREE.Vector3();
+                multiSelectBox.getCenter(target);
+            }
+
+            // Set the new camera center.
+            SceneManager.centerCameraOn(target);
+
+            // Update the menu buttons.
+            UIManager.setActiveCameraModeButton('selected');
+        } else {
+            UIManager.showNotification("Please select an object to center the camera on.");
+        }
     }
 }

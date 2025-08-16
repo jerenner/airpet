@@ -6,23 +6,19 @@ let appMode = 'observe'; // Current application mode: 'observe', 'translate', 'r
 
 let transformControlsInstance = null;
 let orbitControlsInstance = null;
-let flyControlsInstance = null; // If you implement camera fly mode
 
 let isSnapActive = true;
 let translationSnapValue = 10;    // Default in mm
 let rotationSnapValueRad = THREE.MathUtils.degToRad(45); // Default in radians
 
 // --- Initialization ---
-export function initInteractionManager(transformControls, orbitControls, flyControls) {
+export function initInteractionManager(transformControls, orbitControls) {
     if (!transformControls || !orbitControls) {
         console.error("InteractionManager: TransformControls or OrbitControls not provided!");
         return;
     }
     transformControlsInstance = transformControls;
     orbitControlsInstance = orbitControls;
-    if (flyControls) {
-        flyControlsInstance = flyControls;
-    }
 
     // Add global keyboard listeners
     window.addEventListener('keydown', handleKeyDown);
@@ -45,7 +41,6 @@ export function setMode(newMode, selectedSceneObject = null) {
         transformControlsInstance.enabled = false;
         transformControlsInstance.detach(); // Always detach when changing mode initially
     }
-    if (flyControlsInstance) flyControlsInstance.enabled = false;
 
 
     switch (appMode) {
@@ -77,10 +72,6 @@ export function setMode(newMode, selectedSceneObject = null) {
                 transformControlsInstance.enabled = true;
                 if (selectedSceneObject) transformControlsInstance.attach(selectedSceneObject);
             }
-            break;
-        case 'fly': // Example for camera fly mode
-             if (flyControlsInstance) flyControlsInstance.enabled = true;
-             if (transformControlsInstance) transformControlsInstance.detach(); // Ensure gizmo off
             break;
         default:
             console.warn(`[InteractionManager] Unknown mode: ${appMode}. Defaulting to observe.`);

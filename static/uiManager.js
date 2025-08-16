@@ -12,7 +12,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     deleteSelectedObjectButton,
     modeObserveButton, modeTranslateButton, modeRotateButton, modeScaleButton,
     toggleWireframeButton, toggleGridButton, toggleAxesButton,
-    cameraModeOrbitButton, cameraModeFlyButton,
+    cameraModeOriginButton, cameraModeSelectedButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
     aiPromptInput, aiGenerateButton, aiModelSelect,
     setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
@@ -135,8 +135,8 @@ export function initUI(cb) {
     toggleWireframeButton = document.getElementById('toggleWireframeButton');
     toggleGridButton = document.getElementById('toggleGridButton');
     toggleAxesButton = document.getElementById('toggleAxesButton');
-    cameraModeOrbitButton = document.getElementById('cameraModeOrbitButton');
-    cameraModeFlyButton = document.getElementById('cameraModeFlyButton');
+    cameraModeOriginButton = document.getElementById('cameraModeOriginButton');
+    cameraModeSelectedButton = document.getElementById('cameraModeSelectedButton');
 
     // Edit Menu / Snap Buttons
     toggleSnapToGridButton = document.getElementById('toggleSnapToGridButton');
@@ -207,8 +207,15 @@ export function initUI(cb) {
     toggleWireframeButton.addEventListener('click', callbacks.onWireframeToggleClicked);
     toggleGridButton.addEventListener('click', callbacks.onGridToggleClicked);
     toggleAxesButton.addEventListener('click', callbacks.onAxesToggleClicked);
-    cameraModeOrbitButton.addEventListener('click', () => { setActiveCameraModeButton('orbit'); callbacks.onCameraModeChangeClicked('orbit');});
-    cameraModeFlyButton.addEventListener('click', () => { setActiveCameraModeButton('fly'); callbacks.onCameraModeChangeClicked('fly');});
+    cameraModeOriginButton.addEventListener('click', () => {
+        setActiveCameraModeButton('origin');
+        callbacks.onCameraModeChangeClicked('origin');
+    });
+    cameraModeSelectedButton.addEventListener('click', () => {
+        // We don't change the active button here, because it's a one-shot action.
+        // The mode is still "Orbit", we are just changing its target.
+        callbacks.onCameraModeChangeClicked('selected');
+    });
     
     toggleSnapToGridButton.addEventListener('click', () => {
         const isNowEnabled = callbacks.onSnapToggleClicked(); // Callback should return new state
@@ -808,9 +815,9 @@ export function setActiveModeButton(mode) {
     if(currentModeDisplay) currentModeDisplay.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 }
 
-function setActiveCameraModeButton(mode) {
-    if(cameraModeOrbitButton) cameraModeOrbitButton.classList.toggle('active_mode', mode === 'orbit');
-    if(cameraModeFlyButton) cameraModeFlyButton.classList.toggle('active_mode', mode === 'fly');
+export function setActiveCameraModeButton(mode) {
+    // This function visually updates which "centering" mode is conceptually active.
+    if(cameraModeOriginButton) cameraModeOriginButton.classList.toggle('active_mode', mode === 'origin');
 }
 
 export function triggerFileInput(inputId) {
