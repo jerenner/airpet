@@ -287,7 +287,7 @@ class GDMLParser:
 
                 if is_nist:
                     # It's a NIST material. Create it with the 'nist' type.
-                    mat = Material(name, type='nist')
+                    mat = Material(name, mat_type='nist')
                     self.geometry_state.add_material(mat)
                 else:
                     state = element.get('state')

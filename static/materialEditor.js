@@ -139,7 +139,7 @@ export function show(materialData = null, projectState = null) {
         radios.forEach(radio => radio.disabled = true);
 
         // Check the correct radio button
-        if (materialData.type === 'nist') {
+        if (materialData.mat_type === 'nist') {
             nistRadio.checked = true;
         } else if (materialData.components && materialData.components.length > 0) {
             // Check if it's a composite (by natoms) or mixture (by fraction)
@@ -220,6 +220,11 @@ function renderParamsUI(matData = null) {
                 nameInput.value = nistSelect.value;
             }
         });
+
+        // Disable the selector if in edit mode
+        if(isEditMode){
+            nistSelect.disabled = true;
+        }
     } else if (isSimple) {
         // Use the new component for each parameter
         paramsDiv.appendChild(ExpressionInput.create('mat_Z', 'Atomic Number (Z)', matData?.Z_expr || '1', currentProjectState));
@@ -417,14 +422,25 @@ function handleConfirm() {
     let params = {};
     if (isSimple) {
         params = {
+            mat_type: 'standard',
             Z_expr: document.getElementById('mat_Z').value,
             A_expr: document.getElementById('mat_A').value,
             density_expr: document.getElementById('mat_density').value,
             components: []
         };
+    } else if (isNIST) {
+        // Name only for NIST materials
+        params = {
+            mat_type: 'nist',
+            components: [],
+            Z_expr: null, // Let Geant4 calculate these
+            A_expr: null,
+            density_expr: null
+        };
     } else if(!isNIST) {
         // For both Mixture and Composite
         params = {
+            mat_type: 'standard',
             density_expr: document.getElementById('mat_density').value,
             components: materialComponents,
             Z_expr: null, // Let Geant4 calculate these
