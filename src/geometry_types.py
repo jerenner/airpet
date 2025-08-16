@@ -136,9 +136,10 @@ class Isotope:
 
 class Material:
     """Represents a material."""
-    def __init__(self, name, Z_expr=None, A_expr=None, density_expr="0.0", state=None, components=None):
+    def __init__(self, name, mat_type='standard', Z_expr=None, A_expr=None, density_expr="0.0", state=None, components=None):
         self.id = str(uuid.uuid4())
         self.name = name
+        self.mat_type = mat_type
         
         # --- Store raw expressions ---
         self.Z_expr = Z_expr
@@ -155,7 +156,7 @@ class Material:
 
     def to_dict(self):
         return {
-            "id": self.id, "name": self.name,
+            "id": self.id, "name": self.name, "mat_type": self.mat_type,
             "Z_expr": self.Z_expr, 
             "A_expr": self.A_expr,
             "density_expr": self.density_expr, 
@@ -168,11 +169,16 @@ class Material:
 
     @classmethod
     def from_dict(cls, data):
-        Z_expr = data.get('Z_expr', str(data.get('Z', "")))
-        A_expr = data.get('A_expr', str(data.get('A', "")))
-        density_expr = data.get('density_expr', str(data.get('density', "0.0")))
-
-        instance = cls(data['name'], Z_expr, A_expr, density_expr, data.get('state'), data.get('components'))
+        
+        instance = cls(
+            name=data['name'], 
+            mat_type=data.get('mat_type', 'standard'),
+            Z_expr=data.get('Z_expr', str(data.get('Z', ""))), 
+            A_expr=data.get('A_expr', str(data.get('A', ""))), 
+            density_expr=data.get('density_expr', str(data.get('density', "0.0"))), 
+            state=data.get('state'), 
+            components=data.get('components')
+        )
         instance.id = data.get('id', str(uuid.uuid4()))
         
         # Restore evaluated values if they exist

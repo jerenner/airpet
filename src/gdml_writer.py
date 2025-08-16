@@ -96,6 +96,13 @@ class GDMLWriter:
         # Write materials, ensuring their element/material dependencies are met
         for name, mat_obj in self.geometry_state.materials.items():
             if name in self.written_materials: continue
+            
+            if mat_obj.mat_type == 'nist':
+                # For NIST materials, write only the name and nothing else inside.
+                ET.SubElement(materials_el, "material", {"name": name})
+                self.written_materials.add(name)
+                continue # Move to the next material
+
             mat_attrs = {"name": name}
             if mat_obj.state: mat_attrs["state"] = mat_obj.state
             mat_el = ET.SubElement(materials_el, "material", mat_attrs)

@@ -279,39 +279,50 @@ class GDMLParser:
                 if not name_expr: return
                 name = self._evaluate_name(name_expr)
 
-                state = element.get('state')
-                Z_expr = element.get('Z')
-                density_expr = None
-                d_el = element.find('D')
-                if d_el is not None:
-                    density_expr = d_el.get('value')
-                A_expr = None
-                atom_el = element.find('atom')
-                if atom_el is not None:
-                    A_expr = atom_el.get('value')
-                
-                mat = Material(name, Z_expr=Z_expr, A_expr=A_expr, density_expr=density_expr, state=state)
-                
-                # Handle composition by mass fraction
-                for frac_el in element.findall('fraction'):
-                    # Evaluate the fraction reference
-                    frac_ref_expr = frac_el.get('ref')
-                    frac_ref = self._evaluate_name(frac_ref_expr)
-                    mat.components.append({
-                        "ref": frac_ref,
-                        "fraction": frac_el.get('n')
-                    })
+                # Check for any attributes other than 'name' or child elements.
+                has_children = any(child.tag in ['D', 'atom', 'fraction', 'composite'] for child in element)
+                has_defining_attrs = 'Z' in element.attrib
 
-                # Handle composition by number of atoms
-                for comp_el in element.findall('composite'):
-                    comp_ref_expr = comp_el.get('ref')
-                    comp_ref = self._evaluate_name(comp_ref_expr)
-                    mat.components.append({
-                        "ref": comp_ref,
-                        "natoms": comp_el.get('n') # Keep 'n' as an expression string
-                    })
+                is_nist = not has_children and not has_defining_attrs
 
-                self.geometry_state.add_material(mat)
+                if is_nist:
+                    # It's a NIST material. Create it with the 'nist' type.
+                    mat = Material(name, type='nist')
+                    self.geometry_state.add_material(mat)
+                else:
+                    state = element.get('state')
+                    Z_expr = element.get('Z')
+                    density_expr = None
+                    d_el = element.find('D')
+                    if d_el is not None:
+                        density_expr = d_el.get('value')
+                    A_expr = None
+                    atom_el = element.find('atom')
+                    if atom_el is not None:
+                        A_expr = atom_el.get('value')
+                    
+                    mat = Material(name, Z_expr=Z_expr, A_expr=A_expr, density_expr=density_expr, state=state)
+                    
+                    # Handle composition by mass fraction
+                    for frac_el in element.findall('fraction'):
+                        # Evaluate the fraction reference
+                        frac_ref_expr = frac_el.get('ref')
+                        frac_ref = self._evaluate_name(frac_ref_expr)
+                        mat.components.append({
+                            "ref": frac_ref,
+                            "fraction": frac_el.get('n')
+                        })
+
+                    # Handle composition by number of atoms
+                    for comp_el in element.findall('composite'):
+                        comp_ref_expr = comp_el.get('ref')
+                        comp_ref = self._evaluate_name(comp_ref_expr)
+                        mat.components.append({
+                            "ref": comp_ref,
+                            "natoms": comp_el.get('n') # Keep 'n' as an expression string
+                        })
+
+                    self.geometry_state.add_material(mat)
             
             elif tag == 'element':
                 name_expr = element.get('name')
