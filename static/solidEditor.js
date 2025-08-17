@@ -290,51 +290,6 @@ function createExpressionInput(id, label, initialValue = '0') {
     `;
 }
 
-// Overloaded helper for inline boolean transforms
-function createInlineExpressionInput(idPrefix, axis, initialValue = '0') {
-    return `
-        <input type="text" id="${idPrefix}_${axis}" class="inline-trans expression-input" value="${initialValue}" data-id-prefix="${idPrefix}" data-axis="${axis}">
-    `;
-}
-
-function attachLiveEvaluation(inputId, resultId) {
-    const inputEl = document.getElementById(inputId);
-    const resultEl = document.getElementById(resultId);
-    
-    const evaluate = async () => {
-        const expression = inputEl.value;
-        if (!expression.trim()) {
-            resultEl.value = '';
-            resultEl.style.borderColor = '#ccc';
-            return;
-        }
-        try {
-            const response = await APIService.evaluateExpression(expression, currentProjectState);
-            if (response.success) {
-                resultEl.value = response.result.toPrecision(4);
-                resultEl.style.borderColor = '#ccc';
-                resultEl.title = `Evaluated: ${response.result}`;
-            } else {
-                resultEl.value = 'Error';
-                resultEl.style.borderColor = 'red';
-                resultEl.title = response.error;
-            }
-        } catch (error) {
-            resultEl.value = 'Error';
-            resultEl.style.borderColor = 'red';
-            resultEl.title = error.message;
-        }
-    };
-    
-    inputEl.addEventListener('input', () => {
-        // Debounce evaluation to avoid spamming the server on every keystroke
-        clearTimeout(inputEl.debounceTimer);
-        inputEl.debounceTimer = setTimeout(evaluate, 300);
-    });
-    inputEl.addEventListener('change', evaluate); // Also on change for blur events
-    evaluate(); // Trigger initial evaluation
-}
-
 function renderParamsUI(solidData = {}) {
     const params = solidData.raw_parameters || {};
 
@@ -393,9 +348,9 @@ function renderParamsUI(solidData = {}) {
         dynamicParamsDiv.appendChild(solidItem);
 
         // Expression inputs for the scale factors
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_x', 'Scale X', params?.scale?.x || '1.0', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_y', 'Scale Y', params?.scale?.y || '1.0', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_z', 'Scale Z', params?.scale?.z || '1.0', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_x', 'Scale X', params?.scale?.x || '1.0'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_y', 'Scale Y', params?.scale?.y || '1.0'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_scale_z', 'Scale Z', params?.scale?.z || '1.0'));
 
         // Pre-select the solid if in edit mode
         if (params && params.solid_ref) {
@@ -434,7 +389,7 @@ function renderParamsUI(solidData = {}) {
         transformWrapper.appendChild(posGroup);
         ['x', 'y', 'z'].forEach(axis => {
             const initialVal = transformData.position?.[axis] || '0';
-            posGroup.appendChild(ExpressionInput.create(`p_reflect_pos_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+            posGroup.appendChild(ExpressionInput.create(`p_reflect_pos_${axis}`, axis.toUpperCase(), initialVal));
         });
 
         // Rotation
@@ -444,7 +399,7 @@ function renderParamsUI(solidData = {}) {
         transformWrapper.appendChild(rotGroup);
         ['x', 'y', 'z'].forEach(axis => {
             const initialVal = transformData.rotation?.[axis] || '0';
-            rotGroup.appendChild(ExpressionInput.create(`p_reflect_rot_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+            rotGroup.appendChild(ExpressionInput.create(`p_reflect_rot_${axis}`, axis.toUpperCase(), initialVal));
         });
 
         // Scale (including reflection)
@@ -454,7 +409,7 @@ function renderParamsUI(solidData = {}) {
         transformWrapper.appendChild(sclGroup);
         ['x', 'y', 'z'].forEach(axis => {
             const initialVal = transformData.scale?.[axis] || '1';
-            sclGroup.appendChild(ExpressionInput.create(`p_reflect_scl_${axis}`, axis.toUpperCase(), initialVal, currentProjectState));
+            sclGroup.appendChild(ExpressionInput.create(`p_reflect_scl_${axis}`, axis.toUpperCase(), initialVal));
         });
 
         // Pre-select the solid if in edit mode
@@ -466,8 +421,8 @@ function renderParamsUI(solidData = {}) {
 
     } else if (isPolycone) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi'));
         
         const zplaneHtml = `
             <hr>
@@ -487,12 +442,12 @@ function renderParamsUI(solidData = {}) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
 
         // Add inputs for startphi and deltaphi
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi'));
         
         // Add numsides input only for polyhedra types
         if (isGenericPolyhedra) {
-            dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8', currentProjectState));
+            dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8'));
         }
 
         // Create the container for the RZ point list
@@ -517,9 +472,9 @@ function renderParamsUI(solidData = {}) {
     } else if (isPolyhedra) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
         
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi', currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_startphi', 'Start Phi (rad)', params.startphi || '0'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', params.deltaphi || '2*pi'));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_numsides', 'Number of Sides', params.numsides || '8'));
 
         const zplaneHtml = `
             <hr>
@@ -559,11 +514,11 @@ function renderParamsUI(solidData = {}) {
 
     } else if (isArb8) {
         document.getElementById('solid-ingredients-panel').style.display = 'none';
-        dynamicParamsDiv.appendChild(ExpressionInput.create('p_dz', 'Half Length Z (mm)', params.dz || '100', currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('p_dz', 'Half Length Z (mm)', params.dz || '100'));
         dynamicParamsDiv.appendChild(document.createElement('hr'));
         for (let i = 1; i <= 8; i++) {
-            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}x`, `Vertex ${i} X`, params[`v${i}x`] || `${50*(i % 2)-100}`, currentProjectState));
-            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}y`, `Vertex ${i} Y`, params[`v${i}y`] || `${50*((i+1) % 4)-100}`, currentProjectState));
+            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}x`, `Vertex ${i} X`, params[`v${i}x`] || `${50*(i % 2)-100}`));
+            dynamicParamsDiv.appendChild(ExpressionInput.create(`p_v${i}y`, `Vertex ${i} Y`, params[`v${i}y`] || `${50*((i+1) % 4)-100}`));
         }
         dynamicParamsDiv.addEventListener('change', updatePreview);
 
@@ -574,152 +529,152 @@ function renderParamsUI(solidData = {}) {
 
         const uiBuilders = {
             box: () => [ 
-                ExpressionInput.create('p_x', 'Size X (mm)', p('x', '100'), currentProjectState),
-                ExpressionInput.create('p_y', 'Size Y (mm)', p('y', '100'), currentProjectState),
-                ExpressionInput.create('p_z', 'Size Z (mm)', p('z', '100'), currentProjectState) 
+                ExpressionInput.create('p_x', 'Size X (mm)', p('x', '100')),
+                ExpressionInput.create('p_y', 'Size Y (mm)', p('y', '100')),
+                ExpressionInput.create('p_z', 'Size Z (mm)', p('z', '100')) 
             ],
             tube: () => [
-                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
-                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0')),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '50')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200')),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0')),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'))
             ],
             cone: () => [
-                ExpressionInput.create('p_rmin1', 'Inner Radius 1 (mm)', p('rmin1', '0'), currentProjectState),
-                ExpressionInput.create('p_rmax1', 'Outer Radius 1 (mm)', p('rmax1', '50'), currentProjectState),
-                ExpressionInput.create('p_rmin2', 'Inner Radius 2 (mm)', p('rmin2', '0'), currentProjectState),
-                ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+                ExpressionInput.create('p_rmin1', 'Inner Radius 1 (mm)', p('rmin1', '0')),
+                ExpressionInput.create('p_rmax1', 'Outer Radius 1 (mm)', p('rmax1', '50')),
+                ExpressionInput.create('p_rmin2', 'Inner Radius 2 (mm)', p('rmin2', '0')),
+                ExpressionInput.create('p_rmax2', 'Outer Radius 2 (mm)', p('rmax2', '75')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200')),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0')),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'))
             ],
             sphere: () => [
-                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
-                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState),
-                ExpressionInput.create('p_starttheta', 'Start Theta (rad)', p('starttheta', '0'), currentProjectState),
-                ExpressionInput.create('p_deltatheta', 'Delta Theta (rad)', p('deltatheta', 'pi'), currentProjectState)
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0')),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100')),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0')),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi')),
+                ExpressionInput.create('p_starttheta', 'Start Theta (rad)', p('starttheta', '0')),
+                ExpressionInput.create('p_deltatheta', 'Delta Theta (rad)', p('deltatheta', 'pi'))
             ],
             orb: () => [
-                ExpressionInput.create('p_r', 'Radius (mm)', p('r', '100'), currentProjectState)
+                ExpressionInput.create('p_r', 'Radius (mm)', p('r', '100'))
             ],
             ellipsoid: () => [
-                ExpressionInput.create('p_ax', 'Semi-Axis X (mm)', p('ax', '50'), currentProjectState),
-                ExpressionInput.create('p_by', 'Semi-Axis Y (mm)', p('by', '75'), currentProjectState),
-                ExpressionInput.create('p_cz', 'Semi-Axis Z (mm)', p('cz', '100'), currentProjectState),
-                ExpressionInput.create('p_zcut1', 'Bottom Z Cut (mm)', p('zcut1', '-100'), currentProjectState),
-                ExpressionInput.create('p_zcut2', 'Top Z Cut (mm)', p('zcut2', '100'), currentProjectState),
+                ExpressionInput.create('p_ax', 'Semi-Axis X (mm)', p('ax', '50')),
+                ExpressionInput.create('p_by', 'Semi-Axis Y (mm)', p('by', '75')),
+                ExpressionInput.create('p_cz', 'Semi-Axis Z (mm)', p('cz', '100')),
+                ExpressionInput.create('p_zcut1', 'Bottom Z Cut (mm)', p('zcut1', '-100')),
+                ExpressionInput.create('p_zcut2', 'Top Z Cut (mm)', p('zcut2', '100')),
             ],
             torus: () => [
-                ExpressionInput.create('p_rmin', 'Min Radius (mm)', p('rmin', '20'), currentProjectState),
-                ExpressionInput.create('p_rmax', 'Max Radius (mm)', p('rmax', '30'), currentProjectState),
-                ExpressionInput.create('p_rtor', 'Torus Radius (mm)', p('rtor', '100'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState)
+                ExpressionInput.create('p_rmin', 'Min Radius (mm)', p('rmin', '20')),
+                ExpressionInput.create('p_rmax', 'Max Radius (mm)', p('rmax', '30')),
+                ExpressionInput.create('p_rtor', 'Torus Radius (mm)', p('rtor', '100')),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0')),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'))
             ],
             trd: () => [
-                ExpressionInput.create('p_dx1', 'X Half-Length 1 (mm)', p('dx1', '50'), currentProjectState),
-                ExpressionInput.create('p_dx2', 'X Half-Length 2 (mm)', p('dx2', '75'), currentProjectState),
-                ExpressionInput.create('p_dy1', 'Y Half-Length 1 (mm)', p('dy1', '50'), currentProjectState),
-                ExpressionInput.create('p_dy2', 'Y Half-Length 2 (mm)', p('dy2', '75'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'), currentProjectState)
+                ExpressionInput.create('p_dx1', 'X Half-Length 1 (mm)', p('dx1', '50')),
+                ExpressionInput.create('p_dx2', 'X Half-Length 2 (mm)', p('dx2', '75')),
+                ExpressionInput.create('p_dy1', 'Y Half-Length 1 (mm)', p('dy1', '50')),
+                ExpressionInput.create('p_dy2', 'Y Half-Length 2 (mm)', p('dy2', '75')),
+                ExpressionInput.create('p_dz', 'Z Half-Length (mm)', p('dz', '100'))
             ],
             trap: () => [
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
-                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', '0'), currentProjectState),
-                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', '0'), currentProjectState),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100')),
+                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', '0')),
+                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', '0')),
                 document.createElement('hr'),
-                ExpressionInput.create('p_y1', 'Y Full-Length at -z (mm)', p('y1', '50'), currentProjectState),
-                ExpressionInput.create('p_x1', 'X Full-Length 1 at -z (mm)', p('x1', '50'), currentProjectState),
-                ExpressionInput.create('p_x2', 'X Full-Length 2 at -z (mm)', p('x2', '50'), currentProjectState),
-                ExpressionInput.create('p_alpha1', 'Alpha 1 at -z (rad)', p('alpha1', '0'), currentProjectState),
+                ExpressionInput.create('p_y1', 'Y Full-Length at -z (mm)', p('y1', '50')),
+                ExpressionInput.create('p_x1', 'X Full-Length 1 at -z (mm)', p('x1', '50')),
+                ExpressionInput.create('p_x2', 'X Full-Length 2 at -z (mm)', p('x2', '50')),
+                ExpressionInput.create('p_alpha1', 'Alpha 1 at -z (rad)', p('alpha1', '0')),
                 document.createElement('hr'),
-                ExpressionInput.create('p_y2', 'Y Full-Length at +z (mm)', p('y2', '50'), currentProjectState),
-                ExpressionInput.create('p_x3', 'X Full-Length 1 at +z (mm)', p('x3', '50'), currentProjectState),
-                ExpressionInput.create('p_x4', 'X Full-Length 2 at +z (mm)', p('x4', '50'), currentProjectState),
-                ExpressionInput.create('p_alpha2', 'Alpha 2 at +z (rad)', p('alpha2', '0'), currentProjectState),
+                ExpressionInput.create('p_y2', 'Y Full-Length at +z (mm)', p('y2', '50')),
+                ExpressionInput.create('p_x3', 'X Full-Length 1 at +z (mm)', p('x3', '50')),
+                ExpressionInput.create('p_x4', 'X Full-Length 2 at +z (mm)', p('x4', '50')),
+                ExpressionInput.create('p_alpha2', 'Alpha 2 at +z (rad)', p('alpha2', '0')),
             ],
             para: () => [
-                ExpressionInput.create('p_x', 'X Full-Length (mm)', p('x', '50'), currentProjectState),
-                ExpressionInput.create('p_y', 'Y Full-Length (mm)', p('y', '60'), currentProjectState),
-                ExpressionInput.create('p_z', 'Z Full-Length (mm)', p('z', '70'), currentProjectState),
-                ExpressionInput.create('p_alpha', 'Alpha (rad)', p('alpha', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'), currentProjectState)
+                ExpressionInput.create('p_x', 'X Full-Length (mm)', p('x', '50')),
+                ExpressionInput.create('p_y', 'Y Full-Length (mm)', p('y', '60')),
+                ExpressionInput.create('p_z', 'Z Full-Length (mm)', p('z', '70')),
+                ExpressionInput.create('p_alpha', 'Alpha (rad)', p('alpha', 'pi/12')),
+                ExpressionInput.create('p_theta', 'Theta (rad)', p('theta', 'pi/12')),
+                ExpressionInput.create('p_phi', 'Phi (rad)', p('phi', 'pi/12'))
             ],
             hype: () => [
-                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '50'), currentProjectState),
-                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
-                ExpressionInput.create('p_inst', 'Inner Stereo Angle (rad)', p('inst', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_outst', 'Outer Stereo Angle (rad)', p('outst', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState)
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '50')),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100')),
+                ExpressionInput.create('p_inst', 'Inner Stereo Angle (rad)', p('inst', 'pi/12')),
+                ExpressionInput.create('p_outst', 'Outer Stereo Angle (rad)', p('outst', 'pi/12')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'))
             ],
             paraboloid: () => [
-                ExpressionInput.create('p_rlo', 'Radius at -dz (mm)', p('rlo', '50'), currentProjectState),
-                ExpressionInput.create('p_rhi', 'Radius at +dz (mm)', p('rhi', '100'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '100'), currentProjectState)
+                ExpressionInput.create('p_rlo', 'Radius at -dz (mm)', p('rlo', '50')),
+                ExpressionInput.create('p_rhi', 'Radius at +dz (mm)', p('rhi', '100')),
+                ExpressionInput.create('p_dz', 'Half Length Z (mm)', p('dz', '100'))
             ],
             eltube: () => [
-                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
-                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
-                ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'), currentProjectState)
+                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50')),
+                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75')),
+                ExpressionInput.create('p_dz', 'Half-length dz (mm)', p('dz', '100'))
             ],
             cutTube: () => [
-                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0'), currentProjectState),
-                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200'), currentProjectState),
-                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0'), currentProjectState),
-                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi'), currentProjectState),
+                ExpressionInput.create('p_rmin', 'Inner Radius (mm)', p('rmin', '0')),
+                ExpressionInput.create('p_rmax', 'Outer Radius (mm)', p('rmax', '100')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '200')),
+                ExpressionInput.create('p_startphi', 'Start Phi (rad)', p('startphi', '0')),
+                ExpressionInput.create('p_deltaphi', 'Delta Phi (rad)', p('deltaphi', '2*pi')),
                 document.createElement('hr'),
-                ExpressionInput.create('p_lowX', 'Low Normal X', p('lowX', '0'), currentProjectState),
-                ExpressionInput.create('p_lowY', 'Low Normal Y', p('lowY', '0'), currentProjectState),
-                ExpressionInput.create('p_lowZ', 'Low Normal Z', p('lowZ', '-1'), currentProjectState),
+                ExpressionInput.create('p_lowX', 'Low Normal X', p('lowX', '0')),
+                ExpressionInput.create('p_lowY', 'Low Normal Y', p('lowY', '0')),
+                ExpressionInput.create('p_lowZ', 'Low Normal Z', p('lowZ', '-1')),
                 document.createElement('hr'),
-                ExpressionInput.create('p_highX', 'High Normal X', p('highX', '0'), currentProjectState),
-                ExpressionInput.create('p_highY', 'High Normal Y', p('highY', '0'), currentProjectState),
-                ExpressionInput.create('p_highZ', 'High Normal Z', p('highZ', '1'), currentProjectState)
+                ExpressionInput.create('p_highX', 'High Normal X', p('highX', '0')),
+                ExpressionInput.create('p_highY', 'High Normal Y', p('highY', '0')),
+                ExpressionInput.create('p_highZ', 'High Normal Z', p('highZ', '1'))
             ],
             elcone: () => [
-                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50'), currentProjectState),
-                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75'), currentProjectState),
-                ExpressionInput.create('p_zmax', 'Max Z Height (mm)', p('zmax', '200'), currentProjectState),
-                ExpressionInput.create('p_zcut', 'Upper Z Cut Plane (mm)', p('zcut', '150'), currentProjectState)
+                ExpressionInput.create('p_dx', 'Semi-axis dx (mm)', p('dx', '50')),
+                ExpressionInput.create('p_dy', 'Semi-axis dy (mm)', p('dy', '75')),
+                ExpressionInput.create('p_zmax', 'Max Z Height (mm)', p('zmax', '200')),
+                ExpressionInput.create('p_zcut', 'Upper Z Cut Plane (mm)', p('zcut', '150'))
             ],
             twistedbox: () => [
-                ExpressionInput.create('p_x', 'Full Length X (mm)', p('x', '100'), currentProjectState),
-                ExpressionInput.create('p_y', 'Full Length Y (mm)', p('y', '100'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
-                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState)
+                ExpressionInput.create('p_x', 'Full Length X (mm)', p('x', '100')),
+                ExpressionInput.create('p_y', 'Full Length Y (mm)', p('y', '100')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100')),
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'))
             ],
             twistedtrap: () => [
-                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState),
-                ExpressionInput.create('p_z', 'Half Length Z (mm)', p('z', '100'), currentProjectState),
-                ExpressionInput.create('p_Theta', 'Polar Angle Theta (rad)', p('Theta', '0'), currentProjectState),
-                ExpressionInput.create('p_Phi', 'Azimuthal Angle Phi (rad)', p('Phi', '0'), currentProjectState),
-                ExpressionInput.create('p_y1', 'Half Length Y at -z (mm)', p('y1', '50'), currentProjectState),
-                ExpressionInput.create('p_x1', 'Half Length X at -z, -y (mm)', p('x1', '50'), currentProjectState),
-                ExpressionInput.create('p_x2', 'Half Length X at -z, +y (mm)', p('x2', '50'), currentProjectState),
-                ExpressionInput.create('p_y2', 'Half Length Y at +z (mm)', p('y2', '75'), currentProjectState),
-                ExpressionInput.create('p_x3', 'Half Length X at +z, -y (mm)', p('x3', '75'), currentProjectState),
-                ExpressionInput.create('p_x4', 'Half Length X at +z, +y (mm)', p('x4', '75'), currentProjectState),
-                ExpressionInput.create('p_Alph', 'Tilt Angle Alpha (rad)', p('Alph', '0'), currentProjectState),
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12')),
+                ExpressionInput.create('p_z', 'Half Length Z (mm)', p('z', '100')),
+                ExpressionInput.create('p_Theta', 'Polar Angle Theta (rad)', p('Theta', '0')),
+                ExpressionInput.create('p_Phi', 'Azimuthal Angle Phi (rad)', p('Phi', '0')),
+                ExpressionInput.create('p_y1', 'Half Length Y at -z (mm)', p('y1', '50')),
+                ExpressionInput.create('p_x1', 'Half Length X at -z, -y (mm)', p('x1', '50')),
+                ExpressionInput.create('p_x2', 'Half Length X at -z, +y (mm)', p('x2', '50')),
+                ExpressionInput.create('p_y2', 'Half Length Y at +z (mm)', p('y2', '75')),
+                ExpressionInput.create('p_x3', 'Half Length X at +z, -y (mm)', p('x3', '75')),
+                ExpressionInput.create('p_x4', 'Half Length X at +z, +y (mm)', p('x4', '75')),
+                ExpressionInput.create('p_Alph', 'Tilt Angle Alpha (rad)', p('Alph', '0')),
             ],
             twistedtrd: () => [
-                ExpressionInput.create('p_x1', 'X Half-Length at -z (mm)', p('x1', '50'), currentProjectState),
-                ExpressionInput.create('p_x2', 'X Half-Length at +z (mm)', p('x2', '75'), currentProjectState),
-                ExpressionInput.create('p_y1', 'Y Half-Length at -z (mm)', p('y1', '50'), currentProjectState),
-                ExpressionInput.create('p_y2', 'Y Half-Length at +z (mm)', p('y2', '75'), currentProjectState),
-                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100'), currentProjectState),
-                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'), currentProjectState)
+                ExpressionInput.create('p_x1', 'X Half-Length at -z (mm)', p('x1', '50')),
+                ExpressionInput.create('p_x2', 'X Half-Length at +z (mm)', p('x2', '75')),
+                ExpressionInput.create('p_y1', 'Y Half-Length at -z (mm)', p('y1', '50')),
+                ExpressionInput.create('p_y2', 'Y Half-Length at +z (mm)', p('y2', '75')),
+                ExpressionInput.create('p_z', 'Full Length Z (mm)', p('z', '100')),
+                ExpressionInput.create('p_PhiTwist', 'Twist Angle (rad)', p('PhiTwist', 'pi/12'))
             ],
             twistedtubs: () => [
-                ExpressionInput.create('p_twistedangle', 'Twist Angle (rad)', p('twistedangle', 'pi/4'), currentProjectState),
-                ExpressionInput.create('p_endinnerrad', 'Inner Radius (mm)', p('endinnerrad', '50'), currentProjectState),
-                ExpressionInput.create('p_endouterrad', 'Outer Radius (mm)', p('endouterrad', '100'), currentProjectState),
-                ExpressionInput.create('p_zlen', 'Full Length Z (mm)', p('zlen', '200'), currentProjectState),
-                ExpressionInput.create('p_phi', 'Delta Phi / Sector Angle (rad)', p('phi', '2*pi'), currentProjectState)
+                ExpressionInput.create('p_twistedangle', 'Twist Angle (rad)', p('twistedangle', 'pi/4')),
+                ExpressionInput.create('p_endinnerrad', 'Inner Radius (mm)', p('endinnerrad', '50')),
+                ExpressionInput.create('p_endouterrad', 'Outer Radius (mm)', p('endouterrad', '100')),
+                ExpressionInput.create('p_zlen', 'Full Length Z (mm)', p('zlen', '200')),
+                ExpressionInput.create('p_phi', 'Delta Phi / Sector Angle (rad)', p('phi', '2*pi'))
             ]
         };
         
@@ -745,7 +700,7 @@ function rebuildRZPointsUI() {
         row.className = 'property_item'; // A simple flex row
 
         // Create expression input for R
-        const rComp = ExpressionInput.createInline(`rz_${index}_r`, point.r || '0', currentProjectState, (newValue) => {
+        const rComp = ExpressionInput.createInline(`rz_${index}_r`, point.r || '0', (newValue) => {
             rzPointsState[index].r = newValue;
             updatePreview(); // Live update
         });
@@ -754,7 +709,7 @@ function rebuildRZPointsUI() {
         rLabel.style.marginRight = '5px';
 
         // Create expression input for Z
-        const zComp = ExpressionInput.createInline(`rz_${index}_z`, point.z || '0', currentProjectState, (newValue) => {
+        const zComp = ExpressionInput.createInline(`rz_${index}_z`, point.z || '0', (newValue) => {
             rzPointsState[index].z = newValue;
             updatePreview(); // Live update
         });
@@ -797,7 +752,7 @@ function rebuildZPlanesUI() {
         row.className = 'property_item'; // A simple flex row
 
         // Create expression input for Rmin
-        const rminComp = ExpressionInput.createInline(`zplane_${index}_rmin`, plane.rmin || '0', currentProjectState, (newValue) => {
+        const rminComp = ExpressionInput.createInline(`zplane_${index}_rmin`, plane.rmin || '0', (newValue) => {
             zPlanesState[index].rmin = newValue;
             updatePreview();
         });
@@ -806,7 +761,7 @@ function rebuildZPlanesUI() {
         rminLabel.style.marginRight = '5px';
 
         // Create expression input for Rmax
-        const rmaxComp = ExpressionInput.createInline(`zplane_${index}_rmax`, plane.rmax || '0', currentProjectState, (newValue) => {
+        const rmaxComp = ExpressionInput.createInline(`zplane_${index}_rmax`, plane.rmax || '0', (newValue) => {
             zPlanesState[index].rmax = newValue;
             updatePreview();
         });
@@ -816,7 +771,7 @@ function rebuildZPlanesUI() {
         rmaxLabel.style.marginRight = '5px';
         
         // Create expression input for Z
-        const zComp = ExpressionInput.createInline(`zplane_${index}_z`, plane.z || '0', currentProjectState, (newValue) => {
+        const zComp = ExpressionInput.createInline(`zplane_${index}_z`, plane.z || '0', (newValue) => {
             zPlanesState[index].z = newValue;
             updatePreview();
         });
@@ -1345,7 +1300,7 @@ async function updatePreview() {
             if (['recipe', 'facets', 'zplanes', 'rzpoints', 'solid_ref', 'scale', 'transform'].includes(key)) {
                 return [key, expr];
             }
-            const response = await APIService.evaluateExpression(String(expr), currentProjectState);
+            const response = await APIService.evaluateExpression(String(expr));
             return [key, response.success ? response.result : 0];
         });
         const evaluatedEntries = await Promise.all(evalPromises);
@@ -1398,14 +1353,14 @@ async function updatePreview() {
                     const rot_expr_dict = getExpressionsForTransform(transform.rotation);
                     
                     const [posX, posY, posZ] = await Promise.all([
-                        APIService.evaluateExpression(pos_expr_dict.x, currentProjectState),
-                        APIService.evaluateExpression(pos_expr_dict.y, currentProjectState),
-                        APIService.evaluateExpression(pos_expr_dict.z, currentProjectState)
+                        APIService.evaluateExpression(pos_expr_dict.x),
+                        APIService.evaluateExpression(pos_expr_dict.y),
+                        APIService.evaluateExpression(pos_expr_dict.z)
                     ]);
                     const [rotX, rotY, rotZ] = await Promise.all([
-                        APIService.evaluateExpression(rot_expr_dict.x, currentProjectState),
-                        APIService.evaluateExpression(rot_expr_dict.y, currentProjectState),
-                        APIService.evaluateExpression(rot_expr_dict.z, currentProjectState)
+                        APIService.evaluateExpression(rot_expr_dict.x),
+                        APIService.evaluateExpression(rot_expr_dict.y),
+                        APIService.evaluateExpression(rot_expr_dict.z)
                     ]);
 
                     nextBrush.position.set(posX.result || 0, posY.result || 0, posZ.result || 0);
@@ -1433,9 +1388,9 @@ async function updatePreview() {
             geometry = createPrimitiveGeometry(solidToScaleData, currentProjectState, csgEvaluator);
             if (geometry) {
                 // Evaluate the scale factors from the UI
-                const scaleX = (await APIService.evaluateExpression(document.getElementById('p_scale_x').value, currentProjectState)).result || 1;
-                const scaleY = (await APIService.evaluateExpression(document.getElementById('p_scale_y').value, currentProjectState)).result || 1;
-                const scaleZ = (await APIService.evaluateExpression(document.getElementById('p_scale_z').value, currentProjectState)).result || 1;
+                const scaleX = (await APIService.evaluateExpression(document.getElementById('p_scale_x').value)).result || 1;
+                const scaleY = (await APIService.evaluateExpression(document.getElementById('p_scale_y').value)).result || 1;
+                const scaleZ = (await APIService.evaluateExpression(document.getElementById('p_scale_z').value)).result || 1;
                 geometry.scale(scaleX, scaleY, scaleZ);
             }
         }
@@ -1446,15 +1401,15 @@ async function updatePreview() {
             geometry = createPrimitiveGeometry(solidToReflectData, currentProjectState, csgEvaluator);
             if (geometry) {
                 // Evaluate all transform components
-                const posX = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_x').value, currentProjectState)).result || 0;
-                const posY = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_y').value, currentProjectState)).result || 0;
-                const posZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_z').value, currentProjectState)).result || 0;
-                const rotX = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_x').value, currentProjectState)).result || 0;
-                const rotY = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_y').value, currentProjectState)).result || 0;
-                const rotZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_z').value, currentProjectState)).result || 0;
-                const sclX = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_x').value, currentProjectState)).result || 1;
-                const sclY = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_y').value, currentProjectState)).result || 1;
-                const sclZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_z').value, currentProjectState)).result || 1;
+                const posX = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_x').value)).result || 0;
+                const posY = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_y').value)).result || 0;
+                const posZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_pos_z').value)).result || 0;
+                const rotX = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_x').value)).result || 0;
+                const rotY = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_y').value)).result || 0;
+                const rotZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_rot_z').value)).result || 0;
+                const sclX = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_x').value)).result || 1;
+                const sclY = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_y').value)).result || 1;
+                const sclZ = (await APIService.evaluateExpression(document.getElementById('p_reflect_scl_z').value)).result || 1;
                 
                 // Build and apply the transformation matrix
                 const position = new THREE.Vector3(posX, posY, posZ);
@@ -1467,14 +1422,14 @@ async function updatePreview() {
         }
     } else if (type === 'genericPolycone' || type === 'genericPolyhedra') {
         // Evaluate startphi and deltaphi for the preview
-        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value, currentProjectState)).result || '0';
-        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value, currentProjectState)).result || '2*pi';
-        const numSides = (type === 'genericPolyhedra') ? ((await APIService.evaluateExpression(document.getElementById('p_numsides').value, currentProjectState)).result || '32') : '32';
+        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value)).result || '0';
+        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value)).result || '2*pi';
+        const numSides = (type === 'genericPolyhedra') ? ((await APIService.evaluateExpression(document.getElementById('p_numsides').value)).result || '32') : '32';
 
         // Evaluate all RZ points
         const evalPromises = rzPointsState.map(point => Promise.all([
-            APIService.evaluateExpression(point.r, currentProjectState),
-            APIService.evaluateExpression(point.z, currentProjectState)
+            APIService.evaluateExpression(point.r),
+            APIService.evaluateExpression(point.z)
         ]));
         
         const evaluatedPairs = await Promise.all(evalPromises);
@@ -1501,15 +1456,15 @@ async function updatePreview() {
         }
 
     } else if (type === 'polyhedra') {
-        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value, currentProjectState)).result || '0';
-        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value, currentProjectState)).result || '2*pi';
-        const numSides = (await APIService.evaluateExpression(document.getElementById('p_numsides').value, currentProjectState)).result || '32';
+        const startphi = (await APIService.evaluateExpression(document.getElementById('p_startphi').value)).result || '0';
+        const deltaphi = (await APIService.evaluateExpression(document.getElementById('p_deltaphi').value)).result || '2*pi';
+        const numSides = (await APIService.evaluateExpression(document.getElementById('p_numsides').value)).result || '32';
 
         // Evaluate all Z-Planes asynchronously
         const evalPromises = zPlanesState.map(plane => Promise.all([
-            APIService.evaluateExpression(plane.rmin, currentProjectState),
-            APIService.evaluateExpression(plane.rmax, currentProjectState),
-            APIService.evaluateExpression(plane.z, currentProjectState)
+            APIService.evaluateExpression(plane.rmin),
+            APIService.evaluateExpression(plane.rmax),
+            APIService.evaluateExpression(plane.z)
         ]));
         
         const evaluatedPlanes = await Promise.all(evalPromises);

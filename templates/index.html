@@ -71,7 +71,8 @@
 
         /* Tab Content Area (will hold hierarchy_panel) */
         .tab_content_area {
-            flex-grow: 1; /* Takes up available space for hierarchy */
+            /*flex-grow: 1; /* Takes up available space for hierarchy */
+            flex-basis: 400px;
             overflow-y: auto; /* Scroll within this area */
             background-color: #e9e9e9;
         }
@@ -133,9 +134,9 @@
         }
 
         #inspector_panel {
-            height: 300px; /* Fixed height, or use flex-basis for proportions */
-            /* flex-basis: 300px; /* Alternative to height if using flex for parent */
-            /* flex-shrink: 0; /* Prevent shrinking if content is too much */
+            /* height: 300px; /* Fixed height, or use flex-basis for proportions */
+            flex-basis: 300px; /* Alternative to height if using flex for parent */
+            /* flex-shrink: 1; /* Prevent shrinking if content is too much */
             overflow-y: auto;
             padding: 10px;
             border-top: 1px solid #ccc;
@@ -1613,6 +1614,53 @@
                 <button id="saveApiKey" class="confirm-button">Save and Apply</button>
             </div>
         </div>
+    </div>
+    <div id="stepImportModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4>Import STEP File Options</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column; padding: 20px;">
+                <p style="font-size: 13px; color: #555;">Configure how to import '<b id="stepFileName"></b>'.</p>
+
+                <div class="property_item">
+                    <label for="stepImportGroupName">Grouping Name:</label>
+                    <input type="text" id="stepImportGroupName" placeholder="Prefix for new objects...">
+                </div>
+                
+                <div class="property_item">
+                    <label>Placement Mode:</label>
+                    <div>
+                        <input type="radio" name="step_placement_mode" value="assembly" id="step_mode_assembly" checked>
+                        <label for="step_mode_assembly">Create Single Assembly</label>
+                        <br>
+                        <input type="radio" name="step_placement_mode" value="individual">
+                        <label for="step_mode_individual">Place as Individual Volumes</label>
+                    </div>
+                </div>
+
+                <div class="property_item">
+                    <label for="stepImportParentLV">Place Inside:</label>
+                    <select id="stepImportParentLV"></select>
+                </div>
+
+                <div class="transform-group">
+                    <span>Placement Offset (mm)</span>
+                    <div class="inline-inputs-container" id="stepImportOffsetInputs">
+                        <!-- Expression inputs will be added here by JS -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelStepImport">Cancel</button>
+                <button id="confirmStepImport" class="confirm-button">Import</button>
+            </div>
+        </div>
+    </div>
+    <!-- Add a full-screen loading overlay -->
+    <div id="loading-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 1.2em;">
+        <div class="loader" style="width: 50px; height: 50px; border-width: 5px;"></div>
+        <span id="loading-message" style="margin-top: 20px;">Loading...</span>
     </div>
     <div id="drag-image-helper" style="position: absolute; top: -1000px; left: -1000px; padding: 5px 10px; background-color: #4a90e2; color: white; border-radius: 8px; font-family: Arial, sans-serif; font-size: 14px; display: flex; align-items: center; gap: 8px;"></div>
     <script type="importmap">

@@ -11,7 +11,7 @@ import * as APIService from './apiService.js';
  * @param {function} onChange - A callback function to be fired when the value changes.
  * @returns {HTMLElement} The fully constructed component element.
  */
-export function create(id, label, initialValue = '0', projectState, onChange = () => {}) {
+export function create(id, label, initialValue = '0', onChange = () => {}) {
     // Main container for the component
     const container = document.createElement('div');
     container.className = 'expression-component';
@@ -59,7 +59,7 @@ export function create(id, label, initialValue = '0', projectState, onChange = (
         }
         try {
             // Use the provided projectState for context
-            const response = await APIService.evaluateExpression(expression, projectState);
+            const response = await APIService.evaluateExpression(expression);
             if (response.success) {
                 resultEl.value = response.result.toPrecision(4);
                 resultEl.style.borderColor = '';
@@ -103,7 +103,7 @@ export function create(id, label, initialValue = '0', projectState, onChange = (
  * @param {function} onChange - A callback function to be fired when the value changes.
  * @returns {HTMLElement} The fully constructed component wrapper element.
  */
-export function createInline(id, initialValue = '0', projectState, onChange = () => {}) {
+export function createInline(id, initialValue = '0', onChange = () => {}) {
     const wrapper = document.createElement('div');
     wrapper.className = 'input-wrapper'; // Use the same class for consistent styling
     
@@ -135,7 +135,7 @@ export function createInline(id, initialValue = '0', projectState, onChange = ()
             return;
         }
         try {
-            const response = await APIService.evaluateExpression(expression, projectState);
+            const response = await APIService.evaluateExpression(expression);
             if (response.success) {
                 resultEl.value = response.result.toPrecision(4);
                 resultEl.style.borderColor = '';

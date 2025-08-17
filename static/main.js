@@ -15,6 +15,7 @@ import * as PVEditor from './physicalVolumeEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
+import * as StepImportEditor from './stepImportEditor.js';
 import * as UIManager from './uiManager.js';
 
 // --- Global Application State (Keep this minimal) ---
@@ -195,6 +196,11 @@ async function initializeApp() {
     // Initialize the border surface editor
     BorderSurfaceEditor.initBorderSurfaceEditor({
         onConfirm: handleBorderSurfaceEditorConfirm
+    });
+
+    // Initialize the new editor
+    StepImportEditor.initStepImportEditor({
+        onConfirm: handleConfirmStepImport
     });
 
     // Add menu listeners
@@ -948,12 +954,12 @@ async function handleTransformEnd(transformedObject) {
         });
     }
 
-    if (updates.size === 0) {
+    if (updates.length === 0) {
         UIManager.hideLoading();
         return;
     }
     
-    UIManager.showLoading(`Updating ${updates.size} transform(s)...`);
+    UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
     try {
         const result = await APIService.updatePhysicalVolumeBatch(updates);
         syncUIWithState(result, AppState.selectedHierarchyItems);
@@ -1386,19 +1392,7 @@ async function handleAiGenerate(promptText) {
 // Handler for STEP file import
 async function handleImportStep(file) {
     if (!file) return;
-    UIManager.showLoading("Importing and Tessellating STEP file... This may take some time for large files. Please do not navigate away from this tab.");
-    try {
-        const result = await APIService.importStepFile(file);
-        // The backend returns a full state update, so we can just sync
-        syncUIWithState(result);
-        UIManager.showNotification("STEP geometry imported successfully as new solids and logical volumes. You can now place them in the world.");
-    } catch (error) {
-        UIManager.showError("Failed to import STEP file: " + (error.message || error));
-    } finally {
-        // Reset the file input so the user can upload the same file again if they want
-        document.getElementById('stepFile').value = null;
-        UIManager.hideLoading();
-    }
+    StepImportEditor.show(file, AppState.currentProjectState);
 }
 
 // NEW Handlers for the Assembly Definition Editor
@@ -1762,5 +1756,33 @@ function handleCameraModeChange(mode) {
         } else {
             UIManager.showNotification("Please select an object to center the camera on.");
         }
+    }
+}
+
+async function handleConfirmStepImport(options) {
+    if (!options || !options.file) return;
+
+    UIManager.showLoading(`Importing ${options.file.name}... This may take a moment.`);
+    
+    try {
+        const formData = new FormData();
+        formData.append('stepFile', options.file);
+
+        // We send the rest of the options, but remove the file object itself
+        // as it's already been appended.
+        const optionsForJson = { ...options };
+        delete optionsForJson.file;
+        formData.append('options', JSON.stringify(options));
+        
+        const result = await APIService.importStepWithOptions(formData); // This API call is still needed
+        syncUIWithState(result);
+        UIManager.hideLoading();
+        //UIManager.showNotification("STEP file imported successfully.");
+    } catch (error) {
+        UIManager.hideLoading();
+        UIManager.showError("Failed to import STEP file: " + error.message);
+    } finally {
+        currentStepFile = null;
+        document.getElementById('stepFile').value = null;
     }
 }

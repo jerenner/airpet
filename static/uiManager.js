@@ -28,11 +28,13 @@ let inspectorContentDiv;
 let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
     undoButton, redoButton;
 
-// Buttons for adding LVs, PVs, and assemblies
+// Button for adding PVs
 let addPVButton;
 
-// Keep track of selected parent LV in structure hierarchy and last selected item
-let selectedParentContext = null;
+// Loading overlay
+let loadingOverlay, loadingMessage;
+
+// Keep track of last selected item
 let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 
 // Number of items per group for lists
@@ -172,6 +174,10 @@ export function initUI(cb) {
     apiKeyInput = document.getElementById('apiKeyInput');
     saveApiKeyButton = document.getElementById('saveApiKey');
     cancelApiKeyButton = document.getElementById('cancelApiKey');
+
+    // Loading overlay
+    loadingOverlay = document.getElementById('loading-overlay');
+    loadingMessage = document.getElementById('loading-message');
 
     // --- Initialize snap settings from UI values on startup ---
     const initialTransSnap = document.getElementById('gridSnapSizeInput').value;
@@ -466,7 +472,6 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
             `inspector_pv_${type}_${axis}`, // Unique ID
             axis.toUpperCase(), // Label
             displayValues[axis] || ((type === 'scale') ? '1' : '0'), // Initial value, default to 1 for scale, 0 for others
-            projectState,
             (newValue) => { // onChange callback
                 if (select.value === '[Absolute]') {
                     // Read all three values to send a complete object
@@ -1606,7 +1611,6 @@ export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {
 export function clearHierarchySelection() {
     const selected = document.querySelector('#left_panel_container .selected_item');
     if (selected) selected.classList.remove('selected_item');
-    selectedParentContext = null; // Reset the context
 }
 
 export function clearHierarchy() {
@@ -1705,9 +1709,13 @@ export function showNotification(message) {
 }
 export function showLoading(message = "Loading...") {
     console.log("[UI Loading] " + message);
+    loadingMessage.textContent = message;
+    loadingOverlay.style.display = 'flex';
 }
+
 export function hideLoading() {
     console.log("[UI Loading] Complete.");
+    loadingOverlay.style.display = 'none';
 }
 
 /**

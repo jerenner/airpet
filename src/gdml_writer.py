@@ -388,26 +388,45 @@ class GDMLWriter:
                 ET.SubElement(solid_el, "rzpoint", rzp)
         
         elif solid_obj.type == 'tessellated':
-            # It should have lunit and aunit attributes if vertices are not pre-defined with units
-            # but GDML spec usually puts units on <position> defines for vertices.
-            # We will assume vertices are defined and referenced.
-            solid_el.set("aunit", DEFAULT_OUTPUT_AUNIT) # Default, can be overridden by schema
-            solid_el.set("lunit", DEFAULT_OUTPUT_LUNIT) # Default
+            # This logic creates local <position> defines for absolute facets,
+            # preventing pollution of the main <define> block.
+            
+            # Find or create a single <define> block at the start of the <solids> block.
+            # This is cleaner than creating one for each tessellated solid.
+            define_el_local = solids_el.find('define')
+            if define_el_local is None:
+                define_el_local = ET.Element('define')
+                solids_el.insert(0, define_el_local) # Insert at the beginning of <solids>
+
+            # The main <tessellated> element attributes
+            solid_el.set("aunit", DEFAULT_OUTPUT_AUNIT)
+            solid_el.set("lunit", DEFAULT_OUTPUT_LUNIT)
+
+            # --- Use a dedicated facet counter ---
+            facet_counter = 0
 
             for facet in p.get('facets', []):
                 facet_attrs = {}
-                if facet['type'] == 'triangular':
-                    facet_attrs['vertex1'] = facet['vertex_refs'][0]
-                    facet_attrs['vertex2'] = facet['vertex_refs'][1]
-                    facet_attrs['vertex3'] = facet['vertex_refs'][2]
-                elif facet['type'] == 'quadrangular':
-                    facet_attrs['vertex1'] = facet['vertex_refs'][0]
-                    facet_attrs['vertex2'] = facet['vertex_refs'][1]
-                    facet_attrs['vertex3'] = facet['vertex_refs'][2]
-                    facet_attrs['vertex4'] = facet['vertex_refs'][3]
-                    if 'facet_type_attr' in facet: # e.g. ABSOLUTE/RELATIVE
-                        facet_attrs['type'] = facet['facet_type_attr']
-                ET.SubElement(solid_el, facet['type'], facet_attrs)
+                facet_type = facet.get('type', 'triangular')
+
+                if 'vertex_refs' in facet:
+                    # Logic for define-based vertices (no change needed here)
+                    # NOTE: GDML technically doesn't have a RELATIVE type, it's just implied
+                    # when vertices are defined in the main <define> block. ABSOLUTE is explicit.
+                    # We can omit the 'type' attribute here for standard GDML compliance.
+                    for i, ref in enumerate(facet['vertex_refs']):
+                        facet_attrs[f'vertex{i+1}'] = ref
+                elif 'vertices' in facet:
+                    # Logic for absolute vertices
+                    facet_attrs['type'] = "ABSOLUTE"
+                    for i, vertex_dict in enumerate(facet['vertices']):
+                        # Create a unique name for the position define.
+                        pos_name = f"{solid_obj.name}_f{facet_counter}_v{i}"
+                        self._write_define_position(define_el_local, pos_name, vertex_dict)
+                        facet_attrs[f'vertex{i+1}'] = pos_name
+
+                ET.SubElement(solid_el, facet_type, facet_attrs)
+                facet_counter += 1 # Increment the counter for each facet processed
 
         elif solid_obj.type == 'arb8':
             solid_el.set("dz", str(p['dz']))
@@ -500,6 +519,15 @@ class GDMLWriter:
         else:
                 print(f"GDML Writer: Solid type '{solid_obj.type}' (name: {name}) is not fully supported for writing.")
             
+
+    def _write_define_position(self, define_el, name, vertex_dict):
+        """Helper to write a single position define from a dictionary of floats."""
+        # Create a new dictionary to avoid modifying the original.
+        # Convert all numeric values to strings for the XML attributes.
+        pos_attrs = {k: str(v) for k, v in vertex_dict.items()}
+        pos_attrs["name"] = name
+        pos_attrs["unit"] = "mm" # All internal units are mm
+        ET.SubElement(define_el, "position", pos_attrs)
 
     def _add_structure(self):
         if not self.geometry_state.logical_volumes: return

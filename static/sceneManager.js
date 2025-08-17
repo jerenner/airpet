@@ -94,7 +94,6 @@ export function initScene(callbacks) {
     light3.position.set(0, -1, 0).normalize();
     scene.add(light3);
 
-
     // Controls
     orbitControls = new OrbitControls(camera, renderer.domElement);
     orbitControls.enableDamping = true;
@@ -206,17 +205,39 @@ export function initScene(callbacks) {
     scene.add(gridHelper);
     isGridVisible = true;
 
+    // --- Helper function to create text sprites ---
+    function createAxisLabel(text, color, size) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        const font_size = 64;
+        context.font = `Bold ${font_size}px Arial`;
+        
+        // Measure text width to make canvas fit
+        const metrics = context.measureText(text);
+        const textWidth = metrics.width;
+        canvas.width = textWidth;
+        canvas.height = font_size;
+
+        // Re-apply font after resizing canvas
+        context.font = `Bold ${font_size}px Arial`;
+        context.fillStyle = color;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(size, size * (canvas.height / canvas.width), 1); // Adjust scale based on aspect ratio
+        
+        return sprite;
+    }
+
     // --- Setup for Corner Axes Gizmo ---
     isAxesVisible = true;
 
     // The axes scene
     sceneAxes = new THREE.Scene();
-    
-    // // The axes helper itself
-    // const axes = new THREE.AxesHelper(axesSize * 0.8);
-    // axes.material.linewidth = 5;
-    // axes.material.depthTest = false; // Solves z-fighting
-    // sceneAxes.add(axes);
 
     // The axes camera: Orthographic is better for this.
     // We define a square viewing area.
@@ -229,31 +250,36 @@ export function initScene(callbacks) {
 
     // Create axes manually using Line2 for thickness control
     const axesGroup = new THREE.Group();
-
     const origin = [0, 0, 0];
-    const xAxisEnd = [axesSize * 0.8, 0, 0];
-    const yAxisEnd = [0, axesSize * 0.8, 0];
-    const zAxisEnd = [0, 0, axesSize * 0.8];
+    const axisLength = axesSize * 0.5;
     
     // X Axis (Red)
     const xGeo = new LineGeometry();
-    xGeo.setPositions([...origin, ...xAxisEnd]);
+    xGeo.setPositions([...origin, axisLength, 0, 0]);;
     const xMat = new LineMaterial({ color: 0xff0000, linewidth: 20 }); // Linewidth is in screen units (pixels)
     const xAxis = new Line2(xGeo, xMat);
+    const xLabel = createAxisLabel('X', '#ff0000', 15);
+    xLabel.position.set(axisLength + 25, 0, 0); // Position it just beyond the axis end
+    axesGroup.add(xAxis, xLabel);
 
     // Y Axis (Green)
     const yGeo = new LineGeometry();
-    yGeo.setPositions([...origin, ...yAxisEnd]);
+    yGeo.setPositions([...origin, 0, axisLength, 0]);
     const yMat = new LineMaterial({ color: 0x00ff00, linewidth: 20 });
     const yAxis = new Line2(yGeo, yMat);
+    const yLabel = createAxisLabel('Y', '#00ff00', 15);
+    yLabel.position.set(0, axisLength + 25, 0);
+    axesGroup.add(yAxis, yLabel);
 
     // Z Axis (Blue)
     const zGeo = new LineGeometry();
-    zGeo.setPositions([...origin, ...zAxisEnd]);
+    zGeo.setPositions([...origin, 0, 0, axisLength]);
     const zMat = new LineMaterial({ color: 0x8888ff, linewidth: 20 });
     const zAxis = new Line2(zGeo, zMat);
+    const zLabel = createAxisLabel('Z', '#8888ff', 15);
+    zLabel.position.set(0, 0, axisLength + 25);
+    axesGroup.add(zAxis, zLabel);
     
-    axesGroup.add(xAxis, yAxis, zAxis);
     sceneAxes.add(axesGroup);
 
     // ---
@@ -1069,21 +1095,56 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 p.facets.forEach(facet => {
                     if (facet.type === 'triangular') {
-                        const i1 = getVertexIndex(facet.vertex_refs[0]);
-                        const i2 = getVertexIndex(facet.vertex_refs[1]);
-                        const i3 = getVertexIndex(facet.vertex_refs[2]);
-                        if (i1 !== -1 && i2 !== -1 && i3 !== -1) {
-                           indices.push(i1, i2, i3);
+                        // --- Check for absolute vertices ---
+                        if (facet.vertex_type === 'ABSOLUTE' && facet.vertices) {
+                            const v1 = facet.vertices[0];
+                            const v2 = facet.vertices[1];
+                            const v3 = facet.vertices[2];
+                            const newIndex = vertices.length / 3;
+                            vertices.push(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z);
+                            indices.push(newIndex, newIndex + 1, newIndex + 2);
+                        } else {
+                            const i1 = getVertexIndex(facet.vertex_refs[0]);
+                            const i2 = getVertexIndex(facet.vertex_refs[1]);
+                            const i3 = getVertexIndex(facet.vertex_refs[2]);
+                            if (i1 !== -1 && i2 !== -1 && i3 !== -1) {
+                                indices.push(i1, i2, i3);
+                            }
                         }
                     } else if (facet.type === 'quadrangular') {
-                        // A quad is two triangles
-                        const i1 = getVertexIndex(facet.vertex_refs[0]);
-                        const i2 = getVertexIndex(facet.vertex_refs[1]);
-                        const i3 = getVertexIndex(facet.vertex_refs[2]);
-                        const i4 = getVertexIndex(facet.vertex_refs[3]);
-                         if (i1 !== -1 && i2 !== -1 && i3 !== -1 && i4 !== -1) {
-                            indices.push(i1, i2, i3); // First triangle (v1, v2, v3)
-                            indices.push(i1, i3, i4); // Second triangle (v1, v3, v4)
+                        if (facet.vertex_type === 'ABSOLUTE' && facet.vertices) {
+                            // --- Absolute Quadrangular Facet ---
+                            const v1 = facet.vertices[0];
+                            const v2 = facet.vertices[1];
+                            const v3 = facet.vertices[2];
+                            const v4 = facet.vertices[3];
+                            const newIndex = vertices.length / 3;
+                            
+                            // Push all four vertices to the main vertices array
+                            vertices.push(
+                                v1.x, v1.y, v1.z,
+                                v2.x, v2.y, v2.z,
+                                v3.x, v3.y, v3.z,
+                                v4.x, v4.y, v4.z
+                            );
+                            
+                            // Create two triangles using the new indices
+                            // Triangle 1: (v1, v2, v3) -> indices (newIndex, newIndex+1, newIndex+2)
+                            indices.push(newIndex, newIndex + 1, newIndex + 2);
+                            // Triangle 2: (v1, v3, v4) -> indices (newIndex, newIndex+2, newIndex+3)
+                            indices.push(newIndex, newIndex + 2, newIndex + 3);
+                            
+                        } else if (facet.vertex_refs) {
+                            // --- Define-based Quadrangular Facet ---
+                            const i1 = getVertexIndex(facet.vertex_refs[0]);
+                            const i2 = getVertexIndex(facet.vertex_refs[1]);
+                            const i3 = getVertexIndex(facet.vertex_refs[2]);
+                            const i4 = getVertexIndex(facet.vertex_refs[3]);
+                            if (i1 !== -1 && i2 !== -1 && i3 !== -1 && i4 !== -1) {
+                                // Triangulate the quad
+                                indices.push(i1, i2, i3); // First triangle (v1, v2, v3)
+                                indices.push(i1, i3, i4); // Second triangle (v1, v3, v4)
+                            }
                         }
                     }
                 });

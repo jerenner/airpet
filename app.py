@@ -928,21 +928,31 @@ def set_gemini_key():
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Failed to save API key: {e}"}), 500
 
-@app.route('/import_step', methods=['POST'])
-def import_step_route():
+@app.route('/import_step_with_options', methods=['POST'])
+def import_step_with_options_route():
     if 'stepFile' not in request.files:
         return jsonify({"error": "No STEP file part"}), 400
+    if 'options' not in request.form:
+        return jsonify({"error": "Missing import options"}), 400
+        
     file = request.files['stepFile']
+    try:
+        options_json = request.form['options']
+        options = json.loads(options_json)
+    except (json.JSONDecodeError, KeyError) as e:
+        return jsonify({"error": f"Invalid options format: {e}"}), 400
+
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
-
+        
     try:
-        # Pass the file stream directly to the project manager
-        success, error_msg = project_manager.import_step_file(file)
+        # We need a new method in ProjectManager to handle this
+        success, error_msg = project_manager.import_step_with_options(file, options)
         if success:
             return create_success_response("STEP file imported successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to process STEP file."}), 500
+            
     except Exception as e:
         print(f"An unexpected error occurred during STEP import: {e}")
         traceback.print_exc()

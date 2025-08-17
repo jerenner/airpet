@@ -536,12 +536,15 @@ export async function setGeminiApiKey(apiKey) {
     return handleResponse(response);
 }
 
-export async function importStepFile(stepFile) {
-    const formData = new FormData();
-    formData.append('stepFile', stepFile);
-    const response = await fetch(`${API_BASE_URL}/import_step`, {
+/**
+ * Imports a STEP file along with user-defined options from the import modal.
+ * @param {FormData} formData - The form data containing the STEP file and options JSON.
+ * @returns {Promise<Object>} A promise that resolves to the backend's response.
+ */
+export async function importStepWithOptions(formData) {
+    const response = await fetch(`${API_BASE_URL}/import_step_with_options`, {
         method: 'POST',
-        body: formData,
+        body: formData, // FormData sets the correct Content-Type header automatically
     });
     return handleResponse(response);
 }
@@ -622,13 +625,12 @@ export async function moveItemsToGroup(groupType, itemIds, targetGroupName) {
  * @param {Object} projectState - The current full project state to provide context.
  * @returns {Promise<Object>} A promise resolving to the backend's response {success, result} or {success, error}.
  */
-export async function evaluateExpression(expression, projectState) {
+export async function evaluateExpression(expression) {
     const response = await fetch(`${API_BASE_URL}/api/evaluate_expression`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            expression: expression,
-            project_state: projectState // Send the full context
+            expression: expression
         })
     });
     // This uses handleResponse, which will throw an error on non-OK responses

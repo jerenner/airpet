@@ -13,10 +13,10 @@ from OCC.Core.XCAFDoc import XCAFDoc_DocumentTool
 from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
 from OCC.Core.TDocStd import TDocStd_Document
 
+from .expression_evaluator import ExpressionEvaluator 
 from .geometry_types import (
     GeometryState, Define, Solid, LogicalVolume, Material, PhysicalVolumePlacement, Assembly
 )
-from .gdml_writer import GDMLWriter # To borrow its matrix decomposition logic
 
 def _trsf_to_dict(trsf: gp_Trsf):
     """Converts a gp_Trsf to our position and rotation dict format."""
@@ -40,7 +40,7 @@ def _trsf_to_dict(trsf: gp_Trsf):
         "rotation": {"x": gamma, "y": beta, "z": alpha} 
     }
 
-def parse_step_file(file_path):
+def parse_step_file(file_path, options):
     """
     Parses a STEP file with assembly structure and converts its geometry
     into a GeometryState object.
@@ -52,29 +52,108 @@ def parse_step_file(file_path):
 
     shape_tool = XCAFDoc_DocumentTool.ShapeTool(doc.Main())
     
+    # We will build a temporary state and then merge it into the project.
     imported_state = GeometryState()
     
-    default_mat = Material(name="G4_STAINLESS-STEEL", density_expr="8.0", state="solid", Z_expr="26", A_expr="55.845")
-    imported_state.add_material(default_mat)
+    # Use a generic material. The user can change it later.
+    default_mat_name = "G4_STAINLESS-STEEL"
+    if not imported_state.get_material(default_mat_name):
+        default_mat = Material(name=default_mat_name, density_expr="8.0", state="solid", Z_expr="26", A_expr="55.845")
+        imported_state.add_material(default_mat)
 
     assembly_name = os.path.splitext(os.path.basename(file_path))[0].replace(" ", "_")
     main_assembly = Assembly(name=assembly_name)
     imported_state.add_assembly(main_assembly)
 
+    # Use the grouping name from options.
+    grouping_name = options.get('groupingName', 'STEP_Import')
+    imported_state.grouping_name = grouping_name
+
+    # This list will store all the LVs created from the top-level solids.
+    top_level_lvs = []
+
     root_labels = TDF_LabelSequence()
     shape_tool.GetFreeShapes(root_labels)
 
     for i in range(1, root_labels.Length() + 1):
-        process_label(root_labels.Value(i), shape_tool, imported_state, main_assembly, TopLoc_Location())
+        # The return value is a list of LVs created under this root label.
+        created_lvs = process_label(root_labels.Value(i), shape_tool, imported_state, TopLoc_Location(), grouping_name)
+        top_level_lvs.extend(created_lvs)
+
+    # --- Post-processing based on user options ---
+    placement_mode = options.get('placementMode', 'assembly')
+    parent_lv_name = options.get('parentLVName')
+    
+    # --- Evaluate the offset expression ---
+    # We create a temporary evaluator to resolve any variables in the offset.
+    temp_evaluator = ExpressionEvaluator()
+    # Note: This simple evaluator doesn't have project defines.
+    offset_x_success, offset_x = temp_evaluator.evaluate(options.get('offset', {}).get('x', '0'))
+    offset_y_success, offset_y = temp_evaluator.evaluate(options.get('offset', {}).get('y', '0'))
+    offset_z_success, offset_z = temp_evaluator.evaluate(options.get('offset', {}).get('z', '0'))
+    if(not (offset_x_success and offset_y_success and offset_z_success)):
+        global_offset = {'x': '0', 'y': '0', 'z': '0'}
+    else:
+        global_offset = {'x': offset_x, 'y': offset_y, 'z': offset_z}
+
+    if placement_mode == 'assembly':
+        # Create a single assembly containing all the top-level LVs.
+        assembly_name = grouping_name
+        main_assembly = Assembly(name=assembly_name)
+        for lv, transform_dict in top_level_lvs:
+            pv = PhysicalVolumePlacement(
+                name=f"{lv.name}_pv_in_asm",
+                volume_ref=lv.name,
+                position_val_or_ref=transform_dict['position'],
+                rotation_val_or_ref=transform_dict['rotation']
+            )
+            main_assembly.add_placement(pv)
+        imported_state.add_assembly(main_assembly)
+
+        # Create a single PV to place this assembly.
+        assembly_placement = PhysicalVolumePlacement(
+            name=f"{assembly_name}_placement",
+            volume_ref=assembly_name,
+            parent_lv_name=parent_lv_name,
+            position_val_or_ref=global_offset
+        )
+        # We need a way to add this to the main project state, which will be handled by merge.
+        # For now, we can add it to a temporary "placements_to_add" list.
+        imported_state.placements_to_add = [assembly_placement]
+
+    else: # 'individual'
+        # Place each top-level LV as a separate PV.
+        placements = []
+        for lv, transform_dict in top_level_lvs:
+            part_pos = transform_dict['position']
+            
+            # Perform vector addition directly in Python
+            final_pos = {
+                'x': str(part_pos['x'] + global_offset['x']),
+                'y': str(part_pos['y'] + global_offset['y']),
+                'z': str(part_pos['z'] + global_offset['z'])
+            }
+
+            pv = PhysicalVolumePlacement(
+                name=f"{lv.name}_pv",
+                volume_ref=lv.name,
+                parent_lv_name=parent_lv_name,
+                position_val_or_ref=final_pos,  # Assign the calculated absolute position
+                rotation_val_or_ref=transform_dict['rotation']
+            )
+            placements.append(pv)
+        
+        imported_state.placements_to_add = placements
 
     return imported_state
 
-def process_label(label, shape_tool, state, assembly, parent_loc: TopLoc_Location):
+def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, grouping_name):
     """
     Recursively process labels in the STEP file's document tree.
     This version correctly handles assembly, reference, and simple shape labels.
     """
-    
+    created_lvs = []
+
     # Each label can have its own location relative to its parent.
     # We multiply it with the parent's location to get the absolute position.
     current_loc = parent_loc.Multiplied(shape_tool.GetLocation(label))
@@ -89,23 +168,30 @@ def process_label(label, shape_tool, state, assembly, parent_loc: TopLoc_Locatio
             # We need to get the actual shape definition it's referring to.
             ref_label = TDF_Label()
             if shape_tool.GetReferredShape(component_label, ref_label):
-                 # We pass the assembly's *current* location as the parent for the children
-                process_label(ref_label, shape_tool, state, assembly, current_loc)
+                # Recurse and aggregate the results from children.
+                created_lvs.extend(process_label(ref_label, shape_tool, state, current_loc, grouping_name))
 
     # Case 2: The label is a simple shape (a leaf node in the assembly tree).
     elif shape_tool.IsSimpleShape(label):
         shape = shape_tool.GetShape(label)
-        # We only care about solids for our purpose.
         if shape.ShapeType() == TopAbs_SOLID:
-            #print(f"Processing solid of shape {shape} for assembly {assembly.name}")
-            process_solid(shape, current_loc, state, assembly)
+            # process_solid now returns the newly created LogicalVolume.
+            new_lv = process_solid(shape, state, grouping_name)
+            if new_lv:
+                # The transform comes from the current location in the assembly tree.
+                transform_dict = _trsf_to_dict(current_loc.Transformation())
+                created_lvs.append((new_lv, transform_dict))
+
+    return created_lvs
 
 
-def process_solid(solid_shape, location: TopLoc_Location, state, assembly):
+def process_solid(solid_shape, state, grouping_name):
     """Tessellates a single solid and adds it to the state and assembly."""
     solid_index = len(state.solids)
     
-    mesh = BRepMesh_IncrementalMesh(solid_shape, 0.1, True) # Set angular deflection to True
+    # This is a meshing parameter. Smaller values = finer mesh but slower processing.
+    meshing_quality = 0.5 
+    mesh = BRepMesh_IncrementalMesh(solid_shape, meshing_quality, True)
     mesh.Perform()
     
     if not mesh.IsDone():
@@ -137,23 +223,23 @@ def process_solid(solid_shape, location: TopLoc_Location, state, assembly):
     if not all_vertices or not all_faces:
         return
 
-    solid_base_name = f"CAD_Solid_{solid_index}"
+    # Don't create defines. Store vertices directly.
+    solid_base_name = f"{grouping_name}_solid_{solid_index}"
     
-    vertex_defines = {}
-    for i, v in enumerate(all_vertices):
-        define_name = f"{solid_base_name}_v{i}"
-        vertex_define = Define(define_name, 'position', {'x': v[0], 'y': v[1], 'z': v[2]})
-        state.add_define(vertex_define)
-        vertex_defines[i] = define_name
-
+    # The vertices are already in the correct local coordinate system of the part.
+    # The 'location' transform will be applied to the PV placement.
     facets = []
     for face_indices in all_faces:
+        v1 = all_vertices[face_indices[0]]
+        v2 = all_vertices[face_indices[1]]
+        v3 = all_vertices[face_indices[2]]
         facets.append({
             'type': 'triangular',
-            'vertex_refs': [
-                vertex_defines[face_indices[0]],
-                vertex_defines[face_indices[1]],
-                vertex_defines[face_indices[2]]
+            'vertex_type': 'ABSOLUTE', # Add this new key
+            'vertices': [
+                {'x': v1[0], 'y': v1[1], 'z': v1[2]},
+                {'x': v2[0], 'y': v2[1], 'z': v2[2]},
+                {'x': v3[0], 'y': v3[1], 'z': v3[2]}
             ]
         })
     
@@ -163,16 +249,5 @@ def process_solid(solid_shape, location: TopLoc_Location, state, assembly):
     lv_name = f"{solid_base_name}_LV"
     lv = LogicalVolume(lv_name, tessellated_solid.name, "G4_STAINLESS-STEEL")
     state.add_logical_volume(lv)
-    
-    # --- ADD PLACEMENT TO ASSEMBLY ---
-    # This is the key change. We use the location passed down from the traversal.
-    trsf = location.Transformation()
-    transform_dict = _trsf_to_dict(trsf)
-    
-    pv = PhysicalVolumePlacement(
-        name=f"{lv_name}_pv",
-        volume_ref=lv_name,
-        position_val_or_ref=transform_dict['position'],
-        rotation_val_or_ref=transform_dict['rotation']
-    )
-    assembly.add_placement(pv)
+
+    return lv

@@ -45,7 +45,7 @@ export function show(osData = null, projectState = null) {
         finishSelect.value = osData.finish;
         typeSelect.value = osData.type;
         valueContainer.innerHTML = '';
-        valueContainer.appendChild(ExpressionInput.create('os_value', 'Value', osData.value || '1.0', currentProjectState));
+        valueContainer.appendChild(ExpressionInput.create('os_value', 'Value', osData.value || '1.0'));
         
         // Convert properties from {key: value} object to [{key: key, ref: value}] array
         surfaceProperties = Object.entries(osData.properties || {}).map(([key, ref]) => ({ key, ref }));
@@ -63,7 +63,7 @@ export function show(osData = null, projectState = null) {
         finishSelect.value = 'polished';
         typeSelect.value = 'dielectric_dielectric';
         valueContainer.innerHTML = '';
-        valueContainer.appendChild(ExpressionInput.create('os_value', 'Value', '1.0', currentProjectState));
+        valueContainer.appendChild(ExpressionInput.create('os_value', 'Value', '1.0'));
     }
 
     rebuildPropertiesUI();

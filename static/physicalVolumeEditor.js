@@ -317,7 +317,7 @@ function setupTransformUI(type, value, select, defines, options = {}) {
 
         if (isAbsolute) {
             // Create our full component for absolute expressions
-            const comp = ExpressionInput.create(inputId, labelText, initialValue, currentProjectState);
+            const comp = ExpressionInput.create(inputId, labelText, initialValue);
             inputsContainer.appendChild(comp);
 
             // Disable the input box if the whole container is disabled

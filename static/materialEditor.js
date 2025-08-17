@@ -227,11 +227,11 @@ function renderParamsUI(matData = null) {
         }
     } else if (isSimple) {
         // Use the new component for each parameter
-        paramsDiv.appendChild(ExpressionInput.create('mat_Z', 'Atomic Number (Z)', matData?.Z_expr || '1', currentProjectState));
-        paramsDiv.appendChild(ExpressionInput.create('mat_A', 'Atomic Mass (g/mole)', matData?.A_expr || '1.008', currentProjectState));
-        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
+        paramsDiv.appendChild(ExpressionInput.create('mat_Z', 'Atomic Number (Z)', matData?.Z_expr || '1'));
+        paramsDiv.appendChild(ExpressionInput.create('mat_A', 'Atomic Mass (g/mole)', matData?.A_expr || '1.008'));
+        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0'));
     } else { // Mixture or Composite
-        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0', currentProjectState));
+        paramsDiv.appendChild(ExpressionInput.create('mat_density', 'Density (g/cm³)', matData?.density_expr || '1.0'));
         
         const hr = document.createElement('hr');
 
@@ -301,7 +301,6 @@ function rebuildComponentsUI() {
         const valueInputComponent = ExpressionInput.createInline(
             `mat_comp_val_${index}`,
             initialValue,
-            currentProjectState,
             (newValue) => {
                 const component = materialComponents[index];
                 if (isComposite) {

@@ -1435,7 +1435,15 @@ class ProjectManager:
         into the current project, handling name conflicts by renaming.
         """
         if not self.current_geometry_state:
-            self.current_geometry_state = incoming_state # If current is empty, just adopt it
+            self.current_geometry_state = incoming_state
+            # Even if it's a fresh state, it might have placements to add
+            if hasattr(incoming_state, 'placements_to_add'):
+                for pv_to_add in incoming_state.placements_to_add:
+                    parent_lv = self.current_geometry_state.logical_volumes.get(pv_to_add.parent_lv_name)
+                    if parent_lv:
+                        parent_lv.add_child(pv_to_add)
+                    else:
+                        print(f"Warning: Could not find parent LV '{pv_to_add.parent_lv_name}' for initial placement.")
             return True, None
 
         rename_map = {} # Tracks old_name -> new_name
@@ -1523,6 +1531,64 @@ class ProjectManager:
             assembly.name = new_name
             self.current_geometry_state.add_assembly(assembly)
 
+        # --- Process and Add Placements ---
+        if hasattr(incoming_state, 'placements_to_add'):
+            for pv_to_add in incoming_state.placements_to_add:
+                # 1. Update any renamed references within the placement object
+                if pv_to_add.parent_lv_name in rename_map:
+                    pv_to_add.parent_lv_name = rename_map[pv_to_add.parent_lv_name]
+                
+                if pv_to_add.volume_ref in rename_map:
+                    pv_to_add.volume_ref = rename_map[pv_to_add.volume_ref]
+                
+                if isinstance(pv_to_add.position, str) and pv_to_add.position in rename_map:
+                    pv_to_add.position = rename_map[pv_to_add.position]
+                
+                if isinstance(pv_to_add.rotation, str) and pv_to_add.rotation in rename_map:
+                    pv_to_add.rotation = rename_map[pv_to_add.rotation]
+
+                # 2. Find the parent LV in the *main* project state
+                parent_lv = self.current_geometry_state.logical_volumes.get(pv_to_add.parent_lv_name)
+
+                if parent_lv:
+                    if parent_lv.content_type == 'physvol':
+                        # Generate a unique name for the placement within its new parent
+                        existing_names = {pv.name for pv in parent_lv.content}
+                        base_name = pv_to_add.name
+                        i = 1
+                        while pv_to_add.name in existing_names:
+                            pv_to_add.name = f"{base_name}_{i}"
+                            i += 1
+
+                        parent_lv.add_child(pv_to_add)
+                    else:
+                        print(f"Warning: Cannot add placement '{pv_to_add.name}'. Parent LV '{parent_lv.name}' is procedural.")
+                else:
+                    print(f"Warning: Could not find parent LV '{pv_to_add.parent_lv_name}' for imported placement '{pv_to_add.name}'. Skipping.")
+        
+        # --- Auto-Grouping Logic ---
+        if hasattr(incoming_state, 'grouping_name'):
+             grouping_name = incoming_state.grouping_name
+             
+             # Group Solids
+             new_solid_names = [s.name for s in incoming_state.solids.values()]
+             if new_solid_names:
+                 self.create_group('solid', f"{grouping_name}_solids")
+                 self.move_items_to_group('solid', new_solid_names, f"{grouping_name}_solids")
+
+             # Group Logical Volumes
+             new_lv_names = [lv.name for lv in incoming_state.logical_volumes.values()]
+             if new_lv_names:
+                 self.create_group('logical_volume', f"{grouping_name}_lvs")
+                 self.move_items_to_group('logical_volume', new_lv_names, f"{grouping_name}_lvs")
+
+             # Group Assembly (if created)
+             new_asm_names = [asm.name for asm in incoming_state.assemblies.values()]
+             if new_asm_names:
+                 self.create_group('assembly', f"{grouping_name}_assemblies")
+                 self.move_items_to_group('assembly', new_asm_names, f"{grouping_name}_assemblies")
+
+        # Recalculate the state
         success, error_msg = self.recalculate_geometry_state()
 
         # Capture the new state
@@ -1592,35 +1658,36 @@ class ProjectManager:
 
         return success, error_msg
 
-    def import_step_file(self, step_file_stream):
+    def import_step_with_options(self, step_file_stream, options):
         """
-        Processes an uploaded STEP file stream, imports the geometry,
+        Processes an uploaded STEP file using options, imports the geometry,
         and merges it into the current project.
         """
-        # The parser needs a file path, not a stream. So we save to a temp file.
+        # Save the stream to a temporary file to be read by the STEP parser
         with tempfile.NamedTemporaryFile(delete=False, suffix=".step") as temp_f:
             step_file_stream.save(temp_f.name)
             temp_path = temp_f.name
-
+        
         try:
-            # Call the new parser to get a GeometryState object
-            imported_state = parse_step_file(temp_path)
+            # The STEP parser now takes the options dictionary
+            imported_state = parse_step_file(temp_path, options)
             
-            # Use the existing merge logic to add the new objects to the project
+            # The merge_from_state function already handles placements and grouping
             success, error_msg = self.merge_from_state(imported_state)
             
             if not success:
                 return False, f"Failed to merge STEP geometry: {error_msg}"
-                
+            
+            # Recalculate is handled inside merge_from_state, but an extra one ensures consistency.
             self.recalculate_geometry_state()
-
-            # Capture the new state
-            self._capture_history_state(f"Imported STEP file {temp_path}")
+            
+            # Capture this entire import as a single history event
+            self._capture_history_state(f"Imported STEP file '{options.get('groupingName')}'")
 
             return True, None
             
         except Exception as e:
-            # Ensure we re-raise the error so the API can catch it
+            # Ensure we raise the error to be caught by the app route
             raise e
         finally:
             # Clean up the temporary file

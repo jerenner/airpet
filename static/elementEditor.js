@@ -80,8 +80,8 @@ function renderParamsUI(elData = null) {
     const defType = document.querySelector('input[name="el_type"]:checked').value;
 
     if (defType === 'simple') {
-        paramsDiv.appendChild(ExpressionInput.create('elEditorZ', 'Atomic Number (Z)', elData?.Z || '1', currentProjectState));
-        paramsDiv.appendChild(ExpressionInput.create('elEditorA', 'Atomic Mass (A)', elData?.A_expr || '1.008', currentProjectState));
+        paramsDiv.appendChild(ExpressionInput.create('elEditorZ', 'Atomic Number (Z)', elData?.Z || '1'));
+        paramsDiv.appendChild(ExpressionInput.create('elEditorA', 'Atomic Mass (A)', elData?.A_expr || '1.008'));
     } else { // By isotope fraction
         const html = `
             <h6>Isotope Fractions</h6>
@@ -122,7 +122,6 @@ function rebuildIsotopeUI() {
         const valueInputComponent = ExpressionInput.createInline(
             `el_iso_frac_${index}`,
             comp.fraction || '0.0',
-            currentProjectState,
             (newValue) => { // Live update the state
                 isotopeComponents[index].fraction = newValue;
             }

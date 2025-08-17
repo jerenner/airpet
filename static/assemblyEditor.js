@@ -103,7 +103,7 @@ function rebuildPlacementsUI() {
         posGroup.innerHTML = `<span>Position (mm)</span>`;
         ['x', 'y', 'z'].forEach(axis => {
             posGroup.appendChild(ExpressionInput.create(
-                `asm_pos_${index}_${axis}`, axis.toUpperCase(), placement.position?.[axis] || '0', currentProjectState,
+                `asm_pos_${index}_${axis}`, axis.toUpperCase(), placement.position?.[axis] || '0',
                 (newValue) => {
                     if (!assemblyPlacements[index].position) assemblyPlacements[index].position = {};
                     assemblyPlacements[index].position[axis] = newValue;
@@ -117,7 +117,7 @@ function rebuildPlacementsUI() {
         rotGroup.innerHTML = `<span>Rotation (rad)</span>`;
         ['x', 'y', 'z'].forEach(axis => {
             rotGroup.appendChild(ExpressionInput.create(
-                `asm_rot_${index}_${axis}`, axis.toUpperCase(), placement.rotation?.[axis] || '0', currentProjectState,
+                `asm_rot_${index}_${axis}`, axis.toUpperCase(), placement.rotation?.[axis] || '0',
                 (newValue) => {
                     if (!assemblyPlacements[index].rotation) assemblyPlacements[index].rotation = {};
                     assemblyPlacements[index].rotation[axis] = newValue;

@@ -124,7 +124,7 @@ function renderParamsUI(rawExpr = null) {
         // If editing, `rawExpr` will be a string. If creating, it's null.
         const initialValue = rawExpr !== null ? String(rawExpr) : '0';
         dynamicParamsDiv.appendChild(
-            ExpressionInput.create('def_expr_value', 'Value', initialValue, currentProjectState)
+            ExpressionInput.create('def_expr_value', 'Value', initialValue)
         );
     } else if (type === 'position' || type === 'rotation' || type === 'scale') {
         // For compound defines, create an input for each axis.
@@ -133,9 +133,9 @@ function renderParamsUI(rawExpr = null) {
         const initialY = rawExpr?.y || '0';
         const initialZ = rawExpr?.z || '0';
 
-        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_x', 'Value X', initialX, currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_y', 'Value Y', initialY, currentProjectState));
-        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_z', 'Value Z', initialZ, currentProjectState));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_x', 'Value X', initialX));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_y', 'Value Y', initialY));
+        dynamicParamsDiv.appendChild(ExpressionInput.create('def_expr_z', 'Value Z', initialZ));
     } else if (type === 'matrix') { // NEW: Matrix UI rendering
         dynamicParamsDiv.innerHTML = `
             <div class="property_item">
@@ -217,7 +217,6 @@ function rebuildMatrixUI() {
             const cellComponent = ExpressionInput.createInline(
                 `def_matrix_${rowIndex}_${colIndex}`, // Unique ID
                 cellValue,
-                currentProjectState,
                 (newValue) => { // onChange callback
                     matrixState.values[rowIndex][colIndex] = newValue;
                 }
