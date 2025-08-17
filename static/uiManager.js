@@ -1313,10 +1313,10 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         // Add double-click listener
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
-            // We need to find the parent LV name. For a PV, the LV data is in additionalData.
+            // We need to find the parent LV name. For a PV, the LV data is in appData.
             const parentLV = findParentLV(item);
             if (parentLV) {
-                 callbacks.onEditPVClicked(item.appData, parentLV.dataset.name);
+                callbacks.onEditPVClicked(item.dataset, item.appData, parentLV.dataset.name);
             }
         });
     }
@@ -1373,78 +1373,6 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             callbacks.onEditBorderSurfaceClicked(item.appData);
         });
     }
-    return item;
-}
-
-/**
- * Creates a list item for a procedural placement (Replica, Division, etc.).
- * @param {object} itemData - The data object for the procedural placement.
- * @param {string} parentLVName - The name of the logical volume this placement belongs to.
- * @returns {HTMLElement} The created <li> element.
- */
-function createProceduralItem(itemData, parentLVName) {
-    const item = document.createElement('li');
-    let displayName = `Replica of '${itemData.volume_ref}' in '${parentLVName}'`;
-    
-    // You can add more display logic for other types here later
-    // if (itemData.type === 'division') { ... }
-
-    // Use the same consistent layout as other tree items
-    item.innerHTML = `
-        <div class="tree-item-content">
-            <span class="item-name">${displayName}</span>
-            <div class="item-controls">
-                <button class="delete-item-btn" title="Delete Item">×</button>
-            </div>
-        </div>
-    `;
-
-    // Store data on the element for later access (for the inspector, editing, etc.)
-    item.dataset.type = itemData.type; // 'replica', 'division', etc.
-    item.dataset.id = itemData.id;
-    item.dataset.name = displayName;
-    item.appData = itemData; // Store the full object
-
-    // Add a click listener for selection
-    item.addEventListener('click', (event) => {
-        event.stopPropagation();
-        // Simple selection: deselect all others and select this one
-        document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
-            sel.classList.remove('selected_item');
-        });
-        item.classList.add('selected_item');
-        
-        // Notify main.js of the selection
-        // We package it in an array to be consistent with multi-select logic
-        callbacks.onHierarchySelectionChanged([{
-            type: item.dataset.type,
-            id: item.dataset.id,
-            name: item.dataset.name,
-            data: item.appData
-        }]);
-    });
-
-    // Add delete button listener
-    const deleteBtn = item.querySelector('.delete-item-btn');
-    deleteBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (confirmAction(`Are you sure you want to delete this ${itemData.type} placement?`)) {
-            // Note: Deleting procedural placements is more complex than other objects.
-            // This will require a new API endpoint. For now, we can log it.
-            console.log(`TODO: Implement deletion for procedural child with ID ${itemData.id} from parent ${parentLVName}`);
-            showError("Deletion for procedural placements is not yet implemented.");
-            // callbacks.onDeleteSpecificItemClicked(itemData.type, itemData.id, { parent: parentLVName });
-        }
-    });
-
-    // Add double-click listener for editing
-    item.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        console.log(`TODO: Open editor for ${itemData.type} with ID ${itemData.id}`);
-        showError(`Editing for ${itemData.type} placements is not yet implemented.`);
-    });
-
-
     return item;
 }
 

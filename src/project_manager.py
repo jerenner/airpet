@@ -1087,13 +1087,17 @@ class ProjectManager:
     def update_physical_volume(self, pv_id, new_name, new_position, new_rotation, new_scale):
         if not self.current_geometry_state: return False, "No project loaded"
         
-        pv_name = self._update_single_pv(pv_id, new_name, new_position, new_rotation, new_scale)
-        success, error_msg = self.recalculate_geometry_state()
-
-        # Capture the new state
-        self._capture_history_state(f"Updated PV {pv_name} ({pv_id})")
-
-        return success, error_msg
+        # Create an updates list of a single element.
+        update = [{
+                    "id": pv_id,
+                    "name": new_name,
+                    "position": new_position,
+                    "rotation": new_rotation,
+                    "scale": new_scale
+                 }]
+        
+        # Call the batched update function.
+        return self.update_physical_volume_batch(update)
     
     def _update_single_pv(self, pv_id, new_name, new_position, new_rotation, new_scale):
         pv_to_update = None
@@ -1103,6 +1107,7 @@ class ProjectManager:
         for lv in all_lvs:
             if lv.content_type == 'physvol':
                 for pv in lv.content:
+                    print(f"Comparing {pv.id} to {pv_id}")
                     if pv.id == pv_id:
                         pv_to_update = pv
                         break
@@ -1121,22 +1126,24 @@ class ProjectManager:
                     break
         
         if not pv_to_update:
-            return False, f"Physical Volume with ID '{pv_id}' not found."
+            return None
             
         if new_name is not None: pv_to_update.name = new_name
         if new_position is not None: pv_to_update.position = new_position
         if new_rotation is not None: pv_to_update.rotation = new_rotation
         if new_scale is not None: pv_to_update.scale = new_scale
 
-        return new_name
+        return pv_to_update
     
     def update_physical_volume_batch(self, updates_list):
         """
         Updates a batch of physical volumes' transforms in a single transaction.
-        updates_list: A list of dictionaries, each with 'id', 'position', 'rotation', 'scale'.
+        updates_list: A list of dictionaries, each with 'id', 'name', 'position', 'rotation', 'scale'.
         """
         if not self.current_geometry_state:
             return False, "No project loaded."
+        
+        updated_pv_objects = []
         
         try:
             # Apply all updates.
@@ -1147,7 +1154,8 @@ class ProjectManager:
                 new_rotation = update_data.get('rotation')
                 new_scale = update_data.get('scale')
 
-                self._update_single_pv(pv_id, new_name, new_position, new_rotation, new_scale)
+                updated_pv = self._update_single_pv(pv_id, new_name, new_position, new_rotation, new_scale)
+                updated_pv_objects.append(updated_pv)
                 
             # After all updates are applied, recalculate the entire state
             success, error_msg = self.recalculate_geometry_state()
@@ -1155,11 +1163,24 @@ class ProjectManager:
                 return False, error_msg
 
         except Exception as e:
-            return False, str(e)
+            return False, None
+        
+        # --- Return the patch data  ---
+        print(f"Update {updated_pv_objects}")
+        scene_patch = {
+            "updated_transforms": [
+                {
+                    "id": pv.id, # Ensure we use the object's ID
+                    "position": pv._evaluated_position,
+                    "rotation": pv._evaluated_rotation,
+                    "scale": pv._evaluated_scale
+                } for pv in updated_pv_objects
+            ]
+        }
         
         # If everything succeeded, capture the final state and return
-        self._capture_history_state(f"PV batch update")
-        return True, "Batch update successful."
+        self._capture_history_state(f"Batch update to {len(updated_pv_objects)} PVs")
+        return True, scene_patch
 
     def add_assembly(self, name_suggestion, placements_data):
         if not self.current_geometry_state:

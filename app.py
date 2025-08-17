@@ -95,6 +95,21 @@ def create_success_response(message="Success"):
         }
     })
 
+def create_shallow_response(message, scene_patch=None, project_state_patch=None):
+    """Creates a lightweight response with only patches."""
+    return jsonify({
+        "success": True,
+        "message": message,
+        "patch": {
+            "scene_update": scene_patch,
+            "project_state": project_state_patch
+        },
+        "history_status": {
+            "can_undo": project_manager.history_index > 0,
+            "can_redo": project_manager.history_index < len(project_manager.history) - 1
+        }
+    })
+
 @app.route('/api/begin_transaction', methods=['POST'])
 def begin_transaction_route():
     project_manager.begin_transaction()
@@ -634,11 +649,11 @@ def update_physical_volume_batch_route():
         return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
 
     # The project manager will handle the transaction and recalculation internally
-    success, message = project_manager.update_physical_volume_batch(updates_list)
+    success, scene_patch = project_manager.update_physical_volume_batch(updates_list)
 
     if success:
         # After a successful batch update, send back the complete new state
-        return create_success_response(message)
+        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", scene_patch=scene_patch)
     else:
         # If it fails, send back an error and the (potentially partially modified) state
         # A more advanced implementation might revert the changes on failure.

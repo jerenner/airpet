@@ -58,7 +58,7 @@ export function initPVEditor(callbacks) {
     console.log("Physical Volume Editor Initialized.");
 }
 
-export function show(pvData = null, projectState = null, parentContext = null) {
+export function show(pvData = null, lvData = null, projectState = null, parentContext = null) {
     if (!projectState || !parentContext) {
         alert("Cannot open PV Editor without project state and a parent volume.");
         return;
@@ -96,28 +96,29 @@ export function show(pvData = null, projectState = null, parentContext = null) {
 
         isEditMode = true;
         editingPVId = pvData.id;
+        console.log("Editing",editingPVId)
 
         titleElement.textContent = `Edit Placement: '${pvData.name}'`;
         nameInput.value = pvData.name;
         confirmButton.textContent = "Update Placement";
 
         // Set and disable the parent LV dropdown
-        pvParentLVSelect.value = pvData.parent_lv_name;
+        pvParentLVSelect.value = lvData.parent_lv_name;
         pvParentLVSelect.disabled = true;
 
         // Set and disable the placed LV dropdown
         //populateSelectWithOptions(lvSelect, placeableItems); // Populate with all LVs for context
-        lvSelect.value = pvData.volume_ref;
+        lvSelect.value = lvData.volume_ref;
         lvSelect.disabled = true;
 
         // Check LV type before setting up UI.
-        const placedLV = projectState.logical_volumes[pvData.volume_ref] || projectState.assemblies[pvData.volume_ref];
+        const placedLV = projectState.logical_volumes[lvData.volume_ref] || projectState.assemblies[lvData.volume_ref];
         const isProcedural = placedLV && placedLV.content_type && placedLV.content_type !== 'physvol';
 
         // Desable all transform UIs for procedurals
-        setupTransformUI('position', pvData.position, posDefineSelect, posDefines, { isDisabled: isProcedural });
-        setupTransformUI('rotation', pvData.rotation, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
-        setupTransformUI('scale',    pvData.scale,    sclDefineSelect, sclDefines, { isDisabled: isProcedural });
+        setupTransformUI('position', lvData.position, posDefineSelect, posDefines, { isDisabled: isProcedural });
+        setupTransformUI('rotation', lvData.rotation, rotDefineSelect, rotDefines, { isDisabled: isProcedural });
+        setupTransformUI('scale',    lvData.scale,    sclDefineSelect, sclDefines, { isDisabled: isProcedural });
 
     } else {
         // CREATE MODE

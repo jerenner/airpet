@@ -2289,3 +2289,24 @@ function onWindowResize() {
     camera.aspect = viewerContainer.clientWidth / viewerContainer.clientHeight;
     camera.updateProjectionMatrix();
 }
+
+/**
+ * Updates a single object's transform from a data object, without needing a full scene rebuild.
+ * @param {string} pvId The ID of the physical volume group to update.
+ * @param {object} position {x, y, z}
+ * @param {object} rotation {x, y, z} in ZYX radians
+ * @param {object} scale {x, y, z}
+ */
+export function updateObjectTransformFromData(pvId, position, rotation, scale) {
+    const group = findObjectByPvId(pvId);
+    if (group) {
+        group.position.set(position.x, position.y, position.z);
+        
+        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');
+        group.quaternion.setFromEuler(euler);
+
+        group.scale.set(scale.x, scale.y, scale.z);
+
+        group.updateMatrixWorld(true);
+    }
+}

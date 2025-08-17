@@ -264,19 +264,6 @@ async function initializeApp() {
     });
 
     console.log("Application Initialized.");
-    
-    // Example: Fetch initial empty state or last saved state if implemented
-    // try {
-    //     const initialState = await APIService.getProjectState();
-    //     if (initialState && Object.keys(initialState).length > 0 && initialState.world_volume_ref) {
-    //         AppState.currentProjectState = initialState;
-    //         UIManager.updateHierarchy(initialState);
-    //         const threeJSDesc = APIService.extractThreeJSDescription(initialState); // Helper might be needed
-    //         SceneManager.renderObjects(threeJSDesc || []);
-    //     }
-    // } catch (error) {
-    //     console.warn("No initial project state found or error loading:", error);
-    // }
 }
 
 // --- State Synchronization and Selection Management ---
@@ -363,6 +350,45 @@ function syncUIWithState(responseData, selectionToRestore = []) {
             UIManager.clearHierarchySelection();
             SceneManager.unselectAllInScene();
         }  
+    }
+}
+
+function syncUIWithState_shallow(responseData) {
+    if (!responseData.success) {
+        UIManager.showError(responseData.error || "A shallow update failed.");
+        return;
+    }
+    
+    const patch = responseData.patch;
+
+    // Apply scene patch (for transforms)
+    if (patch.scene_update && patch.scene_update.updated_transforms) {
+        patch.scene_update.updated_transforms.forEach(update => {
+            // Update the local AppState first
+            const pv_obj = findItemInState(update.id)?.data;
+            if (pv_obj) {
+                pv_obj._evaluated_position = update.position;
+                pv_obj._evaluated_rotation = update.rotation;
+                pv_obj._evaluated_scale = update.scale;
+            }
+            // Tell SceneManager to visually update the object
+            SceneManager.updateObjectTransformFromData(update.id, update.position, update.rotation, update.scale);
+        });
+    }
+
+    // Apply project state patch (for solid params, etc. - Phase 2)
+    //if (patch.project_state && patch.project_state.updated) {
+        // ... logic to merge updated objects into AppState.currentProjectState ...
+    //}
+    
+    // Update the undo/redo buttons
+    if (responseData.history_status) {
+        UIManager.updateUndoRedoButtons(responseData.history_status);
+    }
+    
+    // Refresh the inspector if an object is selected
+    if (AppState.selectedHierarchyItems.length === 1) {
+        UIManager.populateInspector(AppState.selectedHierarchyItems[0], AppState.currentProjectState);
     }
 }
 
@@ -962,7 +988,8 @@ async function handleTransformEnd(transformedObject) {
     UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
     try {
         const result = await APIService.updatePhysicalVolumeBatch(updates);
-        syncUIWithState(result, AppState.selectedHierarchyItems);
+        //syncUIWithState(result, AppState.selectedHierarchyItems);
+        syncUIWithState_shallow(result);
     } catch (error) {
         UIManager.showError("Error saving transform: " + error.message);
         // Optional: Revert frontend visuals to initialTransforms on error
@@ -1124,11 +1151,11 @@ function handleAddPV() {
         }
     }
     
-    PVEditor.show(null, AppState.currentProjectState, parentContext);
+    PVEditor.show(null, null, AppState.currentProjectState, parentContext);
 }
 
-function handleEditPV(pvData, parentLVName) {
-    PVEditor.show(pvData, AppState.currentProjectState, { name: parentLVName });
+function handleEditPV(pvData, lvData, parentLVName) {
+    PVEditor.show(pvData, lvData, AppState.currentProjectState, { name: parentLVName });
 }
 
 async function handlePVEditorConfirm(data) {
@@ -1782,7 +1809,7 @@ async function handleConfirmStepImport(options) {
         UIManager.hideLoading();
         UIManager.showError("Failed to import STEP file: " + error.message);
     } finally {
-        currentStepFile = null;
         document.getElementById('stepFile').value = null;
     }
 }
+
