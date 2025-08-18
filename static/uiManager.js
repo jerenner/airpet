@@ -817,7 +817,7 @@ export function setActiveModeButton(mode) {
     if(modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
     if(modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
     if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
-    if(currentModeDisplay) currentModeDisplay.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
+    if(currentModeDisplay) currentModeDisplay.textContent = `${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 }
 
 export function setActiveCameraModeButton(mode) {
