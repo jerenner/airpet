@@ -204,6 +204,8 @@ async function initializeApp() {
     });
 
     // Add menu listeners
+    document.getElementById('hideSelBtn').addEventListener('click', handleHideSelected);
+    document.getElementById('showSelBtn').addEventListener('click', handleShowSelected);
     document.getElementById('hideAllBtn').addEventListener('click', handleHideAll);
     document.getElementById('showAllBtn').addEventListener('click', handleShowAll);
 
@@ -227,6 +229,12 @@ async function initializeApp() {
 
     // --- Global Keyboard Listener ---
     window.addEventListener('keydown', (event) => {
+
+        // If the user is typing in ANY input field, textarea, or contenteditable element,
+        // do not trigger any of the global shortcuts (except for Undo/Redo/Save which are universal).
+        const isTyping = document.activeElement.tagName === 'INPUT' ||
+                         document.activeElement.tagName === 'TEXTAREA' ||
+                         document.activeElement.isContentEditable;
         
         // Undo
         if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
@@ -245,22 +253,62 @@ async function initializeApp() {
             handleSaveVersion();
         }
 
-        // Focus camera
+        // If we are typing in an input field, stop here for all other shortcuts.
+        if (isTyping) {
+            return;
+        }
+
+        // Focus camera on selected object
         if (event.key.toLowerCase() === 'f') {
-            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-                event.preventDefault();
-                handleCameraModeChange('selected'); // Trigger the "focus selected" action
-            }
+            event.preventDefault();
+            handleCameraModeChange('selected'); // Trigger the "focus selected" action
         }
 
         // Delete
         if (event.key === 'Delete' || event.key === 'Backspace') {
-            // Prevent the browser's default back navigation on Backspace
-            if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
-                event.preventDefault();
-                handleDeleteSelected();
-            }
+            event.preventDefault();
+            handleDeleteSelected();
         }
+
+        // Hide all
+        if (event.shiftKey && event.key.toLowerCase() === 'h') {
+            event.preventDefault();
+            handleHideAll();
+        }
+        // Hide selected
+        else if (event.key.toLowerCase() === 'h') {
+            event.preventDefault();
+            handleHideSelected();
+        }
+        // Show all
+        if (event.shiftKey && event.key.toLowerCase() === 'j') {
+            event.preventDefault();
+            handleShowAll();
+        }
+        // Show selected
+        else if (event.key.toLowerCase() === 'j') {
+            event.preventDefault();
+            handleShowSelected();
+        }
+
+        // --- Modes ---
+        if (event.key.toLowerCase() === 'w') {
+            event.preventDefault();
+            handleModeChange('observe');
+        }
+        if (event.key.toLowerCase() === 't') {
+            event.preventDefault();
+            handleModeChange('translate');
+        }
+        if (event.key.toLowerCase() === 'r') {
+            event.preventDefault();
+            handleModeChange('rotate');
+        }
+        if (event.key.toLowerCase() === 'e') {
+            event.preventDefault();
+            handleModeChange('scale');
+        }
+
     });
 
     console.log("Application Initialized.");

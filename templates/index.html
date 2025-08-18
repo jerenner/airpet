@@ -1086,9 +1086,14 @@
                         <button id="toggleWireframeButton">Toggle Wireframe</button>
                         <button id="toggleGridButton">Toggle Grid</button>
                         <button id="toggleAxesButton">Toggle Axes</button>
-                        <hr style="margin: 5px 0;"> <!-- Separator -->
+                        <hr style="margin: 5px 0;">
                         <button id="cameraModeOriginButton" class="active_mode">Camera: Origin</button>
-                        <button id="cameraModeSelectedButton">Camera: Selected (F)</button>
+                        <button id="cameraModeSelectedButton">Camera: Focus Selected (F)</button>
+                        <hr style="margin: 5px 0;">
+                        <button id="hideSelBtn">Hide Selected (H)</button>
+                        <button id="showSelBtn">Show Selected (J)</button>
+                        <button id="hideAllBtn">Hide All (Shift+H)</button>
+                        <button id="showAllBtn">Show All (Shift+J)</button>
                     </div>
                 </li>
                 <!-- Object Menu -->
@@ -1096,19 +1101,17 @@
                     <button>Object</button>
                     <div class="dropdown_content">
                         <!--<button id="addObjectButton">Add...</button>-->
-                        <button id="deleteSelectedObjectButton">Delete Selected</button>
-                        <button id="hideAllBtn">Hide All</button>
-                        <button id="showAllBtn">Show All</button>
+                        <button id="deleteSelectedObjectButton">Delete Selected (Del/Bksp)</button>
                     </div>
                 </li>
                 <!-- Mode Menu -->
                 <li>
                     <button>Mode</button>
                     <div class="dropdown_content">
-                        <button id="modeObserveButton" class="active_mode">Observe</button>
-                        <button id="modeTranslateButton">Translate</button> <!-- Renamed from Move -->
-                        <button id="modeRotateButton">Rotate</button>
-                        <button id="modeScaleButton">Scale</button>
+                        <button id="modeObserveButton" class="active_mode">Observe (W)</button>
+                        <button id="modeTranslateButton">Translate (T)</button>
+                        <button id="modeRotateButton">Rotate (R)</button>
+                        <button id="modeScaleButton">Scale (E)</button>
                     </div>
                 </li>
                 <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Mode: Observe</span></li>
