@@ -26,6 +26,12 @@ class ProjectManager:
         self._is_transaction_open = False
         self._pre_transaction_state = None
 
+        # --- Track changed objects (for now only tracking certain solids) ---
+        self.changed_object_ids = {'solids': set() } #, 'lvs': set(), 'defines': set()}
+
+    def _clear_change_tracker(self):
+        self.changed_object_ids = {key: set() for key in self.changed_object_ids}
+
     def begin_transaction(self):
         """Starts a transaction, preventing intermediate history captures."""
         if not self._is_transaction_open:
@@ -518,6 +524,50 @@ class ProjectManager:
 
         return True, None
 
+    def create_empty_project(self):
+        self.current_geometry_state = GeometryState()
+        
+        ## Create a G4_Galactic material
+        world_mat = Material(
+            name="G4_Galactic", 
+            Z_expr="1", 
+            A_expr="1.01", 
+            density_expr="1.0e-25", 
+            state="gas"
+        )
+        self.current_geometry_state.add_material(world_mat)
+        
+        # Create a default solid and LV for the world (e.g., a 10m box)
+        world_solid_params = {'x': '10000', 'y': '10000', 'z': '10000'}
+        world_solid = Solid(name="world_solid", solid_type="box", raw_parameters=world_solid_params)
+        self.current_geometry_state.add_solid(world_solid)
+
+        world_lv = LogicalVolume(name="World", solid_ref="world_solid", material_ref="G4_Galactic")
+        self.current_geometry_state.add_logical_volume(world_lv)
+
+        # Create a single box to go in the center of the world
+        box_solid_params = {'x': '100', 'y': '100', 'z': '100'}
+        box_solid = Solid(name="box_solid", solid_type="box", raw_parameters=box_solid_params)
+        self.current_geometry_state.add_solid(box_solid)
+        box_lv = LogicalVolume(name="box_LV", solid_ref="box_solid", material_ref="G4_Galactic")
+        self.current_geometry_state.add_logical_volume(box_lv)
+        self.add_physical_volume("World", "box_PV", "box_LV", 
+                                 {'x': '0', 'y': '0', 'z': '0'},
+                                 {'x': '0', 'y': '0', 'z': '0'}, 
+                                 {'x': '1', 'y': '1', 'z': '1'})
+
+        # Set this logical volume as the world volume
+        self.current_geometry_state.world_volume_ref = "World"
+
+        # Recalculate to populate evaluated fields
+        self.recalculate_geometry_state()
+        
+        # Reset history and change tracker
+        self.history = []
+        self.history_index = -1
+        self._clear_change_tracker() # Important for consistency
+        self._capture_history_state("New Project")
+
     def load_gdml_from_string(self, gdml_string):
         """
         Orchestrates GDML parsing AND evaluation.
@@ -568,11 +618,37 @@ class ProjectManager:
             return writer.get_gdml_string()
         return "<?xml version='1.0' encoding='UTF-8'?>\n<gdml />"
     
-    def get_full_project_state_dict(self):
-        """ Returns the entire current geometry state as a dictionary. """
-        if self.current_geometry_state:
-            return self.current_geometry_state.to_dict()
-        return {}
+    def get_full_project_state_dict(self, exclude_unchanged_tessellated=False):
+        """
+        Returns the entire current geometry state as a dictionary.
+        Can optionally filter out heavy, unchanged tessellated solids.
+        """
+        if not self.current_geometry_state:
+            return {}
+
+        state_dict = self.current_geometry_state.to_dict()
+        
+        # For now, the only object tracking optimization involves large tessellated solids.
+        if exclude_unchanged_tessellated:
+            filtered_solids = {}
+            changed_solids_set = self.changed_object_ids['solids'] or set()
+            
+            for name, solid_data in state_dict['solids'].items():
+                is_tessellated = solid_data.get('type') == 'tessellated'
+                # A tessellated solid is "static" if its facets have absolute vertices
+                is_static = is_tessellated and \
+                            len(solid_data['raw_parameters'].get('facets', [])) > 0 and \
+                            'vertices' in solid_data['raw_parameters']['facets'][0]
+                
+                # Keep the solid if:
+                # 1. It's not a static tessellated solid.
+                # 2. It's one of the solids that was explicitly changed in this operation.
+                if not is_static or name in changed_solids_set:
+                    filtered_solids[name] = solid_data
+            
+            state_dict['solids'] = filtered_solids
+        
+        return state_dict
 
     def get_object_details(self, object_type, object_name_or_id):
         """
@@ -839,9 +915,15 @@ class ProjectManager:
         if not self.current_geometry_state:
             return None, "No project loaded"
         
+        # Start with a clear change tracker
+        self._clear_change_tracker()
+        
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.solids)
         new_solid = Solid(name, solid_type, raw_parameters)
         self.current_geometry_state.add_solid(new_solid)
+
+        # Set the new solid as "changed" so it is sent to the front end for sure
+        self.changed_object_ids['solids'].add(name)
 
         # Capture the new state
         self._capture_history_state(f"Added solid {name}")
@@ -972,7 +1054,7 @@ class ProjectManager:
         if not parent_lv_name:
              return False, "Parent logical volume for placement was not specified."
         
-        pv_name_sugg = pv_params.get('name', f"{new_lv_name}_placement")
+        pv_name_sugg = pv_params.get('name', f"{new_lv_name}_PV")
         position = {'x': '0', 'y': '0', 'z': '0'} 
         rotation = {'x': '0', 'y': '0', 'z': '0'}
         scale    = {'x': '1', 'y': '1', 'z': '1'}
@@ -1692,6 +1774,11 @@ class ProjectManager:
         try:
             # The STEP parser now takes the options dictionary
             imported_state = parse_step_file(temp_path, options)
+
+            # Set the new solids as "changed" so they will be sent to the front end
+            newly_created_solid_names = set(imported_state.solids.keys())
+            self.changed_object_ids['solids'].update(newly_created_solid_names)
+            print(f"Changed solids {self.changed_object_ids['solids']}")
             
             # The merge_from_state function already handles placements and grouping
             success, error_msg = self.merge_from_state(imported_state)

@@ -310,6 +310,34 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
     console.log("[Main] Syncing UI with new backend state. Message: " + responseData.message);
 
+    // --- MERGE LOGIC for partial updates ---
+    if (responseData.response_type === 'full_with_exclusions') {
+        console.log("Merging with exclusions")
+        // This is a partial state update. We need to merge it.
+        // We can't just replace the whole state.
+        const newSolids = responseData.project_state.solids || {};
+        
+        // Keep all existing solids that are NOT in the incoming update.
+        // This preserves our large, static tessellated solids on the client.
+        const preservedSolids = {};
+        for (const solidName in AppState.currentProjectState.solids) {
+            if (!newSolids.hasOwnProperty(solidName)) {
+                preservedSolids[solidName] = AppState.currentProjectState.solids[solidName];
+            }
+        }
+        
+        // Combine the preserved solids with the newly received ones.
+        const combinedSolids = { ...preservedSolids, ...newSolids };
+        
+        // Update the project state with the combined solids list.
+        AppState.currentProjectState = responseData.project_state;
+        AppState.currentProjectState.solids = combinedSolids;
+
+    } else {
+        // This is a full state update (e.g., from loading a file). Replace everything.
+        AppState.currentProjectState = responseData.project_state;
+    }
+
     // 1. Update the global AppState cache
     AppState.currentProjectState = responseData.project_state;
     AppState.selectedHierarchyItems = []; // Clear old selections
@@ -576,26 +604,26 @@ async function handleExportGdml() {
 
 async function handleUndo() {
     const selectionBeforeUndo = [...AppState.selectedHierarchyItems]; // Make a copy
-    UIManager.showLoading("Undoing...");
+    //UIManager.showLoading("Undoing...");
     try {
         const result = await APIService.undo();
         syncUIWithState(result, selectionBeforeUndo); // Restore selection after undo
     } catch (error) { UIManager.showError(error.message); }
-    finally { UIManager.hideLoading(); }
+    //finally { UIManager.hideLoading(); }
 }
 
 async function handleRedo() {
     const selectionBeforeRedo = [...AppState.selectedHierarchyItems]; // Make a copy
-    UIManager.showLoading("Redoing...");
+    //UIManager.showLoading("Redoing...");
     try {
         const result = await APIService.redo();
         syncUIWithState(result, selectionBeforeRedo); // Restore selection after redo
     } catch (error) { UIManager.showError(error.message); }
-    finally { UIManager.hideLoading(); }
+    //finally { UIManager.hideLoading(); }
 }
 
 async function handleShowHistory() {
-    UIManager.showLoading("Fetching history...");
+    //UIManager.showLoading("Fetching history...");
     try {
         const result = await APIService.getProjectHistory(AppState.currentProjectName);
         if (result.success) {
@@ -605,7 +633,7 @@ async function handleShowHistory() {
             UIManager.showError(result.error);
         }
     } catch (error) { UIManager.showError(error.message); }
-    finally { UIManager.hideLoading(); }
+    //finally { UIManager.hideLoading(); }
 }
 
 async function handleLoadVersion(projectName, versionId) {
@@ -985,7 +1013,7 @@ async function handleTransformEnd(transformedObject) {
         return;
     }
     
-    UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
+    //UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
     try {
         const result = await APIService.updatePhysicalVolumeBatch(updates);
         //syncUIWithState(result, AppState.selectedHierarchyItems);
@@ -993,9 +1021,8 @@ async function handleTransformEnd(transformedObject) {
     } catch (error) {
         UIManager.showError("Error saving transform: " + error.message);
         // Optional: Revert frontend visuals to initialTransforms on error
-    } finally {
-        UIManager.hideLoading();
-    }
+    } 
+    //finally { UIManager.hideLoading();}
 }
 
 // Keep this helper function, it's essential
@@ -1327,12 +1354,25 @@ function handleHideSelected() {
     if (selection.length > 0) {
         selection.forEach(item => {
             if (item.type === 'physical_volume') {
-                // Call the main handler with recursion enabled
-                handlePVVisibilityToggle(item.id, false, true);
+                handlePVVisibilityToggle(item.id, false, false);
             }
         });
     } else {
         UIManager.showNotification("Please select one or more Physical Volumes to hide.");
+    }
+}
+
+function handleShowSelected() {
+    // This now works for multi-select as well
+    const selection = AppState.selectedHierarchyItems;
+    if (selection.length > 0) {
+        selection.forEach(item => {
+            if (item.type === 'physical_volume') {
+                handlePVVisibilityToggle(item.id, true, false);
+            }
+        });
+    } else {
+        UIManager.showNotification("Please select one or more Physical Volumes to show.");
     }
 }
 

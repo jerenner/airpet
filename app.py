@@ -77,17 +77,28 @@ def load_system_prompt():
         return "You are a helpful assistant." # Fallback prompt
 
 # Function for Consistent API Responses
-def create_success_response(message="Success"):
+def create_success_response(message="Success",exclude_unchanged_tessellated=True):
     """
     Helper to create a standard success response object, including history state.
     """
-    state = project_manager.get_full_project_state_dict()
+    state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=exclude_unchanged_tessellated)
     scene = project_manager.get_threejs_description()
+
+    # Set the response type based on whether we excluded certain objects.
+    if(exclude_unchanged_tessellated):
+        response_type = "full_with_exclusions"
+    else:
+        response_type = "full"
+
+    # Reset the object change tracking.
+    project_manager._clear_change_tracker()
+
     return jsonify({
         "success": True,
         "message": message,
         "project_state": state,
         "scene_update": scene,
+        "response_type": response_type,
         # --- Add history status to every successful response ---
         "history_status": {
             "can_undo": project_manager.history_index > 0,
@@ -199,40 +210,6 @@ def load_version_route():
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
-# Function to define a new project
-def create_empty_project():
-
-    global project_manager
-
-    # Re-initialize the project manager to clear everything
-    project_manager = ProjectManager(expression_evaluator) 
-
-    ## Create a G4_Galactic material
-    world_mat = Material(
-        name="G4_Galactic", 
-        Z_expr="1", 
-        A_expr="1.01", 
-        density_expr="1.0e-25", 
-        state="gas"
-    )
-    project_manager.current_geometry_state.add_material(world_mat)
-    
-    # Create a default solid for the world (e.g., a 10m box)
-    # The parameters are now string expressions.
-    world_solid_params = {'x': '10000', 'y': '10000', 'z': '10000'}
-    world_solid = Solid(name="world_solid", solid_type="box", raw_parameters=world_solid_params)
-    project_manager.current_geometry_state.add_solid(world_solid)
-
-    # Create the logical volume for the world
-    world_lv = LogicalVolume(name="World", solid_ref="world_solid", material_ref="G4_Galactic")
-    project_manager.current_geometry_state.add_logical_volume(world_lv)
-
-    # Set this logical volume as the world volume
-    project_manager.current_geometry_state.world_volume_ref = "World"
-
-    # Recalculate to populate evaluated fields
-    project_manager.recalculate_geometry_state()
-
 # Function to construct full AI prompt
 def construct_full_ai_prompt(user_prompt):
 
@@ -259,9 +236,9 @@ def new_project_route():
     """Clears the current project and creates a new one with a default world."""
 
     # Call the helper function for creating an empty project.
-    create_empty_project()
+    project_manager.create_empty_project()
 
-    return create_success_response("New project created.")
+    return create_success_response("New project created.",exclude_unchanged_tessellated=False)
 
 @app.route('/import_gdml_part', methods=['POST'])
 def import_gdml_part_route():
@@ -696,17 +673,17 @@ def get_project_state_route():
     This route is for initial page load state restoration.
     If no project exists, it creates a new default one.
     """
-    state = project_manager.get_full_project_state_dict()
+    state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=False)
     
     # Check if the project is empty (no world volume defined)
     if not state or not state.get('world_volume_ref'):
         print("No active project found, creating a new default world.")
         
         # Call the same logic as the /new_project route
-        create_empty_project()
+        project_manager.create_empty_project()
         
         # Now get the state and scene again from the newly created project
-        state = project_manager.get_full_project_state_dict()
+        state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=False)
         scene = project_manager.get_threejs_description()
     else:
         # Project already exists, just get the scene
