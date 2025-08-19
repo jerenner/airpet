@@ -27,12 +27,107 @@ class ProjectManager:
         self._is_transaction_open = False
         self._pre_transaction_state = None
 
+        # --- Project Management ---
+        self.active_project_name = "untitled"
+        self.projects_dir = ""
+        self.last_state_hash = None # For auto-save change detection
+        self.is_changed = False     # Flag for changes
+
         # --- Track changed objects (for now only tracking certain solids) ---
         self.changed_object_ids = {'solids': set() } #, 'lvs': set(), 'defines': set()}
 
     def _clear_change_tracker(self):
         self.changed_object_ids = {key: set() for key in self.changed_object_ids}
 
+    def _get_project_path(self, project_name):
+        return os.path.join(self.projects_dir, project_name)
+
+    def _get_next_untitled_name(self):
+        base = "untitled"
+        if not os.path.exists(self._get_project_path(base)):
+            return base
+        i = 1
+        while True:
+            name = f"{base}_{i}"
+            if not os.path.exists(self._get_project_path(name)):
+                return name
+            i += 1
+
+    def new_project(self):
+        self._clear_change_tracker()
+        project_name = self._get_next_untitled_name()
+        self.active_project_name = project_name
+        
+        project_path = self._get_project_path(project_name)
+        os.makedirs(os.path.join(project_path, "versions"), exist_ok=True)
+        
+        # Create the default geometry
+        self.current_geometry_state = GeometryState()
+        # ... (your logic to create default world LV, material, solid) ...
+        
+        self.history = []
+        self.history_index = -1
+        self._capture_history_state("New Project")
+        self.save_version("Initial Version") # Save the first version immediately
+        return project_name
+
+    def load_project(self, project_name):
+        project_path = self._get_project_path(project_name)
+        if not os.path.isdir(project_path):
+            return False, "Project not found."
+        
+        versions_path = os.path.join(project_path, "versions")
+        version_files = sorted(glob.glob(os.path.join(versions_path, "*.json")))
+        
+        latest_version = version_files[-1] if version_files else None
+        
+        # Check for a newer autosave file
+        autosave_file = os.path.join(project_path, "autosave.json")
+        if os.path.exists(autosave_file) and (not latest_version or os.path.getmtime(autosave_file) > os.path.getmtime(latest_version)):
+            latest_version = autosave_file
+
+        if latest_version:
+            with open(latest_version, 'r') as f:
+                json_string = f.read()
+            self.load_project_from_json_string(json_string) # This already handles history reset
+            self.active_project_name = project_name
+            return True, f"Loaded project '{project_name}'."
+        else:
+            # If folder exists but has no versions, treat it as a new project
+            self.active_project_name = project_name
+            self.create_empty_project() # Your existing function
+            return True, f"Opened empty project '{project_name}'."
+
+    def save_version(self, description=""):
+        project_path = self._get_project_path(self.active_project_name)
+        versions_path = os.path.join(project_path, "versions")
+        os.makedirs(versions_path, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        version_filepath = os.path.join(versions_path, f"{timestamp}.json")
+        
+        json_string = self.save_project_to_json_string()
+        with open(version_filepath, 'w') as f:
+            f.write(json_string)
+        
+        # After a manual save, the autosave is no longer needed until the next change
+        self.is_changed = False
+        return True, f"Version '{timestamp}' saved."
+        
+    def auto_save_project(self):
+        if not self.is_changed:
+            return False, "No changes to autosave."
+        
+        project_path = self._get_project_path(self.active_project_name)
+        autosave_path = os.path.join(project_path, "autosave.json")
+        
+        json_string = self.save_project_to_json_string()
+        with open(autosave_path, 'w') as f:
+            f.write(json_string)
+        
+        self.is_changed = False
+        return True, "Autosaved."
+    
     def begin_transaction(self):
         """Starts a transaction, preventing intermediate history captures."""
         if not self._is_transaction_open:
@@ -71,7 +166,10 @@ class ProjectManager:
             self.history.pop(0)
         
         self.history_index = len(self.history) - 1
-        print(f"History captured. Index: {self.history_index}, Size: {len(self.history)}")
+        #print(f"History captured. Index: {self.history_index}, Size: {len(self.history)}")
+
+        # Mark project as having changes
+        self.is_changed = True
 
     def undo(self):
         """Reverts to the previous state in history."""
@@ -1110,11 +1208,12 @@ class ProjectManager:
             lv.solid_ref = new_solid_ref
         if new_material_ref and new_material_ref in self.current_geometry_state.materials:
             lv.material_ref = new_material_ref
-        if new_vis_attributes:
+        if new_vis_attributes is not None:
             lv.vis_attributes = new_vis_attributes
             
         # Update content if provided
-        if new_content_type and new_content is not None:
+        if new_content_type and new_content is not None and len(new_content) > 0:
+            print(f"Got new content {new_content}")
             lv.content_type = new_content_type
             if new_content_type == 'replica':
                 lv.content = ReplicaVolume.from_dict(new_content)
@@ -1309,7 +1408,22 @@ class ProjectManager:
         if not self.current_geometry_state:
             return False, "No project loaded."
         
-        # --- 1. Pre-deletion Validation Phase ---
+        # --- Do not allow deletion of world PV or LV ---
+        world_lv = self.current_geometry_state.logical_volumes[self.current_geometry_state.world_volume_ref]
+        for item in objects_to_delete:
+    
+            # Prevent deletion of the designated World Logical Volume.
+            if item.get('type') == 'logical_volume' and item.get('name') == world_lv.name:
+                return False, f"Cannot delete the World Logical Volume ('{world_lv.name}'). To start over, use 'File -> New Project'."
+            
+            # Also prevent deletion of the World's physical placement (though it's not directly selectable yet).
+            # This is good future-proofing.
+            if item.get('type') == 'physical_volume':
+                pv = self._find_pv_by_id(item.get('id'))
+                if pv and pv.volume_ref == world_lv.name:
+                     return False, f"Cannot delete the world volume's placement."
+        
+        # --- Pre-deletion Validation Phase ---
         all_dependencies = {}
         for item in objects_to_delete:
             obj_type = item.get('type')
@@ -1348,7 +1462,7 @@ class ProjectManager:
                 error_msg += f"\n• {obj} is used by:{dep_list_str}"
             return False, error_msg
 
-        # --- 2. Deletion Phase ---
+        # --- Deletion Phase ---
         # If we passed validation, it's safe to delete everything.
         try:
             for item in objects_to_delete:
@@ -1359,7 +1473,7 @@ class ProjectManager:
             # A more robust solution would be to restore from self._pre_transaction_state
             return False, str(e)
         
-        # --- 3. Finalization ---
+        # --- Finalization ---
         # No full geometry recalculation needed here for a simple delete.
         self._capture_history_state(f"Deleted {len(objects_to_delete)} objects")
 
@@ -1492,7 +1606,6 @@ class ProjectManager:
         if object_type == 'solid':
             # Check Logical Volumes
             for lv in state.logical_volumes.values():
-                print(f"Checking LV with solid ref {lv.solid_ref}")
                 if lv.solid_ref == object_id:
                     dependencies.append(f"Logical Volume '{lv.name}'")
             # Check Boolean Solids

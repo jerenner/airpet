@@ -776,7 +776,7 @@ async function handleDeleteSelected() {
         return;
     }
 
-    const itemsToDelete = selectionContexts.map(item => ({ type: item.type, id: item.id }));
+    const itemsToDelete = selectionContexts.map(item => ({ type: item.type, id: item.id, name: item.name }));
 
     let confirmationMessage;
     if (selectionContexts.length === 1) {
@@ -1328,7 +1328,6 @@ function handleEditMaterial(matData) {
 }
 
 async function handleMaterialEditorConfirm(data) {
-    const selectionContext = getSelectionContext();
 
     if (data.isEdit) {
         UIManager.showLoading("Updating Material...");

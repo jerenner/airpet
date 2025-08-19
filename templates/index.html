@@ -1042,7 +1042,7 @@
                         <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
                         <button id="openProjectButton">Open Project (JSON)...</button>
                         <input type="file" id="projectFile" accept=".json" style="display: none;">
-                        <hr>
+                        <hr style="margin: 5px 0;">
                         <!-- Import functionality -->
                         <button id="importGdmlButton">Import Part(s) (GDML)...</button>
                         <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
@@ -1052,10 +1052,10 @@
                         <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
                         <button id="importStepButton">Import CAD (STEP)...</button>
                         <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
-                        <hr>
+                        <hr style="margin: 5px 0;">
                         <button id="saveProjectButton">Save Project (JSON)...</button>
                         <button id="exportGdmlButton">Export GDML...</button>
-                        <hr>
+                        <hr style="margin: 5px 0;">
                         <button id="setApiKeyButton">Set Gemini API Key...</button>
                     </div>
                 </li>
@@ -1063,9 +1063,11 @@
                 <li>
                     <button>Edit</button>
                     <div class="dropdown_content">
+                        <button id="deleteSelectedObjectButton">Delete Selected (Del/Bksp)</button>
+                        <hr style="margin: 5px 0;">
                         <button id="undoButton" disabled>Undo (Ctrl+Z)</button>
                         <button id="redoButton" disabled>Redo (Ctrl+Shift+Z)</button>
-                        <hr>
+                        <hr style="margin: 5px 0;">
                         <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
                         <div class="snap-settings-container">
                             <div class="snap-input-row">
@@ -1096,14 +1098,12 @@
                         <button id="showAllBtn">Show All (Shift+J)</button>
                     </div>
                 </li>
-                <!-- Object Menu -->
+                <!-- Object Menu
                 <li>
                     <button>Object</button>
                     <div class="dropdown_content">
-                        <!--<button id="addObjectButton">Add...</button>-->
-                        <button id="deleteSelectedObjectButton">Delete Selected (Del/Bksp)</button>
                     </div>
-                </li>
+                </li>-->
                 <!-- Mode Menu -->
                 <li>
                     <button>Mode</button>

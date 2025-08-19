@@ -1206,7 +1206,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         </div>
     `;
     item.dataset.type = itemType;
-    item.dataset.id = itemIdForBackend;
+    item.dataset.id = itemIdForBackend;  // note: this will be an "ID" for physical volumes and a name for everything else
     item.dataset.name = displayName;
     item.appData = {...fullItemData, ...lvData};
 
@@ -1269,6 +1269,33 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         });
         
         callbacks.onHierarchySelectionChanged(selectedItemContexts);
+    });
+
+    // --- Context Menu (Right-Click & Ctrl+Click) Handler ---
+    item.addEventListener('contextmenu', (event) => {
+
+        // Stop the event immediately to prevent it bubbling to parent items' context handlers.
+        event.stopPropagation();
+
+        // Prevent the default browser right-click menu from appearing.
+        event.preventDefault();
+
+        // We want Ctrl+Click to behave EXACTLY like a normal click with the Ctrl key held.
+        //    So, we can simply dispatch a new 'click' event on the same element,
+        //    making sure to pass along the modifier key states.
+        
+        // This is a more robust way than duplicating the selection logic.
+        const clickEvent = new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            ctrlKey: true, // We know Ctrl was held for this to fire
+            metaKey: event.metaKey, // Pass along metaKey state
+            shiftKey: event.shiftKey // Pass along shiftKey state
+        });
+        
+        // Dispatch the synthetic click event on the item.
+        item.dispatchEvent(clickEvent);
     });
 
     // Listener for the new delete button
@@ -1523,17 +1550,6 @@ function findParentInHierarchy(element) {
         return parent;
     }
     return null; // Reached the top of the tree
-}
-
-export function selectHierarchyItemByTypeAndId(itemType, itemId, projectState) {
-    let itemElement = document.querySelector(`.tab_pane.active li[data-id="${itemId}"]`);
-    if (itemElement) {
-        if(projectState) {
-            // This part is complex, let's assume itemElement.appData is up to date for now
-        }
-        itemElement.click(); // Simulate a click to run the selection logic
-        itemElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
 }
 
 export function clearHierarchySelection() {
