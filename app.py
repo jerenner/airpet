@@ -106,15 +106,22 @@ def create_success_response(message="Success",exclude_unchanged_tessellated=True
         }
     })
 
-def create_shallow_response(message, scene_patch=None, project_state_patch=None):
-    """Creates a lightweight response with only patches."""
+def create_shallow_response(message, scene_patch=None, project_state_patch=None, full_scene=None):
+    """Creates a lightweight response with a patch and possibly the full scene update."""
+
+    # Construct the patch.
+    patch = {}
+    if scene_patch:
+        patch['scene_update'] = scene_patch
+    if project_state_patch:
+        patch['project_state'] = project_state_patch
+    
     return jsonify({
         "success": True,
         "message": message,
-        "patch": {
-            "scene_update": scene_patch,
-            "project_state": project_state_patch
-        },
+        "patch": patch,
+        "scene_update": full_scene,
+        "response_type": "patch", # A new response type
         "history_status": {
             "can_undo": project_manager.history_index > 0,
             "can_redo": project_manager.history_index < len(project_manager.history) - 1
@@ -301,7 +308,7 @@ def process_gdml_route():
         gdml_content_str = file.read().decode('utf-8')
         try:
             project_manager.load_gdml_from_string(gdml_content_str)
-            return create_success_response("GDML file processed successfully.")
+            return create_success_response("GDML file processed successfully.",exclude_unchanged_tessellated=False)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -315,7 +322,7 @@ def load_project_json_route():
     if file:
         try:
             project_json_string = file.read().decode('utf-8')
-            project_manager.load_project_from_json_string(project_json_string)
+            project_manager.load_project_from_json_string(project_json_string,exclude_unchanged_tessellated=False)
             return create_success_response("Project loaded successfully.")
         except json.JSONDecodeError:
             return jsonify({"error": "Invalid JSON file format"}), 400
@@ -626,45 +633,59 @@ def update_physical_volume_batch_route():
         return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
 
     # The project manager will handle the transaction and recalculation internally
-    success, scene_patch = project_manager.update_physical_volume_batch(updates_list)
+    success, patch = project_manager.update_physical_volume_batch(updates_list)
 
     if success:
         # After a successful batch update, send back the complete new state
-        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", scene_patch=scene_patch)
+        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", scene_patch=patch)
     else:
         # If it fails, send back an error and the (potentially partially modified) state
         # A more advanced implementation might revert the changes on failure.
         return jsonify({"success": False, "error": message}), 500
 
-@app.route('/delete_object', methods=['POST'])
-def delete_object_route():
+@app.route('/api/delete_objects_batch', methods=['POST'])
+def delete_objects_batch_route():
     data = request.get_json()
-    obj_type = data.get('object_type')
-    obj_id = data.get('object_id')
+    objects_to_delete = data.get('objects')
 
-    # --- Check for non-deletable special case items first ---
-    # Check if the PV is part of an assembly's placement list.
-    if obj_type == 'physical_volume':
-        is_in_assembly = False
-        for asm in project_manager.current_geometry_state.assemblies.values():
-            if any(pv.id == obj_id for pv in asm.placements):
-                is_in_assembly = True
-                break
-        if is_in_assembly:
-            error_msg = f"Cannot directly delete Physical Volume '{obj_id}'. It is part of an assembly and must be removed using the Assembly Editor."
-            return jsonify({"success": False, "error": error_msg, "error_type": "dependency"}), 409 # 409 Conflict is a good code here
-    
-    # Main deletion logic.
-    deleted, error_msg = project_manager.delete_object(obj_type, obj_id)
+    if not isinstance(objects_to_delete, list):
+        return jsonify({"success": False, "error": "Invalid request: 'objects' must be a list."}), 400
 
-    if deleted:
-        return create_success_response("Object deleted.")
-    else:
-        # Check if the error message indicates a dependency issue
-        if "in use by" in (error_msg or ""):
-            return jsonify({"success": False, "error": error_msg, "error_type": "dependency"}), 409 # 409 Conflict
+    # First, pre-filter for non-deletable items like assembly members
+    assembly_member_ids = set()
+    for asm in project_manager.current_geometry_state.assemblies.values():
+        for pv in asm.placements:
+            assembly_member_ids.add(pv.id)
+            
+    filtered_deletions = []
+    non_deletable_items = []
+    for item in objects_to_delete:
+        if item['type'] == 'physical_volume' and item['id'] in assembly_member_ids:
+            non_deletable_items.append(item['id'])
         else:
-            return jsonify({"success": False, "error": error_msg or "Failed to delete object"}), 500
+            filtered_deletions.append(item)
+    
+    if non_deletable_items:
+        return jsonify({
+            "success": False, 
+            "error": f"Cannot directly delete items that are part of an assembly definition: {', '.join(non_deletable_items)}. Please use the Assembly Editor.",
+            "error_type": "dependency"
+        }), 409
+
+    # Proceed with the filtered list
+    deleted, patch_or_error_msg = project_manager.delete_objects_batch(filtered_deletions)
+    
+    if deleted:
+        return create_shallow_response(
+            "Objects deleted successfully.",
+            scene_patch=None,
+            project_state_patch=patch_or_error_msg.get("project_state"),
+            full_scene=patch_or_error_msg.get("scene_update")  # need full scene update for delete
+        )
+    else:
+        error_type = "dependency" if "in use by" in (patch_or_error_msg or "") else "generic"
+        status_code = 409 if error_type == "dependency" else 500
+        return jsonify({"success": False, "error": patch_or_error_msg, "error_type": error_type}), status_code
 
 # --- Read-only and Export Routes ---
 @app.route('/get_project_state', methods=['GET'])

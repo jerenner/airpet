@@ -387,7 +387,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
 
     // 1. Update the global AppState cache
-    AppState.currentProjectState = responseData.project_state;
+    //AppState.currentProjectState = responseData.project_state;
     AppState.selectedHierarchyItems = []; // Clear old selections
     AppState.selectedThreeObjects = [];
     AppState.selectedPVContext.pvId = null;
@@ -437,8 +437,41 @@ function syncUIWithState_shallow(responseData) {
     
     const patch = responseData.patch;
 
-    // Apply scene patch (for transforms)
-    if (patch.scene_update && patch.scene_update.updated_transforms) {
+    // Apply project state patch
+    const projectPatch = responseData.patch.project_state || {};
+    if (projectPatch.deleted) {
+        for (const [category, idList] of Object.entries(projectPatch.deleted)) {
+            if (!idList || idList.length === 0) continue;
+            
+            // Map the category to the correct AppState dictionary
+            const targetDictName = category === 'physical_volumes' ? null : category;
+            if (targetDictName && AppState.currentProjectState[targetDictName]) {
+                idList.forEach(id => {
+                    delete AppState.currentProjectState[targetDictName][id];
+                });
+            } else if (category === 'physical_volumes') {
+                // Need to find and remove PVs from their parents
+                idList.forEach(pvIdToDelete => {
+                    for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
+                        if (lv.content_type === 'physvol') {
+                            lv.content = lv.content.filter(pv => pv.id !== pvIdToDelete);
+                        }
+                    }
+                    // Also check assemblies
+                    for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
+                        asm.placements = asm.placements.filter(pv => pv.id !== pvIdToDelete);
+                    }
+                });
+            }
+        }
+    }
+
+    // Update the full scene if it exists.
+    if (responseData.scene_update) {
+        SceneManager.renderObjects(responseData.scene_update, AppState.currentProjectState);
+    }
+    // Otherwise, apply scene patch (for transforms)
+    else if (patch.scene_update && patch.scene_update.updated_transforms) {
         patch.scene_update.updated_transforms.forEach(update => {
             // Update the local AppState first
             const pv_obj = findItemInState(update.id)?.data;
@@ -452,19 +485,38 @@ function syncUIWithState_shallow(responseData) {
         });
     }
 
-    // Apply project state patch (for solid params, etc. - Phase 2)
     //if (patch.project_state && patch.project_state.updated) {
         // ... logic to merge updated objects into AppState.currentProjectState ...
     //}
+
+    // Re-render the hierarchy panels
+    UIManager.updateHierarchy(AppState.currentProjectState);
     
     // Update the undo/redo buttons
     if (responseData.history_status) {
         UIManager.updateUndoRedoButtons(responseData.history_status);
     }
     
-    // Refresh the inspector if an object is selected
-    if (AppState.selectedHierarchyItems.length === 1) {
-        UIManager.populateInspector(AppState.selectedHierarchyItems[0], AppState.currentProjectState);
+    // 5. Restore selection and repopulate inspector ---
+    const selectionToRestore = AppState.selectedHierarchyItems;
+    let validatedSelectionToRestore = [];
+    if (selectionToRestore && selectionToRestore.length > 0) {
+
+        // Filter the old selection, keeping only items that still exist in the new state.
+        validatedSelectionToRestore = selectionToRestore.filter(item =>
+            doesItemExistInState(item, AppState.currentProjectState)
+        );
+
+        if (validatedSelectionToRestore.length > 0) {
+            const idsToSelect = validatedSelectionToRestore.map(item => item.id);
+            UIManager.setHierarchySelection(idsToSelect); // Visually select in the hierarchy
+            handleHierarchySelection(validatedSelectionToRestore); // Update inspector, gizmo, etc.
+        } else {
+            // If no valid selection remains (or there was none to begin with), clear everything.
+            UIManager.clearInspector();
+            UIManager.clearHierarchySelection();
+            SceneManager.unselectAllInScene();
+        }  
     }
 }
 
@@ -724,7 +776,8 @@ async function handleDeleteSelected() {
         return;
     }
 
-    // Create a confirmation message
+    const itemsToDelete = selectionContexts.map(item => ({ type: item.type, id: item.id }));
+
     let confirmationMessage;
     if (selectionContexts.length === 1) {
         confirmationMessage = `Are you sure you want to delete ${selectionContexts[0].type}: ${selectionContexts[0].name}?`;
@@ -736,49 +789,31 @@ async function handleDeleteSelected() {
 
     UIManager.showLoading(`Deleting ${selectionContexts.length} item(s)...`);
     try {
-        let lastResult;
-        // Loop through all selected items and delete them one by one.
-        for (const context of selectionContexts) {
-            lastResult = await APIService.deleteObject(context.type, context.id);
-            // If any deletion fails, we can stop and report it.
-            if (!lastResult.success) {
-                UIManager.showError(`Failed to delete ${context.type} ${context.id}: ${lastResult.error}`);
-                break; // Stop the loop on the first error
-            }
-        }
-        
-        // After all deletions are done (or on the first failure),
-        // sync the UI with the state from the last successful operation.
-        if (lastResult) {
-            syncUIWithState(lastResult); // No selection to restore after deletion
-        } else {
-            // This case might happen if the loop doesn't run, though unlikely
-             UIManager.hideLoading();
-        }
-
+        const result = await APIService.deleteObjectsBatch(itemsToDelete);
+        // A successful deletion requires a full state sync because many things could have changed.
+        syncUIWithState_shallow(result);
     } catch (error) {
-        // --- Check the error type ---
         if (error.type === 'dependency') {
-            // Use a more detailed alert for dependency issues
             UIManager.showDependencyError(error.message);
         } else {
-            UIManager.showError("Error deleting object: " + error.message);
+            UIManager.showError("An error occurred during deletion: " + error.message);
         }
     } finally {
         UIManager.hideLoading();
     }
 }
 
-// NEW handler for specific deletions from button clicks
 async function handleDeleteSpecificItem(type, id) {
+    // We can reuse the main handler's logic.
+    // For simplicity, we'll make a direct API call here.
+    const itemToDelete = [{ type: type, id: id }];
+    
     UIManager.showLoading("Deleting object...");
     try {
-        const result = await APIService.deleteObject(type, id);
+        const result = await APIService.deleteObjectsBatch(itemToDelete);
         syncUIWithState(result);
     } catch (error) {
-        // --- Check the error type ---
         if (error.type === 'dependency') {
-            // Use a more detailed alert for dependency issues
             UIManager.showDependencyError(error.message);
         } else {
             UIManager.showError("Error deleting object: " + error.message);

@@ -294,16 +294,15 @@ export async function updateSolid(solidId, rawParameters) {
 }
 
 /**
- * Deletes an object from the geometry.
- * @param {string} objectType The type of the object to delete.
- * @param {string} objectId The unique ID or name of the object to delete.
+ * Deletes a batch of objects from the geometry in a single transaction.
+ * @param {Array<Object>} objectsToDelete - Array of {type, id} objects.
  * @returns {Promise<Object>} A promise that resolves to the backend's response.
  */
-export async function deleteObject(objectType, objectId) {
-    const response = await fetch(`${API_BASE_URL}/delete_object`, {
+export async function deleteObjectsBatch(objectsToDelete) {
+    const response = await fetch(`${API_BASE_URL}/api/delete_objects_batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ object_type: objectType, object_id: objectId })
+        body: JSON.stringify({ objects: objectsToDelete })
     });
     return handleResponse(response);
 }

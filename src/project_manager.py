@@ -3,6 +3,7 @@ import json
 import math
 import tempfile
 import os
+import re
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
@@ -1189,7 +1190,6 @@ class ProjectManager:
         for lv in all_lvs:
             if lv.content_type == 'physvol':
                 for pv in lv.content:
-                    print(f"Comparing {pv.id} to {pv_id}")
                     if pv.id == pv_id:
                         pv_to_update = pv
                         break
@@ -1248,7 +1248,6 @@ class ProjectManager:
             return False, None
         
         # --- Return the patch data  ---
-        print(f"Update {updated_pv_objects}")
         scene_patch = {
             "updated_transforms": [
                 {
@@ -1301,17 +1300,101 @@ class ProjectManager:
         self._capture_history_state(f"Updated assembly {assembly_name}")
 
         return success, error_msg
-
-    def delete_object(self, object_type, object_id):
-        if not self.current_geometry_state: return False, "No project loaded"
-
-        # --- Pre-deletion validation ---
-        dependencies = self._find_dependencies(object_type, object_id)
-        if dependencies:
-            dep_list_str = "\n - " + "\n - ".join(dependencies)
-            error_msg = f"Cannot delete {object_type} '{object_id}' because it is still in use by:{dep_list_str}"
-            return False, error_msg
+    
+    def delete_objects_batch(self, objects_to_delete):
+        """
+        Deletes a list of objects in a single transaction, after checking all dependencies first.
+        objects_to_delete: A list of dictionaries, e.g., [{"type": "solid", "id": "my_box"}, ...]
+        """
+        if not self.current_geometry_state:
+            return False, "No project loaded."
         
+        # --- 1. Pre-deletion Validation Phase ---
+        all_dependencies = {}
+        for item in objects_to_delete:
+            obj_type = item.get('type')
+            obj_id = item.get('id')
+            
+            # Find dependencies, but exclude dependencies that are also being deleted in this same batch.
+            # This allows deleting an LV and the PV that contains it at the same time.
+            dependencies = self._find_dependencies(obj_type, obj_id)
+            
+            # Filter out dependencies that are also scheduled for deletion in this batch.
+            item_ids_being_deleted = {i['id'] for i in objects_to_delete}
+            filtered_deps = []
+            for dep_string in dependencies:
+                is_also_being_deleted = False
+                for del_id in item_ids_being_deleted:
+                    # Create a regex to match the exact ID as a whole word,
+                    # typically inside single quotes.
+                    # Example: `f"'({re.escape(del_id)})'"` matches "'Box'" but not "'logBox'".
+                    # We add word boundaries (\b) for extra safety.
+                    pattern = r"\b" + re.escape(del_id) + r"\b"
+                    if re.search(pattern, dep_string):
+                        is_also_being_deleted = True
+                        break # Found a match, no need to check other del_ids for this dependency
+                
+                if not is_also_being_deleted:
+                    filtered_deps.append(dep_string)
+
+            if filtered_deps:
+                all_dependencies[f"{obj_type} '{obj_id}'"] = filtered_deps
+
+        if all_dependencies:
+            # Format a comprehensive error message
+            error_msg = "Deletion failed. The following objects are still in use:\n"
+            for obj, deps in all_dependencies.items():
+                dep_list_str = "\n  - " + "\n  - ".join(deps)
+                error_msg += f"\n• {obj} is used by:{dep_list_str}"
+            return False, error_msg
+
+        # --- 2. Deletion Phase ---
+        # If we passed validation, it's safe to delete everything.
+        try:
+            for item in objects_to_delete:
+                # The internal _delete_single_object_no_checks is a new helper
+                self._delete_single_object_no_checks(item['type'], item['id'])
+        except Exception as e:
+            # In case of an unexpected error, revert and report.
+            # A more robust solution would be to restore from self._pre_transaction_state
+            return False, str(e)
+        
+        # --- 3. Finalization ---
+        # No full geometry recalculation needed here for a simple delete.
+        self._capture_history_state(f"Deleted {len(objects_to_delete)} objects")
+
+        # --- Build the patch object for the response ---
+        project_state_patch = {
+            "deleted": {
+                # Initialize with all types that can be deleted
+                "solids": [], "logical_volumes": [], "physical_volumes": [],
+                "materials": [], "elements": [], "isotopes": [], "defines": [],
+                "assemblies": [], "optical_surfaces": [], "skin_surfaces": [], "border_surfaces": []
+            }
+        }
+        for item in objects_to_delete:
+            obj_type = item['type']
+            obj_id = item['id']
+            # Map frontend types to backend dictionary keys if they differ
+            dict_key = f"{obj_type}s" if obj_type != "assembly" else "assemblies"
+            if dict_key in project_state_patch["deleted"]:
+                 project_state_patch["deleted"][dict_key].append(obj_id)
+
+        # A deletion might affect the scene, so we should send a full scene update.
+        scene_update = self.get_threejs_description()
+
+        patch = {
+            "project_state": project_state_patch,
+            "scene_update": scene_update
+        }
+        
+        return True, patch
+
+    def _delete_single_object_no_checks(self, object_type, object_id):
+        """
+        Internal helper that performs the actual deletion from the state dictionaries.
+        This function ASSUMES all dependency checks have already passed.
+        """
         state = self.current_geometry_state
         deleted = False
         error_msg = None
@@ -1320,12 +1403,42 @@ class ProjectManager:
             if object_id in state.defines:
                 del state.defines[object_id]
                 deleted = True
-        
+    
         elif object_type == "material":
             if object_id in state.materials:
                 del state.materials[object_id]
                 deleted = True
-        
+    
+        elif object_type == "element":
+            if object_id in state.elements:
+                del state.elements[object_id]
+                deleted = True
+    
+        elif object_type == "isotope":
+            if object_id in state.isotopes:
+                del state.isotopes[object_id]
+                deleted = True
+    
+        elif object_type == "assembly":
+            if object_id in state.assemblies:
+                del state.assemblies[object_id]
+                deleted = True
+    
+        elif object_type == "optical_surface":
+            if object_id in state.optical_surfaces:
+                del state.optical_surfaces[object_id]
+                deleted = True
+    
+        elif object_type == "skin_surface":
+            if object_id in state.skin_surfaces:
+                del state.skin_surfaces[object_id]
+                deleted = True
+    
+        elif object_type == "border_surface":
+            if object_id in state.border_surfaces:
+                del state.border_surfaces[object_id]
+                deleted = True
+    
         elif object_type == "solid":
             if object_id in state.solids:
                 del state.solids[object_id]
@@ -1366,18 +1479,9 @@ class ProjectManager:
                 deleted = True
             else:
                 error_msg = "Physical Volume not found."
-
-        if deleted:
-            success, calc_error = self.recalculate_geometry_state()
-
-            # Capture the new state
-            self._capture_history_state(f"Deleted {object_type} {object_id}")
-
-            # If there's an error during recalculation, it should be reported
-            return success, calc_error or error_msg
-        else:
-            return False, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
         
+        return deleted, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
+
     def _find_dependencies(self, object_type, object_id):
         """
         Finds all objects that reference a given object.
@@ -1385,10 +1489,10 @@ class ProjectManager:
         """
         dependencies = []
         state = self.current_geometry_state
-
         if object_type == 'solid':
             # Check Logical Volumes
             for lv in state.logical_volumes.values():
+                print(f"Checking LV with solid ref {lv.solid_ref}")
                 if lv.solid_ref == object_id:
                     dependencies.append(f"Logical Volume '{lv.name}'")
             # Check Boolean Solids
