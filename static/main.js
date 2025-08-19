@@ -274,6 +274,11 @@ async function initializeApp() {
             event.preventDefault();
             handleCameraModeChange('selected'); // Trigger the "focus selected" action
         }
+        // Focus camera on origin
+        if (event.key.toLowerCase() === 'o') {
+            event.preventDefault();
+            handleCameraModeChange('origin'); // Trigger the "focus selected" action
+        }
 
         // Delete
         if (event.key === 'Delete' || event.key === 'Backspace') {
