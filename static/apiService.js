@@ -110,6 +110,20 @@ export async function saveProject() {
     await handleBlobResponse(response, 'project.json');
 }
 
+export async function autoSaveProject() {
+    const response = await fetch(`${API_BASE_URL}/autosave`, { method: 'POST' });
+    return handleResponse(response);
+}
+
+export async function renameProject(projectName) {
+    const response = await fetch(`${API_BASE_URL}/rename_project`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_name: projectName })
+    });
+    return handleResponse(response); // Returns simple success/error message
+}
+
 // --- History/Versioning Functions ---
 
 export async function undo() {

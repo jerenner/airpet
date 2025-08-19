@@ -28,8 +28,8 @@ class ProjectManager:
         self._pre_transaction_state = None
 
         # --- Project Management ---
-        self.active_project_name = "untitled"
-        self.projects_dir = ""
+        self.project_name = "untitled"
+        self.projects_dir = "projects"
         self.last_state_hash = None # For auto-save change detection
         self.is_changed = False     # Flag for changes
 
@@ -39,8 +39,8 @@ class ProjectManager:
     def _clear_change_tracker(self):
         self.changed_object_ids = {key: set() for key in self.changed_object_ids}
 
-    def _get_project_path(self, project_name):
-        return os.path.join(self.projects_dir, project_name)
+    def _get_project_path(self):
+        return os.path.join(self.projects_dir, self.project_name)
 
     def _get_next_untitled_name(self):
         base = "untitled"
@@ -52,73 +52,13 @@ class ProjectManager:
             if not os.path.exists(self._get_project_path(name)):
                 return name
             i += 1
-
-    def new_project(self):
-        self._clear_change_tracker()
-        project_name = self._get_next_untitled_name()
-        self.active_project_name = project_name
-        
-        project_path = self._get_project_path(project_name)
-        os.makedirs(os.path.join(project_path, "versions"), exist_ok=True)
-        
-        # Create the default geometry
-        self.current_geometry_state = GeometryState()
-        # ... (your logic to create default world LV, material, solid) ...
-        
-        self.history = []
-        self.history_index = -1
-        self._capture_history_state("New Project")
-        self.save_version("Initial Version") # Save the first version immediately
-        return project_name
-
-    def load_project(self, project_name):
-        project_path = self._get_project_path(project_name)
-        if not os.path.isdir(project_path):
-            return False, "Project not found."
-        
-        versions_path = os.path.join(project_path, "versions")
-        version_files = sorted(glob.glob(os.path.join(versions_path, "*.json")))
-        
-        latest_version = version_files[-1] if version_files else None
-        
-        # Check for a newer autosave file
-        autosave_file = os.path.join(project_path, "autosave.json")
-        if os.path.exists(autosave_file) and (not latest_version or os.path.getmtime(autosave_file) > os.path.getmtime(latest_version)):
-            latest_version = autosave_file
-
-        if latest_version:
-            with open(latest_version, 'r') as f:
-                json_string = f.read()
-            self.load_project_from_json_string(json_string) # This already handles history reset
-            self.active_project_name = project_name
-            return True, f"Loaded project '{project_name}'."
-        else:
-            # If folder exists but has no versions, treat it as a new project
-            self.active_project_name = project_name
-            self.create_empty_project() # Your existing function
-            return True, f"Opened empty project '{project_name}'."
-
-    def save_version(self, description=""):
-        project_path = self._get_project_path(self.active_project_name)
-        versions_path = os.path.join(project_path, "versions")
-        os.makedirs(versions_path, exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        version_filepath = os.path.join(versions_path, f"{timestamp}.json")
-        
-        json_string = self.save_project_to_json_string()
-        with open(version_filepath, 'w') as f:
-            f.write(json_string)
-        
-        # After a manual save, the autosave is no longer needed until the next change
-        self.is_changed = False
-        return True, f"Version '{timestamp}' saved."
         
     def auto_save_project(self):
         if not self.is_changed:
             return False, "No changes to autosave."
         
-        project_path = self._get_project_path(self.active_project_name)
+        project_path = self._get_project_path()
+        os.makedirs(project_path, exist_ok=True)
         autosave_path = os.path.join(project_path, "autosave.json")
         
         json_string = self.save_project_to_json_string()
@@ -128,6 +68,50 @@ class ProjectManager:
         self.is_changed = False
         return True, "Autosaved."
     
+    def create_empty_project(self):
+        self.current_geometry_state = GeometryState()
+        
+        ## Create a G4_Galactic material
+        world_mat = Material(
+            name="G4_Galactic", 
+            Z_expr="1", 
+            A_expr="1.01", 
+            density_expr="1.0e-25", 
+            state="gas"
+        )
+        self.current_geometry_state.add_material(world_mat)
+        
+        # Create a default solid and LV for the world (e.g., a 10m box)
+        world_solid_params = {'x': '10000', 'y': '10000', 'z': '10000'}
+        world_solid = Solid(name="world_solid", solid_type="box", raw_parameters=world_solid_params)
+        self.current_geometry_state.add_solid(world_solid)
+
+        world_lv = LogicalVolume(name="World", solid_ref="world_solid", material_ref="G4_Galactic")
+        self.current_geometry_state.add_logical_volume(world_lv)
+
+        # Create a single box to go in the center of the world
+        box_solid_params = {'x': '100', 'y': '100', 'z': '100'}
+        box_solid = Solid(name="box_solid", solid_type="box", raw_parameters=box_solid_params)
+        self.current_geometry_state.add_solid(box_solid)
+        box_lv = LogicalVolume(name="box_LV", solid_ref="box_solid", material_ref="G4_Galactic")
+        self.current_geometry_state.add_logical_volume(box_lv)
+        self.add_physical_volume("World", "box_PV", "box_LV", 
+                                 {'x': '0', 'y': '0', 'z': '0'},
+                                 {'x': '0', 'y': '0', 'z': '0'}, 
+                                 {'x': '1', 'y': '1', 'z': '1'})
+
+        # Set this logical volume as the world volume
+        self.current_geometry_state.world_volume_ref = "World"
+
+        # Recalculate to populate evaluated fields
+        self.recalculate_geometry_state()
+        
+        # Reset history and change tracker
+        self.history = []
+        self.history_index = -1
+        self._clear_change_tracker() # Important for consistency
+        self._capture_history_state("New project")
+
     def begin_transaction(self):
         """Starts a transaction, preventing intermediate history captures."""
         if not self._is_transaction_open:
@@ -622,50 +606,6 @@ class ProjectManager:
                          transform['_evaluated_rotation'] = evaluate_transform_part(transform.get('rotation'), {'x':0, 'y':0, 'z':0})
 
         return True, None
-
-    def create_empty_project(self):
-        self.current_geometry_state = GeometryState()
-        
-        ## Create a G4_Galactic material
-        world_mat = Material(
-            name="G4_Galactic", 
-            Z_expr="1", 
-            A_expr="1.01", 
-            density_expr="1.0e-25", 
-            state="gas"
-        )
-        self.current_geometry_state.add_material(world_mat)
-        
-        # Create a default solid and LV for the world (e.g., a 10m box)
-        world_solid_params = {'x': '10000', 'y': '10000', 'z': '10000'}
-        world_solid = Solid(name="world_solid", solid_type="box", raw_parameters=world_solid_params)
-        self.current_geometry_state.add_solid(world_solid)
-
-        world_lv = LogicalVolume(name="World", solid_ref="world_solid", material_ref="G4_Galactic")
-        self.current_geometry_state.add_logical_volume(world_lv)
-
-        # Create a single box to go in the center of the world
-        box_solid_params = {'x': '100', 'y': '100', 'z': '100'}
-        box_solid = Solid(name="box_solid", solid_type="box", raw_parameters=box_solid_params)
-        self.current_geometry_state.add_solid(box_solid)
-        box_lv = LogicalVolume(name="box_LV", solid_ref="box_solid", material_ref="G4_Galactic")
-        self.current_geometry_state.add_logical_volume(box_lv)
-        self.add_physical_volume("World", "box_PV", "box_LV", 
-                                 {'x': '0', 'y': '0', 'z': '0'},
-                                 {'x': '0', 'y': '0', 'z': '0'}, 
-                                 {'x': '1', 'y': '1', 'z': '1'})
-
-        # Set this logical volume as the world volume
-        self.current_geometry_state.world_volume_ref = "World"
-
-        # Recalculate to populate evaluated fields
-        self.recalculate_geometry_state()
-        
-        # Reset history and change tracker
-        self.history = []
-        self.history_index = -1
-        self._clear_change_tracker() # Important for consistency
-        self._capture_history_state("New Project")
 
     def load_gdml_from_string(self, gdml_string):
         """

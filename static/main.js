@@ -31,6 +31,11 @@ const AppState = {
     }
 };
 
+// --- Variables for auto-save ---
+let isProjectChanged = false;
+let autoSaveTimer = null;
+const AUTO_SAVE_INTERVAL = 15000; // 15 seconds
+
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', initializeApp);
 
@@ -57,7 +62,7 @@ async function initializeApp() {
         onUndoClicked: handleUndo,
         onRedoClicked: handleRedo,
         onHistoryButtonClicked: handleShowHistory,
-        onProjectRenamed: (newName) => { AppState.currentProjectName = newName; },
+        onProjectRenamed: handleProjectRenamed,
         onLoadVersionClicked: handleLoadVersion,
         // Add/edit solids
         onAddSolidClicked: handleAddSolid,
@@ -217,11 +222,17 @@ async function initializeApp() {
     const initialState = await APIService.getProjectState();
     // No try/catch needed, as the backend now guarantees a valid response
     if (initialState && initialState.project_state) {
-        console.log("Initializing UI with project state.");
+        console.log("Initializing UI with project state.",initialState);
+        
+        // Set the project name
+        AppState.currentProjectName = initialState.project_name;
+        UIManager.setProjectName(AppState.currentProjectName);
+
         // We use a simplified sync function here as the structure is slightly different
         AppState.currentProjectState = initialState.project_state;
         UIManager.updateHierarchy(initialState.project_state);
         SceneManager.renderObjects(initialState.scene_update || [], initialState.project_state);
+
     } else {
         // This case should theoretically not be reached anymore, but is good for safety
         UIManager.showError("Failed to retrieve a valid project state from the server.");
@@ -358,6 +369,9 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
     console.log("[Main] Syncing UI with new backend state. Message: " + responseData.message);
 
+    // Set changed state for autosave
+    markProjectAsChanged();
+
     // --- MERGE LOGIC for partial updates ---
     if (responseData.response_type === 'full_with_exclusions') {
         console.log("Merging with exclusions")
@@ -434,6 +448,9 @@ function syncUIWithState_shallow(responseData) {
         UIManager.showError(responseData.error || "A shallow update failed.");
         return;
     }
+
+    // Set changed state for autosave
+    markProjectAsChanged();
     
     const patch = responseData.patch;
 
@@ -520,6 +537,47 @@ function syncUIWithState_shallow(responseData) {
     }
 }
 
+// --- Autosave functions
+/**
+ * Marks the project as having unsaved changes and schedules an autosave.
+ */
+function markProjectAsChanged() {
+    isProjectChanged = true;
+    
+    // Reset any existing timer
+    if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+    }
+    
+    // Set a new timer to trigger the autosave after the interval
+    console.log(`[AutoSave] Project is in changed state. Scheduling autosave in ${AUTO_SAVE_INTERVAL / 1000}s.`);
+    autoSaveTimer = setTimeout(triggerAutoSave, AUTO_SAVE_INTERVAL);
+}
+
+/**
+ * The function that is called after the user has been idle.
+ */
+async function triggerAutoSave() {
+    if (!isProjectChanged) {
+        console.log("[AutoSave] Aborting: Project is not in changed state.");
+        return;
+    }
+    
+    console.log("[AutoSave] Idle timer expired. Triggering autosave...");
+    
+    try {
+        const result = await APIService.autoSaveProject(); // A new API service function
+        if (result.success && result.message !== "No changes to autosave.") {
+            console.log("[AutoSave] Backend confirmed autosave.");
+            isProjectChanged = false; // Reset the dirty flag ONLY on successful save
+            UIManager.showTemporaryStatus("Auto-saved");
+        }
+    } catch (error) {
+        console.error("Auto-save failed:", error.message);
+        // We do NOT reset the dirty flag, so it will try again later.
+    }
+}
+
 // --- Handler Functions (Act as Controllers/Mediators) ---
 
 async function handleSetApiKey() {
@@ -596,9 +654,6 @@ async function handleOpenGdmlProject(file) {
     UIManager.showLoading("Opening GDML Project...");
     try {
         const result = await APIService.openGdmlProject(file);
-        // Set project name from file
-        AppState.currentProjectName = file.name.replace(/\.[^/.]+$/, "");
-        UIManager.setProjectName(AppState.currentProjectName);
         syncUIWithState(result);
         //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) { 
@@ -750,7 +805,7 @@ async function handleSaveVersion() {
     UIManager.showLoading("Saving version...");
     try {
         const result = await APIService.saveVersion(AppState.currentProjectName);
-        UIManager.showNotification(result.message);
+        UIManager.showTemporaryStatus(result.message);
     } catch (error) { UIManager.showError("Failed to save version: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
@@ -821,6 +876,19 @@ async function handleDeleteSpecificItem(type, id) {
     } finally {
         UIManager.hideLoading();
     }
+}
+
+async function handleProjectRenamed(newName) {
+
+    // Set the frontend current project name
+    AppState.currentProjectName = newName;
+ 
+    // Send the new name to the backend
+    try {
+        const result = await APIService.renameProject(newName);
+    } catch (error) {
+        UIManager.showError("Error renaming project: " + error.message);
+    } 
 }
 
 function handleModeChange(newMode) {

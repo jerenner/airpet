@@ -83,6 +83,7 @@ def create_success_response(message="Success",exclude_unchanged_tessellated=True
     """
     state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=exclude_unchanged_tessellated)
     scene = project_manager.get_threejs_description()
+    project_name = project_manager.project_name
 
     # Set the response type based on whether we excluded certain objects.
     if(exclude_unchanged_tessellated):
@@ -96,6 +97,7 @@ def create_success_response(message="Success",exclude_unchanged_tessellated=True
     return jsonify({
         "success": True,
         "message": message,
+        "project_name": project_name,
         "project_state": state,
         "scene_update": scene,
         "response_type": response_type,
@@ -115,11 +117,14 @@ def create_shallow_response(message, scene_patch=None, project_state_patch=None,
         patch['scene_update'] = scene_patch
     if project_state_patch:
         patch['project_state'] = project_state_patch
+
+    project_name = project_manager.project_name
     
     return jsonify({
         "success": True,
         "message": message,
         "patch": patch,
+        "project_name": project_name,
         "scene_update": full_scene,
         "response_type": "patch", # A new response type
         "history_status": {
@@ -159,12 +164,35 @@ def redo_route():
     else:
         return jsonify({"success": False, "error": message}), 400
 
-@app.route('/api/save_version', methods=['POST'])
-def save_version_route():
+@app.route('/rename_project', methods=['POST'])
+def rename_project_route():
+
     data = request.get_json()
     project_name = data.get('project_name')
-    if not project_name:
-        return jsonify({"success": False, "error": "Project name is required."}), 400
+
+    try:
+        project_manager.project_name = project_name
+        return jsonify({"success": True, "message": f"Project set to {project_name}"})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to save version: {e}"}), 500
+    
+@app.route('/autosave', methods=['POST'])
+def autosave_project_api():
+    # No data is needed in the request body. The project manager knows the active project.
+    success, message = project_manager.auto_save_project()
+    if success:
+        return jsonify({"success": True, "message": message})
+    else:
+        # It's not an error if there was nothing to save, so return success.
+        return jsonify({"success": True, "message": "No changes to autosave."})
+
+@app.route('/api/save_version', methods=['POST'])
+def save_version_route():
+
+    data = request.get_json()
+    project_name = data.get('project_name')
+    if not project_name or project_name != project_manager.project_name:
+        return jsonify({"success": False, "error": "Project name out of sync with backend."}), 400
 
     project_path = os.path.join(PROJECTS_BASE_DIR, project_name)
     versions_path = os.path.join(project_path, "versions")
@@ -322,8 +350,8 @@ def load_project_json_route():
     if file:
         try:
             project_json_string = file.read().decode('utf-8')
-            project_manager.load_project_from_json_string(project_json_string,exclude_unchanged_tessellated=False)
-            return create_success_response("Project loaded successfully.")
+            project_manager.load_project_from_json_string(project_json_string)
+            return create_success_response("Project loaded successfully.",exclude_unchanged_tessellated=False)
         except json.JSONDecodeError:
             return jsonify({"error": "Invalid JSON file format"}), 400
         except Exception as e:
@@ -695,7 +723,8 @@ def get_project_state_route():
     If no project exists, it creates a new default one.
     """
     state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=False)
-    
+    project_name = project_manager.project_name
+
     # Check if the project is empty (no world volume defined)
     if not state or not state.get('world_volume_ref'):
         print("No active project found, creating a new default world.")
@@ -713,7 +742,8 @@ def get_project_state_route():
     # Always return a valid state
     return jsonify({
         "project_state": state,
-        "scene_update": scene
+        "scene_update": scene,
+        "project_name": project_name
     })
 
 @app.route('/get_object_details', methods=['GET'])

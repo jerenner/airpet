@@ -34,6 +34,9 @@ let addPVButton;
 // Loading overlay
 let loadingOverlay, loadingMessage;
 
+// Status indicator for autosave
+let statusIndicator;
+
 // Keep track of last selected item
 let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 
@@ -280,7 +283,7 @@ export function initUI(cb) {
         // Remove any potential HTML tags from pasting
         const cleanName = projectNameDisplay.textContent.trim();
         if (cleanName === "") {
-            projectNameDisplay.textContent = "UntitledProject"; // Revert if empty
+            projectNameDisplay.textContent = "untitled"; // Revert if empty
         } else {
             projectNameDisplay.textContent = cleanName;
         }
@@ -344,7 +347,34 @@ export function initUI(cb) {
         });
     });
 
+    // Autosave status indicator
+    statusIndicator = document.createElement('div');
+    statusIndicator.id = 'status-indicator';
+    statusIndicator.style.position = 'absolute';
+    statusIndicator.style.top = '10px';
+    statusIndicator.style.right = '10px';
+    statusIndicator.style.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+    statusIndicator.style.color = 'white';
+    statusIndicator.style.padding = '5px 10px';
+    statusIndicator.style.borderRadius = '5px';
+    statusIndicator.style.zIndex = '2000';
+    statusIndicator.style.opacity = '0';
+    statusIndicator.style.transition = 'opacity 0.5s ease-in-out';
+    document.getElementById('viewer_container').appendChild(statusIndicator);
+
+
     console.log("UIManager initialized.");
+}
+
+export function showTemporaryStatus(message, duration = 2000) {
+    if (!statusIndicator) return;
+    
+    statusIndicator.textContent = message;
+    statusIndicator.style.opacity = '1';
+    
+    setTimeout(() => {
+        statusIndicator.style.opacity = '0';
+    }, duration);
 }
 
 export function updateUndoRedoButtons(historyStatus) {
@@ -613,145 +643,6 @@ function createReadOnlyProperty(parent, labelText, value) {
     valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
     propDiv.appendChild(valueSpan);
     parent.appendChild(propDiv);
-}
-
-
-// The main function to build the interactive transform editor
-async function createPVTransformEditor(parent, pvData, projectState) {
-    const transformWrapper = document.createElement('div');
-    
-    // --- Get defines from the passed-in state, not a new API call ---
-    const allDefines = projectState.defines || {};
-    const posDefines = {};
-    const rotDefines = {};
-    for (const name in allDefines) {
-        if (allDefines[name].type === 'position') posDefines[name] = allDefines[name];
-        if (allDefines[name].type === 'rotation') rotDefines[name] = allDefines[name];
-    }
-    
-    // --- Create Position Editor ---
-    const posEditor = buildSingleTransformEditor('position', 'Position (mm)', pvData, posDefines);
-    transformWrapper.appendChild(posEditor);
-
-    // --- Create Rotation Editor ---
-    const rotEditor = buildSingleTransformEditor('rotation', 'Rotation (deg, ZYX)', pvData, rotDefines);
-    transformWrapper.appendChild(rotEditor);
-
-    parent.appendChild(transformWrapper);
-}
-
-// Helper to build one transform block (e.g., for position or rotation)
-function buildSingleTransformEditor(transformType, labelText, pvData, defines) {
-    const group = document.createElement('div');
-    group.className = 'transform-group';
-
-    // --- 1. Create all DOM elements first ---
-    const header = document.createElement('div');
-    header.className = 'define-header';
-    header.innerHTML = `<span>${labelText}</span>`;
-    
-    const select = document.createElement('select');
-    select.className = 'define-select';
-    
-    header.appendChild(select);
-    group.appendChild(header);
-
-    const inputs = {};
-    ['x', 'y', 'z'].forEach(axis => {
-        const item = document.createElement('div');
-        item.className = 'property_item';
-        item.innerHTML = `<label>${axis.toUpperCase()}:</label>`;
-        const input = document.createElement('input');
-        input.type = 'number';
-        input.step = 'any';
-        item.appendChild(input);
-        group.appendChild(item);
-        inputs[axis] = input;
-    });
-
-    // --- 2. Create helper to populate inputs from a value object ---
-    const updateInputUI = (valueObj) => {
-        // Default to a safe object if valueObj is null/undefined
-        const val = valueObj || { x: 0, y: 0, z: 0 };
-        
-        if (transformType === 'rotation') {
-            // Use parseFloat to handle both numbers and string representations of numbers
-            inputs.x.value = THREE.MathUtils.radToDeg(parseFloat(val.x || 0)).toFixed(3);
-            inputs.y.value = THREE.MathUtils.radToDeg(parseFloat(val.y || 0)).toFixed(3);
-            inputs.z.value = THREE.MathUtils.radToDeg(parseFloat(val.z || 0)).toFixed(3);
-        } else {
-            inputs.x.value = parseFloat(val.x || 0).toFixed(3);
-            inputs.y.value = parseFloat(val.y || 0).toFixed(3);
-            inputs.z.value = parseFloat(val.z || 0).toFixed(3);
-        }
-    };
-    
-    // --- 3. Set the initial state of the component from pvData ---
-    populateDefineSelect(select, defines); // Populate options first
-    const initialTransformValue = pvData[transformType];
-
-    if (typeof initialTransformValue === 'string' && defines[initialTransformValue]) {
-        // State is a define reference
-        select.value = initialTransformValue;
-        updateInputUI(defines[initialTransformValue].value);
-    } else {
-        // State is an absolute value object (or null)
-        select.value = '[Absolute]';
-        updateInputUI(initialTransformValue);
-    }
-
-    // --- 4. Attach Event Listeners ---
-    
-    // Listener for when the user changes the dropdown (e.g., links to a new define)
-    select.addEventListener('change', () => {
-        const selectedValue = select.value;
-        if (selectedValue === '[Absolute]') {
-            // Switching TO Absolute. The value should be taken from the currently displayed inputs.
-            const currentUiValues = {
-                x: parseFloat(inputs.x.value),
-                y: parseFloat(inputs.y.value),
-                z: parseFloat(inputs.z.value),
-            };
-            const valuesForBackend = (transformType === 'rotation')
-                ? { x: THREE.MathUtils.degToRad(currentUiValues.x), y: THREE.MathUtils.degToRad(currentUiValues.y), z: THREE.MathUtils.degToRad(currentUiValues.z) }
-                : currentUiValues;
-            callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, valuesForBackend);
-        } else {
-            // Switching TO a define. Update the PV to link to this define name.
-            // Also, update the input boxes to reflect this define's values.
-            const define = defines[selectedValue];
-            if (define) {
-                updateInputUI(define.value);
-                callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, selectedValue);
-            }
-        }
-    });
-
-    // Listener for when the user types a new value in an input box
-    Object.values(inputs).forEach(input => {
-        input.addEventListener('change', () => {
-            // Read all three boxes to form a complete object
-            const newUiValues = {
-                x: parseFloat(inputs.x.value),
-                y: parseFloat(inputs.y.value),
-                z: parseFloat(inputs.z.value),
-            };
-            const valuesForBackend = (transformType === 'rotation')
-                ? { x: THREE.MathUtils.degToRad(newUiValues.x), y: THREE.MathUtils.degToRad(newUiValues.y), z: THREE.MathUtils.degToRad(newUiValues.z) }
-                : newUiValues;
-
-            const selectedDefineName = select.value;
-            if (selectedDefineName === '[Absolute]') {
-                // If absolute, update the PV's own transform property.
-                callbacks.onInspectorPropertyChanged('physical_volume', pvData.id, transformType, valuesForBackend);
-            } else {
-                // If linked to a define, update the define's value property.
-                callbacks.onInspectorPropertyChanged('define', selectedDefineName, 'value', valuesForBackend);
-            }
-        });
-    });
-
-    return group;
 }
 
 /**
