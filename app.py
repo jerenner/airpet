@@ -688,6 +688,7 @@ def delete_objects_batch_route():
     filtered_deletions = []
     non_deletable_items = []
     for item in objects_to_delete:
+        print(f"Item is {item}")
         if item['type'] == 'physical_volume' and item['id'] in assembly_member_ids:
             non_deletable_items.append(item['id'])
         else:

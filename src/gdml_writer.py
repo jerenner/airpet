@@ -516,8 +516,38 @@ class GDMLWriter:
             solid_el.set("highX", str(p['highX']))
             solid_el.set("highY", str(p['highY']))
             solid_el.set("highZ", str(p['highZ']))
+            
+        elif solid_obj.type == 'scaledSolid':
+            solid_el.attrib.pop('lunit', None)
+            solid_el.attrib.pop('aunit', None)
+            solid_ref = p.get('solid_ref')
+            if solid_ref:
+                ET.SubElement(solid_el, "solidref", {"ref": solid_ref})
+            scale_data = p.get('scale')
+            if isinstance(scale_data, str):
+                ET.SubElement(solid_el, "scaleref", {"ref": scale_data})
+            elif isinstance(scale_data, dict):
+                scale_attrs = {k: str(v) for k, v in scale_data.items()}
+                ET.SubElement(solid_el, "scale", scale_attrs)
+
+        elif solid_obj.type == 'xtru':
+            vertices = p.get('twoDimVertices', [])
+            for vertex in vertices:
+                ET.SubElement(solid_el, "twoDimVertex", {
+                    "x": str(vertex.get('x', '0')),
+                    "y": str(vertex.get('y', '0'))
+                })
+            sections = p.get('sections', [])
+            for section in sections:
+                ET.SubElement(solid_el, "section", {
+                    "zOrder": str(section.get('zOrder', '0')),
+                    "zPosition": str(section.get('zPosition', '0')),
+                    "xOffset": str(section.get('xOffset', '0')),
+                    "yOffset": str(section.get('yOffset', '0')),
+                    "scalingFactor": str(section.get('scalingFactor', '1.0'))
+                })
         else:
-                print(f"GDML Writer: Solid type '{solid_obj.type}' (name: {name}) is not fully supported for writing.")
+                print(f"GDML Writer: Solid type '{solid_obj.type}' (name: {solid_obj.name}) is not fully supported for writing.")
             
 
     def _write_define_position(self, define_el, name, vertex_dict):

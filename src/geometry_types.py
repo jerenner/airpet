@@ -823,6 +823,8 @@ class GeometryState:
                 "canonical_id": current_canonical_id,
                 "name": pv.name,
                 "parent_id": parent_pv_id,
+                "is_world_volume_placement": False,
+                "volume_ref": pv.volume_ref,
                 "is_assembly_container": True,
                 "is_procedural_container": False,
                 "is_procedural_instance": getattr(pv, 'is_procedural_instance', False),
@@ -863,6 +865,8 @@ class GeometryState:
             "canonical_id": current_canonical_id,
             "name": pv.name,
             "parent_id": parent_pv_id,
+            "is_world_volume_placement": False,
+            "volume_ref": pv.volume_ref,
             "owner_pv_id": current_owner_id,
             "is_assembly_container": False,
             "is_procedural_container": lv.content_type != 'physvol',
@@ -949,9 +953,13 @@ class GeometryState:
 
             # Add the generated replica instance itself to the list
             threejs_objects.append({
-                "id": temp_pv.id, "name": temp_pv.name,
+                "id": temp_pv.id,
+                "canonical_id": parent_pv_id,
+                "name": temp_pv.name,
                 "parent_id": parent_pv_id,
                 "owner_pv_id": owner_id,
+                "is_world_volume_placement": False,
+                "volume_ref": temp_pv.volume_ref,
                 "is_procedural_instance": True, 
                 "solid_ref_for_threejs": child_lv_template.solid_ref,
                 "position": temp_pv._evaluated_position,
@@ -1013,8 +1021,11 @@ class GeometryState:
             # Add the generated slice itself to the list of objects to be rendered.
             threejs_objects.append({
                 "id": temp_pv.id,
+                "canonical_id": parent_pv_id,
                 "name": temp_pv.name,
                 "parent_id": parent_pv_id, # It's a child of the PV that holds the division rule
+                "is_world_volume_placement": False,
+                "volume_ref": temp_pv.volume_ref,
                 "owner_pv_id": owner_id,   # It belongs to the division rule PV
                 "is_procedural_instance": True,
                 "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the unique slice solid
@@ -1074,8 +1085,11 @@ class GeometryState:
             # to the recursive call. Let's create a custom object for the scene description.
             threejs_objects.append({
                 "id": temp_pv.id,
+                "canonical_id": parent_pv_id,
                 "name": temp_pv.name,
                 "parent_id": parent_pv_id,
+                "is_world_volume_placement": False,
+                "volume_ref": temp_pv.volume_ref,
                 "owner_pv_id": owner_id,
                 "is_procedural_instance": True,
                 "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temporary solid's data directly

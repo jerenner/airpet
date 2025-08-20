@@ -732,7 +732,7 @@ export function triggerFileInput(inputId) {
 }
 
 // --- Hierarchy Panel Management ---
-export function updateHierarchy(projectState) {
+export function updateHierarchy(projectState, sceneUpdate) {
     if (!projectState) {
         clearHierarchy();
         return;
@@ -777,45 +777,103 @@ export function updateHierarchy(projectState) {
     populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
 
     // --- Build the physical placement tree (Structure tab) ---
-    if (structureTreeRoot) { // Make sure the element exists
-        if (projectState.world_volume_ref && projectState.logical_volumes) {
-            const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
-            if (worldLV) {
+    if (structureTreeRoot && sceneUpdate) {
+        structureTreeRoot.innerHTML = '';
 
-                // Create the root of the tree representing the World LV
-                const worldItem = createTreeItem(
-                    worldLV.name, 'logical_volume', worldLV.id, worldLV, 
-                    { lvData: null, hideControls: true}
-                );
-
-                worldItem.classList.add('world-volume-item'); // Add a class for special styling/selection
-                // Prepend the "(World)" text visually after the item is created
-                const nameSpan = worldItem.querySelector('.item-name');
-                if (nameSpan) {
-                    nameSpan.innerHTML = `<span style="font-weight:normal; color:#555;">(World) </span>` + nameSpan.innerHTML;
-                }
-
-                // Now, recursively build the tree for all PVs placed *inside* the world
-                const world_children_to_process = (worldLV.content_type === 'physvol') ? worldLV.content : [];
-                if (world_children_to_process && world_children_to_process.length > 0) {
-                    const childrenUl = document.createElement('ul');
-                    world_children_to_process.forEach(pvData => {
-                        const childNode = buildVolumeNode(pvData, projectState);
-                        if (childNode) childrenUl.appendChild(childNode);
-                    });
-                    if (childrenUl.hasChildNodes()) {
-                        worldItem.appendChild(childrenUl);
-                    }
-                }
-                structureTreeRoot.appendChild(worldItem);
-
+        // 1. Create a map of parentId -> [childData, childData, ...] from the scene description
+        const sceneGraph = new Map();
+        let worldPvId = null;
+        sceneUpdate.forEach(pvData => {
+            if (!pvData.parent_id) {
+                worldPvId = pvData.id; // This is the root PV of our scene
+                sceneGraph.set(pvData.id, []);
             } else {
-                structureTreeRoot.innerHTML = '<li>World volume not found in logical volumes list.</li>';
+                if (!sceneGraph.has(pvData.parent_id)) {
+                    sceneGraph.set(pvData.parent_id, []);
+                }
+                sceneGraph.get(pvData.parent_id).push(pvData);
             }
+        });
+
+        // 2. Find the World LV to display as the top-level item
+        const worldLV = projectState.logical_volumes[projectState.world_volume_ref];
+        if (worldLV && worldPvId) {
+            const worldItem = createTreeItem(
+                worldLV.name,
+                'logical_volume',
+                worldLV.name, // The ID for a logical volume is its name
+                worldLV,
+                { instanceId: worldPvId, hideDeleteButton: true, hideVisibilityButton: true } // Pass instanceId and a special flag
+            );
+            
+            // 3. Start the recursive build from the world's direct children
+            const childrenUl = document.createElement('ul');
+            const worldChildren = sceneGraph.get(worldPvId) || [];
+            worldChildren.forEach(childPvData => {
+                const childNode = buildVolumeNodeRecursive(childPvData, projectState, sceneGraph);
+                if (childNode) childrenUl.appendChild(childNode);
+            });
+
+            if (childrenUl.hasChildNodes()) {
+                worldItem.appendChild(childrenUl);
+            }
+            structureTreeRoot.appendChild(worldItem);
         } else {
-             structureTreeRoot.innerHTML = '<li>No world volume defined in project.</li>';
+            structureTreeRoot.innerHTML = '<li>World volume data is missing or invalid.</li>';
         }
     }
+}
+
+/**
+ * Recursive function to build the structure tree from the scene graph map.
+ * @param {object} pvData - The scene description data for the current physical volume.
+ * @param {object} projectState - The full project state for lookups.
+ * @param {Map} sceneGraph - The pre-built map of parentId -> children.
+ * @returns {HTMLLIElement | null}
+ */
+function buildVolumeNodeRecursive(pvData, projectState, sceneGraph) {
+    const allLVs = projectState.logical_volumes || {};
+    const allAssemblies = projectState.assemblies || {};
+
+    const isAssemblyPlacement = allAssemblies[pvData.volume_ref];
+    const childLVData = allLVs[pvData.volume_ref];
+    
+    let displayName = pvData.name || `pv_${pvData.id.substring(0, 4)}`;
+    if (isAssemblyPlacement) {
+        displayName = `⚙️ ` + displayName + ` (Assembly: ${pvData.volume_ref})`;
+    } else if (childLVData) {
+        displayName += ` (LV: ${pvData.volume_ref})`;
+    } else {
+        displayName += ` (Broken Ref: ${pvData.volume_ref})`;
+    }
+
+    const itemElement = createTreeItem(
+        displayName,
+        'physical_volume',
+        pvData.canonical_id, // The ID for editing/deleting is the canonical ID
+        pvData,              // The appData is the full pvDescription
+        { instanceId: pvData.id,
+            lvData: childLVData,
+            hideDeleteButton: pvData.is_procedural_instance, 
+            hideVisibilityButton: false } // The unique ID for this specific instance in the scene
+    );
+    
+    if (isAssemblyPlacement || childLVData) {
+        const childrenOfThisNode = sceneGraph.get(pvData.id) || [];
+        if (childrenOfThisNode.length > 0) {
+            const childrenUl = document.createElement('ul');
+            childrenOfThisNode.forEach(nestedPvData => {
+                const nestedNode = buildVolumeNodeRecursive(nestedPvData, projectState, sceneGraph);
+                if (nestedNode) childrenUl.appendChild(nestedNode);
+            });
+            if (childrenUl.hasChildNodes()) {
+                addToggle(itemElement, childrenUl);
+                itemElement.appendChild(childrenUl);
+            }
+        }
+    }
+
+    return itemElement;
 }
 
 function populateListWithGrouping(listElement, itemsArray, itemType) {
@@ -925,79 +983,6 @@ function createFolderElement(name, itemType, isDroppable) {
     return folderLi;
 }
 
-function buildVolumeNode(pvData, projectState, isInsideAssembly = false) {
-        if (!pvData) return null;
-
-        const allLVs = projectState.logical_volumes || {};
-        const allAssemblies = projectState.assemblies || {};
-
-        // Determine if this PV is placing an Assembly or a Logical Volume
-        const isAssemblyPlacement = allAssemblies[pvData.volume_ref];
-        const childLVData = allLVs[pvData.volume_ref];
-
-        let displayName = pvData.name || `pv_${pvData.id.substring(0, 4)}`;
-        let itemElement;
-
-        if (isAssemblyPlacement) {
-            // --- This PV is an Assembly Placement ---
-            const assembly = isAssemblyPlacement;
-            displayName = `<span class="assembly-icon" title="Assembly">⚙️</span> ` + displayName;
-            displayName += ` (Assembly: ${pvData.volume_ref})`;
-
-            // The main item represents the PV that places the assembly
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { 
-                lvData: null, 
-                hideControls: isInsideAssembly 
-            });
-            
-            // Its children are the PVs inside the assembly
-            if (assembly.placements && assembly.placements.length > 0) {
-                const childrenUl = document.createElement('ul');
-                assembly.placements.forEach(nestedPvData => {
-                    // Recursively build nodes for each PV inside the assembly
-                    const nestedNode = buildVolumeNode(nestedPvData, projectState, true);
-                    if (nestedNode) childrenUl.appendChild(nestedNode);
-                });
-                if (childrenUl.hasChildNodes()) {
-                    addToggle(itemElement, childrenUl);
-                    itemElement.appendChild(childrenUl);
-                }
-            }
-        } else if (childLVData) {
-            // --- This PV is a standard Logical Volume Placement ---
-            displayName += ` (LV: ${pvData.volume_ref})`;
-
-            // Pass the `childLVData` and `isInsideAssembly` flag to `createTreeItem`
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, { 
-                lvData: childLVData, 
-                hideControls: isInsideAssembly 
-            });
-
-            // Its children are the PVs inside the placed LV
-            const children_to_process = (childLVData.content_type === 'physvol') ? childLVData.content : [];
-            if (children_to_process && children_to_process.length > 0) {
-                const childrenUl = document.createElement('ul');
-                children_to_process.forEach(nestedPvData => {
-                    const nestedNode = buildVolumeNode(nestedPvData, projectState, false);
-                    if (nestedNode) childrenUl.appendChild(nestedNode);
-                });
-                if (childrenUl.hasChildNodes()) {
-                    addToggle(itemElement, childrenUl);
-                    itemElement.appendChild(childrenUl);
-                }
-            }
-        } else {
-            // This is a broken reference, but we can still show the placement
-            displayName += ` (Broken Ref: ${pvData.volume_ref})`;
-            itemElement = createTreeItem(displayName, 'physical_volume', pvData.id, pvData, {
-            hideControls: isInsideAssembly // Also respect the isInsideAssembly flag for broken refs
-        });
-            itemElement.style.color = 'red';
-        }
-
-        return itemElement;
-    }
-
 function addToggle(parentLi, childrenUl) {
     const toggle = document.createElement('span');
     toggle.classList.add('toggle');
@@ -1014,7 +999,7 @@ function addToggle(parentLi, childrenUl) {
 
 function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, additionalData = {}) {
 
-    const { lvData = null, hideControls = false } = additionalData;
+    const { instanceId = null, lvData = null, hideDeleteButton = false, hideVisibilityButton = false } = additionalData;
     const item = document.createElement('li');
 
     // --- DRAG LOGIC ---
@@ -1089,11 +1074,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
     // --- Add a container for the name and buttons ---
 
-    // Conditionally create the buttons based on the new 'hideControls' flag
-    const controlsHTML = hideControls ? '' : `
+    // Conditionally create the buttons based on the flags
+    const controlsHTML = `
         <div class="item-controls">
-            ${itemType === 'physical_volume' ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
-            <button class="delete-item-btn" title="Delete Item">×</button>
+            ${(itemType === 'physical_volume' && !hideVisibilityButton) ? '<button class="visibility-btn" title="Toggle Visibility">👁️</button>' : ''}
+            ${!hideDeleteButton ? '<button class="delete-item-btn" title="Delete Item">×</button>' : ''}
         </div>
     `;
 
@@ -1112,6 +1097,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     `;
     item.dataset.type = itemType;
     item.dataset.id = itemIdForBackend;  // note: this will be an "ID" for physical volumes and a name for everything else
+    if (instanceId) {  // UNIQUE ID for scene interaction
+        item.dataset.instanceId = instanceId; 
+    }
+    else {
+        item.dataset.instanceId = itemIdForBackend;
+    }
     item.dataset.name = displayName;
     item.appData = {...fullItemData, ...lvData};
 
@@ -1216,13 +1207,14 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         });
     }
 
-    // For double-clicking physical volumes
+    // Hierarchy interaction logic for physical volumes.
     if (itemType === 'physical_volume') {
 
         // Add visibility button
         const visBtn = item.querySelector('.visibility-btn');
         if(visBtn) {
 
+            const idForVisibility = instanceId || itemIdForBackend; // Use instanceId if available
             const isHidden = SceneManager.isPvHidden(itemIdForBackend);
             item.classList.toggle('item-hidden', isHidden);
             //visBtn.style.opacity = isHidden ? '0.4' : '1.0';
@@ -1238,19 +1230,21 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
                 // The third argument (isRecursive) is false by default if not provided.
                 // If the user holds Alt, we can do a recursive toggle.
                 const isRecursiveToggle = event.altKey;
-                callbacks.onPVVisibilityToggle(itemIdForBackend, isNowVisible, isRecursiveToggle);
+                callbacks.onPVVisibilityToggle(idForVisibility, isNowVisible, isRecursiveToggle);
             });
         }
 
-        // Add double-click listener
-        item.addEventListener('dblclick', (event) => {
-            event.stopPropagation();
-            // We need to find the parent LV name. For a PV, the LV data is in appData.
-            const parentLV = findParentLV(item);
-            if (parentLV) {
-                callbacks.onEditPVClicked(item.dataset, item.appData, parentLV.dataset.name);
-            }
-        });
+        // Add double-click listener if we have a physvol we can delete
+        if(!hideDeleteButton) {
+            item.addEventListener('dblclick', (event) => {
+                event.stopPropagation();
+                // We need to find the parent LV name.
+                const parentLV = findParentLV(item);
+                if (parentLV) {
+                    callbacks.onEditPVClicked(item.dataset, item.appData, parentLV.dataset.name);
+                }
+            });
+        }
     }
     // For double-clicking of solids, volumes, etc.
     else if (itemType === 'define') {
@@ -1580,7 +1574,7 @@ export function setTreeItemVisibility(pvId, isVisible) {
 
     // Use querySelectorAll to find ALL items that match the pvId.
     // This correctly handles cases where an assembly is placed multiple times.
-    const items = document.querySelectorAll(`#structure_tree_root li[data-id="${pvId}"]`);
+    const items = document.querySelectorAll(`#structure_tree_root li[data-instance-id="${pvId}"]`);
     
     if (items.length > 0) {
         items.forEach(item => {

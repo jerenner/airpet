@@ -606,6 +606,7 @@ function isObjectGloballyVisible(object) {
 // Helper function to find a mesh by its PV ID
 export function findObjectByPvId(pvId) { // Renamed
     let foundObject = null;
+    //console.log("Looking for",pvId)
     geometryGroup.traverse(child => {
         // We are now looking for the parent Group, not the mesh
         // if(child.isGroup && child.userData && child.userData.id) {
@@ -613,6 +614,7 @@ export function findObjectByPvId(pvId) { // Renamed
         //     console.log("pvID",pvId)
         //     console.log("IsIn:",child.userData.id.indexOf(pvId) !== -1)
         // }
+        //console.log("Current",child)
         if (child.isGroup && child.userData && child.userData.id === pvId) {
         //if (child.isGroup && child.userData && (child.userData.id !== undefined) && ( child.userData.id === pvId)) {
             foundObject = child;

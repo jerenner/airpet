@@ -21,7 +21,8 @@ import * as UIManager from './uiManager.js';
 // --- Global Application State (Keep this minimal) ---
 const AppState = {
     currentProjectState: null,    // Full state dict from backend (defines, materials, solids, LVs, world_ref)
-    currentProjectName: "UntitledProject",
+    currentProjectScene: null,    // Full scene dict from backend (THREE.js objects to be rendered)
+    currentProjectName: "untitled",
     selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
     selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
     selectedPVContext: {
@@ -226,9 +227,12 @@ async function initializeApp() {
         AppState.currentProjectName = initialState.project_name;
         UIManager.setProjectName(AppState.currentProjectName);
 
-        // We use a simplified sync function here as the structure is slightly different
+        // Save the project state and scene description
         AppState.currentProjectState = initialState.project_state;
-        UIManager.updateHierarchy(initialState.project_state);
+        AppState.currentProjectScene = initialState.scene_update;
+
+        // Update the UI and scene.
+        UIManager.updateHierarchy(initialState.project_state,initialState.scene_update);
         SceneManager.renderObjects(initialState.scene_update || [], initialState.project_state);
 
     } else {
@@ -404,7 +408,8 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
 
     // 1. Update the global AppState cache
-    //AppState.currentProjectState = responseData.project_state;
+    //AppState.currentProjectState updated in logic above
+    AppState.currentProjectScene = responseData.scene_update;
     AppState.selectedHierarchyItems = []; // Clear old selections
     AppState.selectedThreeObjects = [];
     AppState.selectedPVContext.pvId = null;
@@ -417,7 +422,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
 
     // 3. Re-render the hierarchy panels
-    UIManager.updateHierarchy(responseData.project_state);
+    UIManager.updateHierarchy(responseData.project_state,responseData.scene_update);
 
     // 4. Update Undo/Redo button states
     if (responseData.history_status) {
@@ -488,6 +493,7 @@ function syncUIWithState_shallow(responseData) {
 
     // Update the full scene if it exists.
     if (responseData.scene_update) {
+        AppState.currentProjectScene = responseData.scene_update;
         SceneManager.renderObjects(responseData.scene_update, AppState.currentProjectState);
     }
     // Otherwise, apply scene patch (for transforms)
@@ -510,7 +516,7 @@ function syncUIWithState_shallow(responseData) {
     //}
 
     // Re-render the hierarchy panels
-    UIManager.updateHierarchy(AppState.currentProjectState);
+    UIManager.updateHierarchy(AppState.currentProjectState, AppState.currentProjectScene);
     
     // Update the undo/redo buttons
     if (responseData.history_status) {
@@ -910,7 +916,7 @@ function handleModeChange(newMode) {
 async function handleHierarchySelection(newSelection) {
     //console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
-
+    
     // --- 1. Check selection type and manage UI state ---
     let transformState = { translate: true, rotate: true, scale: false }; // Default for standard PVs
     let reason = '';
@@ -978,22 +984,34 @@ async function handleHierarchySelection(newSelection) {
 
     if (newSelection.length === 1) {
         const singleItem = newSelection[0];
-        const { type, id, name } = singleItem;
-        const idForApi = (type === 'physical_volume') ? id : name;
+        
+        // Do not populate inspector for procedural placements
+        let isProcedural = false;
+        if (singleItem.type === 'physical_volume') {
+            const lv = AppState.currentProjectState.logical_volumes[singleItem.data.volume_ref];
+            if (lv && lv.content_type !== 'physvol') {
+                // It's a procedural volume
+                isProcedural = true;
+            }
+        }
 
-        // The getObjectDetails and populateInspector logic can now proceed
-        try {
-            const details = await APIService.getObjectDetails(type, idForApi);
-            if (details) {
-                singleItem.data = details; // Ensure data is up-to-date
-                UIManager.populateInspector(singleItem, AppState.currentProjectState);
-            } else {
-                UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
+        if(!isProcedural) {
+            // The getObjectDetails and populateInspector logic can now proceed
+            const { type, id, name } = singleItem;
+            const idForApi = (type === 'physical_volume') ? id : name;
+            try {
+                const details = await APIService.getObjectDetails(type, idForApi);
+                if (details) {
+                    singleItem.data = details; // Ensure data is up-to-date
+                    UIManager.populateInspector(singleItem, AppState.currentProjectState);
+                } else {
+                    UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
+                    UIManager.clearInspector();
+                }
+            } catch (error) {
+                UIManager.showError(error.message);
                 UIManager.clearInspector();
             }
-        } catch (error) {
-            UIManager.showError(error.message);
-            UIManager.clearInspector();
         }
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
@@ -1017,13 +1035,15 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
         // The owner is the top-level selectable item from the hierarchy 
         // (e.g., the assembly placement). If there's no owner, it's a top-level item itself.
         //console.log("userdata",userData)
-        clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
+        // clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
         // if(userData.is_procedural_instance || userData.is_assembly_instance) {
         //     clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
         // }
         // else {
         //     clickedItemCanonicalId = userData.canonical_id;
         // }
+        clickedItemCanonicalId = userData.canonical_id
+        //console.log("Clicked",clickedItemCanonicalId)
 
     }
 
@@ -1218,7 +1238,6 @@ function handleEditSolid(solidData) {
 }
 
 async function handleSolidEditorConfirm(data) {
-    console.log("Solid Editor confirmed. Data:", data);
     
     if (data.isEdit) {
         // --- EDIT LOGIC ---
@@ -1461,7 +1480,7 @@ async function handleIsotopeEditorConfirm(data) {
 
 function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
     // 1. Get the DOM element for the primary PV
-    const pvElement = document.querySelector(`#structure_tree_root li[data-id="${pvId}"]`);
+    const pvElement = document.querySelector(`#structure_tree_root li[data-instance-id="${pvId}"]`);
     if (!pvElement) return;
 
     // 2. Toggle visibility for selected element

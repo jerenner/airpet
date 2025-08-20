@@ -984,6 +984,22 @@ class GDMLParser:
 
     def _parse_param_vol(self, param_el):
         """Parses a <paramvol> tag and returns a ParamVolume object."""
+        
+        # --- Define the mapping from GDML param names to internal names ---
+        PARAM_MAP = {
+            'box_dimensions': {'x': 'x', 'y': 'y', 'z': 'z'},
+            'tube_dimensions': {
+                'InR': 'rmin', 'OutR': 'rmax', 'hz': 'z',
+                'StartPhi': 'startphi', 'DeltaPhi': 'deltaphi'
+            },
+            'cone_dimensions': {
+                'rmin1': 'rmin1', 'rmax1': 'rmax1', 'rmin2': 'rmin2', 'rmax2': 'rmax2',
+                'z': 'z', 'startphi': 'startphi', 'deltaphi': 'deltaphi'
+            },
+            # ... Add mappings for other supported parameterised solids here as needed ...
+            # e.g., 'trd_dimensions': {'x1': 'x1', 'x2': 'x2', ...}
+        }
+
         name = param_el.get('name', f"param_{uuid.uuid4().hex[:6]}")
         ncopies = param_el.get('ncopies', '0')
         
@@ -1019,7 +1035,19 @@ class GDMLParser:
             for child in params_el:
                 if child.tag.endswith('_dimensions'):
                     dimensions_type = child.tag
-                    dimensions = {k: v for k, v in child.attrib.items() if k not in ['lunit', 'aunit']}
+                    raw_dims = {k: v for k, v in child.attrib.items() if k not in ['lunit', 'aunit']}
+                    
+                    # Get the correct mapping for this dimension type
+                    current_map = PARAM_MAP.get(dimensions_type, {})
+                    if not current_map:
+                        print(f"Warning: No parameter mapping found for '{dimensions_type}'. Using raw names.")
+                        dimensions = raw_dims
+                    else:
+                        # Translate the keys from GDML names to our internal names
+                        for gdml_key, internal_key in current_map.items():
+                            if gdml_key in raw_dims:
+                                dimensions[internal_key] = raw_dims[gdml_key]
+                    
                     break # Found it, stop searching
 
             if dimensions_type: # Position can be optional (defaults to origin)
