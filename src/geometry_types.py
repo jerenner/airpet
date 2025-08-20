@@ -879,16 +879,20 @@ class GeometryState:
             # Recurse into the content of the placed LV
             for child_pv in lv.content:
 
+                # Create a clone
+                child_pv_instance = child_pv.clone()
+
                 # For a standard PV, only pass down the owner if it is not the current PV.
                 pass_down_owner = None
                 if(current_owner_id == pv.id): pass_down_owner = None
 
                 self._traverse(
-                    child_pv, 
+                    child_pv_instance, 
                     parent_pv_id=current_instance_id, # Children are parented to this instance
                     path=path + [lv.name], 
                     threejs_objects=threejs_objects, 
-                    owner_pv_id=pass_down_owner
+                    owner_pv_id=pass_down_owner,
+                    instance_prefix=f"{current_instance_id}::"
                 )
         else: # It's a procedural LV
             # The owner of the unrolled instances is the current instance ID itself.
