@@ -133,7 +133,7 @@ export function initUI(cb) {
     modeObserveButton = document.getElementById('modeObserveButton');
     modeTranslateButton = document.getElementById('modeTranslateButton');
     modeRotateButton = document.getElementById('modeRotateButton');
-    modeScaleButton = document.getElementById('modeScaleButton');
+    //modeScaleButton = document.getElementById('modeScaleButton');
     currentModeDisplay = document.getElementById('currentModeDisplay');
 
     // View Menu Buttons
@@ -211,7 +211,7 @@ export function initUI(cb) {
     modeObserveButton.addEventListener('click', () => { setActiveModeButton('observe'); callbacks.onModeChangeClicked('observe'); });
     modeTranslateButton.addEventListener('click', () => { setActiveModeButton('translate'); callbacks.onModeChangeClicked('translate'); });
     modeRotateButton.addEventListener('click', () => { setActiveModeButton('rotate'); callbacks.onModeChangeClicked('rotate'); });
-    modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
+    //modeScaleButton.addEventListener('click', () => { setActiveModeButton('scale'); callbacks.onModeChangeClicked('scale'); });
 
     toggleWireframeButton.addEventListener('click', callbacks.onWireframeToggleClicked);
     toggleGridButton.addEventListener('click', callbacks.onGridToggleClicked);
@@ -466,6 +466,16 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     select.className = 'define-select';
     header.appendChild(select);
     group.appendChild(header);
+
+    // Set a warning for scale |values| != 1
+    if(type === 'scale') {
+        const warning = document.createElement('p');
+        warning.style.fontSize = '11px';
+        warning.style.color = '#AA0000';
+        warning.style.margin = '5px 0 10px 0';
+        warning.innerHTML = `<b>Note:</b> Only the sign of the numbers placed here are taken into account when rendering the object. Inputs with absolute value not equal to 1 may not give the same behavior as in Geant4.`;
+        group.appendChild(warning); // Add the warning text to the scale group
+    }
 
     const inputsContainer = document.createElement('div');
     inputsContainer.className = 'inline-inputs-container';

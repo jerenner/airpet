@@ -608,7 +608,13 @@ export function findObjectByPvId(pvId) { // Renamed
     let foundObject = null;
     geometryGroup.traverse(child => {
         // We are now looking for the parent Group, not the mesh
+        // if(child.isGroup && child.userData && child.userData.id) {
+        //     console.log("ID is",child.userData.id)
+        //     console.log("pvID",pvId)
+        //     console.log("IsIn:",child.userData.id.indexOf(pvId) !== -1)
+        // }
         if (child.isGroup && child.userData && child.userData.id === pvId) {
+        //if (child.isGroup && child.userData && (child.userData.id !== undefined) && ( child.userData.id === pvId)) {
             foundObject = child;
         }
     });
@@ -1934,7 +1940,16 @@ export function renderObjects(pvDescriptions, projectState) {
         // Apply LOCAL transforms, not world transforms
         const position = pvData.position || { x: 0, y: 0, z: 0 };
         const rotation = pvData.rotation || { x: 0, y: 0, z: 0 };
-        const scale = pvData.scale || { x: 1, y: 1, z: 1 };
+        //const scale = pvData.scale || { x: 1, y: 1, z: 1 };
+
+        // Make all scale values +/- 1
+        const scale = pvData.scale 
+            ? {
+                x: pvData.scale.x ? Math.sign(pvData.scale.x) : 1,
+                y: pvData.scale.y ? Math.sign(pvData.scale.y) : 1,
+                z: pvData.scale.z ? Math.sign(pvData.scale.z) : 1
+                }
+            : { x: 1, y: 1, z: 1 };
         
         obj.position.set(position.x, position.y, position.z);
         const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');

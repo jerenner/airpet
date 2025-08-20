@@ -221,7 +221,6 @@ async function initializeApp() {
     const initialState = await APIService.getProjectState();
     // No try/catch needed, as the backend now guarantees a valid response
     if (initialState && initialState.project_state) {
-        console.log("Initializing UI with project state.",initialState);
         
         // Set the project name
         AppState.currentProjectName = initialState.project_name;
@@ -307,7 +306,7 @@ async function initializeApp() {
         }
 
         // --- Modes ---
-        if (event.key.toLowerCase() === 'w') {
+        if (event.key.toLowerCase() === 'e') {
             event.preventDefault();
             handleModeChange('observe');
         }
@@ -319,10 +318,10 @@ async function initializeApp() {
             event.preventDefault();
             handleModeChange('rotate');
         }
-        if (event.key.toLowerCase() === 'e') {
-            event.preventDefault();
-            handleModeChange('scale');
-        }
+        // if (event.key.toLowerCase() === 'e') {
+        //     event.preventDefault();
+        //     handleModeChange('scale');
+        // }
 
     });
 
@@ -913,7 +912,7 @@ async function handleHierarchySelection(newSelection) {
     AppState.selectedHierarchyItems = newSelection;
 
     // --- 1. Check selection type and manage UI state ---
-    let transformState = { translate: true, rotate: true, scale: true }; // Default for standard PVs
+    let transformState = { translate: true, rotate: true, scale: false }; // Default for standard PVs
     let reason = '';
 
     if (newSelection.length === 1) {
