@@ -1351,6 +1351,8 @@ class ProjectManager:
         # --- Do not allow deletion of world PV or LV ---
         world_lv = self.current_geometry_state.logical_volumes[self.current_geometry_state.world_volume_ref]
         for item in objects_to_delete:
+
+            print(f"Deleting item {item} for world LV {world_lv}")
     
             # Prevent deletion of the designated World Logical Volume.
             if item.get('type') == 'logical_volume' and item.get('name') == world_lv.name:

@@ -517,7 +517,7 @@ export function setPVVisibility(pvId, isVisible) {
     if (group) {
 
         // If it's procedural, we have to traverse to handle the PVs it generates.
-        if(group.userData.is_procedural_container) {
+        if(group.userData.is_procedural_container || group.userData.is_assembly_container) {
             group.traverse(child => {
                 if (child.isMesh || child.isLineSegments) {
                     child.visible = isVisible;
@@ -531,7 +531,6 @@ export function setPVVisibility(pvId, isVisible) {
         });
         }
         
-
         if (isVisible) {
             hiddenPvIds.delete(pvId);
         } else {

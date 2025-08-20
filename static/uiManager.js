@@ -773,7 +773,11 @@ export function updateHierarchy(projectState) {
             if (worldLV) {
 
                 // Create the root of the tree representing the World LV
-                const worldItem = createTreeItem(worldLV.name, 'logical_volume', worldLV.id, worldLV);
+                const worldItem = createTreeItem(
+                    worldLV.name, 'logical_volume', worldLV.id, worldLV, 
+                    { lvData: null, hideControls: true}
+                );
+
                 worldItem.classList.add('world-volume-item'); // Add a class for special styling/selection
                 // Prepend the "(World)" text visually after the item is created
                 const nameSpan = worldItem.querySelector('.item-name');
@@ -1197,7 +1201,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             // We manually call the main delete handler after confirming
             if (confirmAction(`Are you sure you want to delete ${itemType}: ${displayName}?`)) {
                 // We need to tell main.js *what* to delete
-                callbacks.onDeleteSpecificItemClicked(itemType, itemIdForBackend);
+                callbacks.onDeleteSpecificItemClicked(itemType, itemIdForBackend, displayName);
             }
         });
     }

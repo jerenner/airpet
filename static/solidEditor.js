@@ -276,20 +276,6 @@ export function hide() {
 
 // --- Internal Logic ---
 
-
-// Helper to create expression-based input box.
-function createExpressionInput(id, label, initialValue = '0') {
-    return `
-        <div class="property_item" style="flex-direction: column; align-items: flex-start;">
-            <label for="${id}">${label}:</label>
-            <div style="display: flex; width: 80%; align-items: center;">
-                <input type="text" id="${id}" class="expression-input" value="${initialValue}" style="flex-grow: 1; font-family: monospace;">
-                <input type="text" id="${id}-result" class="expression-result" style="width: 80px; margin-left: 5px;" readonly disabled>
-            </div>
-        </div>
-    `;
-}
-
 function renderParamsUI(solidData = {}) {
     const params = solidData.raw_parameters || {};
 
@@ -893,7 +879,6 @@ function buildSingleTransformUI(index, type, label, defines, transformData) {
             const exprComp = ExpressionInput.createInline(
                 `bool_trans_${index}_${type}_${axis}`,
                 displayValues[axis] || '0',
-                currentProjectState,
                 (newValue) => {
                     if (booleanRecipe[index] && typeof booleanRecipe[index].transform[type] === 'object') {
                         booleanRecipe[index].transform[type][axis] = newValue;
@@ -950,7 +935,7 @@ function rebuildBooleanUI() {
         const topPart = document.createElement('div');
         topPart.className = 'boolean-top-part';
 
-        // FIX #1: Operation dropdown
+        // Operation dropdown
         const opContainer = document.createElement('div');
         opContainer.className = 'op-container';
         if (!isBase) {

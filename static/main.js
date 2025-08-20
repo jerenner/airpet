@@ -102,7 +102,6 @@ async function initializeApp() {
         onDeleteSpecificItemClicked: handleDeleteSpecificItem,
         onExportGdmlClicked: handleExportGdml,
         onConfirmAddObject: handleAddObject, // Data from modal comes to this handler
-        onDeleteSelectedClicked: handleDeleteSelected,
         onModeChangeClicked: handleModeChange, // Passes mode to InteractionManager
         onSnapToggleClicked: InteractionManager.toggleSnap, // Direct call if no complex logic
         onSnapSettingsChanged: InteractionManager.updateSnapSettings,
@@ -863,15 +862,15 @@ async function handleDeleteSelected() {
     }
 }
 
-async function handleDeleteSpecificItem(type, id) {
+async function handleDeleteSpecificItem(type, id, name) {
     // We can reuse the main handler's logic.
     // For simplicity, we'll make a direct API call here.
-    const itemToDelete = [{ type: type, id: id }];
+    const itemToDelete = [{ type: type, id: id, name: name }];
     
     UIManager.showLoading("Deleting object...");
     try {
         const result = await APIService.deleteObjectsBatch(itemToDelete);
-        syncUIWithState(result);
+        syncUIWithState_shallow(result);
     } catch (error) {
         if (error.type === 'dependency') {
             UIManager.showDependencyError(error.message);

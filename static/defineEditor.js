@@ -108,7 +108,7 @@ function updateUnitSelector(selectedUnit = null) {
             unitSelect.value = selectedUnit;
         } else {
             // Set a sensible default
-            unitSelect.value = (type === 'rotation') ? 'deg' : 'mm';
+            unitSelect.value = (type === 'rotation') ? 'rad' : 'mm';
         }
     } else {
         unitContainer.style.display = 'none';
