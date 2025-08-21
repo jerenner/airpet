@@ -257,20 +257,36 @@ class LogicalVolume:
 
     @classmethod
     def from_dict(cls, data, all_objects_map=None):
-        # This method needs to be updated to handle the new structure
-        # but we can do that later when we implement JSON loading.
-        # For now, this is sufficient for the GDML import flow.
-        instance = cls(data['name'], data['solid_ref'], data['material_ref'], data.get('vis_attributes'))
+        instance = cls(
+            data['name'], 
+            data['solid_ref'], 
+            data['material_ref'], 
+            data.get('vis_attributes')
+        )
         instance.id = data.get('id', str(uuid.uuid4()))
         instance.content_type = data.get('content_type', 'physvol')
         
         content_data = data.get('content')
+
         if instance.content_type == 'physvol' and isinstance(content_data, list):
             instance.content = [PhysicalVolumePlacement.from_dict(p) for p in content_data]
-        elif content_data: # It's a dict for a single procedural object
+        elif content_data and isinstance(content_data, dict):
+            # This block handles all single procedural volume objects
             if instance.content_type == 'replica':
                 instance.content = ReplicaVolume.from_dict(content_data)
-            # Add elif for other types here...
+            elif instance.content_type == 'division':
+                instance.content = DivisionVolume.from_dict(content_data)
+            elif instance.content_type == 'parameterised':
+                instance.content = ParamVolume.from_dict(content_data)
+            else:
+                # If it's a dict but an unknown type, log a warning but don't crash.
+                print(f"Warning: Unknown procedural content type '{instance.content_type}' for LV '{instance.name}'. Content will be empty.")
+                instance.content = []
+                instance.content_type = 'physvol'
+        else:
+            # Fallback for empty or invalid content
+            instance.content = []
+            instance.content_type = 'physvol'
         
         return instance
 
@@ -551,11 +567,14 @@ class Parameterisation:
 
     @classmethod
     def from_dict(cls, data):
-        return cls(data.get('number'),
-                   data.get('position'),
-                   data.get('dimensions_type'),
-                   data.get('dimensions'),
-                   data.get('rotation'))
+        # The constructor needs all arguments. We provide defaults if they are missing.
+        return cls(
+            number=data.get('number'),
+            position=data.get('position'),
+            dimensions_type=data.get('dimensions_type'),
+            dimensions=data.get('dimensions'),
+            rotation=data.get('rotation') # This might be None, and that's okay
+        )
 
 class ParamVolume:
     """Represents a <paramvol> placement."""

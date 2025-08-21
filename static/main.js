@@ -415,8 +415,10 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
     // 2. Re-render the 3D scene
     if (responseData.scene_update) {
-        SceneManager.renderObjects(responseData.scene_update, responseData.project_state);
+        console.log("Rendering objects", responseData.scene_update)
+        SceneManager.renderObjects(AppState.currentProjectScene, AppState.currentProjectState);
     } else {
+        console.log("Clearing scene: no update")
         SceneManager.clearScene(); // Ensure scene is cleared if there's no update
     }
 
@@ -835,7 +837,7 @@ async function handleDeleteSelected() {
         return;
     }
 
-    const itemsToDelete = selectionContexts.map(item => ({ type: item.type, id: item.id, name: item.name }));
+    const itemsToDelete = selectionContexts.map(item => ({ type: item.type, id: item.canonical_id, name: item.name }));
 
     let confirmationMessage;
     if (selectionContexts.length === 1) {
