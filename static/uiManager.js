@@ -84,7 +84,6 @@ let callbacks = {
     onWireframeToggleClicked: () => {},
     onGridToggleClicked: () => {},
     onAxesToggleClicked: () => {},
-    onHierarchyItemSelected: (itemContext) => {}, // {type, id, name, data}
     onInspectorPropertyChanged: (type, id, path, value) => {},
     onPVVisibilityToggle: (pvId, isVisible) => {},
     onAiGenerateClicked: (promptText) => {},
@@ -1157,13 +1156,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             if (sel.dataset.id) { 
                 selectedItemContexts.push({
                     type: sel.dataset.type,
-                    id: sel.dataset.id,
+                    canonical_id: sel.dataset.id,
+                    id: sel.dataset.instanceId,
                     name: sel.dataset.name,
-                    data: sel.appData
+                    selData: sel.appData
                 });
             }
         });
-        
         callbacks.onHierarchySelectionChanged(selectedItemContexts);
     });
 
@@ -1348,11 +1347,11 @@ export function setHierarchySelection(selectedIds = []) {
     const allItems = document.querySelectorAll('#left_panel_container li[data-id]');
     allItems.forEach(item => {
         // Check if the item's ID is in the array of IDs to select
-        const shouldBeSelected = selectedIds.includes(item.dataset.id);
+        const shouldBeSelected = selectedIds.includes(item.dataset.instanceId);
         item.classList.toggle('selected_item', shouldBeSelected);
         
         // Scroll the last selected item into view
-        if (shouldBeSelected && item.dataset.id === selectedIds[selectedIds.length - 1]) {
+        if (shouldBeSelected && item.dataset.instanceId === selectedIds[selectedIds.length - 1]) {
             item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     });
@@ -1385,8 +1384,8 @@ export function getDescendantPvIds(startElement) {
     // The `querySelectorAll` will find all `<li>` elements at any level of nesting inside the startElement
     const descendants = startElement.querySelectorAll('li[data-type="physical_volume"]');
     descendants.forEach(li => {
-        if (li.dataset.id) {
-            ids.push(li.dataset.id);
+        if (li.dataset.instanceId) {
+            ids.push(li.dataset.instanceId);
         }
     });
     return ids;

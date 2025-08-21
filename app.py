@@ -661,15 +661,18 @@ def update_physical_volume_batch_route():
         return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
 
     # The project manager will handle the transaction and recalculation internally
-    success, patch = project_manager.update_physical_volume_batch(updates_list)
+    success = project_manager.update_physical_volume_batch(updates_list)
+
+    # Compute the full scene again.
+    scene_update = project_manager.get_threejs_description()
 
     if success:
         # After a successful batch update, send back the complete new state
-        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", scene_patch=patch)
+        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", full_scene=scene_update)
     else:
         # If it fails, send back an error and the (potentially partially modified) state
         # A more advanced implementation might revert the changes on failure.
-        return jsonify({"success": False, "error": message}), 500
+        return jsonify({"success": False, "error": "Error creating response after physical volume batch update"}), 500
 
 @app.route('/api/delete_objects_batch', methods=['POST'])
 def delete_objects_batch_route():

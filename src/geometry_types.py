@@ -960,6 +960,8 @@ class GeometryState:
                 "owner_pv_id": owner_id,
                 "is_world_volume_placement": False,
                 "volume_ref": temp_pv.volume_ref,
+                "is_assembly_container": False,
+                "is_procedural_container": False,
                 "is_procedural_instance": True, 
                 "solid_ref_for_threejs": child_lv_template.solid_ref,
                 "position": temp_pv._evaluated_position,
@@ -1027,6 +1029,8 @@ class GeometryState:
                 "is_world_volume_placement": False,
                 "volume_ref": temp_pv.volume_ref,
                 "owner_pv_id": owner_id,   # It belongs to the division rule PV
+                "is_assembly_container": False,
+                "is_procedural_container": False,
                 "is_procedural_instance": True,
                 "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the unique slice solid
                 "position": temp_pv._evaluated_position,
@@ -1091,6 +1095,8 @@ class GeometryState:
                 "is_world_volume_placement": False,
                 "volume_ref": temp_pv.volume_ref,
                 "owner_pv_id": owner_id,
+                "is_assembly_container": False,
+                "is_procedural_container": False,
                 "is_procedural_instance": True,
                 "solid_ref_for_threejs": temp_solid.to_dict(), # Pass the temporary solid's data directly
                 "position": temp_pv._evaluated_position,

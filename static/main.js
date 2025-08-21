@@ -111,7 +111,6 @@ async function initializeApp() {
         onGridToggleClicked: SceneManager.toggleGridVisibility,
         onAxesToggleClicked: SceneManager.toggleAxesVisibility,
         onHierarchySelectionChanged: handleHierarchySelection,
-        onHierarchyItemSelected: handleHierarchySelection, // When an item in hierarchy panel is clicked
         onInspectorPropertyChanged: handleInspectorPropertyUpdate, // When a property in inspector is changed by user
         onAiGenerateClicked: handleAiGenerate,
         // Hierarchy organization
@@ -430,16 +429,26 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
 
     // 5. Restore selection and repopulate inspector ---
+    restoreSelection(selectionToRestore);
+    
+}
+
+function restoreSelection(selectionToRestore) {
+
     let validatedSelectionToRestore = [];
     if (selectionToRestore && selectionToRestore.length > 0) {
 
         // Filter the old selection, keeping only items that still exist in the new state.
-        validatedSelectionToRestore = selectionToRestore.filter(item =>
-            doesItemExistInState(item, responseData.project_state)
-        );
+        validatedSelectionToRestore = selectionToRestore.filter(item => {
+                const itemId = item.id || item.canonical_id;
+                return (findItemInScene(itemId) != null);
+        });
 
         if (validatedSelectionToRestore.length > 0) {
-            const idsToSelect = validatedSelectionToRestore.map(item => item.id);
+            const idsToSelect = validatedSelectionToRestore.map(item => {
+                const itemId = item.id || item.canonical_id;
+                return itemId;
+            });
             UIManager.setHierarchySelection(idsToSelect); // Visually select in the hierarchy
             handleHierarchySelection(validatedSelectionToRestore); // Update inspector, gizmo, etc.
         } else {
@@ -525,25 +534,8 @@ function syncUIWithState_shallow(responseData) {
     
     // 5. Restore selection and repopulate inspector ---
     const selectionToRestore = AppState.selectedHierarchyItems;
-    let validatedSelectionToRestore = [];
-    if (selectionToRestore && selectionToRestore.length > 0) {
-
-        // Filter the old selection, keeping only items that still exist in the new state.
-        validatedSelectionToRestore = selectionToRestore.filter(item =>
-            doesItemExistInState(item, AppState.currentProjectState)
-        );
-
-        if (validatedSelectionToRestore.length > 0) {
-            const idsToSelect = validatedSelectionToRestore.map(item => item.id);
-            UIManager.setHierarchySelection(idsToSelect); // Visually select in the hierarchy
-            handleHierarchySelection(validatedSelectionToRestore); // Update inspector, gizmo, etc.
-        } else {
-            // If no valid selection remains (or there was none to begin with), clear everything.
-            UIManager.clearInspector();
-            UIManager.clearHierarchySelection();
-            SceneManager.unselectAllInScene();
-        }  
-    }
+    restoreSelection(selectionToRestore);
+    
 }
 
 // --- Autosave functions
@@ -630,17 +622,20 @@ function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     // --- Use a Map to consolidate procedural volumes and track standard PVs ---
     // The key will be the canonical ID (either the PV's own ID or its owner's ID)
     const consolidatedSelectionMap = new Map();
-    currentSelection.forEach(item => consolidatedSelectionMap.set(item.id, item));
+    currentSelection.forEach(item => consolidatedSelectionMap.set(item.canonical_id, item));
 
     selectedMeshes.forEach(mesh => {
-        // The canonical ID is the owner ID for procedural slices, or its own ID for standard PVs.
-        const canonicalId = mesh.userData.owner_pv_id || mesh.userData.id;
+        // The ID is the owner ID for procedural slices, or its own ID for standard PVs.
+        // Using canonical_id here will cause selection of parent objects, which is most
+        // likely the easiest for the user to move around objects.
+        const selectedId = mesh.userData.id;
         
         // If we haven't processed this canonical object yet, add it to our map.
-        if (!consolidatedSelectionMap.has(canonicalId)) {
-            const itemContext = findItemInState(canonicalId);
+        if (!consolidatedSelectionMap.has(selectedId)) {
+            const itemContext = findItemInScene(selectedId);
+            console.log("Looking for",selectedId)
             if (itemContext) {
-                consolidatedSelectionMap.set(canonicalId, itemContext);
+                consolidatedSelectionMap.set(selectedId, itemContext);
             }
         }
     });
@@ -912,7 +907,6 @@ function handleModeChange(newMode) {
     }
 }
 
-// Replace the handleHierarchySelection function
 async function handleHierarchySelection(newSelection) {
     //console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
@@ -924,7 +918,7 @@ async function handleHierarchySelection(newSelection) {
     if (newSelection.length === 1) {
         const item = newSelection[0];
         if (item.type === 'physical_volume') {
-            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
             if (lv && lv.content_type !== 'physvol') {
                 // It's a procedural volume, remove gizmo transformations.
                 transformState = { translate: true, rotate: true, scale: false };
@@ -935,7 +929,7 @@ async function handleHierarchySelection(newSelection) {
     } else if (newSelection.length > 1) {
         const anyProcedural = newSelection.some(item => {
             if (item.type !== 'physical_volume') return false;
-            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
+            const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
             return lv && lv.content_type !== 'physvol';
         });
         if (anyProcedural) {
@@ -956,10 +950,10 @@ async function handleHierarchySelection(newSelection) {
     const meshesToProcess = [];
     newSelection.forEach(item => {
         if (item.type === 'physical_volume') {
-            const lv = AppState.currentProjectState.logical_volumes[item.data.volume_ref];
-            if (lv && lv.content_type !== 'physvol') {
+            let isProcedural = item.selData.is_procedural_instance;
+            if (isProcedural) {
                 // Procedural PV: get all its instances.
-                meshesToProcess.push(...SceneManager.getMeshesForOwner(item.id));
+                meshesToProcess.push(...SceneManager.getMeshesForOwner(item.canonical_id));
             } else {
                 // Simple PV: get its single mesh.
                 const mesh = SceneManager.findObjectByPvId(item.id);
@@ -979,39 +973,40 @@ async function handleHierarchySelection(newSelection) {
     }
 
     // --- 4. Update the UI (Hierarchy List and Inspector) ---
-    const selectedIds = newSelection.map(item => item.id);
+    const selectedIds = newSelection.map(item => {
+        if(item.selData.is_procedural_instance) {
+            return item.canonical_id;
+        }
+        return item.id;
+    });
     UIManager.setHierarchySelection(selectedIds);
 
     if (newSelection.length === 1) {
         const singleItem = newSelection[0];
-        
-        // Do not populate inspector for procedural placements
-        let isProcedural = false;
-        if (singleItem.type === 'physical_volume') {
-            const lv = AppState.currentProjectState.logical_volumes[singleItem.data.volume_ref];
-            if (lv && lv.content_type !== 'physvol') {
-                // It's a procedural volume
-                isProcedural = true;
-            }
-        }
 
-        if(!isProcedural) {
-            // The getObjectDetails and populateInspector logic can now proceed
-            const { type, id, name } = singleItem;
-            const idForApi = (type === 'physical_volume') ? id : name;
-            try {
-                const details = await APIService.getObjectDetails(type, idForApi);
-                if (details) {
-                    singleItem.data = details; // Ensure data is up-to-date
-                    UIManager.populateInspector(singleItem, AppState.currentProjectState);
-                } else {
-                    UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
-                    UIManager.clearInspector();
+        // The getObjectDetails and populateInspector logic can now proceed
+        const type = singleItem.type;
+        const name = singleItem.name;
+        const id = singleItem.canonical_id;
+        
+        const idForApi = (type === 'physical_volume') ? id : name;
+        try {
+            const details = await APIService.getObjectDetails(type, idForApi);
+            if (details) {
+                singleItem.data = details; // Ensure data is up-to-date
+
+                // Hack-fix for procedurals
+                if(singleItem.selData.is_procedural_instance) {
+                    singleItem.id = singleItem.canonical_id;
                 }
-            } catch (error) {
-                UIManager.showError(error.message);
+                UIManager.populateInspector(singleItem, AppState.currentProjectState);
+            } else {
+                UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
                 UIManager.clearInspector();
             }
+        } catch (error) {
+            UIManager.showError(error.message);
+            UIManager.clearInspector();
         }
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
@@ -1026,6 +1021,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     if (isShiftHeld) return; // Shift-select is still deferred
 
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
+    let clickedItemInstanceId = null;
     let clickedItemCanonicalId = null;
     
     if (clickedMesh) {
@@ -1043,22 +1039,23 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
         //     clickedItemCanonicalId = userData.canonical_id;
         // }
         clickedItemCanonicalId = userData.canonical_id
+        clickedItemInstanceId = userData.id
         //console.log("Clicked",clickedItemCanonicalId)
 
     }
 
-    if (clickedItemCanonicalId) {
-        const existingIndex = currentSelection.findIndex(item => item.id === clickedItemCanonicalId);
+    if (clickedItemInstanceId && clickedItemCanonicalId) {
+        const existingIndex = currentSelection.findIndex(item => item.id === clickedItemInstanceId);
         
         if (isCtrlHeld) {
             if (existingIndex > -1) {
                 currentSelection.splice(existingIndex, 1);
             } else {
-                const newItem = findItemInState(clickedItemCanonicalId);
+                const newItem = findItemInScene(clickedItemInstanceId);
                 if (newItem) currentSelection.push(newItem);
             }
         } else {
-            const newItem = findItemInState(clickedItemCanonicalId);
+            const newItem = findItemInScene(clickedItemInstanceId);
             currentSelection = newItem ? [newItem] : [];
         }
     } else if (!isCtrlHeld) {
@@ -1070,28 +1067,44 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     handleHierarchySelection(currentSelection);
 }
 
+function findItemInScene(itemId) {
+
+    const pv = SceneManager.findObjectByPvId(itemId);
+    if(pv){
+        return {type: "physical_volume", id: pv.userData.id, name: pv.userData.name, selData: pv.userData, canonical_id: pv.userData.canonical_id};
+    }
+    return null;
+}
+
 // Helper function to find a PV by its ID anywhere in the project state
-function findItemInState(itemId) {
+function findItemInState(itemCanonicalId) {
 
     if (!AppState.currentProjectState) return null;
     const state = AppState.currentProjectState;
+
+    // --- If an instance ID was provided, find the item in the scene
+    // let sceneItem = null;
+    // if(itemInstanceId) {
+    //    sceneItem = findItemInScene(itemInstanceId)
+    // }
     
+    // --- Find the item in the project state
+
     // Search standard PVs
     for (const lv of Object.values(state.logical_volumes)) {
         if (lv.content_type === 'physvol') {
-            const found = lv.content.find(pv => pv.id === itemId);
+            const found = lv.content.find(pv => pv.id === itemCanonicalId);
             if (found) {
                 // Return the standard context object
-                return { type: 'physical_volume', id: found.id, name: found.name, data: found };
+                return { type: 'physical_volume', id: found.id, name: found.name, selData: found, canonical_id: found.id };
             }
         }
     }
-
     // Search PVs within Assemblies
     for (const asm of Object.values(state.assemblies)) {
-        const found = asm.placements.find(pv => pv.id === itemId);
+        const found = asm.placements.find(pv => pv.id === itemCanonicalId);
         if (found) {
-            return { type: 'physical_volume', id: found.id, name: found.name, data: found };
+            return { type: 'physical_volume', id: found.id, name: found.name, data: found, canonical_id: found.id };
         }
     }
 
@@ -1135,10 +1148,11 @@ async function handleTransformEnd(transformedObject) {
     for (const item of selection) {
         if (item.type !== 'physical_volume') continue;
 
-        const pvId = item.id;
+        const pvId = item.canonical_id;
+        const pvInstanceId = item.id || pvId;
         
         // Find the THREE.Group for the PV being updated.
-        const currentThreeJsObject = SceneManager.findObjectByPvId(pvId);
+        const currentThreeJsObject = SceneManager.findObjectByPvId(pvInstanceId);
         if (!currentThreeJsObject) continue;
 
         // Get the final world matrix directly from the transformed three.js object.
@@ -1146,7 +1160,7 @@ async function handleTransformEnd(transformedObject) {
         const finalWorldMatrix = currentThreeJsObject.matrixWorld.clone();
         
         // --- Determine the Parent's World Matrix ---
-        const parentLvName = item.data.parent_lv_name;
+        const parentLvName = item.selData.parent_lv_name;
         let parentWorldMatrix = new THREE.Matrix4(); // Default to identity (for world volume)
 
         if (parentLvName !== AppState.currentProjectState.world_volume_ref) {
@@ -1490,9 +1504,11 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
     // 3. Find all descendant PV IDs
     let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
     
-    // 4. If recursive, toggle visibility of all descendants. All assembly placements must
-    // set visibility recursively.
-    if(isRecursive || isAssemblyPlacement(pvId)) {
+    // 4. If recursive, toggle visibility of all descendants.
+    const pvContext = findItemInScene(pvId);
+    const isAssemblyContainer = pvContext.selData.is_assembly_container;
+    const isProceduralContainer = pvContext.selData.is_procedural_container;
+    if(isRecursive || isAssemblyContainer || isProceduralContainer) {
         descendantIds.forEach(id => {
             // Update the 3D scene
             SceneManager.setPVVisibility(id, isVisible);
@@ -1500,24 +1516,6 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
             UIManager.setTreeItemVisibility(id, isVisible);
         });
     }
-}
-
-/**
- * Checks if a given Physical Volume ID corresponds to a placement of an Assembly.
- * @param {string} pvId - The unique ID of the physical volume to check.
- * @returns {boolean} - True if the PV places an assembly, false otherwise.
- */
-function isAssemblyPlacement(pvId) {
-    if (!AppState.currentProjectState) return false;
-    
-    const pvContext = findItemInState(pvId);
-    if (!pvContext || pvContext.type !== 'physical_volume') {
-        return false;
-    }
-
-    const placedVolumeName = pvContext.data.volume_ref;
-    // Check if the referenced volume exists in the assemblies dictionary
-    return !!AppState.currentProjectState.assemblies[placedVolumeName];
 }
 
 function handleHideSelected() {

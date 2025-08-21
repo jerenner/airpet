@@ -394,8 +394,7 @@ function onPointerUp(event) {
     const finalSelectionUUIDs = new Set(); // Use UUID to prevent adding the same THREE.Group twice
 
     initialSelection.forEach(group => {
-        if (group.userData && group.userData.owner_pv_id) {
-            // This is part of a procedural volume.
+        if (group.userData && group.userData.is_procedural_instance) {
             const ownerId = group.userData.owner_pv_id;
             if (!processedOwnerIds.has(ownerId)) {
                 // We haven't processed this procedural set yet.
@@ -517,7 +516,7 @@ export function setPVVisibility(pvId, isVisible) {
     if (group) {
 
         // If it's procedural, we have to traverse to handle the PVs it generates.
-        if(group.userData.is_procedural_container || group.userData.is_assembly_container) {
+        if(group.userData.is_procedural_container) { // || group.userData.is_assembly_container) {
             group.traverse(child => {
                 if (child.isMesh || child.isLineSegments) {
                     child.visible = isVisible;
@@ -525,10 +524,10 @@ export function setPVVisibility(pvId, isVisible) {
             });
         } else {
             group.children.forEach(child => {
-            if (child.isMesh || child.isLineSegments) {
-                child.visible = isVisible;
-            }
-        });
+                if (child.isMesh || child.isLineSegments) {
+                    child.visible = isVisible;
+                }
+            });
         }
         
         if (isVisible) {
@@ -561,17 +560,14 @@ export function setAllPVVisibility(isVisible, projectState) {
     } else {
         if (projectState) {
 
-            // This logic correctly gathers ALL pvIds.
-            Object.values(projectState.logical_volumes).forEach(lv => {
-                if (lv.content_type === 'physvol') { lv.content.forEach(pv => hiddenPvIds.add(pv.id)); }
-            });
-             Object.values(projectState.assemblies).forEach(asm => {
-                asm.placements.forEach(pv => hiddenPvIds.add(pv.id));
-            });
-
             // Set all three.js objects to visible
             geometryGroup.traverse(group => {
                 if (group.isGroup && group.userData.id) {
+
+                    // Add to the list of hidden PVs
+                    hiddenPvIds.add(group.userData.id)
+
+                    // Set mesh and line segments to visible.
                     group.traverse(child => {
                         if (child.isMesh || child.isLineSegments) {
                             child.visible = false;
@@ -608,15 +604,7 @@ export function findObjectByPvId(pvId) { // Renamed
     let foundObject = null;
     //console.log("Looking for",pvId)
     geometryGroup.traverse(child => {
-        // We are now looking for the parent Group, not the mesh
-        // if(child.isGroup && child.userData && child.userData.id) {
-        //     console.log("ID is",child.userData.id)
-        //     console.log("pvID",pvId)
-        //     console.log("IsIn:",child.userData.id.indexOf(pvId) !== -1)
-        // }
-        //console.log("Current",child)
         if (child.isGroup && child.userData && child.userData.id === pvId) {
-        //if (child.isGroup && child.userData && (child.userData.id !== undefined) && ( child.userData.id === pvId)) {
             foundObject = child;
         }
     });
@@ -2075,22 +2063,11 @@ export function getMeshesForOwner(ownerPvId) {
     return meshes;
 }
 
-function highlightObject(obj) {
-    if (obj.material !== _highlightMaterial) {
-        _originalMaterialsMap.set(obj.uuid, { material: obj.material.clone() });
-    }
-    obj.material = _highlightMaterial;
-}
-
 function unhighlightObject(obj) {
     if (_originalMaterialsMap.has(obj.uuid)) {
         obj.material = _originalMaterialsMap.get(obj.uuid).material;
         _originalMaterialsMap.delete(obj.uuid);
     }
-}
-
-function unhighlightAll() {
-    _selectedThreeObjects.forEach(obj => unhighlightObject(obj));
 }
 
 export function unselectAllInScene() {

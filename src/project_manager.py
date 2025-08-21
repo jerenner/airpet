@@ -1287,20 +1287,22 @@ class ProjectManager:
             return False, None
         
         # --- Return the patch data  ---
-        scene_patch = {
-            "updated_transforms": [
-                {
-                    "id": pv.id, # Ensure we use the object's ID
-                    "position": pv._evaluated_position,
-                    "rotation": pv._evaluated_rotation,
-                    "scale": pv._evaluated_scale
-                } for pv in updated_pv_objects
-            ]
-        }
+        # (For now, do not attempt to patch, as one transformation may affect several PVs
+        #  and this is not yet accounted for.)
+        # scene_patch = {
+        #     "updated_transforms": [
+        #         {
+        #             "id": pv.id, # Ensure we use the object's ID
+        #             "position": pv._evaluated_position,
+        #             "rotation": pv._evaluated_rotation,
+        #             "scale": pv._evaluated_scale
+        #         } for pv in updated_pv_objects
+        #     ]
+        # }
         
         # If everything succeeded, capture the final state and return
         self._capture_history_state(f"Batch update to {len(updated_pv_objects)} PVs")
-        return True, scene_patch
+        return True
 
     def add_assembly(self, name_suggestion, placements_data):
         if not self.current_geometry_state:
