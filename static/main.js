@@ -635,7 +635,6 @@ function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
         // If we haven't processed this canonical object yet, add it to our map.
         if (!consolidatedSelectionMap.has(selectedId)) {
             const itemContext = findItemInScene(selectedId);
-            console.log("Looking for",selectedId)
             if (itemContext) {
                 consolidatedSelectionMap.set(selectedId, itemContext);
             }

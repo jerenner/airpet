@@ -156,18 +156,35 @@ class ProjectManager:
         self.is_changed = True
 
     def undo(self):
-        """Reverts to the previous state in history."""
+        """Reverts to the previous state in history and recalculates it."""
         if self.history_index > 0:
             self.history_index -= 1
+            # Load the raw state from history
             self.current_geometry_state = GeometryState.from_dict(self.history[self.history_index].to_dict())
+            
+            # After loading any state, it must be re-evaluated to be valid for rendering.
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                # This would be a serious bug if an undo leads to an invalid state
+                print(f"CRITICAL WARNING: Undo operation resulted in an invalid state: {error_msg}")
+                return False, f"Undo failed: {error_msg}"
+
             return True, "Undo successful."
         return False, "Nothing to undo."
 
     def redo(self):
-        """Applies the next state in history."""
+        """Applies the next state in history and recalculates it."""
         if self.history_index < len(self.history) - 1:
             self.history_index += 1
+            # Load the raw state from history
             self.current_geometry_state = GeometryState.from_dict(self.history[self.history_index].to_dict())
+
+            # After loading any state, it must be re-evaluated.
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                print(f"CRITICAL WARNING: Redo operation resulted in an invalid state: {error_msg}")
+                return False, f"Redo failed: {error_msg}"
+
             return True, "Redo successful."
         return False, "Nothing to redo."
 
