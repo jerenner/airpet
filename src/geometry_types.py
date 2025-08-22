@@ -922,13 +922,13 @@ class GeometryState:
             owner_id_for_children = current_instance_id
 
             if lv.content_type == 'replica':
-                self._unroll_replica_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
+                self._unroll_replica_and_traverse(lv, current_canonical_id, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
             elif lv.content_type == 'division':
-                 self._unroll_division_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
+                 self._unroll_division_and_traverse(lv, current_canonical_id, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
             elif lv.content_type == 'parameterised':
-                 self._unroll_param_and_traverse(lv, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
+                 self._unroll_param_and_traverse(lv, current_canonical_id, current_instance_id, path, threejs_objects, owner_id=owner_id_for_children)
 
-    def _unroll_replica_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
+    def _unroll_replica_and_traverse(self, lv, canonical_id, parent_pv_id, path, threejs_objects, owner_id):
         replica = lv.content
         child_lv_template = self.get_logical_volume(replica.volume_ref)
         if not child_lv_template: return
@@ -973,7 +973,7 @@ class GeometryState:
             # Add the generated replica instance itself to the list
             threejs_objects.append({
                 "id": temp_pv.id,
-                "canonical_id": parent_pv_id,
+                "canonical_id": canonical_id,
                 "name": temp_pv.name,
                 "parent_id": parent_pv_id,
                 "owner_pv_id": owner_id,
@@ -995,7 +995,7 @@ class GeometryState:
                 for child_of_child_pv in child_lv_template.content:
                     self._traverse(child_of_child_pv, temp_pv.id, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
 
-    def _unroll_division_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
+    def _unroll_division_and_traverse(self, lv, canonical_id, parent_pv_id, path, threejs_objects, owner_id):
         division = lv.content
         child_lv = self.get_logical_volume(division.volume_ref)
         mother_solid = self.get_solid(lv.solid_ref)
@@ -1042,7 +1042,7 @@ class GeometryState:
             # Add the generated slice itself to the list of objects to be rendered.
             threejs_objects.append({
                 "id": temp_pv.id,
-                "canonical_id": parent_pv_id,
+                "canonical_id": canonical_id,
                 "name": temp_pv.name,
                 "parent_id": parent_pv_id, # It's a child of the PV that holds the division rule
                 "is_world_volume_placement": False,
@@ -1064,7 +1064,7 @@ class GeometryState:
                 for child_of_child_pv in child_lv.content:
                     self._traverse(child_of_child_pv, temp_pv.id, path + [lv.name], threejs_objects, owner_pv_id=owner_id)
 
-    def _unroll_param_and_traverse(self, lv, parent_pv_id, path, threejs_objects, owner_id):
+    def _unroll_param_and_traverse(self, lv, canonical_id, parent_pv_id, path, threejs_objects, owner_id):
         param_vol = lv.content
         child_lv_template = self.get_logical_volume(param_vol.volume_ref)
         if not child_lv_template: return
@@ -1108,7 +1108,7 @@ class GeometryState:
             # to the recursive call. Let's create a custom object for the scene description.
             threejs_objects.append({
                 "id": temp_pv.id,
-                "canonical_id": parent_pv_id,
+                "canonical_id": canonical_id,
                 "name": temp_pv.name,
                 "parent_id": parent_pv_id,
                 "is_world_volume_placement": False,
