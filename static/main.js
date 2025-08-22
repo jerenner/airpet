@@ -646,16 +646,22 @@ function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     currentSelection.forEach(item => consolidatedSelectionMap.set(item.canonical_id, item));
 
     selectedMeshes.forEach(mesh => {
-        // The ID is the owner ID for procedural slices, or its own ID for standard PVs.
-        // Using canonical_id here will cause selection of parent objects, which is most
-        // likely the easiest for the user to move around objects.
+        // The ID is the parent ID for procedural slices, or its own ID for standard PVs.
         const selectedId = mesh.userData.id;
         
         // If we haven't processed this canonical object yet, add it to our map.
         if (!consolidatedSelectionMap.has(selectedId)) {
             const itemContext = findItemInScene(selectedId);
             if (itemContext) {
-                consolidatedSelectionMap.set(selectedId, itemContext);
+                // Select the parent for procedural instances
+                if(itemContext.selData.is_procedural_instance) {
+                    const parentId = itemContext.selData.parent_id;
+                    const parentItem = findItemInScene(parentId);
+                    if(parentItem) consolidatedSelectionMap.set(parentId, parentItem);
+                }
+                else {
+                    consolidatedSelectionMap.set(selectedId, itemContext);
+                }
             }
         }
     });
@@ -932,39 +938,39 @@ async function handleHierarchySelection(newSelection) {
     AppState.selectedHierarchyItems = newSelection;
     
     // --- 1. Check selection type and manage UI state ---
-    let transformState = { translate: true, rotate: true, scale: false }; // Default for standard PVs
-    let reason = '';
+    // let transformState = { translate: true, rotate: true, scale: false }; // Default for standard PVs
+    // let reason = '';
 
-    if (newSelection.length === 1) {
-        const item = newSelection[0];
-        if (item.type === 'physical_volume') {
-            const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
-            if (lv && lv.content_type !== 'physvol') {
-                // It's a procedural volume, remove gizmo transformations.
-                transformState = { translate: true, rotate: true, scale: false };
-                reason = "Scaling is not supported for procedural volumes.";
-            }
-        }
-    // For multi-selection, disable scale if any item is procedural.
-    } else if (newSelection.length > 1) {
-        const anyProcedural = newSelection.some(item => {
-            if (item.type !== 'physical_volume') return false;
-            const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
-            return lv && lv.content_type !== 'physvol';
-        });
-        if (anyProcedural) {
-            transformState = { translate: true, rotate: true, scale: false };
-            reason = "Scaling is not supported for procedural volumes.";
-        }
-    }
+    // if (newSelection.length === 1) {
+    //     const item = newSelection[0];
+    //     if (item.type === 'physical_volume') {
+    //         const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
+    //         if (lv && lv.content_type !== 'physvol') {
+    //             // It's a procedural volume, remove gizmo transformations.
+    //             transformState = { translate: true, rotate: true, scale: false };
+    //             reason = "Scaling is not supported for procedural volumes.";
+    //         }
+    //     }
+    // // For multi-selection, disable scale if any item is procedural.
+    // } else if (newSelection.length > 1) {
+    //     const anyProcedural = newSelection.some(item => {
+    //         if (item.type !== 'physical_volume') return false;
+    //         const lv = AppState.currentProjectState.logical_volumes[item.selData.volume_ref];
+    //         return lv && lv.content_type !== 'physvol';
+    //     });
+    //     if (anyProcedural) {
+    //         transformState = { translate: true, rotate: true, scale: false };
+    //         reason = "Scaling is not supported for procedural volumes.";
+    //     }
+    // }
 
-    UIManager.setTransformButtonsState(transformState, reason);
+    // UIManager.setTransformButtonsState(transformState, reason);
 
-    // If a disabled mode is currently active, switch to 'observe'
-    const currentMode = InteractionManager.getCurrentMode();
-    if (currentMode !== 'observe' && !transformState[currentMode]) {
-        handleModeChange('observe');
-    }
+    // // If a disabled mode is currently active, switch to 'observe'
+    // const currentMode = InteractionManager.getCurrentMode();
+    // if (currentMode !== 'observe' && !transformState[currentMode]) {
+    //     handleModeChange('observe');
+    // }
 
     // --- 2. Build the list of meshes to highlight/transform ---
     const meshesToProcess = [];
@@ -1056,11 +1062,29 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
                 currentSelection.splice(existingIndex, 1);
             } else {
                 const newItem = findItemInScene(clickedItemInstanceId);
-                if (newItem) currentSelection.push(newItem);
+                if(newItem) {
+                    // For a procedural, always select the parent.
+                    if(newItem.selData.is_procedural_instance) {
+                        const parentItem = findItemInScene(newItem.selData.parent_id);
+                        if(parentItem) currentSelection.push(parentItem);
+                    }
+                    else{
+                        currentSelection.push(newItem);
+                    }
+                }
             }
         } else {
             const newItem = findItemInScene(clickedItemInstanceId);
-            currentSelection = newItem ? [newItem] : [];
+            if(newItem) {
+                // For a procedural, always select the parent.
+                if(newItem.selData.is_procedural_instance) {
+                    const parentItem = findItemInScene(newItem.selData.parent_id);
+                    currentSelection = parentItem ? [parentItem] : [];
+                }
+                else{
+                    currentSelection = [newItem];
+                }
+            }
         }
     } else if (!isCtrlHeld) {
         currentSelection = [];
@@ -1159,41 +1183,35 @@ async function handleTransformEnd(transformedObject) {
         const currentThreeJsObject = SceneManager.findObjectByPvId(pvInstanceId);
         if (!currentThreeJsObject) continue;
 
-        // Get the final world matrix directly from the transformed three.js object.
-        // For multi-select, the live-update logic already moved the individual objects.
-        const finalWorldMatrix = currentThreeJsObject.matrixWorld.clone();
-        
-        // --- Determine the Parent's World Matrix ---
-        const parentLvName = item.selData.parent_lv_name;
-        let parentWorldMatrix = new THREE.Matrix4(); // Default to identity (for world volume)
+        // 1. Get the final world matrix of this instance after the user's drag.
+        const newWorldMatrix = currentThreeJsObject.matrixWorld.clone();
 
+        // 2. Get the world matrix of its DIRECT PARENT in the scene graph.
+        const parentInverse = new THREE.Matrix4();
+        const parentLvName = item.selData.parent_lv_name;
         if (parentLvName !== AppState.currentProjectState.world_volume_ref) {
-            // Find the physical volume that PLACES our parent logical volume.
-            const parentPvData = findPVThatPlacesLV(parentLvName, AppState.currentProjectState);
-            if (parentPvData) {
-                const parentThreeJsGroup = SceneManager.findObjectByPvId(parentPvData.id);
+            if (item.selData.parent_id) {
+                const parentThreeJsGroup = SceneManager.findObjectByPvId(item.selData.parent_id);
                 if (parentThreeJsGroup) {
-                    parentWorldMatrix = parentThreeJsGroup.matrixWorld.clone();
+                    parentInverse.copy(parentThreeJsGroup.matrixWorld).invert();
                 }
             }
         }
-        
-        // --- Calculate the New LOCAL Matrix ---
-        const parentWorldMatrixInv = parentWorldMatrix.invert();
-        const finalLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentWorldMatrixInv, finalWorldMatrix);
-        
-        // --- Decompose to get local position, rotation, scale ---
+
+        // 3. Calculate the new LOCAL matrix. This is the crucial step.
+        // newLocalMatrix = parentWorldMatrix^-1 * newWorldMatrix
+        const newLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentInverse, newWorldMatrix);
+
+        // 4. Decompose to get local position, rotation, scale for the backend.
         const pos = new THREE.Vector3();
         const rot = new THREE.Quaternion();
         const scl = new THREE.Vector3();
-        finalLocalMatrix.decompose(pos, rot, scl);
+        newLocalMatrix.decompose(pos, rot, scl);
         const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
-
-        // This update structure now works for ALL physical volumes, procedural or not.
-        // We are directly setting their new local transform.
+        
         updates.push({
-            id: pvId,
-            name: null,
+            id: pvId, // Send the canonical ID to the backend
+            name: null, // Name is not changed here
             position: { x: pos.x, y: pos.y, z: pos.z },
             rotation: { x: euler.x, y: euler.y, z: euler.z },
             scale:    { x: scl.x, y: scl.y, z: scl.z }

@@ -121,7 +121,7 @@ export function initScene(callbacks) {
         }
         
         _selectedThreeObjects.forEach(group => {
-            const ownerId = group.userData.owner_pv_id || group.userData.id;
+            const ownerId = group.userData.id;
             const ownerObject = findObjectByPvId(ownerId);
             if (ownerObject && !initialTransforms.has(ownerId)) {
                 initialTransforms.set(ownerId, ownerObject.clone());
@@ -152,11 +152,12 @@ export function initScene(callbacks) {
 
         // This single block now handles all cases: single, multi, procedural, and mixed.
         if (object === gizmoAttachmentHelper && initialTransforms.has('helper')) {
+            
             // --- This is a multi-object or procedural transform ---
             const helperStart = initialTransforms.get('helper');
             const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
             const deltaMatrix = new THREE.Matrix4().multiplyMatrices(gizmoAttachmentHelper.matrixWorld, helperStartMatrixInv);
-
+            
             // Iterate over the initial transforms we stored. The keys are the unique IDs
             // of the top-level objects we are transforming.
             initialTransforms.forEach((initialObjectState, objectId) => {
@@ -600,6 +601,23 @@ function isObjectGloballyVisible(object) {
     }
     // If we reached the top of the scene without finding an invisible parent, it's visible.
     return true;
+}
+
+/**
+ * Finds the first THREE.Group instance in the scene that corresponds to a
+ * given canonical PV ID.
+ * @param {string} canonicalId - The canonical UUID of the PhysicalVolumePlacement.
+ * @returns {THREE.Group | null}
+ */
+export function findFirstInstanceByCanonicalId(canonicalId) {
+    let foundObject = null;
+    geometryGroup.traverse(child => {
+        if (foundObject) return; // Stop searching once we've found one
+        if (child.isGroup && child.userData && child.userData.canonical_id === canonicalId) {
+            foundObject = child;
+        }
+    });
+    return foundObject;
 }
 
 // Helper function to find a mesh by its PV ID
