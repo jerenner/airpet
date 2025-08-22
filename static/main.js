@@ -1023,29 +1023,13 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
     let clickedItemInstanceId = null;
-    let clickedItemCanonicalId = null;
     
     if (clickedMesh) {
         const userData = clickedMesh.userData;
-
-        // Always roll up to the owner if it exists. 
-        // The owner is the top-level selectable item from the hierarchy 
-        // (e.g., the assembly placement). If there's no owner, it's a top-level item itself.
-        //console.log("userdata",userData)
-        // clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
-        // if(userData.is_procedural_instance || userData.is_assembly_instance) {
-        //     clickedItemCanonicalId = userData.owner_pv_id || userData.canonical_id;
-        // }
-        // else {
-        //     clickedItemCanonicalId = userData.canonical_id;
-        // }
-        clickedItemCanonicalId = userData.canonical_id
         clickedItemInstanceId = userData.id
-        //console.log("Clicked",clickedItemCanonicalId)
-
     }
 
-    if (clickedItemInstanceId && clickedItemCanonicalId) {
+    if (clickedItemInstanceId) {
         const existingIndex = currentSelection.findIndex(item => item.id === clickedItemInstanceId);
         
         if (isCtrlHeld) {
