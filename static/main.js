@@ -432,7 +432,23 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
     // 5. Restore selection and repopulate inspector ---
     restoreSelection(selectionToRestore);
+
+    // 6. Re-apply persistent visibility state ---
+    restoreVisibility();
     
+}
+
+function restoreVisibility() {
+
+    // Iterate through the list of hidden IDs and apply the visibility state.
+    const hiddenPvIds = SceneManager.getHiddenPvIds();
+    if (hiddenPvIds.size > 0) {
+        console.log("Re-applying visibility state for", hiddenPvIds.size, "objects.");
+        hiddenPvIds.forEach(pvId => {
+            SceneManager.setPVVisibility(pvId, false);
+            UIManager.setTreeItemVisibility(pvId, false);
+        });
+    }
 }
 
 function restoreSelection(selectionToRestore) {
@@ -537,6 +553,9 @@ function syncUIWithState_shallow(responseData) {
     // 5. Restore selection and repopulate inspector ---
     const selectionToRestore = AppState.selectedHierarchyItems;
     restoreSelection(selectionToRestore);
+
+    // 6. Re-apply persistent visibility state ---
+    restoreVisibility();
     
 }
 

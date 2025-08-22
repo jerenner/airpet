@@ -538,6 +538,9 @@ export function setPVVisibility(pvId, isVisible) {
     }
 }
 
+export function getHiddenPvIds() {
+    return hiddenPvIds;
+}
 
 export function setAllPVVisibility(isVisible, projectState) {
     
@@ -1958,24 +1961,6 @@ export function renderObjects(pvDescriptions, projectState) {
 
     // IMPORTANT: Update world matrices for the entire hierarchy
     geometryGroup.updateMatrixWorld(true);
-
-    // --- Re-apply persistent visibility state ---
-    // After the entire scene has been constructed from the new description,
-    // iterate through our master list of hidden IDs and apply the visibility state.
-    if (hiddenPvIds.size > 0) {
-        console.log("[SceneManager] Re-applying visibility state for", hiddenPvIds.size, "objects.");
-        hiddenPvIds.forEach(pvId => {
-            const group = findObjectByPvId(pvId);
-            if (group) {
-                // Hide the meshes within the group        
-                group.children.forEach(child => {
-                    if (child.isMesh || child.isLineSegments) {
-                        child.visible = false;
-                    }
-                });
-            }
-        });
-    }
 
     console.log("[SceneManager] Rendered objects with nested hierarchy. Total top-level:", geometryGroup.children.length);
 }
