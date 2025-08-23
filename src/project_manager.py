@@ -1287,6 +1287,8 @@ class ProjectManager:
             # Apply all updates.
             for update_data in updates_list:
                 pv_id = update_data.get('id')
+                if not pv_id: continue
+
                 new_name = update_data.get('name')
                 new_position = update_data.get('position')
                 new_rotation = update_data.get('rotation')
@@ -1304,7 +1306,7 @@ class ProjectManager:
             return False, None
         
         # --- Return the patch data  ---
-        # (For now, do not attempt to patch, as one transformation may affect several PVs
+        # (For now, do not attempt to patch the scene, as one transformation may affect several PVs
         #  and this is not yet accounted for.)
         # scene_patch = {
         #     "updated_transforms": [
@@ -1316,10 +1318,18 @@ class ProjectManager:
         #         } for pv in updated_pv_objects
         #     ]
         # }
+
+        # This part is for updating the local data model (AppState)
+        project_state_patch = {
+            "updated": {
+                # We need to send the full PV object so the frontend can replace it
+                "physical_volumes": {pv.id: pv.to_dict() for pv in updated_pv_objects}
+            }
+        }
         
         # If everything succeeded, capture the final state and return
         self._capture_history_state(f"Batch update to {len(updated_pv_objects)} PVs")
-        return True
+        return True, project_state_patch
 
     def add_assembly(self, name_suggestion, placements_data):
         if not self.current_geometry_state:

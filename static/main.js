@@ -490,30 +490,68 @@ function syncUIWithState_shallow(responseData) {
     const patch = responseData.patch;
 
     // Apply project state patch
-    const projectPatch = responseData.patch.project_state || {};
-    if (projectPatch.deleted) {
-        for (const [category, idList] of Object.entries(projectPatch.deleted)) {
-            if (!idList || idList.length === 0) continue;
-            
-            // Map the category to the correct AppState dictionary
-            const targetDictName = category === 'physical_volumes' ? null : category;
-            if (targetDictName && AppState.currentProjectState[targetDictName]) {
-                idList.forEach(id => {
-                    delete AppState.currentProjectState[targetDictName][id];
-                });
-            } else if (category === 'physical_volumes') {
-                // Need to find and remove PVs from their parents
-                idList.forEach(pvIdToDelete => {
-                    for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
-                        if (lv.content_type === 'physvol') {
-                            lv.content = lv.content.filter(pv => pv.id !== pvIdToDelete);
+    if (patch.project_state) {
+        const projectPatch = patch.project_state;
+
+        // Process deletions
+        if (projectPatch.deleted) {
+            for (const [category, idList] of Object.entries(projectPatch.deleted)) {
+                if (!idList || idList.length === 0) continue;
+                
+                // Map the category to the correct AppState dictionary
+                const targetDictName = category === 'physical_volumes' ? null : category;
+                if (targetDictName && AppState.currentProjectState[targetDictName]) {
+                    idList.forEach(id => {
+                        delete AppState.currentProjectState[targetDictName][id];
+                    });
+                } else if (category === 'physical_volumes') {
+                    // Need to find and remove PVs from their parents
+                    idList.forEach(pvIdToDelete => {
+                        for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
+                            if (lv.content_type === 'physvol') {
+                                lv.content = lv.content.filter(pv => pv.id !== pvIdToDelete);
+                            }
+                        }
+                        // Also check assemblies
+                        for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
+                            asm.placements = asm.placements.filter(pv => pv.id !== pvIdToDelete);
+                        }
+                    });
+                }
+            }
+        }
+
+        // Process updates
+        if (projectPatch.updated && projectPatch.updated.physical_volumes) {
+            for (const [pvId, updatedPvData] of Object.entries(projectPatch.updated.physical_volumes)) {
+                let found = false;
+                
+                // Search in Logical Volumes
+                for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
+                    if (lv.content_type === 'physvol') {
+                        const index = lv.content.findIndex(pv => pv.id === pvId);
+                        if (index !== -1) {
+                            // Found it! Replace the old object with the new one.
+                            lv.content[index] = updatedPvData;
+                            found = true;
+                            break;
                         }
                     }
-                    // Also check assemblies
+                }
+                
+                // If not found, search in Assemblies
+                if (!found) {
                     for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
-                        asm.placements = asm.placements.filter(pv => pv.id !== pvIdToDelete);
+                        const index = asm.placements.findIndex(pv => pv.id === pvId);
+                        if (index !== -1) {
+                            // Found it! Replace the old object with the new one.
+                            asm.placements[index] = updatedPvData;
+                            found = true;
+                            break;
+                        }
                     }
-                });
+                }
+                if (!found) console.warn(`Could not find PV with ID ${pvId} in AppState to apply update.`);
             }
         }
     }
