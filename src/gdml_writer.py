@@ -3,7 +3,8 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import math
 from .geometry_types import (
-    DEFAULT_OUTPUT_LUNIT, DEFAULT_OUTPUT_AUNIT, convert_from_internal_units
+    DEFAULT_OUTPUT_LUNIT, DEFAULT_OUTPUT_AUNIT, convert_from_internal_units,
+    Assembly, LogicalVolume
 )
 
 class GDMLWriter:
@@ -559,31 +560,94 @@ class GDMLWriter:
         pos_attrs["unit"] = "mm" # All internal units are mm
         ET.SubElement(define_el, "position", pos_attrs)
 
+    def _topological_sort_structures(self):
+        """
+        Sorts ALL structural elements (LVs and Assemblies) so that dependencies
+        are defined before they are used. Returns a single ordered list of objects.
+        """
+        all_lvs = self.geometry_state.logical_volumes
+        all_asms = self.geometry_state.assemblies
+        all_structures = {**all_lvs, **all_asms}
+
+        # 1. Build a unified dependency graph.
+        # Key: parent name, Value: set of child names (can be LV or Assembly)
+        dependencies = {name: set() for name in all_structures}
+
+        for name, struct_obj in all_structures.items():
+            child_refs = set()
+            
+            # Get children refs from either LV or Assembly
+            if isinstance(struct_obj, LogicalVolume):
+                if struct_obj.content_type == 'physvol':
+                    for pv in struct_obj.content:
+                        child_refs.add(pv.volume_ref)
+                elif struct_obj.content: # Procedural
+                    child_refs.add(struct_obj.content.volume_ref)
+            elif isinstance(struct_obj, Assembly):
+                for pv in struct_obj.placements:
+                    child_refs.add(pv.volume_ref)
+
+            # Populate the dependency graph
+            for child_ref in child_refs:
+                if child_ref in all_structures:
+                    # 'name' depends on 'child_ref'.
+                    dependencies[name].add(child_ref)
+        
+        # 2. Perform the topological sort
+        sorted_names = []
+        visited = set()
+        
+        def visit(name):
+            if name in visited:
+                return
+            if name not in dependencies: # Should not happen, but safe
+                return
+
+            # Recursively visit all children first
+            for child_name in dependencies[name]:
+                visit(child_name)
+            
+            visited.add(name)
+            sorted_names.append(name)
+
+        for name in all_structures:
+            if name not in visited:
+                visit(name)
+        
+        # 3. Return the list of actual objects in the correct order
+        return [all_structures[name] for name in sorted_names]
+
     def _add_structure(self):
         if not self.geometry_state.logical_volumes: return
         structure_el = ET.SubElement(self.root, "structure")
 
-        # First, write all assembly definitions
-        for asm_name, asm_obj in self.geometry_state.assemblies.items():
-            asm_el = ET.SubElement(structure_el, "assembly", {"name": asm_name})
-            for pv_obj in asm_obj.placements:
-                self._write_physvol_element(asm_el, pv_obj)
+        # Get a single, fully sorted list of all structural objects.
+        sorted_structures = self._topological_sort_structures()
 
-        # Then, write all logical volume definitions and their content
-        for lv_name, lv_obj in self.geometry_state.logical_volumes.items():
-            lv_el = ET.SubElement(structure_el, "volume", {"name": lv_name})
-            ET.SubElement(lv_el, "materialref", {"ref": lv_obj.material_ref})
-            ET.SubElement(lv_el, "solidref", {"ref": lv_obj.solid_ref})
+        # Now, iterate through the sorted list and write each object
+        # based on its type (Assembly or LogicalVolume).
+        for struct_obj in sorted_structures:
+            if isinstance(struct_obj, Assembly):
+                # Write the assembly
+                asm_el = ET.SubElement(structure_el, "assembly", {"name": struct_obj.name})
+                for pv_obj in struct_obj.placements:
+                    self._write_physvol_element(asm_el, pv_obj)
             
-            if lv_obj.content_type == 'physvol':
-                for pv_obj in lv_obj.content:
-                    self._write_physvol_element(lv_el, pv_obj)
-            elif lv_obj.content_type == 'division':
-                self._write_divisionvol(lv_el, lv_obj.content)
-            elif lv_obj.content_type == 'replica':
-                self._write_replicavol(lv_el, lv_obj.content)
-            elif lv_obj.content_type == 'parameterised':
-                self._write_paramvol(lv_el, lv_obj.content)
+            elif isinstance(struct_obj, LogicalVolume):
+                # Write the logical volume
+                lv_el = ET.SubElement(structure_el, "volume", {"name": struct_obj.name})
+                ET.SubElement(lv_el, "materialref", {"ref": struct_obj.material_ref})
+                ET.SubElement(lv_el, "solidref", {"ref": struct_obj.solid_ref})
+                
+                if struct_obj.content_type == 'physvol':
+                    for pv_obj in struct_obj.content:
+                        self._write_physvol_element(lv_el, pv_obj)
+                elif struct_obj.content_type == 'division':
+                    self._write_divisionvol(lv_el, struct_obj.content)
+                elif struct_obj.content_type == 'replica':
+                    self._write_replicavol(lv_el, struct_obj.content)
+                elif struct_obj.content_type == 'parameterised':
+                    self._write_paramvol(lv_el, struct_obj.content)
 
         # Finally, write all surface links
         for name, surf in self.geometry_state.skin_surfaces.items():
