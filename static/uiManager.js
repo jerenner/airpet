@@ -1237,11 +1237,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         if(!hideDeleteButton) {
             item.addEventListener('dblclick', (event) => {
                 event.stopPropagation();
-                // We need to find the parent LV name.
-                const parentLV = findParentLV(item);
-                if (parentLV) {
-                    callbacks.onEditPVClicked(item.dataset, item.appData, parentLV.dataset.name);
-                }
+                callbacks.onEditPVClicked(item.dataset, item.appData);
             });
         }
     }

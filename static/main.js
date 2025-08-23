@@ -415,10 +415,8 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
     // 2. Re-render the 3D scene
     if (responseData.scene_update) {
-        console.log("Rendering objects", responseData.scene_update)
         SceneManager.renderObjects(AppState.currentProjectScene, AppState.currentProjectState);
     } else {
-        console.log("Clearing scene: no update")
         SceneManager.clearScene(); // Ensure scene is cleared if there's no update
     }
 
@@ -1428,8 +1426,8 @@ function handleAddPV() {
     PVEditor.show(null, null, AppState.currentProjectState, parentContext);
 }
 
-function handleEditPV(pvData, lvData, parentLVName) {
-    PVEditor.show(pvData, lvData, AppState.currentProjectState, { name: parentLVName });
+function handleEditPV(pvData, lvData) {
+    PVEditor.show(pvData, lvData, AppState.currentProjectState);
 }
 
 async function handlePVEditorConfirm(data) {

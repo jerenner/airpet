@@ -58,9 +58,9 @@ export function initPVEditor(callbacks) {
     console.log("Physical Volume Editor Initialized.");
 }
 
-export function show(pvData = null, lvData = null, projectState = null, parentContext = null) {
-    if (!projectState || !parentContext) {
-        alert("Cannot open PV Editor without project state and a parent volume.");
+export function show(pvData = null, lvData = null, projectState = null) {
+    if (!projectState) {
+        alert("Cannot open PV Editor without project state.");
         return;
     }
     currentProjectState = projectState;
@@ -96,14 +96,14 @@ export function show(pvData = null, lvData = null, projectState = null, parentCo
 
         isEditMode = true;
         editingPVId = pvData.id;
-        console.log("Editing",editingPVId)
 
         titleElement.textContent = `Edit Placement: '${pvData.name}'`;
         nameInput.value = pvData.name;
         confirmButton.textContent = "Update Placement";
 
         // Set and disable the parent LV dropdown
-        pvParentLVSelect.value = lvData.parent_lv_name;
+        const pvParent = findParentPV(lvData.volume_ref,currentProjectState)
+        pvParentLVSelect.value = pvParent.parent_lv_name;
         pvParentLVSelect.disabled = true;
 
         // Set and disable the placed LV dropdown
@@ -133,16 +133,24 @@ export function show(pvData = null, lvData = null, projectState = null, parentCo
         pvParentLVSelect.disabled = false; // Parent LV is selectable
         lvSelect.disabled = false;         // LV is selectable
 
-        // Correctly check if the parentContext name exists in the list of valid parents.
-        if (parentContext && parentCandidates.includes(parentContext.name)) {
-            pvParentLVSelect.value = parentContext.name;
-        } else if (worldRef && parentCandidates.includes(worldRef)) {
-            pvParentLVSelect.value = worldRef; // Fallback to world
-        }
-
         lvSelect.dispatchEvent(new Event('change')); // Trigger change to check initially selected LV
     }
     modalElement.style.display = 'block';
+}
+
+function findParentPV(lvRef, projectState) {
+    // This helper needs to search ALL placements, including those inside assemblies
+    const allPVs = [];
+    for (const lv of Object.values(projectState.logical_volumes)) {
+        if (lv.content_type === 'physvol') {
+            allPVs.push(...lv.content);
+        }
+    }
+    for (const asm of Object.values(projectState.assemblies)) {
+        allPVs.push(...asm.placements);
+    }
+    
+    return allPVs.find(pv => pv.volume_ref === lvRef);
 }
 
 // Central function to update the list of valid parents
