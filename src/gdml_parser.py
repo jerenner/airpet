@@ -1022,14 +1022,34 @@ class GDMLParser:
             dimensions_type = None
             dimensions = {}
 
-            # Find position and dimension tags inside <parameters>
+            # Find position and rotation tags inside <parameters>
             pos_el = params_el.find('position')
             posref_el = params_el.find('positionref')
+            rot_el = params_el.find('rotation')
+            rotref_el = params_el.find('rotationref')
 
+            position = None
             if posref_el is not None:
-                position = posref_el.get('ref')
+                # This is a reference to a global define.
+                position = self._evaluate_name(posref_el.get('ref'))
             elif pos_el is not None:
-                position = {k: v for k, v in pos_el.attrib.items() if k != 'unit'}
+                # This is an inline definition. Use its x, y, z attributes directly.
+                # The 'name' attribute is ignored for evaluation.
+                position = {
+                    'x': pos_el.get('x', '0'),
+                    'y': pos_el.get('y', '0'),
+                    'z': pos_el.get('z', '0')
+                }
+            
+            rotation = None
+            if rotref_el is not None:
+                rotation = self._evaluate_name(rotref_el.get('ref'))
+            elif rot_el is not None:
+                rotation = {
+                    'x': rot_el.get('x', '0'),
+                    'y': rot_el.get('y', '0'),
+                    'z': rot_el.get('z', '0')
+                }
 
             # Find the first dimensions tag (e.g., <box_dimensions>, <tube_dimensions>)
             for child in params_el:
@@ -1051,7 +1071,7 @@ class GDMLParser:
                     break # Found it, stop searching
 
             if dimensions_type: # Position can be optional (defaults to origin)
-                param_set = Parameterisation(number, position, dimensions_type, dimensions)
+                param_set = Parameterisation(number, position, dimensions_type, dimensions, rotation)
                 param_vol_obj.add_parameter_set(param_set)
         
         return param_vol_obj
