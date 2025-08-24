@@ -3,8 +3,10 @@
 import glob
 import json
 import os
+import re
 import requests
 import traceback
+import ollama
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
@@ -863,17 +865,42 @@ def ai_process_prompt_route():
                 )
             )
             ai_json_string = gemini_response.text
+            print(f"GEMINI RESPONSE ({model_name}):\n")
+            print(ai_json_string)
 
         else: # Assume it's an Ollama model
             print(f"Sending prompt to Ollama model: {model_name}")
-            ollama_response = requests.post(
-                'http://localhost:11434/api/generate',
-                json={ "model": model_name, "prompt": full_prompt, "stream": False, "format": "json"},
-                timeout=ai_timeout
-            )
-            ollama_response.raise_for_status()
-            ai_json_string = ollama_response.json().get('response')
-        
+            # messages = [
+            #     {
+            #         "role": "system",
+            #         "content": "You are a helpful assistant. Reasoning: high. Please provide a detailed step-by-step reasoning process before giving the final answer."
+            #     },
+            #     {
+            #         "role": "user",
+            #         "content": full_prompt
+            #     }
+            # ]
+            # ollama_response = requests.post(
+            #     'http://localhost:11434/api/chat',
+            #     json={ "model": model_name,
+            #         "messages": messages, 
+            #         "stream": False, 
+            #         "format": "json",
+            #         "options": {
+            #             "temperature": 0.7,
+            #             "top_p": 0.9,
+            #             "num_ctx": 65536
+            #         }
+            #     },
+            #     timeout=ai_timeout
+            # )
+
+            # Process the response
+            ollama_response = ollama.generate(model=model_name, prompt=full_prompt)
+            ai_json_string = ollama_response['response'].strip()
+            print(f"OLLAMA RESPONSE ({model_name}):\n")
+            print(ai_json_string)
+
         # Step 3: Parse and process the response using a new ProjectManager method
         ai_data = json.loads(ai_json_string)
         success, error_msg = project_manager.process_ai_response(ai_data)
@@ -883,10 +910,29 @@ def ai_process_prompt_route():
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to process AI response."}), 500
 
+            # else:
+            #     print(f"Request failed with status code: {ollama_response.status_code}")
+            #     print(ollama_response.text)
+
+            #ollama_response.raise_for_status()
+            # print(ollama_response.json().get('response'))
+            # response_text = ollama_response.json().get('response').strip()
+            # print("\n\nTEXT")
+            # print(response_text)
+
+            # # Extract JSON from Markdown code fences if present
+            # json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            # if json_match:
+            #     json_text = json_match.group(1).strip()
+            # else:
+            #     json_text = response_text  # Fallback: try parsing raw response
+
     except requests.exceptions.RequestException as e:
         return jsonify({"success": False, "error": f"Could not connect to AI service: {e}"}), 500
     except json.JSONDecodeError:
         return jsonify({"success": False, "error": "AI returned invalid JSON."}), 500
+    except ollama.ResponseError as e:
+                print('Ollama error:', e.error)
     except Exception as e:
         import traceback
         traceback.print_exc()

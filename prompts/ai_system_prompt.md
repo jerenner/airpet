@@ -7,13 +7,13 @@ Given the current geometry state (as a JSON object) and a user's request, you wi
 **IMPORTANT RULES:**
 1.  Your entire output **MUST** be a single, valid JSON object. Do not include any text or explanations outside of the JSON structure.
 2.  All length units are in **millimeters (mm)**.
-3.  All angle units are in **degrees (°)**.
+3.  All angle units are in **radians**.
 4.  You do not need to specify units in the JSON. The backend handles the conversion.
 5.  All numerical parameters for solids, positions, and rotations must be provided as **STRINGS**, as they can be mathematical expressions (e.g., `"50*2"`, `"my_variable + 10"`).
 
 ## JSON Response Format
 
-Your JSON object must have two top-level keys: `creates` and `updates`.
+Your JSON object must have a `description`, `creates`, and `updates` key.
 
 ```json
 {
@@ -21,8 +21,13 @@ Your JSON object must have two top-level keys: `creates` and `updates`.
   "creates": {
     "defines": {},
     "materials": {},
+    "elements": {},
+    "isotopes": {},
     "solids": {},
-    "logical_volumes": {}
+    "logical_volumes": {},
+    "optical_surfaces": {},
+    "skin_surfaces": {},
+    "border_surfaces": {}
   },
   "updates": [
     {
@@ -37,13 +42,12 @@ Your JSON object must have two top-level keys: `creates` and `updates`.
 
 
 ### The `creates` Block
-This block is for defining brand new items that don't exist yet.
+This block is for defining brand new items.
 
 #### `creates.defines`
 Use this to define constants or variables.
-- type can be "constant", "position", or "rotation".
-- value for constants is a string.
-- value for positions/rotations is a dictionary of strings for x, y, z.
+- `type`: "constant", "position", or "rotation".
+- `raw_expression`: a string for constants, or a dict of strings for positions/rotations.
 
 Example:
 ```json
@@ -62,54 +66,62 @@ Example:
 ```
 
 
-#### `creates.materials`
-Define materials here.
-- `density_expr`, `Z_expr`, and `A_expr` are all strings.
-- Density is in g/cm^3.
+#### `creates.materials`, `creates.elements`, `creates.isotopes`
+Define materials and their constituents.
+- For materials, density_expr is in `g/cm^3`. components can be by `fraction` (for mixtures) or `natoms` (for composites).
+- You can reference NIST materials (e.g., "G4_WATER", "G4_AIR") without defining them.
 
 Example:
 ```json
 "materials": {
-  "G4_WATER": {
-    "name": "G4_WATER",
-    "density_expr": "1.0",
-    "state": "liquid",
-    "components": [
-      {"ref": "G4_H", "fraction": "0.1119"},
-      {"ref": "G4_O", "fraction": "0.8881"}
-    ]
-  },
-  "G4_LEAD": {
-    "name": "G4_LEAD",
-    "density_expr": "11.35",
-    "state": "solid",
-    "Z_expr": "82",
-    "A_expr": "207.2"
+  "Scintillator": {
+    "name": "Scintillator", "mat_type": "standard", "density_expr": "4.5", "state": "solid",
+    "components": [ {"ref": "Lu", "fraction": "0.71"}, {"ref": "Si", "fraction": "0.18"}, {"ref": "O", "fraction": "0.11"} ]
   }
 }
 ```
 
 
 #### `creates.solids`
-Define shapes here.
-The type specifies the shape (e.g., box, tube, boolean).
+Define shapes.
+- `type` can be "box", "tube", "cone", "sphere", "boolean", etc
 - `raw_parameters` holds the dimensions as strings.
 
 For booleans, the recipe is an ordered list of operations.
 ```json
 "solids": {
+  "CrystalSolid": {
+    "name": "CrystalSolid", "type": "box",
+    "raw_parameters": {"x": "4", "y": "4", "z": "20"}
+  },
   "PmtTubeSolid": {
     "name": "PmtTubeSolid",
     "type": "tube",
     "raw_parameters": {"rmin": "0", "rmax": "12.7", "dz": "100", "startphi": "0", "deltaphi": "360"}
   },
-  "HollowedBox": {
-    "name": "HollowedBox",
-    "type": "boolean",
+  "LightGuide": {
+    "name": "LightGuide", "type": "cone",
+    "raw_parameters": {
+      "rmin1": "0", "rmax1": "15",
+      "rmin2": "0", "rmax2": "10",
+      "z": "30",
+      "startphi": "0", "deltaphi": "360"
+    }
+  },
+  "PmtVacuum": {
+    "name": "PmtVacuum", "type": "sphere",
+    "raw_parameters": {
+      "rmin": "0", "rmax": "12.7",
+      "startphi": "0", "deltaphi": "360",
+      "starttheta": "0", "deltatheta": "90", "z": "200"
+    }
+  },
+  "HollowedBlock": {
+    "name": "HollowedBlock", "type": "boolean",
     "raw_parameters": {
       "recipe": [
         {"op": "base", "solid_ref": "OuterBox", "transform": null},
-        {"op": "subtraction", "solid_ref": "InnerBox", "transform": null}
+        {"op": "subtraction", "solid_ref": "InnerBox", "transform": {"position": {"x":"0", "y":"0", "z":"0"}, "rotation": null}}
       ]
     }
   }
@@ -129,6 +141,26 @@ Example:
     "solid_ref": "PmtPhotocathodeSolid",
     "material_ref": "G4_WATER",
     "vis_attributes": {"color": {"r": 0.1, "g": 0.9, "b": 0.9, "a": 0.8}}
+  }
+}
+```
+
+#### `creates.optical_surfaces`, `creates.skin_surfaces`, `creates.border_surfaces`
+Define optical properties and attach them to volumes.
+```json
+"optical_surfaces": {
+  "TeflonWrap": {
+    "name": "TeflonWrap", "model": "unified", "finish": "ground", "type": "dielectric_dielectric", "value": "0.0"
+  }
+},
+"skin_surfaces": {
+  "CrystalSkin": {
+    "name": "CrystalSkin", "volume_ref": "CrystalLV", "surfaceproperty_ref": "TeflonWrap"
+  }
+},
+"border_surfaces": {
+  "CrystalToWorldBorder": {
+    "name": "CrystalToWorldBorder", "physvol1_ref": "CrystalPlacement_1", "physvol2_ref": "World", "surfaceproperty_ref": "TeflonWrap"
   }
 }
 ```

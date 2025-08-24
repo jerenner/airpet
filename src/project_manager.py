@@ -222,7 +222,12 @@ class ProjectManager:
         evaluator.clear_symbols() # Clear old symbols
 
         # Helper function for evaluating transforms ##
-        def evaluate_transform_part(part_data, default_val):
+        def evaluate_transform_part(part_data, default_val, rotation=False):
+
+            # Negate Euler angles for rotations
+            rotation_factor = 1
+            if(rotation): rotation_factor = -1
+
             if isinstance(part_data, str): # It's a reference to a define
                 return evaluator.get_symbol(part_data, default_val)
             elif isinstance(part_data, dict): # It's a dict of expressions
@@ -231,9 +236,9 @@ class ProjectManager:
                     try:
                         # Check if it's already a number
                         if isinstance(raw_expr, (int, float)):
-                            evaluated_dict[axis] = raw_expr
+                            evaluated_dict[axis] = raw_expr*rotation_factor
                         else:
-                            evaluated_dict[axis] = evaluator.evaluate(str(raw_expr))[1]
+                            evaluated_dict[axis] = evaluator.evaluate(str(raw_expr))[1]*rotation_factor
                     except Exception:
                         evaluated_dict[axis] = default_val.get(axis, 0)
                 return evaluated_dict
@@ -265,8 +270,7 @@ class ProjectManager:
                                 _, val = evaluator.evaluate(expr_to_eval)
                                 val_dict[axis] = val
 
-                                # NOTE: Account for an apparent difference in rotation angle sense
-                                #       in THREE.js and GDML
+                                # NOTE: Account for a difference in rotation angle sense in THREE.js and GDML
                                 if(define_obj.type == 'rotation'): val_dict[axis] *= -1
 
                         # Set define value and add to symbol table
@@ -396,9 +400,9 @@ class ProjectManager:
                 ep['solid_ref'] = p.get('solid_ref')
                 transform = p.get('transform', {})
                 ep['transform'] = {
-                    '_evaluated_position': evaluate_transform_part(transform.get('position'), {'x': 0, 'y': 0, 'z': 0}),
-                    '_evaluated_rotation': evaluate_transform_part(transform.get('rotation'), {'x': 0, 'y': 0, 'z': 0}),
-                    '_evaluated_scale': evaluate_transform_part(transform.get('scale'), {'x': 1, 'y': 1, 'z': 1})
+                    '_evaluated_position': evaluate_transform_part(transform.get('position'), {'x': 0, 'y': 0, 'z': 0}, rotation=False),
+                    '_evaluated_rotation': evaluate_transform_part(transform.get('rotation'), {'x': 0, 'y': 0, 'z': 0}, rotation=True),
+                    '_evaluated_scale': evaluate_transform_part(transform.get('scale'), {'x': 1, 'y': 1, 'z': 1}, rotation=False)
                 }
 
             elif solid_type == 'box':
@@ -408,8 +412,8 @@ class ProjectManager:
             
             elif solid_type == 'tube':
                 ep['rmin'] = p.get('rmin', 0)
-                ep['rmax'] = p.get('rmax', 0)
-                ep['z'] = p.get('z', 0)
+                ep['rmax'] = p.get('rmax', 10)
+                ep['z'] = p.get('z', 20)
                 ep['startphi'] = p.get('startphi', 0)
                 ep['deltaphi'] = p.get('deltaphi', 2 * math.pi) # Default is a full circle
 
@@ -547,9 +551,9 @@ class ProjectManager:
                     except Exception as e:
                         pv.copy_number = 0
                     
-                    pv._evaluated_position = evaluate_transform_part(pv.position, {'x': 0, 'y': 0, 'z': 0})
-                    pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x': 0, 'y': 0, 'z': 0})
-                    pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x': 1, 'y': 1, 'z': 1})
+                    pv._evaluated_position = evaluate_transform_part(pv.position, {'x': 0, 'y': 0, 'z': 0}, rotation=False)
+                    pv._evaluated_rotation = evaluate_transform_part(pv.rotation, {'x': 0, 'y': 0, 'z': 0}, rotation=True)
+                    pv._evaluated_scale = evaluate_transform_part(pv.scale, {'x': 1, 'y': 1, 'z': 1}, rotation=False)
             
             elif lv.content_type in ['replica', 'division', 'parameterised']:
                 # For procedural placements, we need to evaluate their parameters (width, offset, etc.)
@@ -572,9 +576,9 @@ class ProjectManager:
                     
                     # Evaluate replica-specific transforms if they exist
                     if hasattr(proc_obj, 'start_position'):
-                        proc_obj._evaluated_start_position = evaluate_transform_part(proc_obj.start_position, {'x': 0, 'y': 0, 'z': 0})
+                        proc_obj._evaluated_start_position = evaluate_transform_part(proc_obj.start_position, {'x': 0, 'y': 0, 'z': 0}, rotation=False)
                     if hasattr(proc_obj, 'start_rotation'):
-                        proc_obj._evaluated_start_rotation = evaluate_transform_part(proc_obj.start_rotation, {'x': 0, 'y': 0, 'z': 0})
+                        proc_obj._evaluated_start_rotation = evaluate_transform_part(proc_obj.start_rotation, {'x': 0, 'y': 0, 'z': 0}, rotation=True)
 
                     # Add evaluation logic for parameterised volumes
                     if hasattr(proc_obj, 'ncopies'):
@@ -585,8 +589,8 @@ class ProjectManager:
                     if hasattr(proc_obj, 'parameters'):
                         for param_set in proc_obj.parameters:
                             # Evaluate the transform for this instance
-                            param_set._evaluated_position = evaluate_transform_part(param_set.position, {'x': 0, 'y': 0, 'z': 0})
-                            param_set._evaluated_rotation = evaluate_transform_part(param_set.rotation, {'x': 0, 'y': 0, 'z': 0})
+                            param_set._evaluated_position = evaluate_transform_part(param_set.position, {'x': 0, 'y': 0, 'z': 0}, rotation=False)
+                            param_set._evaluated_rotation = evaluate_transform_part(param_set.rotation, {'x': 0, 'y': 0, 'z': 0}, rotation=True)
                             
                             # Evaluate each dimension expression for this instance
                             evaluated_dims = {}

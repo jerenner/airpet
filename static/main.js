@@ -1183,7 +1183,7 @@ function findItemInState(itemCanonicalId) {
 //     }
 
 //     // 2. If the transform is linked to a define, update THAT define's inspector
-//     const euler = new THREE.Euler().setFromQuaternion(liveObject.quaternion, 'ZYX');
+//     const euler = new THREE.Euler().setFromQuaternion(liveObject.quaternion, 'XYZ');
 //     const newPosition = { x: liveObject.position.x, y: liveObject.position.y, z: liveObject.position.z };
 //     const newRotation = { x: euler.x, y: euler.y, z: euler.z };
 
@@ -1243,7 +1243,7 @@ async function handleTransformEnd(transformedObject) {
         const rot = new THREE.Quaternion();
         const scl = new THREE.Vector3();
         newLocalMatrix.decompose(pos, rot, scl);
-        const euler = new THREE.Euler().setFromQuaternion(rot, 'ZYX');
+        const euler = new THREE.Euler().setFromQuaternion(rot, 'XYZ');
         
         updates.push({
             id: pvId, // Send the canonical ID to the backend

@@ -699,19 +699,36 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             geometry = new THREE.BoxGeometry(p.x, p.y, p.z);
             break;
         case 'tube':
-            if (p.rmin <= 1e-9) { // Solid Cylinder
-                geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z, 32, 1, false, p.startphi, p.deltaphi);
+            // The solid cylinder case is correct and does not need to change.
+            if (p.rmin <= 1e-9) { 
+                geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z, 50, 1, false, p.startphi, p.deltaphi);
                 geometry.rotateX(Math.PI / 2);
+
             } else { // Hollow Tube
+                const startAngle = p.startphi;
+                const endAngle = p.startphi + p.deltaphi;
+
+                // --- The robust manual path creation ---
                 const shape = new THREE.Shape();
-                shape.moveTo(p.rmax * Math.cos(p.startphi), p.rmax * Math.sin(p.startphi));
-                shape.absarc(0, 0, p.rmax, p.startphi, p.startphi + p.deltaphi, false);
-                shape.lineTo(p.rmin * Math.cos(p.startphi + p.deltaphi), p.rmin * Math.sin(p.startphi + p.deltaphi));
-                shape.absarc(0, 0, p.rmin, p.startphi + p.deltaphi, p.startphi, true);
+                
+                // 1. Move to the start of the outer arc
+                shape.moveTo(p.rmax * Math.cos(startAngle), p.rmax * Math.sin(startAngle));
+                
+                // 2. Draw the outer arc (CCW)
+                shape.absarc(0, 0, p.rmax, startAngle, endAngle, false); 
+                
+                // 3. Draw a line to the start of the inner arc
+                shape.lineTo(p.rmin * Math.cos(endAngle), p.rmin * Math.sin(endAngle));
+                
+                // 4. Draw the inner arc in the REVERSE direction (CW) to close the shape
+                shape.absarc(0, 0, p.rmin, endAngle, startAngle, true); 
+                
+                // 5. Close the path with a final line back to the start
                 shape.closePath();
-                const extrudeSettings = { steps: 1, depth: p.z, bevelEnabled: false };
+
+                const extrudeSettings = { depth: p.z, bevelEnabled: false };
                 geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-                geometry.translate(0, 0, -p.z/2);
+                geometry.translate(0, 0, -p.z / 2);
             }
             break;
         case 'cone':
@@ -1696,26 +1713,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     return geometry;
 }
 
-/**
- * Applies a GDML transform (position & rotation) to a Three.js mesh.
- * @param {THREE.Mesh} mesh - The mesh to transform.
- * @param {object} transformData - The transform data { position, rotation }.
- */
-function _applyTransform(mesh, transformData) {
-    if (!transformData) return;
-
-    const position = transformData.position || { x: 0, y: 0, z: 0 };
-    const rotation = transformData.rotation || { x: 0, y: 0, z: 0 }; // ZYX Euler
-
-    const posVec = new THREE.Vector3(position.x, position.y, position.z);
-    const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');
-    const quat = new THREE.Quaternion().setFromEuler(euler);
-
-    const matrix = new THREE.Matrix4().compose(posVec, quat, new THREE.Vector3(1, 1, 1));
-    mesh.applyMatrix4(matrix);
-    mesh.updateMatrixWorld(true); // Ensure matrix is up-to-date
-}
-
 
 /**
  * Recursively gets or builds a geometry for a solid.
@@ -1791,7 +1788,7 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
                 const scl = p.transform._evaluated_scale || {x:1, y:1, z:1};
 
                 const positionVec = new THREE.Vector3(pos.x, pos.y, pos.z);
-                const euler = new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX');
+                const euler = new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ');
                 const quaternion = new THREE.Quaternion().setFromEuler(euler);
                 const scaleVec = new THREE.Vector3(scl.x, scl.y, scl.z);
 
@@ -1829,7 +1826,7 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
                 const pos = baseTransform._evaluated_position || {x:0, y:0, z:0};
                 const rot = baseTransform._evaluated_rotation || {x:0, y:0, z:0};
                 resultBrush.position.set(pos.x, pos.y, pos.z);
-                resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+                resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ'));
                 resultBrush.updateMatrixWorld();
             }
 
@@ -1846,7 +1843,7 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
                 const pos = transform._evaluated_position || {x:0, y:0, z:0};
                 const rot = transform._evaluated_rotation || {x:0, y:0, z:0};
                 nextBrush.position.set(pos.x, pos.y, pos.z);
-                nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'ZYX'));
+                nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ'));
                 nextBrush.updateMatrixWorld();
 
                 const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
@@ -1963,7 +1960,7 @@ export function renderObjects(pvDescriptions, projectState) {
             : { x: 1, y: 1, z: 1 };
         
         obj.position.set(position.x, position.y, position.z);
-        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');
+        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
         obj.quaternion.setFromEuler(euler);
         obj.scale.set(scale.x, scale.y, scale.z);
         
@@ -2290,7 +2287,7 @@ function onWindowResize() {
  * Updates a single object's transform from a data object, without needing a full scene rebuild.
  * @param {string} pvId The ID of the physical volume group to update.
  * @param {object} position {x, y, z}
- * @param {object} rotation {x, y, z} in ZYX radians
+ * @param {object} rotation {x, y, z} in XYZ radians
  * @param {object} scale {x, y, z}
  */
 export function updateObjectTransformFromData(pvId, position, rotation, scale) {
@@ -2298,7 +2295,7 @@ export function updateObjectTransformFromData(pvId, position, rotation, scale) {
     if (group) {
         group.position.set(position.x, position.y, position.z);
         
-        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'ZYX');
+        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
         group.quaternion.setFromEuler(euler);
 
         group.scale.set(scale.x, scale.y, scale.z);
