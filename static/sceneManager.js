@@ -700,7 +700,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'tube':
             // The solid cylinder case is correct and does not need to change.
-            if (p.rmin <= 1e-9) { 
+            if (p.rmin <= 1e-9 && Math.abs(p.deltaphi - 6.283185307179586) < 1e-3) { 
                 geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z, 50, 1, false, p.startphi, p.deltaphi);
                 geometry.rotateX(Math.PI / 2);
 

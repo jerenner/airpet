@@ -1249,7 +1249,7 @@ async function handleTransformEnd(transformedObject) {
             id: pvId, // Send the canonical ID to the backend
             name: null, // Name is not changed here
             position: { x: pos.x, y: pos.y, z: pos.z },
-            rotation: { x: euler.x, y: euler.y, z: euler.z },
+            rotation: { x: -euler.x, y: -euler.y, z: -euler.z },
             scale:    { x: scl.x, y: scl.y, z: scl.z }
         });
     }
