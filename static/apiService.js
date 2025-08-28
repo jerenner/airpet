@@ -2,7 +2,7 @@
 
 // --- Configuration ---
 // It's good practice to have the base URL configurable
-const API_BASE_URL = 'http://localhost:5003'; // Empty for same-origin, or e.g., 'http://localhost:5003' if different
+const API_BASE_URL = ''; // Empty for same-origin, or e.g., 'http://localhost:5003' if different
 
 // --- Helper Functions ---
 async function handleResponse(response) {
