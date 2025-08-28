@@ -915,6 +915,8 @@ class GDMLParser:
         direction = {}
         width = "0"
         offset = "0"
+        start_position = None
+        start_rotation = None
 
         # The <replicavol> tag contains a <volumeref> and a <replicate_along_axis> tag.
         volumeref_el = replica_el.find('volumeref')
@@ -933,17 +935,45 @@ class GDMLParser:
 
             width_el = replicator_el.find('width')
             if width_el is not None:
-                width = width_el.get('value', '0')
+                value_str = width_el.get('value', '0')
+                unit_str = width_el.get('unit')
+                if unit_str:
+                    # If a unit is specified, create an expression for evaluation
+                    width = f"({value_str}) * {unit_str}"
+                else:
+                    width = value_str
             
             offset_el = replicator_el.find('offset')
             if offset_el is not None:
-                offset = offset_el.get('value', '0')
+                value_str = offset_el.get('value', '0')
+                unit_str = offset_el.get('unit')
+                if unit_str:
+                    offset = f"({value_str}) * {unit_str}"
+                else:
+                    offset = value_str
+
+            # Also parse the optional starting transform for the replica group
+            pos_el = replicator_el.find('position')
+            posref_el = replicator_el.find('positionref')
+            rot_el = replicator_el.find('rotation')
+            rotref_el = replicator_el.find('rotationref')
+
+            if posref_el is not None:
+                start_position = self._evaluate_name(posref_el.get('ref'))
+            elif pos_el is not None:
+                start_position = {k: v for k, v in pos_el.attrib.items() if k != 'unit'}
+
+            if rotref_el is not None:
+                start_rotation = self._evaluate_name(rotref_el.get('ref'))
+            elif rot_el is not None:
+                start_rotation = {k: v for k, v in rot_el.attrib.items() if k != 'unit'}
 
         if not volume_ref:
             print("Warning: <replicavol> found without a <volumeref>. Skipping.")
             return None
         
-        return ReplicaVolume(name, volume_ref, number_expr, direction, width, offset)
+        return ReplicaVolume(name, volume_ref, number_expr, direction, width, offset,
+                             start_position, start_rotation)
 
     def _parse_division_vol(self, division_el):
         """Parses a <divisionvol> tag and returns a DivisionVolume object."""
