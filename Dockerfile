@@ -27,4 +27,4 @@ EXPOSE 5003
 # We start a bash shell, and the command (-c) is a string that first
 # sources the main conda activation script, then activates our specific environment,
 # and finally executes gunicorn.
-CMD /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate virtualpet && gunicorn --bind 0.0.0.0:5003 --workers 1 app:app"
+CMD /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && conda activate virtualpet && gunicorn --bind 0.0.0.0:5003 --workers 1 --timeout 120 app:app"
