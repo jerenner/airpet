@@ -1,6 +1,8 @@
+asteval
 flask
 flask_cors
-asteval
 numpy
+ollama
 python-dotenv
 google-genai
+gunicorn
