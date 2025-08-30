@@ -7,7 +7,7 @@ Given the current geometry state (as a JSON object) and a user's request, you wi
 **IMPORTANT RULES:**
 1.  Your entire output **MUST** be a single, valid JSON object. Do not include any text or explanations outside of the JSON structure.
 2.  All length units are in **millimeters (mm)**.
-3.  All angle units are in **radians**.
+3.  All angle units are in **radians** (note: the use of "pi" in rotation expressions is valid). All rotation values you provide must follow the **Geant4 GDML convention**. This is an **extrinsic XYZ Euler rotation**, where angles are applied sequentially around the fixed world axes. This is equivalent to a standard graphics **intrinsic ZYX Euler rotation** where the angles for X, Y, and Z have been **negated**. **Therefore, for any rotation, you must provide the standard ZYX Euler angles with each component multiplied by -1.** For example, to make a tube lying along the X-axis (which starts oriented along Z), the correct rotation is `{"x": "0", "y": "-pi/2", "z": "0"}`.
 4.  You do not need to specify units in the JSON. The backend handles the conversion.
 5.  All numerical parameters for solids, positions, and rotations must be provided as **STRINGS**, as they can be mathematical expressions (e.g., `"50*2"`, `"my_variable + 10"`).
 
@@ -48,6 +48,8 @@ This block is for defining brand new items.
 Use this to define constants or variables.
 - `type`: "constant", "position", or "rotation".
 - `raw_expression`: a string for constants, or a dict of strings for positions/rotations.
+- value for positions/rotations is a dictionary of strings for x, y, z.
+- rotation values here MUST also follow the negated ZYX convention.
 
 Example:
 ```json
@@ -67,13 +69,17 @@ Example:
 
 
 #### `creates.materials`, `creates.elements`, `creates.isotopes`
-Define materials and their constituents.
-- For materials, density_expr is in `g/cm^3`. components can be by `fraction` (for mixtures) or `natoms` (for composites).
-- You can reference NIST materials (e.g., "G4_WATER", "G4_AIR") without defining them.
+Define materials and their constituents. For materials, density_expr is in `g/cm^3`. components can be by `fraction` (for mixtures) or `natoms` (for composites). If you need to use a pre-defined NIST material (like "G4_WATER" or "G4_AIR"), you **MUST** create a simple material definition for it. This definition only needs the `name`. Do not add any other properties like density, state, or components.
 
 Example:
 ```json
 "materials": {
+  "G4_WATER": {
+    "name": "G4_WATER"
+  },
+  "G4_LEAD": {
+    "name": "G4_LEAD"
+  },
   "Scintillator": {
     "name": "Scintillator", "mat_type": "standard", "density_expr": "4.5", "state": "solid",
     "components": [ {"ref": "Lu", "fraction": "0.71"}, {"ref": "Si", "fraction": "0.18"}, {"ref": "O", "fraction": "0.11"} ]
@@ -97,7 +103,7 @@ For booleans, the recipe is an ordered list of operations.
   "PmtTubeSolid": {
     "name": "PmtTubeSolid",
     "type": "tube",
-    "raw_parameters": {"rmin": "0", "rmax": "12.7", "dz": "100", "startphi": "0", "deltaphi": "360"}
+    "raw_parameters": {"rmin": "0", "rmax": "12.7", "z": "100", "startphi": "0", "deltaphi": "360"}
   },
   "LightGuide": {
     "name": "LightGuide", "type": "cone",
@@ -173,7 +179,8 @@ This is a list of modifications to make. Placing a volume is an update to its pa
 - `data`: A dictionary defining the physical volume.
 - `name`: A new, unique name for this placement.
 - `volume_ref`: The logical volume you are placing.
-- `position` and `rotation` can be a dictionary of string expressions or the name of a define.
+- `position` can be a dictionary of string expressions or the name of a position define.
+- `rotation` can be a dictionary of string expressions following the negated ZYX convention, or the name of a rotation define.
 
 Example:
 ```json

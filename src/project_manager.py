@@ -1770,14 +1770,14 @@ class ProjectManager:
             # Update solid references within booleans
             if solid.type in ['boolean', 'union', 'subtraction', 'intersection']:
                 if solid.type == 'boolean': # New virtual boolean
-                    for item in solid.parameters.get('recipe', []):
+                    for item in solid.raw_parameters.get('recipe', []):
                         if item['solid_ref'] in rename_map:
                             item['solid_ref'] = rename_map[item['solid_ref']]
                 else: # Old style boolean
-                    if solid.parameters['first_ref'] in rename_map:
-                        solid.parameters['first_ref'] = rename_map[solid.parameters['first_ref']]
-                    if solid.parameters['second_ref'] in rename_map:
-                        solid.parameters['second_ref'] = rename_map[solid.parameters['second_ref']]
+                    if solid.raw_parameters['first_ref'] in rename_map:
+                        solid.raw_parameters['first_ref'] = rename_map[solid.raw_parameters['first_ref']]
+                    if solid.raw_parameters['second_ref'] in rename_map:
+                        solid.raw_parameters['second_ref'] = rename_map[solid.raw_parameters['second_ref']]
 
             new_name = self._generate_unique_name(name, self.current_geometry_state.solids)
             if new_name != name:

@@ -1,5 +1,6 @@
 # FILE: gdml-studio/app.py
 
+import ast
 import glob
 import json
 import os
@@ -966,8 +967,20 @@ def import_ai_json_route():
 
     print("Importing AI Response...");
     try:
-        json_string = file.read().decode('utf-8')
-        ai_data = json.loads(json_string)
+        ai_json_string = file.read().decode('utf-8')
+        ai_data = None
+        try:
+            # First, try the standard, strict JSON parser
+            ai_data = json.loads(ai_json_string)
+        except json.JSONDecodeError:
+            print("AI response was not valid JSON, attempting to parse as Python literal...")
+            try:
+                # If JSON fails, try parsing it as a Python dictionary literal.
+                # This is much safer than eval().
+                ai_data = ast.literal_eval(ai_json_string)
+            except (ValueError, SyntaxError) as e:
+                print(f"Failed to parse AI response as Python literal: {e}")
+                return jsonify({"success": False, "error": "AI returned an invalid JSON or Python dictionary string."}), 500
 
         # Use the existing AI processing logic!
         success, error_msg = project_manager.process_ai_response(ai_data)

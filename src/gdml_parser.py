@@ -784,6 +784,27 @@ class GDMLParser:
             border_surf = BorderSurface(name, pv1_ref, pv2_ref, surface_property_ref)
             self.geometry_state.add_border_surface(border_surf)
 
+    def get_material(self, name):
+        """
+        Intelligently retrieves a material. If not explicitly defined, it checks
+        if it's a NIST material and creates it on-the-fly if so.
+        """
+        # 1. Check if the material is already in our state
+        mat = self.geometry_state.get_material(name)
+        if mat:
+            return mat
+
+        # 2. If not found, check if it's a NIST material by convention
+        if name.startswith("G4_"):
+            print(f"Info: Material '{name}' not found in <materials> block. Assuming it is a NIST material and creating it.")
+            # 3. Create it on the fly and add it to the state
+            new_nist_material = Material(name, mat_type='nist')
+            self.geometry_state.add_material(new_nist_material)
+            return new_nist_material
+
+        # 4. If it's not in the state and not a NIST name, it's an error.
+        raise ValueError(f"Referenced material '{name}' was not found in the <materials> block and is not a valid NIST material name.")
+    
     def _parse_single_lv(self, vol_el):
         name_expr = vol_el.get('name')
         if not name_expr: return
@@ -802,10 +823,17 @@ class GDMLParser:
         
         mat_ref_expr = mat_ref_el.get('ref')
         mat_ref = self._evaluate_name(mat_ref_expr)
+
+        # Attempt to get the material (or create it if it's an undefined NIST material).
+        try:
+            material_obj = self.get_material(mat_ref)
+        except ValueError as e:
+            print(f"Error processing logical volume '{lv_name}': {e}")
+            return
         
         # Avoid re-defining if it already exists (can happen with loops)
         if not self.geometry_state.get_logical_volume(lv_name):
-            lv = LogicalVolume(lv_name, solid_ref, mat_ref)
+            lv = LogicalVolume(lv_name, solid_ref, material_obj.name)
             self.geometry_state.add_logical_volume(lv)
 
     def _parse_single_assembly(self, asm_el):

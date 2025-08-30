@@ -68,8 +68,15 @@ class GDMLWriter:
 
 
     def _add_materials(self):
-        if not (self.geometry_state.materials or self.geometry_state.elements or self.geometry_state.isotopes):
+
+        # Create a temporary list of only non-NIST materials to process
+        standard_materials = {name: mat for name, mat in self.geometry_state.materials.items() if mat.mat_type != 'nist'}
+        
+        if not (standard_materials or self.geometry_state.elements or self.geometry_state.isotopes):
+            # If there are only NIST materials (or no materials at all), we might not even need the <materials> tag.
+            # It's safer to create it an empty one, but for cleanliness we can skip it.
             return
+        
         materials_el = ET.SubElement(self.root, "materials")
         
         # Write isotopes first as they are dependencies for elements
@@ -95,14 +102,14 @@ class GDMLWriter:
             self.written_elements.add(name)
 
         # Write materials, ensuring their element/material dependencies are met
-        for name, mat_obj in self.geometry_state.materials.items():
+        for name, mat_obj in standard_materials.items():
             if name in self.written_materials: continue
             
-            if mat_obj.mat_type == 'nist':
-                # For NIST materials, write only the name and nothing else inside.
-                ET.SubElement(materials_el, "material", {"name": name})
-                self.written_materials.add(name)
-                continue # Move to the next material
+            # if mat_obj.mat_type == 'nist':
+            #     # For NIST materials, write only the name and nothing else inside.
+            #     ET.SubElement(materials_el, "material", {"name": name})
+            #     self.written_materials.add(name)
+            #     continue # Move to the next material
 
             mat_attrs = {"name": name}
             if mat_obj.state: mat_attrs["state"] = mat_obj.state
@@ -203,12 +210,12 @@ class GDMLWriter:
 
                 if isinstance(pos, str):
                     ET.SubElement(boolean_el, "positionref", {"ref": pos})
-                elif isinstance(pos, dict) and any(float(v) != 0 for v in pos.values()):
+                elif isinstance(pos, dict):
                     ET.SubElement(boolean_el, "position", pos)
 
                 if isinstance(rot, str):
                     ET.SubElement(boolean_el, "rotationref", {"ref": rot})
-                elif isinstance(rot, dict) and any(float(v) != 0 for v in rot.values()):
+                elif isinstance(rot, dict):
                     ET.SubElement(boolean_el, "rotation", rot)
             
             # The result of this operation becomes the 'first' solid for the next iteration

@@ -169,10 +169,20 @@ class Material:
 
     @classmethod
     def from_dict(cls, data):
+
+        name = data['name']
+
+        # A material is considered NIST if its name starts with G4_ AND
+        # it has no other defining properties in the dictionary.
+        is_nist_name = name.startswith("G4_")
+        has_no_components = not data.get('components')
+        has_no_z = not data.get('Z') and not data.get('Z_expr')
+        
+        material_type = 'nist' if is_nist_name and has_no_components and has_no_z else 'standard'
         
         instance = cls(
-            name=data['name'], 
-            mat_type=data.get('mat_type', 'standard'),
+            name=name, 
+            mat_type=data.get('mat_type', material_type),
             Z_expr=data.get('Z_expr', str(data.get('Z', ""))), 
             A_expr=data.get('A_expr', str(data.get('A', ""))), 
             density_expr=data.get('density_expr', str(data.get('density', "0.0"))), 

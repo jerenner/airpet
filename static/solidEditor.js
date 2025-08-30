@@ -927,6 +927,23 @@ function rebuildBooleanUI() {
     }
     
     booleanRecipe.forEach((item, index) => {
+
+        // Ensure that every item has a valid transform object with defaults.
+        // This prevents crashes if the transform key has been omitted.
+        if (!item.transform) {
+            item.transform = {
+                position: { x: '0', y: '0', z: '0' },
+                rotation: { x: '0', y: '0', z: '0' }
+            };
+        }
+        // Also ensure the position and rotation keys exist within the transform.
+        if (!item.transform.position) {
+            item.transform.position = { x: '0', y: '0', z: '0' };
+        }
+        if (!item.transform.rotation) {
+            item.transform.rotation = { x: '0', y: '0', z: '0' };
+        }
+        
         const isBase = index === 0;
         const row = document.createElement('div');
         row.className = 'boolean-recipe-row';
