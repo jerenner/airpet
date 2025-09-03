@@ -1065,6 +1065,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'tet': // Tetrahedron
@@ -1099,6 +1102,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         
@@ -1186,6 +1192,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'cutTube':
@@ -1281,39 +1290,28 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'trd': // Trapezoid with parallel z-faces
             {
-                // A Trd can be made with CylinderGeometry with 4 sides.
-                // We need to map Trd params (dx1, dx2, dy1, dy2) to Cylinder params (radiusTop, radiusBottom).
-                // This is only a rough approximation if dx != dy.
-                // For accuracy, we'll build it from vertices.
                 const dx1 = p.dx1; const dx2 = p.dx2;
                 const dy1 = p.dy1; const dy2 = p.dy2;
                 const dz = p.dz;
-                const vertices = [
-                    -dx1, -dy1, -dz, // 0
-                     dx1, -dy1, -dz, // 1
-                     dx1,  dy1, -dz, // 2
-                    -dx1,  dy1, -dz, // 3
-                    -dx2, -dy2,  dz, // 4
-                     dx2, -dy2,  dz, // 5
-                     dx2,  dy2,  dz, // 6
-                    -dx2,  dy2,  dz  // 7
+                
+                const points = [
+                    new THREE.Vector3(-dx1, -dy1, -dz), new THREE.Vector3( dx1, -dy1, -dz),
+                    new THREE.Vector3( dx1,  dy1, -dz), new THREE.Vector3(-dx1,  dy1, -dz),
+                    new THREE.Vector3(-dx2, -dy2,  dz), new THREE.Vector3( dx2, -dy2,  dz),
+                    new THREE.Vector3( dx2,  dy2,  dz), new THREE.Vector3(-dx2,  dy2,  dz)
                 ];
-                const indices = [
-                    0, 1, 2,  0, 2, 3, // bottom face
-                    4, 5, 6,  4, 6, 7, // top face
-                    0, 4, 5,  0, 5, 1, // front face
-                    1, 5, 6,  1, 6, 2, // right face
-                    2, 6, 7,  2, 7, 3, // back face
-                    3, 7, 4,  3, 4, 0  // left face
-                ];
-                geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                geometry.setIndex(indices);
-                geometry.computeVertexNormals();
+                
+                geometry = new ConvexGeometry(points);
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'eltube':
@@ -1406,6 +1404,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'twistedbox':
@@ -1467,6 +1468,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'twistedtrap':
@@ -1557,6 +1561,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'twistedtubs':
@@ -1683,6 +1690,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 geometry.setFromPoints(vertices);
                 geometry.setIndex(indices);
                 geometry.computeVertexNormals();
+
+                // Add dummy UVs to make the geometry compatible with CSG operations.
+                ensureUvAttribute(geometry);
             }
             break;
         case 'arb8':
@@ -1710,6 +1720,13 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             geometry = new THREE.SphereGeometry(10, 8, 8);
             break;
     }
+
+    if (geometry) {
+        // This is a good practice for any geometry that will be used in CSG.
+        // It ensures all face normals are pointing consistently outwards.
+        geometry.computeVertexNormals();
+    }
+    
     return geometry;
 }
 
@@ -1876,6 +1893,64 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
         geometryCache.set(solidName, finalGeometry);
     }
     return finalGeometry;
+}
+
+/**
+ * Ensures a geometry has a UV attribute, which is required by the CSG library.
+ * If it doesn't have one, it creates a dummy UV set.
+ * @param {THREE.BufferGeometry} geometry - The geometry to check.
+ */
+function ensureUvAttribute(geometry) {
+    if (!geometry.attributes.uv) {
+        const vertexCount = geometry.attributes.position.count;
+        const uvs = new Float32Array(vertexCount * 2); // 2 coordinates (u, v) per vertex
+        
+        // You could do more complex mapping here, but for non-textured objects,
+        // (0,0) for every vertex is sufficient to prevent the error.
+        uvs.fill(0); 
+
+        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+}
+
+/**
+ * Automatically frames the camera to fit the entire scene.
+ * This should be called after a new geometry is loaded or imported.
+ */
+export function frameScene() {
+    if (!geometryGroup || geometryGroup.children.length === 0) return;
+
+    // 1. Calculate the bounding box of the entire scene
+    const box = new THREE.Box3().setFromObject(geometryGroup);
+    
+    if (box.isEmpty()) return; // Nothing to frame
+
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+
+    // 2. Adjust camera's far plane to be able to see everything
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const cameraFar = maxDim * 5; // Make it much larger than the scene
+    if(cameraFar < 1000) { cameraFar = 1000; }
+    camera.far = cameraFar;
+    camera.near = cameraFar / 1000; // Keep a reasonable near/far ratio
+    camera.updateProjectionMatrix();
+
+    // 3. Move the camera to a suitable viewing position
+    const fitOffset = 1.2; // Add some padding
+    const distance = (maxDim / 2) * fitOffset / Math.tan(Math.PI * camera.fov / 360);
+    
+    // Position camera away from the center along a diagonal
+    const offset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(distance);
+    camera.position.copy(center).add(offset);
+
+    // 4. Point the camera at the center of the scene
+    orbitControls.target.copy(center);
+    orbitControls.update();
+
+    console.log(`[SceneManager] Framed scene. New camera far plane: ${camera.far}`);
 }
 
 

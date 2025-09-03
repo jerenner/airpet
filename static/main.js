@@ -233,6 +233,7 @@ async function initializeApp() {
         // Update the UI and scene.
         UIManager.updateHierarchy(initialState.project_state,initialState.scene_update);
         SceneManager.renderObjects(initialState.scene_update || [], initialState.project_state);
+        SceneManager.frameScene();
 
     } else {
         // This case should theoretically not be reached anymore, but is good for safety
@@ -416,6 +417,14 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // 2. Re-render the 3D scene
     if (responseData.scene_update) {
         SceneManager.renderObjects(AppState.currentProjectScene, AppState.currentProjectState);
+        
+        // --- Frame the scene after a full update ---
+        // We only do this for "full" loads, not for every small patch.
+        // const responseType = responseData.response_type || "full";
+        // if (responseType.startsWith("full")) { // Catches 'full' and 'full_with_exclusions'
+        //      SceneManager.frameScene();
+        // }
+
     } else {
         SceneManager.clearScene(); // Ensure scene is cleared if there's no update
     }

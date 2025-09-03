@@ -2,8 +2,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createPrimitiveGeometry } from './sceneManager.js'; 
+import { _getOrBuildGeometry, createPrimitiveGeometry } from './sceneManager.js'; 
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import * as APIService from './apiService.js';
 import * as ExpressionInput from './expressionInput.js';
 
@@ -91,7 +92,7 @@ export function initSolidEditor(cb) {
 
     // Event Listeners
     document.getElementById('closeSolidEditor').addEventListener('click', hide);
-    document.getElementById('recenter-solid-preview-btn').addEventListener('click', recenterCamera);
+    document.getElementById('recenter-solid-preview-btn').addEventListener('click', updatePreview);
     typeSelect.addEventListener('change', renderParamsUI);
     confirmButton.addEventListener('click', handleConfirm);
 
@@ -1038,6 +1039,7 @@ function attachBooleanListeners() {
             if (index > 0) {
                 booleanRecipe.splice(index, 1);
                 rebuildBooleanUI();
+                updatePreview();
             }
         });
     });
@@ -1282,6 +1284,9 @@ async function updatePreview() {
     let geometry = null;
     const csgEvaluator = new Evaluator();
 
+    // --- Use a temporary geometry cache for this preview render ---
+    const previewGeometryCache = new Map();
+
     // --- Get parameters differently for editable vs. non-editable types ---
     let solidDataForPreview;
 
@@ -1322,7 +1327,7 @@ async function updatePreview() {
 
         if (booleanRecipe.length === 0 || !booleanRecipe[0].solid) return;
         
-        // ## NEW HELPER FUNCTION to resolve defines before evaluation ##
+        // Helper function to resolve defines before evaluation
         const getExpressionsForTransform = (transformPart) => {
             if (typeof transformPart === 'string') {
                 // It's a define reference, find it in the project state
@@ -1334,18 +1339,42 @@ async function updatePreview() {
         };
 
         try {
-            const baseGeom = createPrimitiveGeometry(booleanRecipe[0].solid, currentProjectState, csgEvaluator);
+            
+            // Use the recursive builder for the base solid
+            const baseGeom = _getOrBuildGeometry(
+                booleanRecipe[0].solid.name, // Pass the name reference
+                currentProjectState.solids,
+                currentProjectState,
+                previewGeometryCache,
+                csgEvaluator
+            );
+
             if (!baseGeom) return;
+
+            // Prepare the geometry before creating the brush
+            new Brush(baseGeom).prepareGeometry();
             let resultBrush = new Brush(baseGeom);
 
             if (booleanRecipe.length > 1) {
+
+                // Define a tiny value for scaling the cutter brushes
+                const EPSILON = 1e-5;
+
                 for (let i = 1; i < booleanRecipe.length; i++) {
                     const item = booleanRecipe[i];
                     if (!item.solid) continue;
 
-                    const nextSolidGeom = createPrimitiveGeometry(item.solid, currentProjectState, csgEvaluator);
+                    // The recursive builder can handle if item.solid is a primitive OR another boolean
+                    const nextSolidGeom = _getOrBuildGeometry(
+                        item.solid.name, // Pass the name reference
+                        currentProjectState.solids,
+                        currentProjectState,
+                        previewGeometryCache,
+                        csgEvaluator
+                    );
                     if (!nextSolidGeom) continue;
 
+                    new Brush(nextSolidGeom).prepareGeometry();
                     const nextBrush = new Brush(nextSolidGeom);
                     
                     const transform = item.transform || {};
@@ -1372,13 +1401,31 @@ async function updatePreview() {
                         rotZ.result || 0, 
                         'ZYX'
                     ));
-                    nextBrush.updateMatrixWorld();
 
+                    // Evaluate the boolean operation
                     const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
+                    if (op === SUBTRACTION) {
+                        nextBrush.scale.addScalar(EPSILON);
+                    }
+                    nextBrush.updateMatrixWorld();
+                    
                     resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
                 }
             }
-            if (resultBrush) geometry = resultBrush.geometry;
+            if (resultBrush) {
+                geometry = resultBrush.geometry;
+
+                // 3. Post-process the FINAL resulting geometry.
+                
+                // The CSG operation can create un-indexed ("triangle soup") geometry.
+                // Merging vertices is crucial for correct normal calculation and performance.
+                // We use a small tolerance to merge vertices that are very close.
+                const MERGE_TOLERANCE = 1e-3;
+                geometry = BufferGeometryUtils.mergeVertices(geometry, MERGE_TOLERANCE);
+
+                // Now, with a clean, indexed geometry, re-compute the normals.
+                geometry.computeVertexNormals();
+            }
         } catch (error) {
             console.error("Error building boolean preview:", error);
         }
@@ -1523,6 +1570,9 @@ async function updatePreview() {
     } else {
         currentSolidMesh = null; // Ensure the handle is cleared if no geometry was created
     }
+
+    // After the mesh is created and added to the scene, frame the camera on it.
+    recenterCamera();
 }
 
 function updateSlotUI(slot, solidData) {
@@ -1610,33 +1660,65 @@ function updateTransformUIFromGizmo() {
     p_in('p_rot_z', THREE.MathUtils.radToDeg(euler.z));
 }
 
-// Helper function to frame the camera on the current mesh
+/**
+ * Frames the editor's camera to fit the current solid mesh.
+ */
 function recenterCamera() {
-    if (!currentSolidMesh || !controls || !camera) {
-        if(controls) controls.reset();
+    if (!controls || !camera) {
         return;
     }
 
+    if (!currentSolidMesh) {
+        // If there's no mesh, reset the camera to a default state
+        controls.target.set(0, 0, 0);
+        camera.position.set(150, 150, 300);
+        camera.near = 0.1;
+        camera.far = 10000;
+        camera.updateProjectionMatrix();
+        controls.update();
+        return;
+    }
+
+    // 1. Calculate the bounding box of the mesh.
     const boundingBox = new THREE.Box3().setFromObject(currentSolidMesh);
-    const center = boundingBox.getCenter(new THREE.Vector3());
-    const size = boundingBox.getSize(new THREE.Vector3());
+    
+    if (boundingBox.isEmpty()) {
+        controls.reset();
+        return;
+    }
+    
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    boundingBox.getCenter(center);
+    boundingBox.getSize(size);
 
-    // Get the maximum dimension of the object
+    // 2. Determine the viewing distance
     const maxDim = Math.max(size.x, size.y, size.z);
-    
-    // Calculate camera distance
-    const fov = camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 * 3 / Math.tan(fov / 2));
-    
-    // Give a minimum distance for very small objects
-    cameraZ = Math.max(cameraZ, 200); 
+    const fitOffset = 1.2;
+    const distance = (maxDim / 2) * fitOffset / Math.tan(Math.PI * camera.fov / 360);
+    const finalDistance = Math.max(distance, 50);
 
-    // Update orbit controls
+    // 3. Adjust the camera's near and far clipping planes based on the object's size and distance.
+    // The near plane should be close but not so close it causes z-fighting.
+    camera.near = Math.max(0.1, finalDistance / 100); 
+    // The far plane MUST be larger than the distance to the object PLUS the object's size.
+    camera.far = finalDistance + maxDim * 2; 
+    // After changing near/far, you MUST update the projection matrix.
+    camera.updateProjectionMatrix();
+
+    // 4. Position the camera
+    const direction = new THREE.Vector3();
+    camera.getWorldDirection(direction);
+    if (direction.lengthSq() === 0) {
+        direction.set(0.5, 0.5, 1); // Fallback viewing direction
+    }
+    
+    // Position camera backwards from the center along the current viewing direction
+    camera.position.copy(center).addScaledVector(direction.normalize(), -finalDistance);
+
+    // 5. Point the orbit controls' target at the center of the object.
     controls.target.copy(center);
     
-    // Position the camera
-    camera.position.set(center.x, center.y, center.z + cameraZ);
-
-    // This is important - you must call update after changing camera position/target
+    // 6. Update the controls to apply all changes.
     controls.update();
 }
