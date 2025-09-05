@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { Line2 } from 'three/addons/lines/Line2.js';
@@ -691,9 +692,6 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     }
     // End of NaN Trap
 
-    // Temporary handling of null project state from solid editor
-    const defines = (projectState && projectState.defines) ? projectState.defines : {};
-
     switch (solidData.type) {
         case 'box':
             geometry = new THREE.BoxGeometry(p.x, p.y, p.z);
@@ -1070,44 +1068,21 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 ensureUvAttribute(geometry);
             }
             break;
-        case 'tet': // Tetrahedron
+        case 'tet':
             {
-                const defines = projectState.defines;
-                const v1 = p.vertex1;
-                const v2 = p.vertex2;
-                const v3 = p.vertex3;
-                const v4 = p.vertex4;
+                const v1 = p.vertex1; const v2 = p.vertex2;
+                const v3 = p.vertex3; const v4 = p.vertex4;
                 
-                if (!v1 || !v2 || !v3 || !v4) {
-                    console.error(`[SceneManager] Could not find all vertex definitions for tet '${solidData.name}'`);
-                    return new THREE.SphereGeometry(10, 8, 8); // Placeholder
-                }
-
-                const vertices = new Float32Array([
-                    v1.x, v1.y, v1.z,
-                    v2.x, v2.y, v2.z,
-                    v3.x, v3.y, v3.z,
-                    v4.x, v4.y, v4.z,
-                ]);
-
-                // Define the 4 triangular faces using vertex indices
-                const indices = [
-                    0, 2, 1, // Face 1
-                    0, 1, 3, // Face 2
-                    1, 2, 3, // Face 3
-                    2, 0, 3  // Face 4
+                const points = [
+                    new THREE.Vector3(v1.x, v1.y, v1.z),
+                    new THREE.Vector3(v2.x, v2.y, v2.z),
+                    new THREE.Vector3(v3.x, v3.y, v3.z),
+                    new THREE.Vector3(v4.x, v4.y, v4.z)
                 ];
 
-                geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-                geometry.setIndex(indices);
-                geometry.computeVertexNormals();
-
-                // Add dummy UVs to make the geometry compatible with CSG operations.
-                ensureUvAttribute(geometry);
+                geometry = new ConvexGeometry(points);
             }
             break;
-        
         case 'tessellated':
             {
                 const defines = projectState.defines;
@@ -1254,45 +1229,23 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'para': // Parallelepiped
             {
-                // p.x, p.y, p.z from the evaluator are the FULL lengths from GDML.
-                // The vertex formula requires HALF-lengths.
-                const dx = p.x / 2.0;
-                const dy = p.y / 2.0;
-                const dz = p.z / 2.0;
-
+                const dx = p.x / 2.0; const dy = p.y / 2.0; const dz = p.z / 2.0;
                 const t_alpha = Math.tan(p.alpha);
                 const t_theta_cp = Math.tan(p.theta) * Math.cos(p.phi);
                 const t_theta_sp = Math.tan(p.theta) * Math.sin(p.phi);
-
-                const vertices = [
-                    // This vertex calculation formula is based on half-lengths and is correct.
-                    -dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz, // 0
-                     dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz, // 1
-                     dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz, // 2
-                    -dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz, // 3
-                    -dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz, // 4
-                     dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz, // 5
-                     dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz, // 6
-                    -dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz  // 7
-                ];
                 
-                // The indices for the faces are correct.
-                const indices = [
-                    0, 1, 2,  0, 2, 3, // bottom
-                    4, 6, 5,  4, 7, 6, // top
-                    0, 4, 5,  0, 5, 1, // front
-                    1, 5, 6,  1, 6, 2, // right
-                    2, 6, 7,  2, 7, 3, // back
-                    3, 7, 4,  3, 4, 0  // left
+                const points = [
+                    new THREE.Vector3(-dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz),
+                    new THREE.Vector3( dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz),
+                    new THREE.Vector3( dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz),
+                    new THREE.Vector3(-dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz),
+                    new THREE.Vector3(-dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz),
+                    new THREE.Vector3( dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz),
+                    new THREE.Vector3( dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz),
+                    new THREE.Vector3(-dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz)
                 ];
 
-                geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
-                geometry.setIndex(indices);
-                geometry.computeVertexNormals();
-
-                // Add dummy UVs to make the geometry compatible with CSG operations.
-                ensureUvAttribute(geometry);
+                geometry = new ConvexGeometry(points);
             }
             break;
         case 'trd': // Trapezoid with parallel z-faces
@@ -1370,43 +1323,27 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'trap': // General Trapezoid
             {
-                const vertices = [];
-                const dz = p.z; const th = p.theta; const ph = p.phi;
-                const dy1 = p.y1; const dx1 = p.x1; const dx2 = p.x2;
-                const dy2 = p.y2; const dx3 = p.x3; const dx4 = p.x4;
+                const dz = p.z/2; const th = p.theta; const ph = p.phi;
+                const dy1 = p.y1/2; const dx1 = p.x1/2; const dx2 = p.x2/2;
+                const dy2 = p.y2/2; const dx3 = p.x3/2; const dx4 = p.x4/2;
                 const a1 = p.alpha1; const a2 = p.alpha2;
                 const tth_cp = Math.tan(th) * Math.cos(ph);
                 const tth_sp = Math.tan(th) * Math.sin(ph);
                 const ta1 = Math.tan(a1);
                 const ta2 = Math.tan(a2);
-                
-                vertices.push(
-                    -dz*tth_cp - dy1*ta1 - dx1, -dz*tth_sp - dy1, -dz,
-                    -dz*tth_cp - dy1*ta1 + dx1, -dz*tth_sp - dy1, -dz,
-                    -dz*tth_cp + dy1*ta1 - dx2, -dz*tth_sp + dy1, -dz,
-                    -dz*tth_cp + dy1*ta1 + dx2, -dz*tth_sp + dy1, -dz,
-                        dz*tth_cp - dy2*ta2 - dx3,  dz*tth_sp - dy2,  dz,
-                        dz*tth_cp - dy2*ta2 + dx3,  dz*tth_sp - dy2,  dz,
-                        dz*tth_cp + dy2*ta2 - dx4,  dz*tth_sp + dy2,  dz,
-                        dz*tth_cp + dy2*ta2 + dx4,  dz*tth_sp + dy2,  dz
-                );
-                
-                const indices = [
-                    0, 1, 2,  0, 2, 3, // bottom
-                    4, 5, 6,  4, 6, 7, // top
-                    0, 4, 5,  0, 5, 1, // front
-                    1, 5, 6,  1, 6, 2, // right
-                    2, 6, 7,  2, 7, 3, // back
-                    3, 7, 4,  3, 4, 0  // left
+
+                const points = [
+                    new THREE.Vector3(-dz*tth_cp - dy1*ta1 - dx1, -dz*tth_sp - dy1, -dz),
+                    new THREE.Vector3(-dz*tth_cp - dy1*ta1 + dx1, -dz*tth_sp - dy1, -dz),
+                    new THREE.Vector3(-dz*tth_cp + dy1*ta1 + dx2, -dz*tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3(-dz*tth_cp + dy1*ta1 - dx2, -dz*tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3( dz*tth_cp - dy2*ta2 - dx3,  dz*tth_sp - dy2,  dz),
+                    new THREE.Vector3( dz*tth_cp - dy2*ta2 + dx3,  dz*tth_sp - dy2,  dz),
+                    new THREE.Vector3( dz*tth_cp + dy2*ta2 + dx4,  dz*tth_sp + dy2,  dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3( dz*tth_cp + dy2*ta2 - dx4,  dz*tth_sp + dy2,  dz)  // Note: Swapped sign from GDML spec for vertex order
                 ];
                 
-                geometry = new THREE.BufferGeometry();
-                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                geometry.setIndex(indices);
-                geometry.computeVertexNormals();
-
-                // Add dummy UVs to make the geometry compatible with CSG operations.
-                ensureUvAttribute(geometry);
+                geometry = new ConvexGeometry(points);
             }
             break;
         case 'twistedbox':
@@ -1722,9 +1659,16 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     }
 
     if (geometry) {
-        // This is a good practice for any geometry that will be used in CSG.
-        // It ensures all face normals are pointing consistently outwards.
+        // 1. Merge vertices. This converts non-indexed geometries (like from
+        //    ConvexGeometry) into indexed ones and cleans up duplicates.
+        //    This is the primary fix for the CSG error.
+        geometry = BufferGeometryUtils.mergeVertices(geometry, 1e-4);
+
+        // 2. Recompute normals after merging for correct shading.
         geometry.computeVertexNormals();
+
+        // 3. Add dummy UVs, which are still required by the CSG library.
+        ensureUvAttribute(geometry);
     }
     
     return geometry;
