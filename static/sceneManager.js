@@ -1323,9 +1323,9 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'trap': // General Trapezoid
             {
-                const dz = p.z/2; const th = p.theta; const ph = p.phi;
-                const dy1 = p.y1/2; const dx1 = p.x1/2; const dx2 = p.x2/2;
-                const dy2 = p.y2/2; const dx3 = p.x3/2; const dx4 = p.x4/2;
+                const dz = p.z; const th = p.theta; const ph = p.phi;
+                const dy1 = p.y1; const dx1 = p.x1; const dx2 = p.x2;
+                const dy2 = p.y2; const dx3 = p.x3; const dx4 = p.x4;
                 const a1 = p.alpha1; const a2 = p.alpha2;
                 const tth_cp = Math.tan(th) * Math.cos(ph);
                 const tth_sp = Math.tan(th) * Math.sin(ph);
