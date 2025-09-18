@@ -225,8 +225,6 @@ class Solid:
         instance._evaluated_parameters = data.get('_evaluated_parameters', {})
         return instance
 
-# Could have subclasses like BoxSolid(Solid), TubeSolid(Solid) if needed for specific logic
-
 class LogicalVolume:
     """Represents a logical volume."""
     def __init__(self, name, solid_ref, material_ref, vis_attributes=None):
@@ -696,6 +694,43 @@ class BorderSurface:
         instance = cls(data['name'], data['physvol1_ref'], data['physvol2_ref'], data['surfaceproperty_ref'])
         instance.id = data.get('id', instance.id)
         return instance
+    
+class ParticleSource:
+    """Represents a particle source (G4GeneralParticleSource) in the project."""
+    def __init__(self, name, gps_commands=None, position=None, vis_attributes=None):
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.type = "gps" # To distinguish from other potential source types later
+        
+        # Store the raw GPS commands as a dictionary for easy editing
+        self.gps_commands = gps_commands if gps_commands is not None else {}
+
+        # Store the position separately for easy access by the transform gizmo
+        self.position = position if position is not None else {'x': '0', 'y': '0', 'z': '0'}
+        
+        # Evaluated position for rendering
+        self._evaluated_position = {'x': 0, 'y': 0, 'z': 0}
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "type": self.type,
+            "gps_commands": self.gps_commands,
+            "position": self.position,
+            "_evaluated_position": self._evaluated_position,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(
+            data['name'],
+            data.get('gps_commands', {}),
+            data.get('position', {'x': '0', 'y': '0', 'z': '0'})
+        )
+        instance.id = data.get('id', str(uuid.uuid4()))
+        instance._evaluated_position = data.get('_evaluated_position', {'x': 0, 'y': 0, 'z': 0})
+        return instance
 
 class GeometryState:
     """Holds the entire geometry definition."""
@@ -713,6 +748,9 @@ class GeometryState:
         self.optical_surfaces = {}
         self.skin_surfaces = {}
         self.border_surfaces = {}
+
+        # To hold radioactive sources
+        self.sources = {}
 
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
@@ -748,6 +786,8 @@ class GeometryState:
         self.skin_surfaces[surf_obj.name] = surf_obj
     def add_border_surface(self, surf_obj):
         self.border_surfaces[surf_obj.name] = surf_obj
+    def add_source(self, source_obj):
+        self.sources[source_obj.name] = source_obj
     
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
@@ -759,6 +799,7 @@ class GeometryState:
     def get_optical_surface(self, name): return self.optical_surfaces.get(name)
     def get_skin_surface(self, name): return self.skin_surfaces.get(name)
     def get_border_surface(self, name): return self.border_surfaces.get(name)
+    def get_source(self, name): return self.sources.get(name)
 
     def to_dict(self):
         return {
@@ -773,7 +814,8 @@ class GeometryState:
             "optical_surfaces": {name: surf.to_dict() for name, surf in self.optical_surfaces.items()},
             "skin_surfaces": {name: surf.to_dict() for name, surf in self.skin_surfaces.items()},
             "border_surfaces": {name: surf.to_dict() for name, surf in self.border_surfaces.items()},
-            "ui_groups": self.ui_groups 
+            "sources": {name: source.to_dict() for name, source in self.sources.items()},
+            "ui_groups": self.ui_groups
         }
 
     @classmethod
@@ -784,6 +826,7 @@ class GeometryState:
         instance.elements = {name: Element.from_dict(d) for name, d in data.get('elements', {}).items()}
         instance.isotopes = {name: Isotope.from_dict(d) for name, d in data.get('isotopes', {}).items()}
         instance.solids = {name: Solid.from_dict(d) for name, d in data.get('solids', {}).items()}
+        instance.sources = {name: ParticleSource.from_dict(d) for name, d in data.get('sources', {}).items()}
         
         # For logical volumes, pass the instance itself to resolve internal refs if needed during from_dict
         instance.logical_volumes = {
@@ -831,6 +874,18 @@ class GeometryState:
                 # Initial call starts with the world as the parent
                 self._traverse(pv, parent_pv_id=world_pv_id, path=[world_lv.name], threejs_objects=threejs_objects)
 
+        # After the geometry traversal, add the sources
+        for source in self.sources.values():
+            threejs_objects.append({
+                "id": source.id,
+                "name": source.name,
+                "parent_id": world_pv_id, # Attach to the world physical volume
+                "is_source": True,
+                "position": source._evaluated_position,
+                "rotation": {'x': 0, 'y': 0, 'z': 0},
+                "scale": {'x': 1, 'y': 1, 'z': 1}
+            })
+            
         return threejs_objects
 
     def _traverse(self, pv, parent_pv_id, path, threejs_objects, owner_pv_id=None, instance_prefix=""):

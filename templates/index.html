@@ -890,6 +890,7 @@
                 <div class="tab_header">
                     <span class="tab-title">World Structure</span>
                     <div>
+                        <button class="add_button" data-add-type="particle_source" title="Add a General Particle Source">+ GPS</button>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
                 </div>
@@ -1679,6 +1680,59 @@
             <div class="modal-footer">
                 <button id="cancelStepImport">Cancel</button>
                 <button id="confirmStepImport" class="confirm-button">Import</button>
+            </div>
+        </div>
+    </div>
+    <div id="gpsEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 550px; height: auto;">
+            <div class="modal-header">
+                <h4 id="gpsEditorTitle">Create New Particle Source</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="gpsEditorName">Source Name:</label>
+                    <input type="text" id="gpsEditorName" placeholder="e.g., PET_Source">
+                </div>
+                <hr>
+                <!-- Particle Type -->
+                <div class="property_item">
+                    <label for="gpsEditorParticle">Particle:</label>
+                    <select id="gpsEditorParticle">
+                        <option value="gamma">gamma</option>
+                        <option value="e+">e+</option>
+                        <option value="e-">e-</option>
+                        <option value="proton">proton</option>
+                        <option value="neutron">neutron</option>
+                        <option value="alpha">alpha</option>
+                        <!-- Add more common particles as needed -->
+                    </select>
+                </div>
+
+                <!-- Energy Distribution -->
+                <div id="gps-energy-params">
+                    <!-- Energy ExpressionInput will be added by JS -->
+                </div>
+
+                <hr>
+                <!-- Position/Shape Distribution -->
+                <div class="property_item">
+                    <label for="gpsEditorShape">Source Shape:</label>
+                    <select id="gpsEditorShape">
+                        <option value="Point">Point</option>
+                        <option value="Volume">Volume</option>
+                        <option value="Surface">Surface</option>
+                    </select>
+                </div>
+                
+                <!-- Dynamic parameters based on shape -->
+                <div id="gps-shape-params">
+                    <!-- JS will populate this section -->
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button id="gpsEditorCancel">Cancel</button>
+                <button id="gpsEditorConfirm" class="confirm-button">Create Source</button>
             </div>
         </div>
     </div>

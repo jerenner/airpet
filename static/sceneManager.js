@@ -52,6 +52,22 @@ let onMultiObjectSelectedCallback = null;
 let gizmoAttachmentHelper = new THREE.Object3D(); // Helper for gizmo on multi-select
 let initialTransforms = new Map(); // To store initial state on drag start
 
+// --- Materials for sources ---
+const _sourceMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffd700, // Gold
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide
+});
+
+const _sourceHighlightMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff8c00, // Bright Orange
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+    depthTest: false // Render on top
+});
+
 // --- Initialization ---
 export function initScene(callbacks) {
     onObjectSelectedCallback = callbacks.onObjectSelectedIn3D;
@@ -1876,18 +1892,18 @@ export function frameScene() {
 
     // 2. Adjust camera's far plane to be able to see everything
     const maxDim = Math.max(size.x, size.y, size.z);
-    const cameraFar = maxDim * 5; // Make it much larger than the scene
-    if(cameraFar < 1000) { cameraFar = 1000; }
+    let cameraFar = maxDim * 5; // Make it much larger than the scene
+    if(cameraFar < 10000) { cameraFar = 10000; }
     camera.far = cameraFar;
     camera.near = cameraFar / 1000; // Keep a reasonable near/far ratio
     camera.updateProjectionMatrix();
 
     // 3. Move the camera to a suitable viewing position
-    const fitOffset = 1.2; // Add some padding
+    const fitOffset = 5; // Add some padding
     const distance = (maxDim / 2) * fitOffset / Math.tan(Math.PI * camera.fov / 360);
     
     // Position camera away from the center along a diagonal
-    const offset = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(distance);
+    const offset = new THREE.Vector3(2, 1, 1).normalize().multiplyScalar(distance);
     camera.position.copy(center).add(offset);
 
     // 4. Point the camera at the center of the scene
@@ -1916,47 +1932,71 @@ export function renderObjects(pvDescriptions, projectState) {
         _getOrBuildGeometry(solidName, projectState.solids, projectState, geometryCache, csgEvaluator);
     }
 
-    // NEW: Use a map to build the hierarchy
+    // Use a map to build the hierarchy
     const objectMap = new Map();
 
     // First pass: create all THREE.Group objects
     pvDescriptions.forEach(pvData => {
-        const group = new THREE.Group();
-        group.userData = pvData;
-        group.name = pvData.name || `group_${pvData.id}`;
 
-        // Store it in the map by its unique PV ID
-        objectMap.set(pvData.id, group);
+        // --- LOGIC FOR SOURCES ---
+        if (pvData.is_source) {
+            const sourceGroup = new THREE.Group();
+            sourceGroup.userData = pvData; // Attach all data
+            sourceGroup.name = pvData.name;
 
-        // Only create meshes for actual, renderable volumes
-        const isRenderable = !pvData.is_world_volume_placement 
-                             && !pvData.is_assembly_container 
-                             && !pvData.is_procedural_container;
+            // Create a visual marker
+            const markerGeometry = new THREE.SphereGeometry(5, 16, 8); // 5mm radius sphere
+            const markerMesh = new THREE.Mesh(markerGeometry, _sourceMaterial);
+            markerMesh.name = "SourceMarker"; // For identification
 
-        if (isRenderable) {
-            const solidRef = pvData.solid_ref_for_threejs;
-            const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
-            if (geometry) {
-                const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
-                const color = vis.color;
-                const meshMaterial = new THREE.MeshPhongMaterial({
-                    color: new THREE.Color(color.r, color.g, color.b),
-                    transparent: color.a < 1.0,
-                    opacity: color.a,
-                    side: THREE.DoubleSide,
-                    shininess: 30,
-                    polygonOffset: true,
-                    polygonOffsetFactor: 1,
-                    polygonOffsetUnits: 1
-                });
-                const solidMesh = new THREE.Mesh(geometry, meshMaterial);
-                const edges = new EdgesGeometry(geometry, 1);
-                const lineMaterial = new LineBasicMaterial({ color: 0x000000, linewidth: 2 });
-                const wireframe = new LineSegments(edges, lineMaterial);
-                group.add(solidMesh);
-                group.add(wireframe);
-            }
+            // Add axes to show orientation (useful for directional sources later)
+            const axes = new THREE.AxesHelper(15); // 15mm long axes
+            
+            sourceGroup.add(markerMesh);
+            sourceGroup.add(axes);
+
+            objectMap.set(pvData.id, sourceGroup);
         } 
+        // --- LOGIC FOR GEOMETRY ---
+        else {
+
+            const group = new THREE.Group();
+            group.userData = pvData;
+            group.name = pvData.name || `group_${pvData.id}`;
+
+            // Store it in the map by its unique PV ID
+            objectMap.set(pvData.id, group);
+
+            // Only create meshes for actual, renderable volumes
+            const isRenderable = !pvData.is_world_volume_placement 
+                                && !pvData.is_assembly_container 
+                                && !pvData.is_procedural_container;
+
+            if (isRenderable) {
+                const solidRef = pvData.solid_ref_for_threejs;
+                const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
+                if (geometry) {
+                    const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
+                    const color = vis.color;
+                    const meshMaterial = new THREE.MeshPhongMaterial({
+                        color: new THREE.Color(color.r, color.g, color.b),
+                        transparent: color.a < 1.0,
+                        opacity: color.a,
+                        side: THREE.DoubleSide,
+                        shininess: 30,
+                        polygonOffset: true,
+                        polygonOffsetFactor: 1,
+                        polygonOffsetUnits: 1
+                    });
+                    const solidMesh = new THREE.Mesh(geometry, meshMaterial);
+                    const edges = new EdgesGeometry(geometry, 1);
+                    const lineMaterial = new LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+                    const wireframe = new LineSegments(edges, lineMaterial);
+                    group.add(solidMesh);
+                    group.add(wireframe);
+                }
+            }
+        }
     });
 
     // Second pass: parent the objects and apply LOCAL transforms
@@ -1969,7 +2009,13 @@ export function renderObjects(pvDescriptions, projectState) {
         const rotation = pvData.rotation || { x: 0, y: 0, z: 0 };
         //const scale = pvData.scale || { x: 1, y: 1, z: 1 };
 
+        obj.position.set(position.x, position.y, position.z);
+        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
+        obj.quaternion.setFromEuler(euler);
+
         // Make all scale values +/- 1
+        // Sources should not be scaled by geometry scale values
+        if (!pvData.is_source) {
         const scale = pvData.scale 
             ? {
                 x: pvData.scale.x ? Math.sign(pvData.scale.x) : 1,
@@ -1977,11 +2023,8 @@ export function renderObjects(pvDescriptions, projectState) {
                 z: pvData.scale.z ? Math.sign(pvData.scale.z) : 1
                 }
             : { x: 1, y: 1, z: 1 };
-        
-        obj.position.set(position.x, position.y, position.z);
-        const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
-        obj.quaternion.setFromEuler(euler);
-        obj.scale.set(scale.x, scale.y, scale.z);
+            obj.scale.set(scale.x, scale.y, scale.z);
+        }
         
         // Find the parent and attach
         const parentObj = objectMap.get(pvData.parent_id);
@@ -1993,7 +2036,7 @@ export function renderObjects(pvDescriptions, projectState) {
         }
     });
 
-    // IMPORTANT: Update world matrices for the entire hierarchy
+    // Update world matrices for the entire hierarchy
     geometryGroup.updateMatrixWorld(true);
 
     console.log("[SceneManager] Rendered objects with nested hierarchy. Total top-level:", geometryGroup.children.length);
@@ -2044,16 +2087,19 @@ export function updateSelectionState(groupsToSelect = []) {
     _selectedThreeObjects.forEach(group => {
         // This is a robust way to find all meshes, wherever they are nested
         group.traverse(child => {
-            if (child.isMesh && _originalMaterialsMap.has(child.uuid)) {
-                child.material = _originalMaterialsMap.get(child.uuid).material;
-                _originalMaterialsMap.delete(child.uuid);
+            if (child.isMesh) {
+                if (group.userData.is_source) {
+                    child.material = _sourceMaterial; // Revert to original source material
+                } else if (_originalMaterialsMap.has(child.uuid)) {
+                    child.material = _originalMaterialsMap.get(child.uuid).material;
+                    _originalMaterialsMap.delete(child.uuid);
+                }
             }
         });
     });
 
     // 2. The groups passed in ARE the selected objects. No need to clear and re-populate.
     _selectedThreeObjects = groupsToSelect;
-
     if (!_selectedThreeObjects || _selectedThreeObjects.length === 0) {
         return; // Nothing to select
     }
@@ -2062,10 +2108,16 @@ export function updateSelectionState(groupsToSelect = []) {
     _selectedThreeObjects.forEach(group => {
         group.traverse(child => {
             if (child.isMesh) { // Find every mesh inside the selected group
-                if (!_originalMaterialsMap.has(child.uuid)) {
-                    _originalMaterialsMap.set(child.uuid, { material: child.material });
+                if (group.userData.is_source) {
+                    // It's a source, use the special highlight material
+                    child.material = _sourceHighlightMaterial;
+                } else {
+                    // It's regular geometry, use the standard highlight
+                    if (!_originalMaterialsMap.has(child.uuid)) {
+                        _originalMaterialsMap.set(child.uuid, { material: child.material });
+                    }
+                    child.material = _highlightMaterial;
                 }
-                child.material = _highlightMaterial;
             }
         });
     });

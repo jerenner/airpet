@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
 import * as ExpressionInput from './expressionInput.js';
+import * as GpsEditor from './gpsEditor.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -256,13 +257,15 @@ export function initUI(cb) {
                 callbacks.onAddSkinSurfaceClicked();
             } else if (type.startsWith('border_surface')) {
                 callbacks.onAddBorderSurfaceClicked();
+            } else if (type.startsWith('particle_source')) {
+                callbacks.onAddGpsClicked();
             } else {
                 console.log("ERROR: module does not exist")
             }
         });
     });
 
-    // Add listeners for add logical and physical volume buttons
+    // Add listener for physical volume button
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
 
@@ -782,7 +785,12 @@ export function updateHierarchy(projectState, sceneUpdate) {
         // 1. Create a map of parentId -> [childData, childData, ...] from the scene description
         const sceneGraph = new Map();
         let worldPvId = null;
-        sceneUpdate.forEach(pvData => {
+
+        // Separate geometry from sources
+        const geometryItems = sceneUpdate.filter(item => !item.is_source);
+        const sourceItems = sceneUpdate.filter(item => item.is_source);
+
+        geometryItems.forEach(pvData => {
             if (!pvData.parent_id) {
                 worldPvId = pvData.id; // This is the root PV of our scene
                 sceneGraph.set(pvData.id, []);
@@ -811,6 +819,19 @@ export function updateHierarchy(projectState, sceneUpdate) {
             worldChildren.forEach(childPvData => {
                 const childNode = buildVolumeNodeRecursive(childPvData, projectState, sceneGraph);
                 if (childNode) childrenUl.appendChild(childNode);
+            });
+
+            // --- Add sources to the world's children ---
+            sourceItems.forEach(sourceData => {
+                // The source data comes directly from the scene update
+                const sourceNode = createTreeItem(
+                    `⚛️ ${sourceData.name}`, // Add an icon
+                    'particle_source',       // A new type for our hierarchy items
+                    sourceData.id,           // Use the unique ID for selection
+                    sourceData,
+                    { instanceId: sourceData.id }
+                );
+                childrenUl.appendChild(sourceNode);
             });
 
             if (childrenUl.hasChildNodes()) {
@@ -1292,6 +1313,12 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         item.addEventListener('dblclick', (event) => {
             event.stopPropagation();
             callbacks.onEditBorderSurfaceClicked(item.appData);
+        });
+    } else if (itemType === 'particle_source') {
+        item.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            // We need a callback to main.js to show the editor
+            callbacks.onEditGpsClicked(fullItemData);
         });
     }
     return item;

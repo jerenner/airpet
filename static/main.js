@@ -5,6 +5,7 @@ import * as APIService from './apiService.js';
 import * as AssemblyEditor from './assemblyEditor.js';
 import * as BorderSurfaceEditor from './borderSurfaceEditor.js';
 import * as DefineEditor from './defineEditor.js';
+import * as GpsEditor from './gpsEditor.js';
 import * as InteractionManager from './interactionManager.js';
 import * as IsotopeEditor from './isotopeEditor.js';
 import * as LVEditor from './logicalVolumeEditor.js';
@@ -97,6 +98,9 @@ async function initializeApp() {
         // Add/edit assemblies
         onAddAssemblyClicked: handleAddAssembly,
         onEditAssemblyClicked: handleEditAssembly,
+        // Add/edit GPS clicked
+        onAddGpsClicked: handleAddGps,
+        onEditGpsClicked: handleEditGps,
 
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
@@ -137,6 +141,11 @@ async function initializeApp() {
                 rotationSnap: InteractionManager.getRotationSnapValue() 
             };
         }
+    });
+
+    // Initialize the new editor
+    GpsEditor.initGpsEditor({
+        onConfirm: handleGpsEditorConfirm
     });
     
     // Initialize interaction manager (modes, keyboard shortcuts for transforms)
@@ -1212,72 +1221,89 @@ async function handleTransformEnd(transformedObject) {
         return;
     }
 
-    const selection = AppState.selectedHierarchyItems;
-    const updates = [];
+    if (transformedObject.userData.is_source) {
+        // --- It's a particle source ---
+        const sourceId = transformedObject.userData.id;
+        const newPosition = {
+            x: transformedObject.position.x,
+            y: transformedObject.position.y,
+            z: transformedObject.position.z,
+        };
+        try {
+            const result = await APIService.updateSourceTransform(sourceId, newPosition);
+            syncUIWithState(result, AppState.selectedHierarchyItems);
+        } catch (error) {
+            UIManager.showError("Error updating source transform: " + error.message);
+        }
+    } else {
 
-    // This function will now handle all cases: single, multi, and procedural,
-    // by calculating the final local transform for every affected object.
+        const selection = AppState.selectedHierarchyItems;
+        const updates = [];
 
-    for (const item of selection) {
-        if (item.type !== 'physical_volume') continue;
+        // This function will now handle all cases: single, multi, and procedural,
+        // by calculating the final local transform for every affected object.
 
-        const pvId = item.canonical_id;
-        const pvInstanceId = item.id || pvId;
-        
-        // Find the THREE.Group for the PV being updated.
-        const currentThreeJsObject = SceneManager.findObjectByPvId(pvInstanceId);
-        if (!currentThreeJsObject) continue;
+        for (const item of selection) {
+            if (item.type !== 'physical_volume') continue;
 
-        // 1. Get the final world matrix of this instance after the user's drag.
-        const newWorldMatrix = currentThreeJsObject.matrixWorld.clone();
+            const pvId = item.canonical_id;
+            const pvInstanceId = item.id || pvId;
+            
+            // Find the THREE.Group for the PV being updated.
+            const currentThreeJsObject = SceneManager.findObjectByPvId(pvInstanceId);
+            if (!currentThreeJsObject) continue;
 
-        // 2. Get the world matrix of its DIRECT PARENT in the scene graph.
-        const parentInverse = new THREE.Matrix4();
-        const parentLvName = item.selData.parent_lv_name;
-        if (parentLvName !== AppState.currentProjectState.world_volume_ref) {
-            if (item.selData.parent_id) {
-                const parentThreeJsGroup = SceneManager.findObjectByPvId(item.selData.parent_id);
-                if (parentThreeJsGroup) {
-                    parentInverse.copy(parentThreeJsGroup.matrixWorld).invert();
+            // 1. Get the final world matrix of this instance after the user's drag.
+            const newWorldMatrix = currentThreeJsObject.matrixWorld.clone();
+
+            // 2. Get the world matrix of its DIRECT PARENT in the scene graph.
+            const parentInverse = new THREE.Matrix4();
+            const parentLvName = item.selData.parent_lv_name;
+            if (parentLvName !== AppState.currentProjectState.world_volume_ref) {
+                if (item.selData.parent_id) {
+                    const parentThreeJsGroup = SceneManager.findObjectByPvId(item.selData.parent_id);
+                    if (parentThreeJsGroup) {
+                        parentInverse.copy(parentThreeJsGroup.matrixWorld).invert();
+                    }
                 }
             }
+
+            // 3. Calculate the new LOCAL matrix. This is the crucial step.
+            // newLocalMatrix = parentWorldMatrix^-1 * newWorldMatrix
+            const newLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentInverse, newWorldMatrix);
+
+            // 4. Decompose to get local position, rotation, scale for the backend.
+            const pos = new THREE.Vector3();
+            const rot = new THREE.Quaternion();
+            const scl = new THREE.Vector3();
+            newLocalMatrix.decompose(pos, rot, scl);
+            const euler = new THREE.Euler().setFromQuaternion(rot, 'XYZ');
+            
+            updates.push({
+                id: pvId, // Send the canonical ID to the backend
+                name: null, // Name is not changed here
+                position: { x: pos.x, y: pos.y, z: pos.z },
+                rotation: { x: -euler.x, y: -euler.y, z: -euler.z },
+                scale:    { x: scl.x, y: scl.y, z: scl.z }
+            });
         }
 
-        // 3. Calculate the new LOCAL matrix. This is the crucial step.
-        // newLocalMatrix = parentWorldMatrix^-1 * newWorldMatrix
-        const newLocalMatrix = new THREE.Matrix4().multiplyMatrices(parentInverse, newWorldMatrix);
-
-        // 4. Decompose to get local position, rotation, scale for the backend.
-        const pos = new THREE.Vector3();
-        const rot = new THREE.Quaternion();
-        const scl = new THREE.Vector3();
-        newLocalMatrix.decompose(pos, rot, scl);
-        const euler = new THREE.Euler().setFromQuaternion(rot, 'XYZ');
+        if (updates.length === 0) {
+            UIManager.hideLoading();
+            return;
+        }
         
-        updates.push({
-            id: pvId, // Send the canonical ID to the backend
-            name: null, // Name is not changed here
-            position: { x: pos.x, y: pos.y, z: pos.z },
-            rotation: { x: -euler.x, y: -euler.y, z: -euler.z },
-            scale:    { x: scl.x, y: scl.y, z: scl.z }
-        });
+        //UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
+        try {
+            const result = await APIService.updatePhysicalVolumeBatch(updates);
+            //syncUIWithState(result, AppState.selectedHierarchyItems);
+            syncUIWithState_shallow(result);
+        } catch (error) {
+            UIManager.showError("Error saving transform: " + error.message);
+            // Optional: Revert frontend visuals to initialTransforms on error
+        } 
+        //finally { UIManager.hideLoading();}
     }
-
-    if (updates.length === 0) {
-        UIManager.hideLoading();
-        return;
-    }
-    
-    //UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
-    try {
-        const result = await APIService.updatePhysicalVolumeBatch(updates);
-        //syncUIWithState(result, AppState.selectedHierarchyItems);
-        syncUIWithState_shallow(result);
-    } catch (error) {
-        UIManager.showError("Error saving transform: " + error.message);
-        // Optional: Revert frontend visuals to initialTransforms on error
-    } 
-    //finally { UIManager.hideLoading();}
 }
 
 // Keep this helper function, it's essential
@@ -2090,3 +2116,47 @@ async function handleConfirmStepImport(options) {
     }
 }
 
+function handleAddGps() {
+    GpsEditor.show(null);
+}
+
+function handleEditGps(sourceData) {
+    GpsEditor.show(sourceData);
+}
+
+async function handleGpsEditorConfirm(data) {
+    // This handles both creating and editing sources
+    const selectionContext = getSelectionContext();
+    if (data.isEdit) {
+
+        // --- THIS IS THE UPDATED LOGIC ---
+        UIManager.showLoading("Updating Particle Source...");
+        try {
+            // Note: data.id is the source's name. We need the unique ID from the selection.
+            const sourceId = (selectionContext && selectionContext[0]) ? selectionContext[0].id : null;
+            if (!sourceId) {
+                throw new Error("Could not determine the unique ID of the source to update.");
+            }
+            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands);
+            syncUIWithState(result, selectionContext);
+        } catch (error) {
+            UIManager.showError("Error updating source: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+
+    } else {
+        UIManager.showLoading("Creating Particle Source...");
+        try {
+            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position);
+            // After creating, find the new source in the response to select it
+            const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
+            const newSelection = newSource ? [{ type: 'particle_source', id: newSource.id, name: newSource.name, data: newSource }] : [];
+            syncUIWithState(result, newSelection);
+        } catch (error) {
+            UIManager.showError("Error creating source: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+    }
+}

@@ -140,16 +140,25 @@ def generate_macro_file(job_id, sim_params):
     macro_content.append("")
 
     # --- Configure Source (using GPS) ---
-    source = sim_params.get('source', {})
-    macro_content.append("# --- Primary Particle Source ---")
-    macro_content.append(f"/gps/particle {source.get('particle', 'gamma')}")
-    macro_content.append(f"/gps/energy {source.get('energy', 511)} keV")
-    macro_content.append(f"/gps/pos/type {source.get('type', 'Point')}")
-    pos = source.get('position', {'x': 0, 'y': 0, 'z': 0})
-    macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
-    # For now, we'll just use an isotropic source. We can add more direction options later.
-    macro_content.append("/gps/ang/type iso")
-    macro_content.append("")
+    sources = project_manager.current_geometry_state.sources.values()
+    if not sources:
+        macro_content.append("# WARNING: No particle source defined in the project.")
+    else:
+        macro_content.append("# --- Primary Particle Source(s) ---")
+        for i, source in enumerate(sources):
+            # The /gps/source/add command creates a new source "particle gun"
+            # that can be configured independently.
+            macro_content.append(f"/gps/source/add {1.0}") # The number is a relative intensity weight
+            macro_content.append(f"/gps/source/multiplevertex true")
+
+            # Apply all stored GPS commands for this source
+            for cmd, value in source.gps_commands.items():
+                macro_content.append(f"/gps/{cmd} {value}")
+
+            # Apply the position from the scene
+            pos = source._evaluated_position
+            macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+            macro_content.append("")
 
     # --- Configure Sensitive Detectors ---
     # sds = sim_params.get('sensitive_detectors', [])
@@ -285,6 +294,50 @@ def get_simulation_status(job_id):
 
         return jsonify({"success": True, "status": status_copy})
     
+@app.route('/api/add_source', methods=['POST'])
+def add_source_route():
+    data = request.get_json()
+    name_suggestion = data.get('name', 'gps_source')
+    gps_commands = data.get('gps_commands', {})
+    position = data.get('position', {'x': '0', 'y': '0', 'z': '0'})
+    
+    new_source, error_msg = project_manager.add_particle_source(name_suggestion, gps_commands, position)
+    if new_source:
+        return create_success_response("Particle source created.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/api/update_source_transform', methods=['POST'])
+def update_source_transform_route():
+    data = request.get_json()
+    source_id = data.get('id')
+    new_position = data.get('position')
+    
+    if not source_id:
+        return jsonify({"error": "Source ID missing"}), 400
+        
+    success, error_msg = project_manager.update_source_transform(source_id, new_position)
+    if success:
+        return create_success_response(f"Source {source_id} transform updated.")
+    else:
+        return jsonify({"success": False, "error": error_msg or "Could not update source transform."}), 404
+
+@app.route('/api/update_source', methods=['POST'])
+def update_source_route():
+    data = request.get_json()
+    source_id = data.get('id')
+    new_name = data.get('name')
+    new_gps_commands = data.get('gps_commands')
+
+    if not source_id:
+        return jsonify({"success": False, "error": "Source ID is required."}), 400
+
+    success, error_msg = project_manager.update_particle_source(source_id, new_name, new_gps_commands)
+
+    if success:
+        return create_success_response("Particle source updated successfully.")
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
 # -----------------------------------------------------------------------------------
 
 # --- Helper Functions ---

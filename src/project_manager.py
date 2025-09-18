@@ -7,7 +7,7 @@ import re
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
-                            BorderSurface
+                            BorderSurface, ParticleSource
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -34,7 +34,7 @@ class ProjectManager:
         self.is_changed = False     # Flag for changes
 
         # --- Track changed objects (for now only tracking certain solids) ---
-        self.changed_object_ids = {'solids': set() } #, 'lvs': set(), 'defines': set()}
+        self.changed_object_ids = {'solids': set(), 'sources': set() } #, 'lvs': set(), 'defines': set()}
 
     def _clear_change_tracker(self):
         self.changed_object_ids = {key: set() for key in self.changed_object_ids}
@@ -625,6 +625,10 @@ class ProjectManager:
                          # Use the same helper to evaluate the nested transforms
                          transform['_evaluated_position'] = evaluate_transform_part(transform.get('position'), {'x':0, 'y':0, 'z':0})
                          transform['_evaluated_rotation'] = evaluate_transform_part(transform.get('rotation'), {'x':0, 'y':0, 'z':0})
+
+        # --- Evaluate Source Positions ---
+        for source in state.sources.values():
+            source._evaluated_position = evaluate_transform_part(source.position, {'x': 0, 'y': 0, 'z': 0})
 
         return True, None
 
@@ -1372,6 +1376,40 @@ class ProjectManager:
         self._capture_history_state(f"Updated assembly {assembly_name}")
 
         return success, error_msg
+    
+    def add_particle_source(self, name_suggestion, gps_commands, position):
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
+        new_source = ParticleSource(name, gps_commands, position)
+        self.current_geometry_state.add_source(new_source)
+        self.recalculate_geometry_state()
+        self._capture_history_state(f"Added particle source {name}")
+        return new_source.to_dict(), None
+
+    def update_source_transform(self, source_id, new_position):
+        """Updates just the position of a source."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+
+        source_to_update = None
+        for source in self.current_geometry_state.sources.values():
+            if source.id == source_id:
+                source_to_update = source
+                break
+
+        if not source_to_update:
+            return False, f"Source with ID '{source_id}' not found."
+
+        if new_position is not None:
+            # The new position from the gizmo is already evaluated (floats)
+            # We need to store it as strings in the 'raw' position dict
+            source_to_update.position = {k: str(v) for k, v in new_position.items()}
+
+        self.recalculate_geometry_state()
+        self._capture_history_state(f"Transformed source {source_to_update.name}")
+        return True, None
     
     def delete_objects_batch(self, objects_to_delete):
         """
@@ -2270,3 +2308,35 @@ class ProjectManager:
         self._capture_history_state(f"Updated border surface {surface_name}")
 
         return True, None
+
+    def update_particle_source(self, source_id, new_name, new_gps_commands):
+        """Updates the properties of an existing particle source."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+
+        source_to_update = None
+        for source in self.current_geometry_state.sources.values():
+            if source.id == source_id:
+                source_to_update = source
+                break
+
+        if not source_to_update:
+            return False, f"Source with ID '{source_id}' not found."
+
+        # Check for name change and ensure uniqueness if it changed
+        if new_name and new_name != source_to_update.name:
+            if new_name in self.current_geometry_state.sources:
+                return False, f"A source named '{new_name}' already exists."
+            # To rename, we remove the old entry and add a new one
+            del self.current_geometry_state.sources[source_to_update.name]
+            source_to_update.name = new_name
+            self.current_geometry_state.sources[new_name] = source_to_update
+
+        if new_gps_commands is not None:
+            source_to_update.gps_commands = new_gps_commands
+
+        self._capture_history_state(f"Updated particle source {source_to_update.name}")
+        # Recalculation is not strictly necessary unless commands affect evaluation,
+        # but it's good practice to keep it consistent.
+        success, error_msg = self.recalculate_geometry_state()
+        return success, error_msg
