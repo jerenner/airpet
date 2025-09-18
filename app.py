@@ -8,6 +8,10 @@ import re
 import requests
 import traceback
 import ollama
+import subprocess
+import threading
+import atexit
+
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response
 from flask_cors import CORS
@@ -38,12 +42,14 @@ PROJECTS_BASE_DIR = os.path.join(os.getcwd(), "projects")
 os.makedirs(PROJECTS_BASE_DIR, exist_ok=True)
 project_manager.projects_dir = PROJECTS_BASE_DIR # Give PM access
 
+# ------------------------------------------------------------------------------
 # AI setup
 ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client: client.Client | None = None # Configure Gemini client
 
+# Configure the Gemini client
 def configure_gemini_client():
     """Initializes or re-initializes the Gemini client with the current API key."""
     global GEMINI_API_KEY, gemini_client
@@ -64,6 +70,222 @@ def configure_gemini_client():
 
 # Initial configuration on startup
 configure_gemini_client()
+
+# --------------------------------------------------------------------------
+# Geant4 integration
+
+# --- New Global Configuration ---
+# Path to the Geant4 application directory and executable
+# We assume the script is run from the `virtual-pet` root directory
+GEANT4_APP_DIR = os.path.join(os.getcwd(), "geant4")
+GEANT4_BUILD_DIR = os.path.join(GEANT4_APP_DIR, "build")
+GEANT4_EXECUTABLE = os.path.join(GEANT4_BUILD_DIR, "airpet-sim")
+
+# A dictionary to track running simulation processes
+SIMULATION_PROCESSES = {}
+SIMULATION_STATUS = {}
+SIMULATION_LOCK = threading.Lock()
+
+# Ensure we terminate any running simulations when the Flask app exits
+def cleanup_processes():
+    with SIMULATION_LOCK:
+        for job_id, process in SIMULATION_PROCESSES.items():
+            if process.poll() is None: # Check if the process is still running
+                print(f"Terminating running simulation job {job_id}...")
+                process.terminate()
+                process.wait()
+
+atexit.register(cleanup_processes)
+
+def generate_macro_file(job_id, sim_params):
+    """
+    Generates a Geant4 macro file from simulation parameters.
+
+    Args:
+        job_id (str): A unique identifier for this simulation run.
+        sim_params (dict): A dictionary containing settings from the frontend.
+
+    Returns:
+        str: The path to the generated macro file.
+    """
+    # Create a dedicated run directory for this job to keep files organized
+    run_dir = os.path.join(GEANT4_BUILD_DIR, f"run_{job_id}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    macro_path = os.path.join(run_dir, "run.mac")
+    geometry_path = os.path.join(run_dir, "geometry.gdml")
+
+    # 1. Export the current geometry to a GDML file inside the run directory
+    try:
+        gdml_string = project_manager.export_to_gdml_string()
+        with open(geometry_path, 'w') as f:
+            f.write(gdml_string)
+    except Exception as e:
+        raise RuntimeError(f"Failed to export geometry for simulation: {e}")
+
+    # 2. Generate the macro content
+    macro_content = []
+    macro_content.append("# AirPet Auto-Generated Macro")
+    macro_content.append(f"# Job ID: {job_id}")
+    macro_content.append("")
+
+    # --- Load Geometry ---
+    # Path is relative to the execution directory (GEANT4_BUILD_DIR)
+    relative_geometry_path = os.path.relpath(geometry_path, GEANT4_BUILD_DIR)
+    macro_content.append(f"/g4pet/detector/readFile {relative_geometry_path}")
+    macro_content.append("")
+
+    # --- Initialize Run ---
+    macro_content.append("/run/initialize")
+    macro_content.append("")
+
+    # --- Configure Source (using GPS) ---
+    source = sim_params.get('source', {})
+    macro_content.append("# --- Primary Particle Source ---")
+    macro_content.append(f"/gps/particle {source.get('particle', 'gamma')}")
+    macro_content.append(f"/gps/energy {source.get('energy', 511)} keV")
+    macro_content.append(f"/gps/pos/type {source.get('type', 'Point')}")
+    pos = source.get('position', {'x': 0, 'y': 0, 'z': 0})
+    macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+    # For now, we'll just use an isotropic source. We can add more direction options later.
+    macro_content.append("/gps/ang/type iso")
+    macro_content.append("")
+
+    # --- Configure Sensitive Detectors ---
+    # sds = sim_params.get('sensitive_detectors', [])
+    # if sds:
+    #     macro_content.append("# --- Sensitive Detectors ---")
+    #     for sd_request in sds:
+    #         macro_content.append(f"/g4pet/detector/addSD {sd_request['lv_name']} {sd_request['sd_name']}")
+    #     macro_content.append("")
+
+    # --- Configure Output & Visualization ---
+    macro_content.append("# --- Output and Visualization ---")
+    # Tell EventAction to write track files
+    if sim_params.get('visualize_tracks', False):
+        macro_content.append("/g4pet/event/printTracksToFile true")
+    
+    # Set the output HDF5 file name
+    output_filename = os.path.join(run_dir, "output.hdf5")
+    relative_output_path = os.path.relpath(output_filename, GEANT4_BUILD_DIR)
+    macro_content.append(f"/analysis/setFileName {relative_output_path}")
+
+    # --- Run Beam On ---
+    num_events = sim_params.get('events', 1)
+    macro_content.append("\n# --- Start Simulation ---")
+    macro_content.append(f"/run/beamOn {num_events}")
+
+    # 3. Write the macro file
+    with open(macro_path, 'w') as f:
+        f.write("\n".join(macro_content))
+
+    return macro_path
+
+@app.route('/api/simulation/run', methods=['POST'])
+def run_simulation():
+    if not os.path.exists(GEANT4_EXECUTABLE):
+        return jsonify({
+            "success": False,
+            "error": "Geant4 executable not found. Please compile the application in 'geant4_app/build'."
+        }), 500
+
+    sim_params = request.get_json()
+    if not sim_params:
+        return jsonify({"success": False, "error": "Missing simulation parameters."}), 400
+
+    job_id = str(uuid.uuid4())
+
+    try:
+        macro_path = generate_macro_file(job_id, sim_params)
+        relative_macro_path = os.path.relpath(macro_path, GEANT4_BUILD_DIR)
+
+        # This will be the function run in a separate thread
+        def run_g4_process(job_id, command):
+            with SIMULATION_LOCK:
+                # The process will run in the 'geant4_app/build' directory
+                process = subprocess.Popen(
+                    command,
+                    cwd=GEANT4_BUILD_DIR,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1 # Line-buffered
+                )
+                SIMULATION_PROCESSES[job_id] = process
+                SIMULATION_STATUS[job_id] = {
+                    "status": "Running",
+                    "progress": 0,
+                    "total_events": sim_params.get('events', 1),
+                    "stdout": [],
+                    "stderr": []
+                }
+
+            # Monitor stdout
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    line = line.strip()
+                    if line:
+                        with SIMULATION_LOCK:
+                           SIMULATION_STATUS[job_id]['stdout'].append(line)
+                           # Example of parsing progress:
+                           if ">>> Event" in line and "starts" in line:
+                               try:
+                                   event_num = int(line.split()[2])
+                                   SIMULATION_STATUS[job_id]['progress'] = event_num + 1
+                               except (ValueError, IndexError):
+                                   pass
+                process.stdout.close()
+
+            # Monitor stderr
+            if process.stderr:
+                for line in iter(process.stderr.readline, ''):
+                    line = line.strip()
+                    if line:
+                        with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stderr'].append(line)
+                process.stderr.close()
+
+            process.wait()
+            
+            with SIMULATION_LOCK:
+                if process.returncode == 0:
+                    SIMULATION_STATUS[job_id]['status'] = 'Completed'
+                else:
+                    SIMULATION_STATUS[job_id]['status'] = 'Error'
+                SIMULATION_PROCESSES.pop(job_id, None)
+
+        # Start the simulation in a background thread so the API call can return immediately
+        command_to_run = [f'./{os.path.basename(GEANT4_EXECUTABLE)}', relative_macro_path]
+        thread = threading.Thread(target=run_g4_process, args=(job_id, command_to_run))
+        thread.daemon = True # Allows main app to exit even if threads are running
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "message": "Simulation started.",
+            "job_id": job_id
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/simulation/status/<job_id>', methods=['GET'])
+def get_simulation_status(job_id):
+    with SIMULATION_LOCK:
+        status = SIMULATION_STATUS.get(job_id)
+        if not status:
+            return jsonify({"success": False, "error": "Job ID not found."}), 404
+        
+        # To avoid sending the entire (potentially huge) log every time,
+        # we can just send the last few lines.
+        status_copy = status.copy()
+        status_copy['stdout'] = status_copy['stdout'][-5:] # Last 5 lines
+        status_copy['stderr'] = status_copy['stderr'][-5:] # Last 5 lines
+
+        return jsonify({"success": True, "status": status_copy})
+    
+# -----------------------------------------------------------------------------------
 
 # --- Helper Functions ---
 

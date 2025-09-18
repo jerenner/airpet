@@ -1,0 +1,40 @@
+# Macro to test the airpet-sim application with a specific geometry and particle source.
+
+# Set verbosity
+/run/verbose 1
+/tracking/verbose 0
+
+# --- 1. Load the Geometry ---
+# We tell our custom DetectorConstruction to read the GDML file.
+# The path is relative to the `build` directory where we run the executable.
+/g4pet/detector/readFile default.gdml
+
+# --- 2. Initialize the Run ---
+# This is crucial. It builds the geometry and physics tables.
+# No other commands will work until this is done.
+/run/initialize
+
+# --- 3. Configure the General Particle Source (GPS) ---
+# Set the particle type to a proton
+/gps/particle proton
+
+# Set the particle's kinetic energy to 100 MeV
+/gps/energy 800 MeV
+
+# Set the source to be a point source
+/gps/pos/type Point
+
+# Set the starting position of the particle.
+# Place it 50 cm away from the origin along the -Z axis.
+/gps/pos/centre 0 0 -50 cm
+
+# Set the momentum direction along the +Z axis, towards the origin.
+/gps/direction 0 0 1
+
+# --- Enable writing tracks to a file ---
+# This will create a file named "event_0000_tracks.txt"
+/g4pet/event/printTracksToFile true
+
+# --- 4. Run One Event ---
+# This will simulate one primary particle with the settings defined above.
+/run/beamOn 1

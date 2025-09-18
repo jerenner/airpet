@@ -1,0 +1,25 @@
+# Macro file to customize the Qt GUI for AirPet Simulation.
+
+# --- File Menu ---
+/gui/addMenu file File
+/gui/addButton file Quit exit
+
+# --- Run Menu ---
+/gui/addMenu run Run
+/gui/addButton run "Run 1 event" "/run/beamOn 1"
+/gui/addButton run "Run 10 events" "/run/beamOn 10"
+
+# --- Gun Menu (for simple tests) ---
+/gui/addMenu gun Gun
+/gui/addButton gun "gamma" "/gun/particle gamma"
+/gui/addButton gun "e-" "/gun/particle e-"
+/gui/addButton gun "proton" "/gun/particle proton"
+/gui/addButton gun "1 MeV" "/gun/energy 1 MeV"
+/gui/addButton gun "511 keV" "/gun/energy 511 keV"
+/gui/addButton gun "10 MeV" "/gun/energy 10 MeV"
+
+# --- Viewer Menu ---
+/gui/addMenu viewer Viewer
+/gui/addButton viewer "Refresh" "/vis/viewer/refresh"
+/gui/addButton viewer "Wireframe" "/vis/viewer/set/style wireframe"
+/gui/addButton viewer "Surface" "/vis/viewer/set/style surface"

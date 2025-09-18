@@ -1,0 +1,52 @@
+# Macro file for AirPet Simulation visualization settings.
+
+# --- Create a viewer ---
+# If you have multiple graphics drivers installed, you can specify one,
+# e.g., /vis/open OGLSQt. Otherwise, Geant4 will pick one for you.
+/vis/open
+
+# --- Improve interactivity by disabling auto-refresh during setup ---
+/vis/viewer/set/autoRefresh false
+/vis/verbose errors
+
+# --- Draw the geometry loaded from the GDML file ---
+/vis/drawVolume
+
+# --- Set a nice default viewpoint ---
+# Angles are in degrees.
+/vis/viewer/set/viewpointThetaPhi 70 20
+/vis/viewer/zoom 1.2
+
+# --- Set the drawing style ---
+# 'surface' shows solid objects. 'wireframe' is also useful.
+/vis/viewer/set/style surface
+
+# --- Draw trajectories ---
+# Store all trajectories so they can be visualized
+/tracking/storeTrajectory 1
+
+# Create a "model" for drawing trajectories
+/vis/scene/add/trajectories smooth
+
+# Configure the model to draw by particle charge
+/vis/modeling/trajectories/create/drawByCharge
+# - positive particles will be red
+/vis/modeling/trajectories/drawByCharge-0/set 1 red
+# - neutral particles will be green
+/vis/modeling/trajectories/drawByCharge-0/set 0 green
+# - negative particles will be blue
+/vis/modeling/trajectories/drawByCharge-0/set -1 blue
+
+# Add markers for each step point in the trajectory
+/vis/modeling/trajectories/drawByCharge-0/default/setDrawStepPts true
+/vis/modeling/trajectories/drawByCharge-0/default/setStepPtsSize 2
+
+# To accumulate trajectories from multiple events in one view
+/vis/scene/endOfEventAction accumulate
+
+# --- Re-establish auto-refreshing and normal verbosity ---
+/vis/viewer/set/autoRefresh true
+/vis/verbose warnings
+
+# For file-based drivers, this command forces a refresh
+/vis/viewer/flush

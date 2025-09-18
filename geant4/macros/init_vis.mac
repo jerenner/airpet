@@ -1,0 +1,17 @@
+# Macro file for the initialization of the AirPet Simulation
+# when running in interactive mode with visualization.
+
+# --- Set some reasonable default verbosity levels ---
+# /control/verbose 2
+/run/verbose 1
+/event/verbose 0
+/tracking/verbose 0
+
+# --- Initialize the Geant4 kernel ---
+# This builds the geometry and physics tables. It is a mandatory step
+# before visualization or running events.
+/run/initialize
+
+# --- Load the main visualization settings ---
+# This will set up the viewer, camera angle, trajectory styles, etc.
+/control/execute vis.mac
