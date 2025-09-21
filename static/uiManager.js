@@ -910,6 +910,16 @@ function buildVolumeNodeRecursive(pvData, projectState, sceneGraph) {
         }
     }
 
+    // --- SET THE ACTIVE SOURCE RADIO BUTTON ---
+    // We need to know which source is active. We'll store this in the main AppState.
+    const activeSourceId = callbacks.getActiveSourceId?.(); // Add a callback to get this
+    if (activeSourceId) {
+        const activeRadio = structureTreeRoot.querySelector(`.active-source-radio[value="${activeSourceId}"]`);
+        if (activeRadio) {
+            activeRadio.checked = true;
+        }
+    }
+
     return itemElement;
 }
 
@@ -1120,16 +1130,27 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     `;
 
     let finalDisplayName = displayName; // Start with the passed name
+    let leadingContent = ''; // Content before the name
+
     // Add an icon for procedural volumes in the main hierarchy view
     if (itemType === 'logical_volume' && fullItemData.content_type && fullItemData.content_type !== 'physvol') {
         const icon = `<span class="procedural-icon" title="Type: ${fullItemData.content_type}">⚙️</span>`;
         finalDisplayName = icon + ' ' + displayName;
     }
 
+    // --- SOURCE RADIO BUTTON ---
+    if (itemType === 'particle_source') {
+        finalDisplayName = `&nbsp;&nbsp;${displayName}&nbsp;&nbsp;⚛️`;
+        // Create a radio button. The 'name' attribute ensures only one can be checked.
+        // We will check it later based on a global state.
+        leadingContent = `<input type="radio" name="active_source_selector" class="active-source-radio" value="${itemIdForBackend}" title="Set as active source for the next run">`;
+    }
+
     item.innerHTML = `
         <div class="tree-item-content">
+            ${leadingContent}
             <span class="item-name">${finalDisplayName}</span>
-            ${controlsHTML} 
+            ${controlsHTML}
         </div>
     `;
     item.dataset.type = itemType;
@@ -1338,6 +1359,16 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             callbacks.onEditGpsClicked(fullItemData);
         });
     }
+
+    // Add a specific listener for the particle source radio button, if we added one
+    const radio = item.querySelector('.active-source-radio');
+    if (radio) {
+        radio.addEventListener('click', (event) => {
+            event.stopPropagation(); // Don't trigger the item selection click
+            callbacks.onSourceActivationChanged(event.target.value);
+        });
+    }
+
     return item;
 }
 

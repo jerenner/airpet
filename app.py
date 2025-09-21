@@ -142,43 +142,48 @@ def generate_macro_file(job_id, sim_params):
     macro_content.append("")
 
     # --- Configure Source (using GPS) ---
-    sources = project_manager.current_geometry_state.sources.values()
-    if not sources:
+    active_id = self.current_geometry_state.active_source_id
+    active_source = None
+    if active_id:
+        for source in self.current_geometry_state.sources.values():
+            if source.id == active_id:
+                active_source = source
+                break
+    if not active_source:
         macro_content.append("# WARNING: No particle source defined in the project.")
     else:
         macro_content.append("# --- Primary Particle Source(s) ---")
-        for i, source in enumerate(sources):
-            # The /gps/source/add command creates a new source "particle gun"
-            # that can be configured independently.
-            macro_content.append(f"/gps/source/add {1.0}") # The number is a relative intensity weight
-            macro_content.append(f"/gps/source/multiplevertex true")
+        # The /gps/source/add command creates a new source "particle gun"
+        # that can be configured independently.
+        macro_content.append(f"/gps/source/add {1.0}") # The number is a relative intensity weight
+        macro_content.append(f"/gps/source/multiplevertex true")
+        
+        # The logic to write commands for a single source is now driven
+        # by the backend's state, not the request payload.
+        for cmd, value in active_source.gps_commands.items():
+            macro_content.append(f"/gps/{cmd} {value}")
+        
+        pos = active_source._evaluated_position
+        macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+        macro_content.append("")
 
-            # Apply all stored GPS commands for this source
-            for cmd, value in source.gps_commands.items():
-                macro_content.append(f"/gps/{cmd} {value}")
+        # --- APPLY ROTATION ---
+        # Get the evaluated rotation (ZYX in radians, negated)
+        rot = source._evaluated_rotation
 
-            # Apply the position from the scene
-            pos = source._evaluated_position
-            macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
-            macro_content.append("")
+        # Create a rotation matrix in Python using numpy
+        # Note: We must apply the rotations in Z, Y, X order
+        # Since our rotations are negated ZYX, we apply them as Z, Y, X with their negated values
+        r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
+        rot_matrix = r.as_matrix()
 
-            # --- APPLY ROTATION ---
-            # Get the evaluated rotation (ZYX in radians, negated)
-            rot = source._evaluated_rotation
-
-            # Create a rotation matrix in Python using numpy
-            # Note: We must apply the rotations in Z, Y, X order
-            # Since our rotations are negated ZYX, we apply them as Z, Y, X with their negated values
-            r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
-            rot_matrix = r.as_matrix()
-
-            # The new x' and y' axes for GPS are the first two columns of the rotation matrix
-            x_prime = rot_matrix[:, 0]
-            y_prime = rot_matrix[:, 1]
+        # The new x' and y' axes for GPS are the first two columns of the rotation matrix
+        x_prime = rot_matrix[:, 0]
+        y_prime = rot_matrix[:, 1]
             
-            macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
-            macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
-            macro_content.append("")
+        macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
+        macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
+        macro_content.append("")
 
     # --- Configure Sensitive Detectors ---
     # sds = sim_params.get('sensitive_detectors', [])
@@ -209,6 +214,20 @@ def generate_macro_file(job_id, sim_params):
         f.write("\n".join(macro_content))
 
     return macro_path
+
+@app.route('/api/set_active_source', methods=['POST'])
+def set_active_source_route():
+    data = request.get_json()
+    source_id = data.get('source_id') # Can be the ID string or null
+    
+    success, error_msg = project_manager.set_active_source(source_id)
+    
+    if success:
+        # We don't need to send the whole state back for this, a simple success is fine.
+        # The frontend can manage the radio button state.
+        return jsonify({"success": True, "message": "Active source updated."})
+    else:
+        return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/api/simulation/run', methods=['POST'])
 def run_simulation():

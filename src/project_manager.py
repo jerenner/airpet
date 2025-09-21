@@ -1445,6 +1445,10 @@ class ProjectManager:
         for item in objects_to_delete:
             obj_type = item.get('type')
             obj_id = item.get('id')
+
+            # --- SKIP DEPENDENCY CHECK FOR SOURCES ---
+            if obj_type == 'particle_source':
+                continue
             
             # Find dependencies, but exclude dependencies that are also being deleted in this same batch.
             # This allows deleting an LV and the PV that contains it at the same time.
@@ -1500,14 +1504,21 @@ class ProjectManager:
                 # Initialize with all types that can be deleted
                 "solids": [], "logical_volumes": [], "physical_volumes": [],
                 "materials": [], "elements": [], "isotopes": [], "defines": [],
-                "assemblies": [], "optical_surfaces": [], "skin_surfaces": [], "border_surfaces": []
+                "assemblies": [], "optical_surfaces": [], "skin_surfaces": [], 
+                "border_surfaces": [], "particle_sources": []
             }
         }
         for item in objects_to_delete:
             obj_type = item['type']
             obj_id = item['id']
             # Map frontend types to backend dictionary keys if they differ
-            dict_key = f"{obj_type}s" if obj_type != "assembly" else "assemblies"
+            dict_key = ""
+            if obj_type == "particle_source":
+                dict_key = "particle_sources"
+            elif obj_type == "assembly":
+                dict_key = "assemblies"
+            else:
+                dict_key = f"{obj_type}s"
             if dict_key in project_state_patch["deleted"]:
                  project_state_patch["deleted"][dict_key].append(obj_id)
 
@@ -1610,6 +1621,19 @@ class ProjectManager:
                 deleted = True
             else:
                 error_msg = "Physical Volume not found."
+
+        elif object_type == "particle_source":
+            source_to_delete = None
+            for name, source in state.sources.items():
+                if source.id == object_id:
+                    source_to_delete = name
+                    break
+            if source_to_delete:
+                del state.sources[source_to_delete]
+                # If the deleted source was the active one, clear the active ID
+                if state.active_source_id == object_id:
+                    state.active_source_id = None
+                deleted = True
         
         return deleted, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
 
@@ -2350,3 +2374,21 @@ class ProjectManager:
         # but it's good practice to keep it consistent.
         success, error_msg = self.recalculate_geometry_state()
         return success, error_msg
+    
+    def set_active_source(self, source_id):
+        """Sets the active source for the simulation."""
+        if not self.current_geometry_state:
+            return False, "No project loaded"
+
+        # Verify the source ID exists
+        found = any(s.id == source_id for s in self.current_geometry_state.sources.values())
+        
+        # Also allow unsetting the active source
+        if not found and source_id is not None:
+            return False, f"Source with ID {source_id} not found."
+
+        self.current_geometry_state.active_source_id = source_id
+        # No history capture is needed for just changing the active selection,
+        # but we do want to mark the project as changed for autosave.
+        self.is_changed = True
+        return True, None

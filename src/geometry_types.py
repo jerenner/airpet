@@ -756,6 +756,7 @@ class GeometryState:
 
         # To hold radioactive sources
         self.sources = {}
+        self.active_source_id = None
 
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
@@ -820,6 +821,7 @@ class GeometryState:
             "skin_surfaces": {name: surf.to_dict() for name, surf in self.skin_surfaces.items()},
             "border_surfaces": {name: surf.to_dict() for name, surf in self.border_surfaces.items()},
             "sources": {name: source.to_dict() for name, source in self.sources.items()},
+            "active_source_id": self.active_source_id,
             "ui_groups": self.ui_groups
         }
 
@@ -832,6 +834,7 @@ class GeometryState:
         instance.isotopes = {name: Isotope.from_dict(d) for name, d in data.get('isotopes', {}).items()}
         instance.solids = {name: Solid.from_dict(d) for name, d in data.get('solids', {}).items()}
         instance.sources = {name: ParticleSource.from_dict(d) for name, d in data.get('sources', {}).items()}
+        instance.active_source_id = data.get('active_source_id')
         
         # For logical volumes, pass the instance itself to resolve internal refs if needed during from_dict
         instance.logical_volumes = {

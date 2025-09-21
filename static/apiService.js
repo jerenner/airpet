@@ -754,3 +754,12 @@ export async function updateParticleSource(sourceId, name, gps_commands, positio
     });
     return handleResponse(response);
 }
+
+export async function setActiveSource(sourceId) {
+    const response = await fetch(`${API_BASE_URL}/api/set_active_source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId })
+    });
+    return handleResponse(response);
+}

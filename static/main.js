@@ -24,6 +24,7 @@ const AppState = {
     currentProjectState: null,    // Full state dict from backend (defines, materials, solids, LVs, world_ref)
     currentProjectScene: null,    // Full scene dict from backend (THREE.js objects to be rendered)
     currentProjectName: "untitled",
+    activeSourceId: null,
     selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
     selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
     selectedPVContext: {
@@ -125,7 +126,10 @@ async function initializeApp() {
         onAddGroup: handleAddGroup,
         onRenameGroup: handleRenameGroup,
         onDeleteGroup: handleDeleteGroup,
-        onMoveItemsToGroup: handleMoveItemsToGroup
+        onMoveItemsToGroup: handleMoveItemsToGroup,
+        // Source activation
+        onSourceActivationChanged: handleSourceActivation,
+        getActiveSourceId: () => AppState.activeSourceId
     });
 
     // Initialize the 3D scene and its controls
@@ -419,6 +423,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // 1. Update the global AppState cache
     //AppState.currentProjectState updated in logic above
     AppState.currentProjectScene = responseData.scene_update;
+    AppState.activeSourceId = responseData.project_state.active_source_id;
     AppState.selectedHierarchyItems = []; // Clear old selections
     AppState.selectedThreeObjects = [];
     AppState.selectedPVContext.pvId = null;
@@ -518,27 +523,45 @@ function syncUIWithState_shallow(responseData) {
         if (projectPatch.deleted) {
             for (const [category, idList] of Object.entries(projectPatch.deleted)) {
                 if (!idList || idList.length === 0) continue;
-                
-                // Map the category to the correct AppState dictionary
-                const targetDictName = category === 'physical_volumes' ? null : category;
-                if (targetDictName && AppState.currentProjectState[targetDictName]) {
-                    idList.forEach(id => {
-                        delete AppState.currentProjectState[targetDictName][id];
-                    });
-                } else if (category === 'physical_volumes') {
-                    // Need to find and remove PVs from their parents
-                    idList.forEach(pvIdToDelete => {
-                        for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
-                            if (lv.content_type === 'physvol') {
-                                lv.content = lv.content.filter(pv => pv.id !== pvIdToDelete);
+
+                if (category === 'particle_sources') {
+                    idList.forEach(sourceIdToDelete => {
+                        // Find and remove the source from the AppState by its ID
+                        for (const sourceName in AppState.currentProjectState.sources) {
+                            if (AppState.currentProjectState.sources[sourceName].id === sourceIdToDelete) {
+                                delete AppState.currentProjectState.sources[sourceName];
+                                // Also check if it was the active source
+                                if (AppState.activeSourceId === sourceIdToDelete) {
+                                    AppState.activeSourceId = null;
+                                }
+                                break; // Found and deleted, move to next ID
                             }
                         }
-                        // Also check assemblies
-                        for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
-                            asm.placements = asm.placements.filter(pv => pv.id !== pvIdToDelete);
-                        }
                     });
+                } 
+                else {
+                    // Map the category to the correct AppState dictionary
+                    const targetDictName = category === 'physical_volumes' ? null : category;
+                    if (targetDictName && AppState.currentProjectState[targetDictName]) {
+                        idList.forEach(id => {
+                            delete AppState.currentProjectState[targetDictName][id];
+                        });
+                    } else if (category === 'physical_volumes') {
+                        // Need to find and remove PVs from their parents
+                        idList.forEach(pvIdToDelete => {
+                            for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
+                                if (lv.content_type === 'physvol') {
+                                    lv.content = lv.content.filter(pv => pv.id !== pvIdToDelete);
+                                }
+                            }
+                            // Also check assemblies
+                            for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
+                                asm.placements = asm.placements.filter(pv => pv.id !== pvIdToDelete);
+                            }
+                        });
+                    }
                 }
+                
             }
         }
 
@@ -2204,5 +2227,55 @@ async function handleGpsEditorConfirm(data) {
         } finally {
             UIManager.hideLoading();
         }
+    }
+}
+
+async function handleSourceActivation(sourceId) {
+    console.log(`Setting source ${sourceId} as active on the backend.`);
+    try {
+        await APIService.setActiveSource(sourceId);
+        // Update the local state cache
+        AppState.activeSourceId = sourceId;
+    } catch (error) {
+        UIManager.showError("Failed to set active source: " + error.message);
+        // Optional: Re-render the hierarchy to revert the radio button
+    }
+}
+
+// --- UPDATE THE SIMULATION TRIGGER ---
+// In the (soon to be created) handler for the "Run Simulation" button click
+async function handleRunSimulation() {
+    // ... (gather number of events, etc. into a sim_params object)
+
+    if (!AppState.activeSourceId) {
+        UIManager.showError("Please select an active particle source in the hierarchy before running a simulation.");
+        return;
+    }
+    
+    // Find the full source object from the project state using the active ID
+    const activeSource = Object.values(AppState.currentProjectState.sources)
+                               .find(s => s.id === AppState.activeSourceId);
+
+    if (!activeSource) {
+        UIManager.showError("The selected active source could not be found in the project state.");
+        return;
+    }
+
+    // Now, we create a 'source' entry in sim_params that contains ONLY the active source's data
+    const sim_params = {
+        events: 1000, // Or get from UI
+        visualize_tracks: true, // Or get from UI
+        sources: [activeSource] // Pass an array with only the active source
+    };
+
+    // The backend will automatically use the active source stored in the project.
+    try {
+        UIManager.showLoading("Starting simulation...");
+        const result = await APIService.runSimulation(sim_params);
+        // ... handle polling using result.job_id ...
+    } catch (error) {
+        UIManager.showError("Failed to start simulation: " + error.message);
+    } finally {
+        UIManager.hideLoading();
     }
 }
