@@ -491,6 +491,11 @@ function restoreSelection(selectionToRestore) {
             UIManager.clearHierarchySelection();
             SceneManager.unselectAllInScene();
         }  
+    } else {
+        // If there was no previous selection, also clear everything.
+        UIManager.clearInspector();
+        UIManager.clearHierarchySelection();
+        SceneManager.unselectAllInScene();
     }
 }
 
@@ -1064,29 +1069,47 @@ async function handleHierarchySelection(newSelection) {
     if (newSelection.length === 1) {
         const singleItem = newSelection[0];
 
-        // The getObjectDetails and populateInspector logic can now proceed
-        const type = singleItem.type;
-        const name = singleItem.name;
-        const id = singleItem.canonical_id;
-        
-        const idForApi = (type === 'physical_volume') ? id : name;
-        try {
-            const details = await APIService.getObjectDetails(type, idForApi);
-            if (details) {
-                singleItem.data = details; // Ensure data is up-to-date
+        // --- NEW LOGIC: Handle sources and geometry differently ---
+        if (singleItem.type === 'particle_source') {
+            // For sources, the 'data' we already have is sufficient for the inspector.
+            // We just need to fetch the latest version in case it changed.
+            try {
+                const details = await APIService.getObjectDetails(singleItem.type, singleItem.id);
+                UIManager.populateInspector(
+                    {...singleItem, data: details}, // Use fresh data
+                    AppState.currentProjectState
+                );
+            } catch (error) {
+                 UIManager.showError(error.message);
+                 UIManager.clearInspector();
+            }
 
-                // Hack-fix for procedurals
-                if(singleItem.selData.is_procedural_instance) {
-                    singleItem.id = singleItem.canonical_id;
+        } else {
+
+            // The getObjectDetails and populateInspector logic can now proceed
+            const type = singleItem.type;
+            const name = singleItem.name;
+            const id = singleItem.canonical_id;
+            
+            const idForApi = (type === 'physical_volume') ? id : name;
+            try {
+                const details = await APIService.getObjectDetails(type, idForApi);
+                if (details) {
+                    singleItem.data = details; // Ensure data is up-to-date
+
+                    // Hack-fix for procedurals
+                    if(singleItem.selData.is_procedural_instance) {
+                        singleItem.id = singleItem.canonical_id;
+                    }
+                    UIManager.populateInspector(singleItem, AppState.currentProjectState);
+                } else {
+                    UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
+                    UIManager.clearInspector();
                 }
-                UIManager.populateInspector(singleItem, AppState.currentProjectState);
-            } else {
-                UIManager.showError(`Could not fetch details for ${type} ${idForApi}`);
+            } catch (error) {
+                UIManager.showError(error.message);
                 UIManager.clearInspector();
             }
-        } catch (error) {
-            UIManager.showError(error.message);
-            UIManager.clearInspector();
         }
     } else if (newSelection.length > 1) {
         UIManager.clearInspector();
@@ -1151,9 +1174,17 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
 function findItemInScene(itemId) {
 
-    const pv = SceneManager.findObjectByPvId(itemId);
-    if(pv){
-        return {type: "physical_volume", id: pv.userData.id, name: pv.userData.name, selData: pv.userData, canonical_id: pv.userData.canonical_id};
+    const obj = SceneManager.findObjectByPvId(itemId);
+    if(obj){
+        // Determine the type from userData
+        const type = obj.userData.is_source ? "particle_source" : "physical_volume";
+        return {
+            type: type, 
+            id: obj.userData.id, 
+            name: obj.userData.name, 
+            selData: obj.userData, 
+            canonical_id: obj.userData.canonical_id
+        };
     }
     return null;
 }
@@ -2151,7 +2182,13 @@ async function handleGpsEditorConfirm(data) {
             const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position);
             // After creating, find the new source in the response to select it
             const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
-            const newSelection = newSource ? [{ type: 'particle_source', id: newSource.id, name: newSource.name, data: newSource }] : [];
+            const newSelection = newSource ? [{ 
+                type: 'particle_source', 
+                id: newSource.id, 
+                name: newSource.name, 
+                data: newSource,
+                selData: { is_source: true }
+            }] : [];
             syncUIWithState(result, newSelection);
         } catch (error) {
             UIManager.showError("Error creating source: " + (error.message || error));

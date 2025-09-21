@@ -1036,10 +1036,22 @@ def get_object_details_route():
     obj_id = request.args.get('id')
     if not obj_type or not obj_id:
         return jsonify({"error": "Type or ID missing"}), 400
-    details = project_manager.get_object_details(obj_type, obj_id)
+    
+    if obj_type == "particle_source":
+        # For sources, the 'id' from the frontend is the unique ID
+        details = None
+        for source in project_manager.current_geometry_state.sources.values():
+            if source.id == obj_id:
+                details = source.to_dict()
+                break
+    else:
+        details = project_manager.get_object_details(obj_type, obj_id)
+
     if details:
         return jsonify(details)
-    return jsonify({"error": f"{obj_type} '{obj_id}' not found"}), 404
+    
+    error_key = "ID" if obj_type in ["physical_volume", "particle_source"] else "name"
+    return jsonify({"error": f"{obj_type} with {error_key} '{obj_id}' not found"}), 404
 
 @app.route('/save_project_json', methods=['GET'])
 def save_project_json_route():

@@ -559,13 +559,30 @@ export async function populateInspector(itemContext, projectState) {
     if (!inspectorContentDiv) return;
     inspectorContentDiv.innerHTML = '';
 
+    // Handle multi-selection case
+    if (Array.isArray(itemContext)) {
+        const title = document.createElement('h4');
+        title.textContent = `${itemContext.length} items selected`;
+        inspectorContentDiv.appendChild(title);
+        // ... (optional: show common properties)
+        return;
+    }
+
     const { type, id, name, data } = itemContext;
 
     const title = document.createElement('h4');
     title.textContent = `${type}: ${name || id}`;
     inspectorContentDiv.appendChild(title);
 
-    if (type === 'physical_volume') {
+    if (type === 'particle_source') {
+        createReadOnlyProperty(inspectorContentDiv, "Source Type:", data.type.toUpperCase());
+        
+        const commands = data.gps_commands || {};
+        for (const [key, value] of Object.entries(commands)) {
+            createReadOnlyProperty(inspectorContentDiv, `/gps/${key}:`, value);
+        }
+        
+    } else if (type === 'physical_volume') {
         const allDefines = projectState.defines || {};
         const posDefines = {};
         const rotDefines = {};
@@ -825,7 +842,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
             sourceItems.forEach(sourceData => {
                 // The source data comes directly from the scene update
                 const sourceNode = createTreeItem(
-                    `⚛️ ${sourceData.name}`, // Add an icon
+                    `${sourceData.name}`, // Add an icon
                     'particle_source',       // A new type for our hierarchy items
                     sourceData.id,           // Use the unique ID for selection
                     sourceData,
