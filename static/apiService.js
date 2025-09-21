@@ -722,29 +722,35 @@ export async function updateBorderSurface(id, params) {
     return handleResponse(response);
 }
 
-export async function addParticleSource(name, gps_commands, position) {
+export async function addParticleSource(name, gps_commands, position, rotation) {
     const response = await fetch(`${API_BASE_URL}/api/add_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, gps_commands, position })
+        body: JSON.stringify({ name, gps_commands, position, rotation })
     });
     return handleResponse(response);
 }
 
-export async function updateSourceTransform(sourceId, position) {
+export async function updateSourceTransform(sourceId, position, rotation) {
     const response = await fetch(`${API_BASE_URL}/api/update_source_transform`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sourceId, position: position })
+        body: JSON.stringify({ id: sourceId, position: position, rotation: rotation })
     });
     return handleResponse(response);
 }
 
-export async function updateParticleSource(sourceId, name, gps_commands) {
+export async function updateParticleSource(sourceId, name, gps_commands, position, rotation) {
     const response = await fetch(`${API_BASE_URL}/api/update_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sourceId, name: name, gps_commands: gps_commands })
+        body: JSON.stringify({ 
+            id: sourceId, 
+            name: name, 
+            gps_commands: gps_commands,
+            position: position,
+            rotation: rotation
+        })
     });
     return handleResponse(response);
 }

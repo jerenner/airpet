@@ -1,7 +1,7 @@
 // static/sceneManager.js
 
 import * as THREE from 'three';
-import { EdgesGeometry, LineBasicMaterial, LineSegments } from 'three';
+import { ArrowHelper, EdgesGeometry, LineBasicMaterial, LineSegments } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { SelectionBox } from 'three/addons/interactive/SelectionBox.js';
@@ -1955,6 +1955,17 @@ export function renderObjects(pvDescriptions, projectState) {
             sourceGroup.add(markerMesh);
             sourceGroup.add(axes);
 
+            // --- ADD ARROW HELPER ---
+            // The arrow will point along the local Z-axis (0, 0, 1)
+            const dir = new THREE.Vector3(0, 0, 1);
+            const origin = new THREE.Vector3(0, 0, 0);
+            const length = 25; // 25mm long arrow
+            const hexColor = 0xff0000; // Red
+            const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hexColor, 8, 4); // Last two params are head length and width
+            arrowHelper.line.name = "SourceArrowLine";
+            arrowHelper.cone.name = "SourceArrowCone";
+            sourceGroup.add(arrowHelper);
+
             objectMap.set(pvData.id, sourceGroup);
         } 
         // --- LOGIC FOR GEOMETRY ---
@@ -2095,6 +2106,10 @@ export function updateSelectionState(groupsToSelect = []) {
                     _originalMaterialsMap.delete(child.uuid);
                 }
             }
+            // --- REVERT SOURCE ARROW COLOR ---
+            if (child.name === "SourceArrowLine" || child.name === "SourceArrowCone") {
+                child.material.color.setHex(0xff0000); // Revert to red
+            }
         });
     });
 
@@ -2118,6 +2133,10 @@ export function updateSelectionState(groupsToSelect = []) {
                     }
                     child.material = _highlightMaterial;
                 }
+            }
+            // --- HIGHLIGHT SOURCE ARROW COLOR ---
+            if (child.name === "SourceArrowLine" || child.name === "SourceArrowCone") {
+                child.material.color.setHex(0xff8c00); // Set to bright orange to match
             }
         });
     });

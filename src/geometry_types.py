@@ -697,7 +697,7 @@ class BorderSurface:
     
 class ParticleSource:
     """Represents a particle source (G4GeneralParticleSource) in the project."""
-    def __init__(self, name, gps_commands=None, position=None, vis_attributes=None):
+    def __init__(self, name, gps_commands=None, position=None, rotation=None, vis_attributes=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.type = "gps" # To distinguish from other potential source types later
@@ -707,9 +707,11 @@ class ParticleSource:
 
         # Store the position separately for easy access by the transform gizmo
         self.position = position if position is not None else {'x': '0', 'y': '0', 'z': '0'}
+        self.rotation = rotation if rotation is not None else {'x': '0', 'y': '0', 'z': '0'}
         
         # Evaluated position for rendering
         self._evaluated_position = {'x': 0, 'y': 0, 'z': 0}
+        self._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
 
     def to_dict(self):
         return {
@@ -719,6 +721,7 @@ class ParticleSource:
             "gps_commands": self.gps_commands,
             "position": self.position,
             "_evaluated_position": self._evaluated_position,
+            "_evaluated_rotation": self._evaluated_rotation,
         }
 
     @classmethod
@@ -726,10 +729,12 @@ class ParticleSource:
         instance = cls(
             data['name'],
             data.get('gps_commands', {}),
-            data.get('position', {'x': '0', 'y': '0', 'z': '0'})
+            data.get('position', {'x': '0', 'y': '0', 'z': '0'}),
+            data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
         )
         instance.id = data.get('id', str(uuid.uuid4()))
         instance._evaluated_position = data.get('_evaluated_position', {'x': 0, 'y': 0, 'z': 0})
+        instance._evaluated_rotation = data.get('_evaluated_rotation', {'x': 0, 'y': 0, 'z': 0})
         return instance
 
 class GeometryState:
@@ -882,10 +887,11 @@ class GeometryState:
                 "parent_id": world_pv_id, # Attach to the world physical volume
                 "is_source": True,
                 "position": source._evaluated_position,
-                "rotation": {'x': 0, 'y': 0, 'z': 0},
-                "scale": {'x': 1, 'y': 1, 'z': 1}
+                "rotation": source._evaluated_rotation,
+                "scale": {'x': 1, 'y': 1, 'z': 1},
+                "gps_commands": source.gps_commands
             })
-            
+
         return threejs_objects
 
     def _traverse(self, pv, parent_pv_id, path, threejs_objects, owner_pv_id=None, instance_prefix=""):

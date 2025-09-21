@@ -1034,7 +1034,7 @@ async function handleHierarchySelection(newSelection) {
     // --- 2. Build the list of meshes to highlight/transform ---
     const meshesToProcess = [];
     newSelection.forEach(item => {
-        if (item.type === 'physical_volume') {
+        if (item.type === 'physical_volume' || item.type === "particle_source") {
             let isProcedural = item.selData.is_procedural_instance;
             if (isProcedural) {
                 // Procedural PV: get all its instances.
@@ -1069,7 +1069,7 @@ async function handleHierarchySelection(newSelection) {
     if (newSelection.length === 1) {
         const singleItem = newSelection[0];
 
-        // --- NEW LOGIC: Handle sources and geometry differently ---
+        // --- Handle sources and geometry differently ---
         if (singleItem.type === 'particle_source') {
             // For sources, the 'data' we already have is sufficient for the inspector.
             // We just need to fetch the latest version in case it changed.
@@ -1260,8 +1260,18 @@ async function handleTransformEnd(transformedObject) {
             y: transformedObject.position.y,
             z: transformedObject.position.z,
         };
+
+        // --- GET ROTATION FROM GIZMO ---
+        // The gizmo gives a quaternion, we need to convert it to ZYX Euler angles in radians.
+        const euler = new THREE.Euler().setFromQuaternion(transformedObject.quaternion, 'XYZ');
+        const newRotation = {
+            x: -euler.x,
+            y: -euler.y,
+            z: -euler.z
+        };
+
         try {
-            const result = await APIService.updateSourceTransform(sourceId, newPosition);
+            const result = await APIService.updateSourceTransform(sourceId, newPosition, newRotation);
             syncUIWithState(result, AppState.selectedHierarchyItems);
         } catch (error) {
             UIManager.showError("Error updating source transform: " + error.message);
@@ -2160,7 +2170,6 @@ async function handleGpsEditorConfirm(data) {
     const selectionContext = getSelectionContext();
     if (data.isEdit) {
 
-        // --- THIS IS THE UPDATED LOGIC ---
         UIManager.showLoading("Updating Particle Source...");
         try {
             // Note: data.id is the source's name. We need the unique ID from the selection.
@@ -2168,7 +2177,7 @@ async function handleGpsEditorConfirm(data) {
             if (!sourceId) {
                 throw new Error("Could not determine the unique ID of the source to update.");
             }
-            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands);
+            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands, data.position, data.rotation);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating source: " + (error.message || error));
@@ -2179,7 +2188,7 @@ async function handleGpsEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Particle Source...");
         try {
-            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position);
+            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation);
             // After creating, find the new source in the response to select it
             const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
             const newSelection = newSource ? [{ 

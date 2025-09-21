@@ -629,6 +629,7 @@ class ProjectManager:
         # --- Evaluate Source Positions ---
         for source in state.sources.values():
             source._evaluated_position = evaluate_transform_part(source.position, {'x': 0, 'y': 0, 'z': 0})
+            source._evaluated_rotation = evaluate_transform_part(source.rotation, {'x': 0, 'y': 0, 'z': 0}, rotation=True)
 
         return True, None
 
@@ -1377,18 +1378,18 @@ class ProjectManager:
 
         return success, error_msg
     
-    def add_particle_source(self, name_suggestion, gps_commands, position):
+    def add_particle_source(self, name_suggestion, gps_commands, position, rotation):
         if not self.current_geometry_state:
             return None, "No project loaded"
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
-        new_source = ParticleSource(name, gps_commands, position)
+        new_source = ParticleSource(name, gps_commands, position, rotation)
         self.current_geometry_state.add_source(new_source)
         self.recalculate_geometry_state()
         self._capture_history_state(f"Added particle source {name}")
         return new_source.to_dict(), None
 
-    def update_source_transform(self, source_id, new_position):
+    def update_source_transform(self, source_id, new_position, new_rotation):
         """Updates just the position of a source."""
         if not self.current_geometry_state:
             return False, "No project loaded"
@@ -1406,6 +1407,9 @@ class ProjectManager:
             # The new position from the gizmo is already evaluated (floats)
             # We need to store it as strings in the 'raw' position dict
             source_to_update.position = {k: str(v) for k, v in new_position.items()}
+
+        if new_rotation is not None:
+            source_to_update.rotation = {k: str(v) for k, v in new_rotation.items()}
 
         self.recalculate_geometry_state()
         self._capture_history_state(f"Transformed source {source_to_update.name}")
@@ -2309,7 +2313,7 @@ class ProjectManager:
 
         return True, None
 
-    def update_particle_source(self, source_id, new_name, new_gps_commands):
+    def update_particle_source(self, source_id, new_name, new_gps_commands, new_position, new_rotation):
         """Updates the properties of an existing particle source."""
         if not self.current_geometry_state:
             return False, "No project loaded"
@@ -2334,6 +2338,12 @@ class ProjectManager:
 
         if new_gps_commands is not None:
             source_to_update.gps_commands = new_gps_commands
+
+        if new_position is not None:
+            source_to_update.position = new_position
+
+        if new_rotation is not None:
+            source_to_update.rotation = new_rotation
 
         self._capture_history_state(f"Updated particle source {source_to_update.name}")
         # Recalculation is not strictly necessary unless commands affect evaluation,

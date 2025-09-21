@@ -34,18 +34,21 @@ export function show(sourceData = null) {
         editingSourceId = sourceData.id;
         titleElement.textContent = `Edit Particle Source: ${sourceData.name}`;
         nameInput.value = sourceData.name;
-        nameInput.disabled = true;
+        nameInput.disabled = false;
         confirmButton.textContent = "Update Source";
 
         // Pre-fill fields from sourceData.gps_commands
         const commands = sourceData.gps_commands || {};
         particleSelect.value = commands['particle'] || 'gamma';
+
         energyContainer.innerHTML = '';
         energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', commands['energy'] || '511'));
         
         const shape = commands['pos/type'] || 'Point';
         shapeSelect.value = shape;
-        renderShapeParamsUI(shape, commands, sourceData.position);
+        const angType = commands['ang/type'] || 'iso';
+        
+        renderShapeParamsUI(shape, commands, sourceData.position, sourceData.rotation, angType);
 
     } else { // CREATE MODE
         isEditMode = false;
@@ -60,7 +63,7 @@ export function show(sourceData = null) {
         energyContainer.innerHTML = '';
         energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', '511'));
         shapeSelect.value = 'Point';
-        renderShapeParamsUI();
+        renderShapeParamsUI('Point', {}, {x:'0',y:'0',z:'0'}, {x:'0',y:'0',z:'0'}, 'iso');
     }
     modalElement.style.display = 'block';
 }
@@ -69,7 +72,7 @@ function hide() {
     modalElement.style.display = 'none';
 }
 
-function renderShapeParamsUI(shapeType = null, commands = {}, position = {}) {
+function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rotation = {}, ang_type = 'iso') {
     const shape = shapeType || shapeSelect.value;
     shapeParamsContainer.innerHTML = ''; // Clear previous params
 
@@ -83,7 +86,43 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}) {
             `gps_pos_${axis}`, axis.toUpperCase(), position[axis] || '0'
         ));
     });
+
+    // --- NEW: ADD ANGULAR DISTRIBUTION EDITOR ---
     shapeParamsContainer.appendChild(document.createElement('hr'));
+    const angGroup = document.createElement('div');
+    angGroup.className = 'property_item';
+    angGroup.innerHTML = `
+        <label for="gpsAngType">Distribution:</label>
+        <select id="gpsAngType">
+            <option value="iso">Isotropic (Random)</option>
+            <option value="beam1d">Beam (Directed)</option>
+        </select>
+    `;
+    shapeParamsContainer.appendChild(angGroup);
+    const angTypeSelect = angGroup.querySelector('#gpsAngType');
+    angTypeSelect.value = ang_type;
+
+    const rotGroup = document.createElement('div');
+    rotGroup.className = 'transform-group';
+    rotGroup.innerHTML = `<span>Orientation (rad)</span>`;
+    shapeParamsContainer.appendChild(rotGroup);
+    ['x', 'y', 'z'].forEach(axis => {
+        rotGroup.appendChild(ExpressionInput.create(
+            `gps_rot_${axis}`, axis.toUpperCase(), rotation[axis] || '0'
+        ));
+    });
+
+    // Disable rotation inputs if source is isotropic
+    if (angTypeSelect.value === 'iso') {
+        rotGroup.style.opacity = '0.5';
+        rotGroup.querySelectorAll('input').forEach(input => input.disabled = true);
+    }
+    
+    angTypeSelect.addEventListener('change', (e) => {
+        const isIso = e.target.value === 'iso';
+        rotGroup.style.opacity = isIso ? '0.5' : '1.0';
+        rotGroup.querySelectorAll('input').forEach(input => input.disabled = isIso);
+    });
 
     switch (shape) {
         case 'Point':
@@ -128,7 +167,7 @@ function handleConfirm() {
     // Collect all GPS commands into a dictionary
     const gpsCommands = {};
     gpsCommands['particle'] = particleSelect.value;
-    gpsCommands['energy'] = document.getElementById('gps_energy').value + ' keV';
+    gpsCommands['energy'] = document.getElementById('gps_energy').value;
     
     const shape = shapeSelect.value;
     gpsCommands['pos/type'] = shape;
@@ -153,12 +192,24 @@ function handleConfirm() {
         z: document.getElementById('gps_pos_z').value
     };
 
+    // Collect angular commands
+    const angType = document.getElementById('gpsAngType').value;
+    gpsCommands['ang/type'] = angType;
+
+    // Collect rotation
+    const rotation = {
+        x: document.getElementById('gps_rot_x').value,
+        y: document.getElementById('gps_rot_y').value,
+        z: document.getElementById('gps_rot_z').value
+    };
+
     onConfirmCallback({
         isEdit: isEditMode,
         id: isEditMode ? editingSourceId : name,
         name: name,
         gps_commands: gpsCommands,
-        position: position 
+        position: position,
+        rotation: rotation
     });
     hide();
 }

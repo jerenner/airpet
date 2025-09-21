@@ -21,6 +21,8 @@ from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
 from google.genai import client # For type hinting
 
+from scipy.spatial.transform import Rotation as R
+
 from src.expression_evaluator import ExpressionEvaluator 
 from src.project_manager import ProjectManager
 from src.geometry_types import get_unit_value
@@ -158,6 +160,24 @@ def generate_macro_file(job_id, sim_params):
             # Apply the position from the scene
             pos = source._evaluated_position
             macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+            macro_content.append("")
+
+            # --- APPLY ROTATION ---
+            # Get the evaluated rotation (ZYX in radians, negated)
+            rot = source._evaluated_rotation
+
+            # Create a rotation matrix in Python using numpy
+            # Note: We must apply the rotations in Z, Y, X order
+            # Since our rotations are negated ZYX, we apply them as Z, Y, X with their negated values
+            r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
+            rot_matrix = r.as_matrix()
+
+            # The new x' and y' axes for GPS are the first two columns of the rotation matrix
+            x_prime = rot_matrix[:, 0]
+            y_prime = rot_matrix[:, 1]
+            
+            macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
+            macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
             macro_content.append("")
 
     # --- Configure Sensitive Detectors ---
@@ -300,8 +320,10 @@ def add_source_route():
     name_suggestion = data.get('name', 'gps_source')
     gps_commands = data.get('gps_commands', {})
     position = data.get('position', {'x': '0', 'y': '0', 'z': '0'})
+    rotation = data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
     
-    new_source, error_msg = project_manager.add_particle_source(name_suggestion, gps_commands, position)
+    new_source, error_msg = project_manager.add_particle_source(
+        name_suggestion, gps_commands, position, rotation)
     if new_source:
         return create_success_response("Particle source created.")
     else:
@@ -312,11 +334,14 @@ def update_source_transform_route():
     data = request.get_json()
     source_id = data.get('id')
     new_position = data.get('position')
-    
+    new_rotation = data.get('rotation')
+
     if not source_id:
         return jsonify({"error": "Source ID missing"}), 400
         
-    success, error_msg = project_manager.update_source_transform(source_id, new_position)
+    success, error_msg = project_manager.update_source_transform(
+        source_id, new_position, new_rotation
+    )
     if success:
         return create_success_response(f"Source {source_id} transform updated.")
     else:
@@ -328,11 +353,15 @@ def update_source_route():
     source_id = data.get('id')
     new_name = data.get('name')
     new_gps_commands = data.get('gps_commands')
+    new_position = data.get('position')
+    new_rotation = data.get('rotation')
 
     if not source_id:
         return jsonify({"success": False, "error": "Source ID is required."}), 400
 
-    success, error_msg = project_manager.update_particle_source(source_id, new_name, new_gps_commands)
+    success, error_msg = project_manager.update_particle_source(
+        source_id, new_name, new_gps_commands, new_position, new_rotation
+    )
 
     if success:
         return create_success_response("Particle source updated successfully.")
