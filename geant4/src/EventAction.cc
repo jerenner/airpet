@@ -11,13 +11,13 @@
 #include "G4TrajectoryContainer.hh"
 #include "G4ios.hh"
 #include "G4HCtable.hh"
-#include "G4GenericMessenger.hh"
 
 #include <fstream>
 
 EventAction::EventAction()
  : G4UserEventAction(),
-   fPrintTracksToFile(false)
+   fPrintTracksToFile(false),
+   fTrackOutputDir(".")
 {
   // Initialize the vector with an invalid ID
   fHitsCollectionIDs.push_back(-1);
@@ -28,6 +28,10 @@ EventAction::EventAction()
       .SetGuidance("Enable or disable writing trajectory points to a file for visualization.")
       .SetParameterName("value", true)
       .SetDefaultValue("false");
+
+  fMessenger->DeclareMethod("printTracksToDir", &EventAction::SetTrackOutputDir)
+      .SetGuidance("Set the output directory for trajectory files.")
+      .SetParameterName("dir", false);
 }
 
 EventAction::~EventAction()
@@ -147,7 +151,9 @@ void EventAction::WriteTracksToFile(const G4Event* event)
 
     // Create a filename for this event's tracks
     std::ostringstream filename;
-    filename << "event_" << std::setw(4) << std::setfill('0') << event->GetEventID() << "_tracks.txt";
+    
+    // Prepend the directory path to the filename
+    filename << fTrackOutputDir << "/event_" << std::setw(4) << std::setfill('0') << event->GetEventID() << "_tracks.txt";
 
     std::ofstream outFile(filename.str());
     if (!outFile.is_open()) {

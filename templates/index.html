@@ -282,6 +282,48 @@
         }
         canvas { display: block; width: 100% !important; height: 100% !important; }
 
+        /* Bottom panel containing AI and simulation options */
+        #bottom_panel {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            border-top: 1px solid #ccc;
+            background-color: #f0f2f5;
+        }
+
+        #bottom_panel .tab_navigation {
+            flex-shrink: 0;
+        }
+
+        #bottom_panel .tab_content_area {
+            /* This container is now just for sizing and overflow */
+            flex-grow: 1;
+            flex-shrink: 0;
+            min-height: 50px;
+            max-height: 120px;
+            resize: vertical;
+            overflow: auto; /* Let the content area itself scroll if needed */
+        }
+
+        #bottom_panel .tab_pane {
+            /* Panes are hidden by default... */
+            display: none;
+            /* ...and are flex containers for their internal content. */
+            display: flex;
+            flex-direction: column;
+            height: 80%; /* Make the pane fill the content area's height */
+        }
+
+        #bottom_panel .tab_pane.active {
+            /* ...except for the active one, which is displayed as a flex container. */
+            display: flex;
+        }
+
+        /* --- IMPORTANT: We need to explicitly hide the non-active panes --- */
+        #bottom_panel .tab_pane:not(.active) {
+            display: none;
+        }
+
         /* --- AI PANEL --- */
         #ai_panel {
             flex-shrink: 0; 
@@ -292,13 +334,20 @@
             gap: 10px;
             align-items: center;
         }
+        #ai_panel_content {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+        }
         #ai_prompt_input {
             flex-grow: 1;
-            height: 38px; /* Two lines of text + padding */
+            height: 65px; /* Two lines of text + padding */
             min-height: 38px; /* Prevent resizing smaller */
-            max-height: 150px; /* Allow resizing up to a certain point */
+            max-height: 130px; /* Allow resizing up to a certain point */
             resize: vertical;
-            padding: 8px 12px; /* More padding inside */
+            padding: 12px 12px; /* More padding inside */
             font-family: Arial, sans-serif;
             font-size: 14px;
             border: 1px solid #ddd;
@@ -353,6 +402,49 @@
             background-color: #e2e8f0; /* Lighter gray for disabled input */
             color: #718096;
             cursor: not-allowed;
+        }
+
+        /* Simulation Panel */
+        #sim_controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            flex-shrink: 0;
+        }
+        #sim_controls label {
+            font-size: 13px;
+            font-weight: bold;
+        }
+        #simEventsInput {
+            width: 80px;
+        }
+        #runSimButton, #stopSimButton, #simOptionsButton {
+            padding: 5px 5px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        #stopSimButton:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        #sim_console_wrapper {
+            flex-grow: 0;
+            background-color: #2d3748; /* Dark background */
+            color: #f7fafc; /* Light text */
+            font-family: monospace;
+            font-size: 12px;
+            border-radius: 4px;
+            padding: 10px;
+            overflow-y: scroll; /* Make the console scrollable */
+            white-space: pre-wrap; /* Wrap long lines */
+            word-break: break-all;
+        }
+
+        #sim_console {
+            margin: 0;
+            padding: 0;
         }
 
         /* AI loader */
@@ -877,14 +969,14 @@
 </head>
 <body style="display: flex; width: 100vw; height: 100vh;">
     <div id="left_panel_container">
-        <div class="tab_navigation">
+        <div id="left_panel_tabs" class="tab_navigation">
             <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
             <button class="tab_button" data-tab="tab_volumes">Volumes</button>
             <button class="tab_button" data-tab="tab_defines">Defines</button>
             <button class="tab_button" data-tab="tab_properties">Properties</button>
             <button class="tab_button" data-tab="tab_solids">Solids</button>
         </div>
-        <div class="tab_content_area">
+        <div id="left_panel_content" class="tab_content_area">
             <div id="tab_structure" class="tab_pane active">
                 <!-- Structure (Volumes) Hierarchy will be built here -->
                 <div class="tab_header">
@@ -1137,18 +1229,43 @@
         <!-- The selection box element -->
         <div id="selection_box" class="selection-box" style="display:none;"></div>
         <!-- AI PANEL --- -->
-        <div id="ai_panel">
-            <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
-            <select id="ai_model_select" title="Select AI Model">
-                <!-- Add a static option for exporting -->
-                <option value="--export--">[ Export Prompt ]</option>
-                <option disabled>──────────</option> <!-- Visual separator -->
-                <!-- Dynamic options will be added here by JS -->
-            </select>
-            <button id="ai_generate_button" title="Generate with AI">
-                <span class="button-text">➤</span>
-                <div class="loader"></div>
-            </button>
+        <div id="bottom_panel">
+            <div id="bottom_panel_tabs" class="tab_navigation">
+                <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
+                <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
+            </div>
+            <div id="bottom_panel_content" class="tab_content_area">
+                <!-- AI Panel Content -->
+                <div id="tab_ai_panel" class="tab_pane active">
+                    <div id="ai_panel_content">
+                        <textarea id="ai_prompt_input" placeholder="e.g., Create a 10cm lead cube and place it at the center of the world..."></textarea>
+                        <select id="ai_model_select" title="Select AI Model">
+                            <!-- Add a static option for exporting -->
+                            <option value="--export--">[ Export Prompt ]</option>
+                            <option disabled>──────────</option> <!-- Visual separator -->
+                            <!-- Dynamic options will be added here by JS -->
+                        </select>
+                        <button id="ai_generate_button" title="Generate with AI">
+                            <span class="button-text">➤</span>
+                            <div class="loader"></div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Simulation Panel Content -->
+                <div id="tab_sim_panel" class="tab_pane">
+                    <div id="sim_controls">
+                        <label for="simEventsInput">Events:</label>
+                        <input type="number" id="simEventsInput" value="1000" min="1" step="1">
+                        <button id="runSimButton">▶ Run</button>
+                        <button id="stopSimButton" disabled>⏹ Stop</button>
+                        <button id="simOptionsButton">⚙️ Options</button>
+                    </div>
+                    <div id="sim_console_wrapper">
+                        <pre id="sim_console"></pre>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     <!-- History panel -->

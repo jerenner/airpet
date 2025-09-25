@@ -19,6 +19,9 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
     currentModeDisplay;
 
+// Simulation control variables
+let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole;
+
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
@@ -187,6 +190,13 @@ export function initUI(cb) {
     const initialAngleSnap = document.getElementById('angleSnapSizeInput').value;
     callbacks.onSnapSettingsChanged(initialTransSnap, initialAngleSnap);
 
+    // Simulation control elements
+    simEventsInput = document.getElementById('simEventsInput');
+    runSimButton = document.getElementById('runSimButton');
+    stopSimButton = document.getElementById('stopSimButton');
+    simOptionsButton = document.getElementById('simOptionsButton');
+    simConsole = document.getElementById('sim_console');
+
     // Attach Event Listeners
     openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
     openProjectButton.addEventListener('click', () => triggerFileInput('projectFile'));
@@ -309,15 +319,53 @@ export function initUI(cb) {
     });
     cancelApiKeyButton.addEventListener('click', hideApiKeyModal);
 
-    // Tab Navigation
-    const tabNavButtons = document.querySelectorAll('.tab_button');
-    tabNavButtons.forEach(button => {
+    // Add listeners for sim buttons
+    runSimButton.addEventListener('click', () => {
+        const numEvents = parseInt(simEventsInput.value, 10);
+        if (numEvents > 0) {
+            callbacks.onRunSimulationClicked({ events: numEvents });
+        } else {
+            showError("Please enter a valid number of events.");
+        }
+    });
+    stopSimButton.addEventListener('click', callbacks.onStopSimulationClicked);
+
+    // --- Tab Navigation for LEFT SIDE PANEL ---
+    const leftTabButtons = document.querySelectorAll('#left_panel_tabs .tab_button');
+    const leftTabPanes = document.querySelectorAll('#left_panel_content .tab_pane');
+    leftTabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetTabId = button.dataset.tab;
-            activateTab(targetTabId);
+            // Activate button in the left panel only
+            leftTabButtons.forEach(btn => btn.classList.toggle('active', btn === button));
+            // Show content in the left panel only
+            leftTabPanes.forEach(pane => {
+                pane.classList.toggle('active', pane.id === targetTabId);
+            });
         });
     });
-    activateTab('tab_structure'); // Default tab
+
+    // --- Tab Navigation for BOTTOM PANEL ---
+    const bottomTabButtons = document.querySelectorAll('#bottom_panel_tabs .tab_button');
+    const bottomTabPanes = document.querySelectorAll('#bottom_panel_content .tab_pane');
+    bottomTabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const targetTabId = button.dataset.tab;
+            // Activate button in the bottom panel only
+            bottomTabButtons.forEach(btn => btn.classList.toggle('active', btn === button));
+            // Show content in the bottom panel only
+            bottomTabPanes.forEach(pane => {
+                pane.classList.toggle('active', pane.id === targetTabId);
+            });
+        });
+    });
+
+    // Set default active tabs for both panels
+    document.querySelector('#left_panel_tabs .tab_button[data-tab="tab_structure"]').classList.add('active');
+    document.querySelector('#left_panel_content #tab_structure').classList.add('active');
+    
+    document.querySelector('#bottom_panel_tabs .tab_button[data-tab="tab_ai_panel"]').classList.add('active');
+    document.querySelector('#bottom_panel_content #tab_ai_panel').classList.add('active');
 
     // Add listeners for the new "+ Group" buttons
     document.querySelectorAll('.add-group-btn').forEach(button => {
@@ -1592,19 +1640,6 @@ export function setAiPanelState(state, title = null) {
     }
 }
 
-// --- Tab Management ---
-function activateTab(tabId) {
-    const tabNavButtons = document.querySelectorAll('.tab_button');
-    const tabContentPanes = document.querySelectorAll('.tab_pane');
-
-    tabNavButtons.forEach(button => {
-        button.classList.toggle('active', button.dataset.tab === tabId);
-    });
-    tabContentPanes.forEach(pane => {
-        pane.classList.toggle('active', pane.id === tabId);
-    });
-}
-
 // --- Utility/Notification Functions ---
 export function showError(message) {
     console.error("[UI Error] " + message);
@@ -1729,4 +1764,26 @@ export function hideApiKeyModal() {
 }
 export function setApiKeyInputValue(key) {
     if (apiKeyInput) apiKeyInput.value = key;
+}
+
+// --- Functions for simulation ---
+export function setSimulationState(state) {
+    // state can be 'idle', 'running'
+    const isRunning = state === 'running';
+    runSimButton.disabled = isRunning;
+    stopSimButton.disabled = !isRunning;
+    simEventsInput.disabled = isRunning;
+    simOptionsButton.disabled = isRunning;
+}
+
+export function clearSimConsole() {
+    if(simConsole) simConsole.textContent = '';
+}
+
+export function appendToSimConsole(text) {
+    if(simConsole) {
+        simConsole.textContent += text + '\n';
+        // Auto-scroll to the bottom
+        simConsole.parentElement.scrollTop = simConsole.parentElement.scrollHeight;
+    }
 }

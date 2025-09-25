@@ -4,6 +4,9 @@ import math
 import tempfile
 import os
 import re
+from datetime import datetime
+from scipy.spatial.transform import Rotation as R
+
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
@@ -111,6 +114,29 @@ class ProjectManager:
         self.history_index = -1
         self._clear_change_tracker() # Important for consistency
         self._capture_history_state("New project")
+
+    def save_project_version(self, description=""):
+        """Saves the current geometry state as a new version."""
+        project_path = self._get_project_path()
+        versions_path = os.path.join(project_path, "versions")
+        os.makedirs(versions_path, exist_ok=True)
+        
+        # Use a more descriptive name if available
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        version_name = f"{timestamp}_{description.replace(' ', '_')}" if description else timestamp
+        
+        version_dir = os.path.join(versions_path, version_name)
+        os.makedirs(version_dir)
+        
+        # Create a subdirectory for future simulation runs
+        os.makedirs(os.path.join(version_dir, "sim_runs"), exist_ok=True)
+
+        version_filepath = os.path.join(version_dir, "version.json")
+        json_string = self.save_project_to_json_string()
+        with open(version_filepath, 'w') as f:
+            f.write(json_string)
+            
+        return version_name, "Version saved successfully."
 
     def begin_transaction(self):
         """Starts a transaction, preventing intermediate history captures."""
@@ -2392,3 +2418,100 @@ class ProjectManager:
         # but we do want to mark the project as changed for autosave.
         self.is_changed = True
         return True, None
+    
+    def generate_macro_file(self, job_id, sim_params, build_dir, run_dir, version_dir):
+        """
+        Generates a Geant4 macro file from simulation parameters.
+
+        Args:
+            job_id (str): A unique identifier for this simulation run.
+            sim_params (dict): A dictionary containing settings from the frontend.
+            build_dir (str): The path to the Geant4 build directory.
+            run_dir (str): The path to the specific directory for this run's output.
+            version_dir (str): The path to the directory of the project version being run.
+
+        Returns:
+            str: The path to the generated macro file.
+        """
+        macro_path = os.path.join(run_dir, "run.mac")
+        version_json_path = os.path.join(version_dir, "version.json")
+
+        # 1. Load the geometry from the version.json file, not the current state
+        try:
+            with open(version_json_path, 'r') as f:
+                state_dict = json.load(f)
+            
+            # The GDML writer needs a GeometryState object
+            temp_state = GeometryState.from_dict(state_dict)
+            gdml_string = GDMLWriter(temp_state).get_gdml_string()
+            
+            gdml_output_path = os.path.join(run_dir, "geometry.gdml")
+            with open(gdml_output_path, 'w') as f:
+                f.write(gdml_string)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process geometry for simulation: {e}")
+
+        # 2. Generate the macro content
+        macro_content = []
+        macro_content.append("# AirPet Auto-Generated Macro")
+        macro_content.append(f"# Job ID: {job_id}")
+        macro_content.append("")
+
+        # --- Load Geometry ---
+        macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
+        macro_content.append("")
+
+        # --- Initialize Run ---
+        macro_content.append("/run/initialize")
+        macro_content.append("")
+
+        # --- Configure Source (using GPS) ---
+        active_id = self.current_geometry_state.active_source_id
+        active_source = None
+        if active_id:
+            for source in self.current_geometry_state.sources.values():
+                if source.id == active_id:
+                    active_source = source
+                    break
+        
+        if not active_source:
+            macro_content.append("# WARNING: No active particle source was specified for this run.")
+        else:
+            macro_content.append("# --- Primary Particle Source ---")
+            for cmd, value in active_source.gps_commands.items():
+                macro_content.append(f"/gps/{cmd} {value}")
+            
+            pos = active_source._evaluated_position
+            macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+
+            rot = active_source._evaluated_rotation
+            r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
+            rot_matrix = r.as_matrix()
+            x_prime = rot_matrix[:, 0]
+            y_prime = rot_matrix[:, 1]
+            
+            macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
+            macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
+            macro_content.append("")
+
+        # --- Configure Output to save tracks in a subdirectory ---
+        tracks_dir = os.path.join(run_dir, "tracks")
+        os.makedirs(tracks_dir, exist_ok=True)
+        macro_content.append("# --- Output and Visualization ---")
+        if sim_params.get('visualize_tracks', False):
+            macro_content.append("/g4pet/event/printTracksToFile true")
+            macro_content.append("/g4pet/event/printTracksToDir tracks/")
+        
+        # Set the output HDF5 file name
+        macro_content.append(f"/analysis/setFileName output.hdf5")
+
+        # --- Run Beam On ---
+        num_events = sim_params.get('events', 1)
+        macro_content.append("\n# --- Start Simulation ---")
+        macro_content.append(f"/run/beamOn {num_events}")
+
+        # 3. Write the macro file
+        with open(macro_path, 'w') as f:
+            f.write("\n".join(macro_content))
+
+        return macro_path

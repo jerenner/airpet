@@ -11,17 +11,16 @@ import ollama
 import subprocess
 import threading
 import atexit
+import uuid
 
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, send_from_directory
 from flask_cors import CORS
 
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
 from google.genai import client # For type hinting
-
-from scipy.spatial.transform import Rotation as R
 
 from src.expression_evaluator import ExpressionEvaluator 
 from src.project_manager import ProjectManager
@@ -86,6 +85,7 @@ GEANT4_EXECUTABLE = os.path.join(GEANT4_BUILD_DIR, "airpet-sim")
 # A dictionary to track running simulation processes
 SIMULATION_PROCESSES = {}
 SIMULATION_STATUS = {}
+LATEST_COMPLETED_JOB_ID = None
 SIMULATION_LOCK = threading.Lock()
 
 # Ensure we terminate any running simulations when the Flask app exits
@@ -98,122 +98,6 @@ def cleanup_processes():
                 process.wait()
 
 atexit.register(cleanup_processes)
-
-def generate_macro_file(job_id, sim_params):
-    """
-    Generates a Geant4 macro file from simulation parameters.
-
-    Args:
-        job_id (str): A unique identifier for this simulation run.
-        sim_params (dict): A dictionary containing settings from the frontend.
-
-    Returns:
-        str: The path to the generated macro file.
-    """
-    # Create a dedicated run directory for this job to keep files organized
-    run_dir = os.path.join(GEANT4_BUILD_DIR, f"run_{job_id}")
-    os.makedirs(run_dir, exist_ok=True)
-
-    macro_path = os.path.join(run_dir, "run.mac")
-    geometry_path = os.path.join(run_dir, "geometry.gdml")
-
-    # 1. Export the current geometry to a GDML file inside the run directory
-    try:
-        gdml_string = project_manager.export_to_gdml_string()
-        with open(geometry_path, 'w') as f:
-            f.write(gdml_string)
-    except Exception as e:
-        raise RuntimeError(f"Failed to export geometry for simulation: {e}")
-
-    # 2. Generate the macro content
-    macro_content = []
-    macro_content.append("# AirPet Auto-Generated Macro")
-    macro_content.append(f"# Job ID: {job_id}")
-    macro_content.append("")
-
-    # --- Load Geometry ---
-    # Path is relative to the execution directory (GEANT4_BUILD_DIR)
-    relative_geometry_path = os.path.relpath(geometry_path, GEANT4_BUILD_DIR)
-    macro_content.append(f"/g4pet/detector/readFile {relative_geometry_path}")
-    macro_content.append("")
-
-    # --- Initialize Run ---
-    macro_content.append("/run/initialize")
-    macro_content.append("")
-
-    # --- Configure Source (using GPS) ---
-    active_id = self.current_geometry_state.active_source_id
-    active_source = None
-    if active_id:
-        for source in self.current_geometry_state.sources.values():
-            if source.id == active_id:
-                active_source = source
-                break
-    if not active_source:
-        macro_content.append("# WARNING: No particle source defined in the project.")
-    else:
-        macro_content.append("# --- Primary Particle Source(s) ---")
-        # The /gps/source/add command creates a new source "particle gun"
-        # that can be configured independently.
-        macro_content.append(f"/gps/source/add {1.0}") # The number is a relative intensity weight
-        macro_content.append(f"/gps/source/multiplevertex true")
-        
-        # The logic to write commands for a single source is now driven
-        # by the backend's state, not the request payload.
-        for cmd, value in active_source.gps_commands.items():
-            macro_content.append(f"/gps/{cmd} {value}")
-        
-        pos = active_source._evaluated_position
-        macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
-        macro_content.append("")
-
-        # --- APPLY ROTATION ---
-        # Get the evaluated rotation (ZYX in radians, negated)
-        rot = source._evaluated_rotation
-
-        # Create a rotation matrix in Python using numpy
-        # Note: We must apply the rotations in Z, Y, X order
-        # Since our rotations are negated ZYX, we apply them as Z, Y, X with their negated values
-        r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
-        rot_matrix = r.as_matrix()
-
-        # The new x' and y' axes for GPS are the first two columns of the rotation matrix
-        x_prime = rot_matrix[:, 0]
-        y_prime = rot_matrix[:, 1]
-            
-        macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
-        macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
-        macro_content.append("")
-
-    # --- Configure Sensitive Detectors ---
-    # sds = sim_params.get('sensitive_detectors', [])
-    # if sds:
-    #     macro_content.append("# --- Sensitive Detectors ---")
-    #     for sd_request in sds:
-    #         macro_content.append(f"/g4pet/detector/addSD {sd_request['lv_name']} {sd_request['sd_name']}")
-    #     macro_content.append("")
-
-    # --- Configure Output & Visualization ---
-    macro_content.append("# --- Output and Visualization ---")
-    # Tell EventAction to write track files
-    if sim_params.get('visualize_tracks', False):
-        macro_content.append("/g4pet/event/printTracksToFile true")
-    
-    # Set the output HDF5 file name
-    output_filename = os.path.join(run_dir, "output.hdf5")
-    relative_output_path = os.path.relpath(output_filename, GEANT4_BUILD_DIR)
-    macro_content.append(f"/analysis/setFileName {relative_output_path}")
-
-    # --- Run Beam On ---
-    num_events = sim_params.get('events', 1)
-    macro_content.append("\n# --- Start Simulation ---")
-    macro_content.append(f"/run/beamOn {num_events}")
-
-    # 3. Write the macro file
-    with open(macro_path, 'w') as f:
-        f.write("\n".join(macro_content))
-
-    return macro_path
 
 @app.route('/api/set_active_source', methods=['POST'])
 def set_active_source_route():
@@ -244,8 +128,16 @@ def run_simulation():
     job_id = str(uuid.uuid4())
 
     try:
-        macro_path = generate_macro_file(job_id, sim_params)
-        relative_macro_path = os.path.relpath(macro_path, GEANT4_BUILD_DIR)
+        version_name, _ = project_manager.save_project_version(f"SimRun_{job_id[:8]}")
+        version_dir = get_version_dir(project_manager.project_name, version_name)
+        run_dir = os.path.join(version_dir, "sim_runs", job_id)
+        os.makedirs(run_dir, exist_ok=True)
+
+        # Generate macro and geometry inside the final run directory
+        macro_path = project_manager.generate_macro_file(
+            job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
+        )
+        
 
         # This will be the function run in a separate thread
         def run_g4_process(job_id, command):
@@ -253,7 +145,7 @@ def run_simulation():
                 # The process will run in the 'geant4_app/build' directory
                 process = subprocess.Popen(
                     command,
-                    cwd=GEANT4_BUILD_DIR,
+                    cwd=run_dir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -298,20 +190,23 @@ def run_simulation():
             with SIMULATION_LOCK:
                 if process.returncode == 0:
                     SIMULATION_STATUS[job_id]['status'] = 'Completed'
+                    LATEST_COMPLETED_JOB_ID = job_id
                 else:
                     SIMULATION_STATUS[job_id]['status'] = 'Error'
                 SIMULATION_PROCESSES.pop(job_id, None)
 
         # Start the simulation in a background thread so the API call can return immediately
-        command_to_run = [f'./{os.path.basename(GEANT4_EXECUTABLE)}', relative_macro_path]
+        # The executable path must be absolute or relative to the run_dir
+        executable_path = os.path.relpath(GEANT4_EXECUTABLE, run_dir)
+        command_to_run = [executable_path, "run.mac"]
         thread = threading.Thread(target=run_g4_process, args=(job_id, command_to_run))
-        thread.daemon = True # Allows main app to exit even if threads are running
         thread.start()
 
         return jsonify({
             "success": True,
             "message": "Simulation started.",
-            "job_id": job_id
+            "job_id": job_id,
+            "version_id": version_name
         })
 
     except Exception as e:
@@ -320,18 +215,78 @@ def run_simulation():
 
 @app.route('/api/simulation/status/<job_id>', methods=['GET'])
 def get_simulation_status(job_id):
+
+    # Get the line number from which the client wants updates
+    last_line_seen = request.args.get('since', 0, type=int)
+
     with SIMULATION_LOCK:
         status = SIMULATION_STATUS.get(job_id)
         if not status:
             return jsonify({"success": False, "error": "Job ID not found."}), 404
         
-        # To avoid sending the entire (potentially huge) log every time,
-        # we can just send the last few lines.
-        status_copy = status.copy()
-        status_copy['stdout'] = status_copy['stdout'][-5:] # Last 5 lines
-        status_copy['stderr'] = status_copy['stderr'][-5:] # Last 5 lines
+        # Create a copy to send back to the user
+        status_copy = {
+            "status": status["status"],
+            "progress": status["progress"],
+            "total_events": status["total_events"]
+        }
+
+        # Get only the new lines from stdout and stderr
+        all_lines = status['stdout'] + [f"stderr: {line}" for line in status['stderr']]
+        new_lines = all_lines[last_line_seen:]
+        
+        status_copy['new_stdout'] = new_lines
+        status_copy['total_lines'] = len(all_lines)
 
         return jsonify({"success": True, "status": status_copy})
+    
+@app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])
+def get_simulation_tracks(version_id, job_id, event_spec):
+    run_dir = os.path.join(get_version_dir(project_manager.project_name, version_id), "sim_runs", job_id)
+    tracks_dir = os.path.join(run_dir, "tracks")
+
+    if not os.path.isdir(tracks_dir):
+        return jsonify({"success": False, "error": "Tracks directory not found for this run."}), 404
+
+    # --- Handle multiple event files ---
+    all_tracks_content = ""
+    
+    if event_spec.lower() == 'all':
+        track_files = sorted(os.listdir(tracks_dir))
+    else:
+        # Simple parsing for now, e.g., "0,1,5-7"
+        # A more robust parser can be added later.
+        try:
+            event_id = int(event_spec)
+            track_files = [f"event_{event_id:04d}_tracks.txt"]
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid event specification."}), 400
+
+    for filename in track_files:
+        filepath = os.path.join(tracks_dir, filename)
+        if os.path.exists(filepath):
+            with open(filepath, 'r') as f:
+                all_tracks_content += f.read()
+    
+    if not all_tracks_content:
+        return jsonify({"success": False, "error": "No track files found for the specified events."}), 404
+        
+    return Response(all_tracks_content, mimetype='text/plain')
+    
+@app.route('/api/simulation/stop/<job_id>', methods=['POST'])
+def stop_simulation(job_id):
+    with SIMULATION_LOCK:
+        process = SIMULATION_PROCESSES.get(job_id)
+        if process:
+            if process.poll() is None: # Check if the process is still running
+                print(f"Terminating simulation job {job_id}...")
+                process.terminate()
+                # We don't need to wait here, the monitoring thread will handle the status update
+                return jsonify({"success": True, "message": f"Stop signal sent to job {job_id}."})
+            else:
+                return jsonify({"success": False, "error": "Job has already finished."}), 404
+        else:
+            return jsonify({"success": False, "error": "Job ID not found or already completed."}), 404
     
 @app.route('/api/add_source', methods=['POST'])
 def add_source_route():
@@ -515,26 +470,17 @@ def autosave_project_api():
 @app.route('/api/save_version', methods=['POST'])
 def save_version_route():
 
-    data = request.get_json()
-    project_name = data.get('project_name')
-    if not project_name or project_name != project_manager.project_name:
-        return jsonify({"success": False, "error": "Project name out of sync with backend."}), 400
-
-    project_path = os.path.join(PROJECTS_BASE_DIR, project_name)
-    versions_path = os.path.join(project_path, "versions")
-    os.makedirs(versions_path, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    version_filename = f"{timestamp}.json"
-    version_filepath = os.path.join(versions_path, version_filename)
-
+    data = request.get_json() or {}
+    description = data.get('description', 'User Save')
     try:
-        json_string = project_manager.save_project_to_json_string()
-        with open(version_filepath, 'w') as f:
-            f.write(json_string)
-        return jsonify({"success": True, "message": f"Version saved as {version_filename}"})
+        version_name, message = project_manager.save_project_version(description)
+        return jsonify({"success": True, "message": f"Version '{version_name}' saved."})
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to save version: {e}"}), 500
+
+# Helper to get the path for a specific version
+def get_version_dir(project_name, version_id):
+    return os.path.join(PROJECTS_BASE_DIR, project_name, "versions", version_id)
 
 @app.route('/api/get_project_history', methods=['GET'])
 def get_project_history_route():

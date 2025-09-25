@@ -27,6 +27,7 @@ public:
 
   // Method to be called by a messenger command
   void SetPrintTracksToFile(G4bool value) { fPrintTracksToFile = value; }
+  void SetTrackOutputDir(const G4String& dir) { fTrackOutputDir = dir; }
 
 private:
     void WriteTracksToFile(const G4Event* event);
@@ -37,7 +38,9 @@ private:
 
   // Flag to enable trajectory output to file.
   G4bool fPrintTracksToFile;
+  
   G4GenericMessenger* fMessenger;
+  G4String fTrackOutputDir;
 };
 
 #endif

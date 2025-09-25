@@ -763,3 +763,65 @@ export async function setActiveSource(sourceId) {
     });
     return handleResponse(response);
 }
+
+/**
+ * Sends a request to the backend to start a new simulation run.
+ * @param {object} simParams - An object containing simulation parameters (e.g., {events: 1000}).
+ * @returns {Promise<Object>} A promise resolving to the backend's response, including a job_id.
+ */
+export async function runSimulation(simParams) {
+    const response = await fetch(`${API_BASE_URL}/api/simulation/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(simParams)
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Sends a request to the backend to get the status of a running simulation.
+ * @param {string} jobId - The unique ID of the simulation job.
+ * @returns {Promise<Object>} A promise resolving to the simulation status.
+ */
+export async function getSimulationStatus(jobId, sinceLine = 0) {
+    const response = await fetch(`${API_BASE_URL}/api/simulation/status/${jobId}?since=${sinceLine}`);
+    return handleResponse(response);
+}
+
+/**
+ * Fetches the trajectory data for a specific event or all events as a text file.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @param {string|number} eventSpec - The event number or the string "all".
+ * @returns {Promise<string>} A promise that resolves to the text content of the track file(s).
+ */
+export async function getEventTracks(versionId, jobId, eventSpec) {
+    // Construct the URL, e.g., /api/simulation/tracks/2024-08.../uuid.../all
+    const response = await fetch(`${API_BASE_URL}/api/simulation/tracks/${versionId}/${jobId}/${eventSpec}`);
+    
+    if (!response.ok) {
+        // Try to get a structured error message from the body (which might be JSON)
+        let errorData;
+        try {
+            errorData = await response.json();
+            throw new Error(errorData.error || `Failed to fetch tracks: ${response.statusText}`);
+        } catch(e) {
+            // If the body is not JSON or another error occurs, use the status text
+            throw new Error(`Failed to fetch tracks: ${response.statusText}`);
+        }
+    }
+    // If the response is OK, return the raw text content
+    return response.text();
+}
+
+/**
+ * Sends a request to the backend to stop (terminate) a running simulation.
+ * @param {string} jobId - The unique ID of the simulation job to stop.
+ * @returns {Promise<Object>} A promise resolving to the backend's response.
+ */
+export async function stopSimulation(jobId) {
+    const response = await fetch(`${API_BASE_URL}/api/simulation/stop/${jobId}`, { // We will create this endpoint next
+        method: 'POST'
+    });
+    return handleResponse(response);
+}

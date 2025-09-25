@@ -25,8 +25,15 @@ const AppState = {
     currentProjectScene: null,    // Full scene dict from backend (THREE.js objects to be rendered)
     currentProjectName: "untitled",
     activeSourceId: null,
+    currentSimJobId: null,
+    simStatusPoller: null,
+    activeSourceId: null,
     selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
     selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
+    simConsoleLineCount: 0,
+    lastSimVersionId: null,
+    lastSimJobId: null,
+
     selectedPVContext: {
         pvId: null,
         positionDefineName: null,
@@ -129,7 +136,10 @@ async function initializeApp() {
         onMoveItemsToGroup: handleMoveItemsToGroup,
         // Source activation
         onSourceActivationChanged: handleSourceActivation,
-        getActiveSourceId: () => AppState.activeSourceId
+        getActiveSourceId: () => AppState.activeSourceId,
+        // Simulation
+        onRunSimulationClicked: handleRunSimulation,
+        onStopSimulationClicked: handleStopSimulation
     });
 
     // Initialize the 3D scene and its controls
@@ -2242,39 +2252,119 @@ async function handleSourceActivation(sourceId) {
     }
 }
 
-// --- UPDATE THE SIMULATION TRIGGER ---
-// In the (soon to be created) handler for the "Run Simulation" button click
-async function handleRunSimulation() {
-    // ... (gather number of events, etc. into a sim_params object)
-
+// --- Simulation functions ---
+async function handleRunSimulation(simSettings) {
     if (!AppState.activeSourceId) {
-        UIManager.showError("Please select an active particle source in the hierarchy before running a simulation.");
+        UIManager.showError("Please select an active particle source in the hierarchy.");
+        return;
+    }
+
+    // Prepare the final parameters to send to the backend
+    const sim_params = {
+        events: simSettings.events,
+        visualize_tracks: true // We can make this a UI option later
+    };
+
+    try {
+        UIManager.setSimulationState('running');
+        UIManager.clearSimConsole();
+        AppState.simConsoleLineCount = 0;
+        UIManager.appendToSimConsole("Starting simulation...");
+        
+        const result = await APIService.runSimulation(sim_params);
+        AppState.currentSimJobId = result.job_id;
+        AppState.lastSimVersionId = result.version_id;
+
+        // Start polling for status updates
+        AppState.simStatusPoller = setInterval(pollSimStatus, 2000); // Poll every 2 seconds
+
+    } catch (error) {
+        UIManager.showError("Failed to start simulation: " + error.message);
+        UIManager.setSimulationState('idle');
+    }
+}
+
+async function pollSimStatus() {
+    if (!AppState.currentSimJobId) return;
+
+    try {
+        // Let's ask for new lines since our last check
+        const result = await APIService.getSimulationStatus(AppState.currentSimJobId, AppState.simConsoleLineCount);
+
+        if (result.success) {
+            const status = result.status;
+            
+            // Append any new stdout/stderr lines to the console
+            if (status.new_stdout) {
+                status.new_stdout.forEach(line => UIManager.appendToSimConsole(line));
+            }
+            if (status.new_stderr) {
+                status.new_stderr.forEach(line => UIManager.appendToSimConsole(`[ERROR] ${line}`));
+            }
+
+            // Update the line count
+            AppState.simConsoleLineCount = status.total_lines;
+            
+            if (status.status === 'Completed' || status.status === 'Error') {
+                clearInterval(AppState.simStatusPoller);
+                AppState.simStatusPoller = null;
+                if (status.status === 'Completed') {
+                    AppState.lastSimJobId = AppState.currentSimJobId;
+                }
+                AppState.currentSimJobId = null;
+                UIManager.setSimulationState('idle');
+                UIManager.appendToSimConsole(`\n--- Simulation ${status.status} ---`);
+                if (status.status === 'Completed' && UIManager.confirmAction("Simulation finished. Show all tracks?")) {
+                    // Call the track fetching and drawing function
+                    fetchAndDrawTracks(AppState.lastSimVersionId, AppState.lastSimJobId, 'all');
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Polling error:", error);
+        clearInterval(AppState.simStatusPoller);
+        AppState.simStatusPoller = null;
+        UIManager.setSimulationState('idle');
+        UIManager.appendToSimConsole(`--- Polling Error: ${error.message} ---`);
+    }
+}
+
+async function handleStopSimulation() {
+    if (!AppState.currentSimJobId) return;
+    
+    UIManager.appendToSimConsole("Sending stop request...");
+    // We need a new API endpoint for this
+    try {
+        await APIService.stopSimulation(AppState.currentSimJobId);
+        // The poller will eventually report the status as "Error" or "Completed" (Aborted)
+    } catch (error) {
+        UIManager.showError("Failed to send stop request: " + error.message);
+    }
+}
+
+/**
+ * Orchestrates fetching track data from the backend and telling the scene manager to draw it.
+ * @param {string} versionId The ID of the project version for the run.
+ * @param {string} jobId The ID of the simulation run.
+ * @param {string|number} eventSpec The event(s) to fetch, e.g., 'all' or 0.
+ */
+async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
+    if (!versionId || !jobId) {
+        UIManager.showError("Cannot fetch tracks: Missing version or job ID.");
         return;
     }
     
-    // Find the full source object from the project state using the active ID
-    const activeSource = Object.values(AppState.currentProjectState.sources)
-                               .find(s => s.id === AppState.activeSourceId);
-
-    if (!activeSource) {
-        UIManager.showError("The selected active source could not be found in the project state.");
-        return;
-    }
-
-    // Now, we create a 'source' entry in sim_params that contains ONLY the active source's data
-    const sim_params = {
-        events: 1000, // Or get from UI
-        visualize_tracks: true, // Or get from UI
-        sources: [activeSource] // Pass an array with only the active source
-    };
-
-    // The backend will automatically use the active source stored in the project.
+    UIManager.showLoading("Loading simulation tracks...");
     try {
-        UIManager.showLoading("Starting simulation...");
-        const result = await APIService.runSimulation(sim_params);
-        // ... handle polling using result.job_id ...
+        // 1. Call the API service to get the raw text data for the tracks
+        const trackData = await APIService.getEventTracks(versionId, jobId, eventSpec);
+        
+        // 2. Pass the raw text data to the SceneManager to parse and draw
+        SceneManager.drawTracks(trackData);
+        
     } catch (error) {
-        UIManager.showError("Failed to start simulation: " + error.message);
+        // The apiService function will throw a detailed error if the fetch fails
+        UIManager.showError(`Could not load tracks: ${error.message}`);
     } finally {
         UIManager.hideLoading();
     }

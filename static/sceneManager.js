@@ -2393,3 +2393,60 @@ export function updateObjectTransformFromData(pvId, position, rotation, scale) {
         group.updateMatrixWorld(true);
     }
 }
+
+// This function will be called by main.js
+export function drawTracks(trackData) {
+    // Find or create a group to hold all tracks
+    let tracksGroup = scene.getObjectByName("TracksGroup");
+    if (tracksGroup) {
+        // Clear existing tracks
+        tracksGroup.clear();
+    } else {
+        tracksGroup = new THREE.Group();
+        tracksGroup.name = "TracksGroup";
+        scene.add(tracksGroup);
+    }
+
+    const lines = trackData.split('\n');
+    let currentPoints = [];
+    let currentParticleColor = new THREE.Color(0xffffff); // Default white
+
+    lines.forEach(line => {
+        if (line.startsWith('T ')) { // New track starts
+            // If we have points from the previous track, draw them
+            if (currentPoints.length > 1) {
+                const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
+                const material = new THREE.LineBasicMaterial({ color: currentParticleColor });
+                const trackLine = new THREE.Line(geometry, material);
+                tracksGroup.add(trackLine);
+            }
+            
+            // Start a new track
+            currentPoints = [];
+            const parts = line.split(' ');
+            const pdgCode = parseInt(parts[5], 10);
+            
+            // Simple color coding based on PDG code
+            if (pdgCode === 22) currentParticleColor = new THREE.Color(0x00ff00); // gamma (green)
+            else if (pdgCode === 11) currentParticleColor = new THREE.Color(0x0000ff); // electron (blue)
+            else if (pdgCode === -11) currentParticleColor = new THREE.Color(0xff0000); // positron (red)
+            else if (pdgCode === 2212) currentParticleColor = new THREE.Color(0xffff00); // proton (yellow)
+            else currentParticleColor = new THREE.Color(0xffffff); // others (white)
+
+        } else if (line.trim().length > 0 && !line.startsWith('#')) {
+            // This is a point for the current track
+            const coords = line.split(' ').map(parseFloat);
+            if (coords.length === 3) {
+                currentPoints.push(new THREE.Vector3(coords[0], coords[1], coords[2]));
+            }
+        }
+    });
+
+    // Draw the very last track in the file
+    if (currentPoints.length > 1) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(currentPoints);
+        const material = new THREE.LineBasicMaterial({ color: currentParticleColor });
+        const trackLine = new THREE.Line(geometry, material);
+        tracksGroup.add(trackLine);
+    }
+}
