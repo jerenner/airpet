@@ -965,6 +965,106 @@
             justify-content: flex-end;
         }
 
+        /* --- Styles for History Panel Accordion --- */
+        #history_list_container .accordion-item {
+            border-bottom: 1px solid #d1d5db; /* A slightly softer border */
+        }
+
+        #history_list_container .accordion-header {
+            background-color: #f9fafb; /* Lighter than the property accordions */
+            cursor: pointer;
+            padding: 8px 10px;
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between; /* Pushes button to the right */
+            box-sizing: border-box;
+        }
+
+        #history_list_container .accordion-header:hover {
+            background-color: #f3f4f6;
+        }
+
+        #history_list_container .accordion-toggle {
+            font-family: monospace;
+            font-size: 14px;
+            margin-right: 8px;
+            width: 15px;
+            color: #6b7280;
+        }
+
+        .version-info {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+        }
+
+        .version-desc {
+            font-weight: bold;
+            color: #111827;
+        }
+
+        .version-ts {
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .load-version-btn {
+            padding: 3px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid #d1d5db;
+            background-color: #fff;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+
+        .load-version-btn:hover {
+            background-color: #e5e7eb;
+            border-color: #9ca3af;
+        }
+
+        #history_list_container .accordion-content {
+            padding: 0;
+            display: none;
+            overflow: hidden;
+            background-color: #ffffff; /* White background for the run list */
+        }
+
+        #history_list_container .accordion-content.active {
+            display: block;
+        }
+
+        .accordion-content ul {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .run-item {
+            padding: 8px 10px 8px 35px; /* Indent to align under description */
+            font-size: 12px;
+            font-family: monospace;
+            color: #374151;
+            cursor: pointer;
+            border-top: 1px solid #f3f4f6;
+        }
+
+        .run-item:hover {
+            background-color: #eff6ff; /* A light blue hover */
+        }
+
+        .no-runs-text {
+            padding: 8px 10px 8px 35px;
+            font-size: 12px;
+            color: #9ca3af;
+            font-style: italic;
+        }
+
     </style>
 </head>
 <body style="display: flex; width: 100vw; height: 100vh;">

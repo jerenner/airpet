@@ -35,6 +35,7 @@ class ProjectManager:
         self.projects_dir = "projects"
         self.last_state_hash = None # For auto-save change detection
         self.is_changed = False     # Flag for changes
+        self.current_version_id = None # Track the currently loaded version
 
         # --- Track changed objects (for now only tracking certain solids) ---
         self.changed_object_ids = {'solids': set(), 'sources': set() } #, 'lvs': set(), 'defines': set()}
@@ -115,6 +116,22 @@ class ProjectManager:
         self._clear_change_tracker() # Important for consistency
         self._capture_history_state("New project")
 
+    def load_project_version(self, version_id):
+        """Loads a specific project version from its directory."""
+        version_filepath = os.path.join(self._get_version_dir(version_id), "version.json")
+        with open(version_filepath, 'r') as f:
+            json_string = f.read()
+        
+        self.load_project_from_json_string(json_string)
+        self.current_version_id = version_id
+        self.is_changed = False
+        return True, f"Loaded version {version_id}"
+    
+    def _get_version_dir(self, version_id):
+        """Returns the full path to a specific version directory."""
+        project_path = self._get_project_path()
+        return os.path.join(project_path, "versions", version_id)
+    
     def save_project_version(self, description=""):
         """Saves the current geometry state as a new version."""
         project_path = self._get_project_path()
@@ -125,7 +142,7 @@ class ProjectManager:
         timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         version_name = f"{timestamp}_{description.replace(' ', '_')}" if description else timestamp
         
-        version_dir = os.path.join(versions_path, version_name)
+        version_dir = self._get_version_dir(version_name)
         os.makedirs(version_dir)
         
         # Create a subdirectory for future simulation runs
@@ -136,6 +153,8 @@ class ProjectManager:
         with open(version_filepath, 'w') as f:
             f.write(json_string)
             
+        self.is_changed = False # The project is now saved
+        self.current_version_id = version_name # This is now the active version
         return version_name, "Version saved successfully."
 
     def begin_transaction(self):

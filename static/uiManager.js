@@ -444,25 +444,71 @@ export function hideHistoryPanel() {
 export function populateHistoryPanel(history, projectName) {
     historyListContainer.innerHTML = '';
     if (history.length === 0) {
-        historyListContainer.innerHTML = '<p style="text-align:center; color:#888; padding:10px;">No saved versions.</p>';
+        historyListContainer.innerHTML = '<p>No saved versions.</p>';
         return;
     }
+
     history.forEach(version => {
-        const item = document.createElement('div');
-        item.className = 'history-item'; // Add CSS for this
-        item.style.padding = '8px 12px';
-        item.style.borderBottom = '1px solid #ddd';
-        item.style.cursor = 'pointer';
-        item.innerHTML = `
-            <div style="font-weight:bold;">${formatTimestamp(version.timestamp)}</div>
-            <div style="font-size:11px; color:#666;">${version.id}</div>
+        const versionItem = document.createElement('div');
+        versionItem.className = 'accordion-item';
+
+        const header = document.createElement('div');
+        header.className = 'accordion-header';
+        header.innerHTML = `
+            <span class="accordion-toggle">[+]</span>
+            <div class="version-info">
+                <span class="version-desc">&nbsp;&nbsp;${version.description}</span>
+                <span class="version-ts">&nbsp;&nbsp;${formatTimestamp(version.timestamp)}</span>
+            </div>
+            <button class="load-version-btn" title="Load this project version">Load</button>
         `;
-        item.addEventListener('click', () => {
-            if (confirmAction(`Restore version from ${formatTimestamp(version.timestamp)}?`)) {
-                callbacks.onLoadVersionClicked(projectName, version.id);
+        
+        const content = document.createElement('div');
+        content.className = 'accordion-content';
+
+        // --- Populate with simulation runs ---
+        if (version.runs && version.runs.length > 0) {
+            const runList = document.createElement('ul');
+            version.runs.forEach(runId => {
+                const runLi = document.createElement('li');
+                runLi.className = 'run-item';
+                runLi.textContent = `Run: ${runId.substring(0, 8)}...`;
+                runLi.title = `Show tracks for this run (${runId})`;
+                runLi.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    // Callback to main.js to load the geometry AND the tracks
+                    callbacks.onLoadRunResults(version.id, runId);
+                });
+                runList.appendChild(runLi);
+            });
+            content.appendChild(runList);
+        } else {
+            content.innerHTML = '<p class="no-runs-text">(No simulation runs for this version)</p>';
+        }
+
+        versionItem.appendChild(header);
+        versionItem.appendChild(content);
+        historyListContainer.appendChild(versionItem);
+
+        // --- Add Event Listeners ---
+        header.addEventListener('click', () => {
+            const isActive = content.classList.contains('active');
+            // Close all other accordions
+            historyListContainer.querySelectorAll('.accordion-content.active').forEach(ac => {
+                ac.classList.remove('active');
+                ac.previousElementSibling.querySelector('.accordion-toggle').textContent = '[+]  ';
+            });
+            // Toggle current one
+            if (!isActive) {
+                content.classList.add('active');
+                header.querySelector('.accordion-toggle').textContent = '[-]  ';
             }
         });
-        historyListContainer.appendChild(item);
+
+        header.querySelector('.load-version-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            callbacks.onLoadVersionClicked(projectName, version.id);
+        });
     });
 }
 

@@ -139,7 +139,10 @@ async function initializeApp() {
         getActiveSourceId: () => AppState.activeSourceId,
         // Simulation
         onRunSimulationClicked: handleRunSimulation,
-        onStopSimulationClicked: handleStopSimulation
+        onStopSimulationClicked: handleStopSimulation,
+        // Run/version loading
+        onLoadVersionClicked: handleLoadVersion,
+        onLoadRunResults: handleLoadRunResults
     });
 
     // Initialize the 3D scene and its controls
@@ -917,10 +920,35 @@ async function handleLoadVersion(projectName, versionId) {
     UIManager.showLoading(`Loading version ${versionId}...`);
     try {
         const result = await APIService.loadVersion(projectName, versionId);
-        syncUIWithState(result); // This will update the whole app to the restored state
+        syncUIWithState(result);
         UIManager.hideHistoryPanel();
     } catch (error) { UIManager.showError(error.message); }
     finally { UIManager.hideLoading(); }
+}
+
+async function handleLoadRunResults(versionId, jobId) {
+    UIManager.showLoading(`Loading results for run ${jobId.substring(0,8)}...`);
+    try {
+        // Step 1: Load the geometry of the associated version first
+        const loadResult = await APIService.loadVersion(AppState.currentProjectName, versionId);
+        if (!loadResult.success) throw new Error(loadResult.error);
+        
+        // This syncs the geometry but doesn't restore selection
+        syncUIWithState(loadResult);
+
+        // Step 2: Now fetch and draw the tracks for that run
+        // We can create a new text input in the UI for this, or hardcode 'all' for now.
+        const eventSpec = 'all'; // or document.getElementById('eventSpecInput').value
+        const trackData = await APIService.getEventTracks(versionId, jobId, eventSpec);
+        SceneManager.drawTracks(trackData);
+
+        UIManager.hideHistoryPanel();
+
+    } catch (error) {
+        UIManager.showError(`Failed to load run results: ${error.message}`);
+    } finally {
+        UIManager.hideLoading();
+    }
 }
 
 async function handleSaveVersion() {

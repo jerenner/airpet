@@ -128,8 +128,12 @@ def run_simulation():
     job_id = str(uuid.uuid4())
 
     try:
-        version_name, _ = project_manager.save_project_version(f"SimRun_{job_id[:8]}")
-        version_dir = get_version_dir(project_manager.project_name, version_name)
+        version_id = project_manager.current_version_id
+        # If the project has changed or no version is active, save a new one.
+        if project_manager.is_changed or not version_id:
+            version_id, _ = project_manager.save_project_version(f"AutoSave_for_Sim_{job_id[:8]}")
+
+        version_dir = project_manager._get_version_dir(version_id)
         run_dir = os.path.join(version_dir, "sim_runs", job_id)
         os.makedirs(run_dir, exist_ok=True)
 
@@ -206,7 +210,7 @@ def run_simulation():
             "success": True,
             "message": "Simulation started.",
             "job_id": job_id,
-            "version_id": version_name
+            "version_id": version_id
         })
 
     except Exception as e:
@@ -242,7 +246,8 @@ def get_simulation_status(job_id):
     
 @app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])
 def get_simulation_tracks(version_id, job_id, event_spec):
-    run_dir = os.path.join(get_version_dir(project_manager.project_name, version_id), "sim_runs", job_id)
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
     tracks_dir = os.path.join(run_dir, "tracks")
 
     if not os.path.isdir(tracks_dir):
@@ -492,28 +497,39 @@ def get_project_history_route():
     if not os.path.isdir(versions_path):
         return jsonify({"success": True, "history": []})
 
-    version_files = sorted(glob.glob(os.path.join(versions_path, "*.json")), reverse=True)
-    history = [{"id": os.path.basename(f), "timestamp": os.path.basename(f).replace('.json','')} for f in version_files]
+    # List directories instead of files, sorting reverse-chronologically
+    version_dirs = sorted([d for d in os.listdir(versions_path) if os.path.isdir(os.path.join(versions_path, d))], reverse=True)
     
+    history = []
+    for version_id in version_dirs:
+        sim_runs_path = os.path.join(versions_path, version_id, "sim_runs")
+        runs = []
+        if os.path.isdir(sim_runs_path):
+            runs = sorted(os.listdir(sim_runs_path), reverse=True)
+        
+        history.append({
+            "id": version_id,
+            "timestamp": version_id.split('_')[0], # Extract timestamp from name
+            "description": version_id.split('_')[1] if '_' in version_id else "Saved",
+            "runs": runs # List of job_ids
+        })
+        
     return jsonify({"success": True, "history": history})
 
 @app.route('/api/load_version', methods=['POST'])
 def load_version_route():
     data = request.get_json()
-    project_name = data.get('project_name')
     version_id = data.get('version_id') # This is the filename
     
-    if not project_name or not version_id:
+    if not version_id:
         return jsonify({"success": False, "error": "Project name and version ID are required."}), 400
 
-    version_filepath = os.path.join(PROJECTS_BASE_DIR, project_name, "versions", version_id)
     try:
-        with open(version_filepath, 'r') as f:
-            json_string = f.read()
-        project_manager.load_project_from_json_string(json_string)
-        return create_success_response(f"Loaded version {version_id}")
-    except FileNotFoundError:
-        return jsonify({"success": False, "error": "Version file not found."}), 404
+        success, message = project_manager.load_project_version(version_id)
+        if success:
+            return create_success_response(message, exclude_unchanged_tessellated=False)
+        else:
+            return jsonify({"success": False, "error": message}), 500
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
