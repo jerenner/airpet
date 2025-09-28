@@ -881,10 +881,14 @@ def add_logical_volume_route():
     solid_ref = data.get('solid_ref')
     material_ref = data.get('material_ref')
     vis_attributes = data.get('vis_attributes')
+    is_sensitive = data.get('is_sensitive', False)
     content_type = data.get('content_type', 'physvol')
     content = data.get('content', [])
     
-    new_lv ,error_msg = project_manager.add_logical_volume(name, solid_ref, material_ref, vis_attributes, content_type, content)
+    new_lv ,error_msg = project_manager.add_logical_volume(
+        name, solid_ref, material_ref, vis_attributes, is_sensitive,
+        content_type, content
+    )
     
     if new_lv:
         return create_success_response("Logical Volume created.")
@@ -898,10 +902,14 @@ def update_logical_volume_route():
     solid_ref = data.get('solid_ref')
     material_ref = data.get('material_ref')
     vis_attributes = data.get('vis_attributes')
+    is_sensitive = data.get('is_sensitive')
     content_type = data.get('content_type')
     content = data.get('content')
 
-    success ,error_msg = project_manager.update_logical_volume(lv_name, solid_ref, material_ref, vis_attributes, content_type, content)
+    success ,error_msg = project_manager.update_logical_volume(
+        lv_name, solid_ref, material_ref, vis_attributes, is_sensitive,
+        content_type, content
+    )
 
     if success:
         return create_success_response(f"Logical Volume '{lv_name}' updated.")

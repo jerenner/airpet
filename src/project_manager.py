@@ -1181,7 +1181,10 @@ class ProjectManager:
         self.recalculate_geometry_state()
         return True, None
 
-    def add_logical_volume(self, name_suggestion, solid_ref, material_ref, vis_attributes=None, content_type='physvol', content=None):
+    def add_logical_volume(self, name_suggestion, solid_ref, material_ref, 
+                           vis_attributes=None, is_sensitive=False,
+                           content_type='physvol', content=None):
+        
         if not self.current_geometry_state: return None, "No project loaded"
         if solid_ref not in self.current_geometry_state.solids:
             return None, f"Solid '{solid_ref}' not found."
@@ -1189,7 +1192,7 @@ class ProjectManager:
             return None, f"Material '{material_ref}' not found."
 
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.logical_volumes)
-        new_lv = LogicalVolume(name, solid_ref, material_ref, vis_attributes)
+        new_lv = LogicalVolume(name, solid_ref, material_ref, vis_attributes, is_sensitive)
 
         new_lv.content_type = content_type
         if content_type == 'replica':
@@ -1207,7 +1210,9 @@ class ProjectManager:
 
         return new_lv.to_dict(), None        
 
-    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, new_vis_attributes=None, new_content_type=None, new_content=None):
+    def update_logical_volume(self, lv_name, new_solid_ref, new_material_ref, 
+                              new_vis_attributes=None, new_is_sensitive=None,
+                              new_content_type=None, new_content=None):
         if not self.current_geometry_state: return False, "No project loaded"
         
         lv = self.current_geometry_state.logical_volumes.get(lv_name)
@@ -1221,6 +1226,8 @@ class ProjectManager:
             lv.material_ref = new_material_ref
         if new_vis_attributes is not None:
             lv.vis_attributes = new_vis_attributes
+        if new_is_sensitive is not None:
+            lv.is_sensitive = new_is_sensitive
             
         # Update content if provided
         if new_content_type and new_content is not None and len(new_content) > 0:
@@ -2512,6 +2519,20 @@ class ProjectManager:
             macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
             macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
             macro_content.append("")
+
+        # --- Configure Sensitive Detectors ---
+        macro_content.append("# --- Sensitive Detectors ---")
+        # Find all LVs marked as sensitive
+        sensitive_lvs = [lv for lv in self.current_geometry_state.logical_volumes.values() if lv.is_sensitive]
+        
+        if not sensitive_lvs:
+            macro_content.append("# No sensitive detectors defined.")
+        else:
+            for lv in sensitive_lvs:
+                sd_name = f"{lv.name}_SD" # Automatic naming
+                macro_content.append(f"/g4pet/detector/addSD {lv.name} {sd_name}")
+        
+        macro_content.append("")
 
         # --- Configure Output to save tracks in a subdirectory ---
         tracks_dir = os.path.join(run_dir, "tracks")

@@ -1529,7 +1529,7 @@ async function handleLVEditorConfirm(data) {
     if (data.isEdit) {
         UIManager.showLoading("Updating Logical Volume...");
         try {
-            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.content_type, data.content);
+            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating LV: " + (error.message || error));
@@ -1539,7 +1539,7 @@ async function handleLVEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Logical Volume...");
         try {
-            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.content_type, data.content);
+            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
             syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
         } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }

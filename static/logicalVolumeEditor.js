@@ -10,6 +10,7 @@ let currentProjectState = null;
 let contentTypeRadios, proceduralParamsDiv;
 let replicaStartTransformContainer, replicaStartPosContainer, replicaStartRotContainer;
 let paramSetsState = []; // Holds the data for each <parameters> block
+let lvSensitiveCheckbox;
 
 export function initLVEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -27,6 +28,7 @@ export function initLVEditor(callbacks) {
     replicaStartTransformContainer = document.getElementById('replica_start_transform_container');
     replicaStartPosContainer = document.getElementById('replica_start_pos_container');
     replicaStartRotContainer = document.getElementById('replica_start_rot_container');
+    lvSensitiveCheckbox = document.getElementById('lvEditorSensitive');
 
     document.getElementById('closeLVEditor').addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -54,6 +56,8 @@ export function show(lvData = null, projectState = null) {
     const radios = contentTypeRadios.querySelectorAll('input[type="radio"]');
     radios.forEach(radio => radio.disabled = (lvData && lvData.name));
 
+    console.log(lvData)
+
     if (lvData && lvData.name) {
         // --- EDIT MODE ---
         isEditMode = true;
@@ -78,6 +82,9 @@ export function show(lvData = null, projectState = null) {
 
         // Set the correct radio button and render its params
         const contentType = lvData.content_type || 'physvol';
+
+        // Set the checkbox state
+        lvSensitiveCheckbox.checked = lvData.is_sensitive || false;
         
         document.getElementById(`lv_type_${contentType}`).checked = true;
         renderProceduralParams(contentType, lvData.content);
@@ -95,6 +102,9 @@ export function show(lvData = null, projectState = null) {
         // Set default color/alpha
         colorInput.value = '#cccccc';
         alphaInput.value = 1.0;
+
+        // Not a sensitive detector by default
+        lvSensitiveCheckbox.checked = false;
 
         // Default to standard physvol type
         document.getElementById('lv_type_physvol').checked = true;
@@ -400,6 +410,9 @@ function handleConfirm() {
         }
     };
 
+    // Get sensitive detector state
+    const isSensitive = lvSensitiveCheckbox.checked;
+
     const contentType = document.querySelector('input[name="lv_content_type"]:checked').value;
     let content = null;
 
@@ -455,6 +468,7 @@ function handleConfirm() {
         solid_ref: solidRef,
         material_ref: materialRef,
         vis_attributes: visAttributes,
+        is_sensitive: isSensitive,
         content_type: contentType,
         content: content
     });

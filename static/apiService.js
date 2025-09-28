@@ -400,20 +400,20 @@ export async function updateBooleanSolid(solidId, recipe) {
     return handleResponse(response);
 }
 
-export async function addLogicalVolume(name, solid_ref, material_ref, vis_attributes, content_type, content) {
+export async function addLogicalVolume(name, solid_ref, material_ref, vis_attributes, is_sensitive, content_type, content) {
     const response = await fetch(`${API_BASE_URL}/add_logical_volume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, solid_ref, material_ref, vis_attributes, content_type, content })
+        body: JSON.stringify({ name, solid_ref, material_ref, vis_attributes, is_sensitive, content_type, content })
     });
     return handleResponse(response);
 }
 
-export async function updateLogicalVolume(id, solid_ref, material_ref, vis_attributes, content_type, content) {
+export async function updateLogicalVolume(id, solid_ref, material_ref, vis_attributes, is_sensitive, content_type, content) {
     const response = await fetch(`${API_BASE_URL}/update_logical_volume`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, solid_ref, material_ref, vis_attributes, content_type, content })
+        body: JSON.stringify({ id, solid_ref, material_ref, vis_attributes, is_sensitive, content_type, content })
     });
     return handleResponse(response);
 }
