@@ -33,6 +33,7 @@ const AppState = {
     simConsoleLineCount: 0,
     lastSimVersionId: null,
     lastSimJobId: null,
+    currentReconShape: null,
 
     selectedPVContext: {
         pvId: null,
@@ -142,7 +143,12 @@ async function initializeApp() {
         onStopSimulationClicked: handleStopSimulation,
         // Run/version loading
         onLoadVersionClicked: handleLoadVersion,
-        onLoadRunResults: handleLoadRunResults
+        onLoadRunResults: handleLoadRunResults,
+        // Reconstruction
+        onReconModalOpen: handleOpenReconstructionModal,
+        onRunReconstruction: handleRunReconstruction,
+        onSliceChanged: handleSliceSliderChange,
+        onSliceAxisChanged: handleSliceAxisChange
     });
 
     // Initialize the 3D scene and its controls
@@ -2338,6 +2344,8 @@ async function pollSimStatus() {
                 AppState.simStatusPoller = null;
                 if (status.status === 'Completed') {
                     AppState.lastSimJobId = AppState.currentSimJobId;
+                    // Enable the reconstruction button **
+                    UIManager.setReconModalButtonEnabled(true);
                 }
                 AppState.currentSimJobId = null;
                 UIManager.setSimulationState('idle');
@@ -2396,4 +2404,56 @@ async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
     } finally {
         UIManager.hideLoading();
     }
+}
+
+async function handleOpenReconstructionModal() {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+        UIManager.showError("No completed simulation run found for reconstruction.");
+        return;
+    }
+    UIManager.showLoading("Processing coincidences...");
+    try {
+        const result = await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, { coincidence_window_ns: 4.0 });
+        UIManager.showNotification(result.message);
+        UIManager.showReconstructionModal(); // Open the modal on success
+    } catch (error) {
+        UIManager.showError("Failed to process LORs: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleRunReconstruction(reconParams) {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+        UIManager.showError("Cannot run reconstruction: No simulation context.");
+        return;
+    }
+    UIManager.showLoading("Running MLEM Reconstruction...");
+    try {
+        const result = await APIService.runReconstruction(AppState.lastSimVersionId, AppState.lastSimJobId, reconParams);
+        AppState.currentReconShape = result.image_shape; // Store the shape
+        
+        // Setup the slider and load the first slice
+        const initialAxis = document.getElementById('reconAxis').value;
+        UIManager.setupSliceSlider(initialAxis, AppState.currentReconShape);
+
+        UIManager.showNotification(result.message);
+    } catch (error) {
+        UIManager.showError("Reconstruction failed: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleSliceSliderChange(axis, sliceNum) {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId || !AppState.currentReconShape) return;
+    
+    const maxSlice = (axis === 'x') ? AppState.currentReconShape[0] : (axis === 'y') ? AppState.currentReconShape[1] : AppState.currentReconShape[2];
+    const imageUrl = APIService.getReconstructionSliceUrl(AppState.lastSimVersionId, AppState.lastSimJobId, axis, sliceNum);
+    UIManager.updateReconstructionSlice(imageUrl, sliceNum, maxSlice);
+}
+
+function handleSliceAxisChange(newAxis) {
+    if (!AppState.currentReconShape) return;
+    UIManager.setupSliceSlider(newAxis, AppState.currentReconShape);
 }

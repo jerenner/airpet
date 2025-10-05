@@ -12,6 +12,11 @@ import subprocess
 import threading
 import atexit
 import uuid
+import h5py
+import numpy as np
+import pandas as pd
+import io
+import parallelproj
 
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
@@ -27,6 +32,8 @@ from src.project_manager import ProjectManager
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
+
+from PIL import Image
 
 # Load environment variables from .env file
 load_dotenv()
@@ -346,6 +353,201 @@ def update_source_route():
         return create_success_response("Particle source updated successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+    
+@app.route('/api/simulation/process_lors/<version_id>/<job_id>', methods=['POST'])
+def process_lors_route(version_id, job_id):
+    """
+    Processes Geant4 hits from HDF5, finds coincidences, and saves LORs.
+    """
+    data = request.get_json()
+    coincidence_window_ns = data.get('coincidence_window_ns', 4.0)  # 4 ns window
+
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    hdf5_path = os.path.join(run_dir, "output.hdf5")
+    lors_output_path = os.path.join(run_dir, "lors.npz")
+
+    if not os.path.exists(hdf5_path):
+        return jsonify({"success": False, "error": "Simulation output file not found."}), 404
+
+    try:
+        data = {}
+        with h5py.File(hdf5_path, 'r') as f:
+            group = f['/default_ntuples/Hits']
+            
+            # Load data from the non-metadata keys
+            for key in group.keys():
+                if key not in ['columns', 'entries', 'forms', 'names']:
+                    data[key] = group[key]['pages'][:]
+
+        # Use pandas for efficient sorting and searching
+        hits_df = pd.DataFrame(data)
+
+        # Geant4 n-tuple column names can be bytes, so decode if necessary
+        hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
+
+        # Use the correct column names from the HDF5 file (case-sensitive)
+        hits_df.sort_values(by='Time', inplace=True)
+
+        all_start_coords, all_end_coords, all_tof_bins = [], [], []
+
+        # A simple coincidence sorter using pandas groupby for efficiency
+        for event_id, event_hits in hits_df.groupby('EventID'):
+            if len(event_hits) < 2:
+                continue
+
+            # A more robust sorter would iterate through combinations and check energy.
+            # For now, we pair the first two hits in time within the event.
+            hit1 = event_hits.iloc[0]
+            hit2 = event_hits.iloc[1]
+
+            time1, time2 = hit1['Time'], hit2['Time']
+
+            # Geant4 time is in nanoseconds by default, so no conversion needed for the window check
+            if abs(time1 - time2) < coincidence_window_ns:
+                # Position is in mm by default in Geant4
+                pos1 = np.array([hit1['PosX'], hit1['PosY'], hit1['PosZ']])
+                pos2 = np.array([hit2['PosX'], hit2['PosY'], hit2['PosZ']])
+                
+                # For parallelproj, start and end points don't matter, but we'll be consistent
+                if time1 < time2:
+                    all_start_coords.append(pos1)
+                    all_end_coords.append(pos2)
+                else:
+                    all_start_coords.append(pos2)
+                    all_end_coords.append(pos1)
+                
+                # For non-TOF reconstruction, the TOF bin is always 0
+                all_tof_bins.append(0)
+
+
+        if not all_start_coords:
+            return jsonify({"success": False, "error": "No valid coincidences found within the time window."}), 404
+
+        # Save LORs to a compressed file
+        np.savez_compressed(
+            lors_output_path,
+            start_coords=np.array(all_start_coords),
+            end_coords=np.array(all_end_coords),
+            tof_bins=np.array(all_tof_bins)
+        )
+
+        return jsonify({"success": True, "message": f"Processed {len(all_start_coords)} LORs.", "num_lors": len(all_start_coords)})
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+    
+@app.route('/api/reconstruction/run/<version_id>/<job_id>', methods=['POST'])
+def run_reconstruction_route(version_id, job_id):
+    """
+    Runs MLEM reconstruction using parallelproj on the pre-processed LORs.
+    """
+    data = request.get_json()
+    iterations = data.get('iterations', 1)
+    # Get image geometry parameters from the request
+    img_shape = tuple(data.get('image_size', [128, 128, 128]))
+    voxel_size = tuple(data.get('voxel_size', [2.0, 2.0, 2.0]))
+
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    lors_path = os.path.join(run_dir, "lors.npz")
+    recon_output_path = os.path.join(run_dir, "reconstruction.npy")
+
+    if not os.path.exists(lors_path):
+        return jsonify({"success": False, "error": "LOR file not found. Please process coincidences first."}), 404
+
+    try:
+        lor_data = np.load(lors_path)
+        event_start_coords = lor_data['start_coords']
+        event_end_coords = lor_data['end_coords']
+
+        # Use parallelproj with numpy backend for this example
+        import array_api_compat.numpy as xp
+        dev = "cpu"
+
+        # Convert LOR data to the array type used by parallelproj
+        event_start_coords_xp = xp.asarray(event_start_coords, device=dev)
+        event_end_coords_xp = xp.asarray(event_end_coords, device=dev)
+
+        # Setup the listmode projector
+        lm_proj = parallelproj.ListmodePETProjector(
+            event_start_coords_xp,
+            event_end_coords_xp,
+            img_shape,
+            voxel_size
+        )
+        
+        # We need an "adjoint_ones" image for sensitivity correction in MLEM.
+        # This is the backprojection of a list of ones.
+        sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
+
+        # --- MLEM Reconstruction Loop ---
+        x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
+
+        for i in range(iterations):
+            print(f"Running MLEM iteration {i+1}/{iterations}...")
+            ybar = lm_proj(x)
+            # Add a small epsilon to avoid division by zero
+            ybar = xp.where(ybar == 0, 1e-9, ybar)
+            x = (x / sensitivity_image) * lm_proj.adjoint(1 / ybar)
+            print(f"Iteration {i+1} done.")
+
+        # Save the final numpy array
+        reconstructed_image_np = parallelproj.to_numpy_array(x)
+        np.save(recon_output_path, reconstructed_image_np)
+
+        return jsonify({
+            "success": True, 
+            "message": "Reconstruction complete.",
+            "image_shape": reconstructed_image_np.shape
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Reconstruction failed: {str(e)}"}), 500
+
+@app.route('/api/reconstruction/slice/<version_id>/<job_id>/<axis>/<int:slice_num>')
+def get_recon_slice_route(version_id, job_id, axis, slice_num):
+    """
+    Loads the reconstructed 3D numpy array and returns a single 2D slice as a PNG image.
+    """
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    recon_path = os.path.join(run_dir, "reconstruction.npy")
+
+    if not os.path.exists(recon_path):
+        return "Reconstruction file not found", 404
+
+    try:
+        recon_img = np.load(recon_path)
+
+        # Select the slice
+        if axis == 'x':
+            slice_2d = recon_img[slice_num, :, :]
+        elif axis == 'y':
+            slice_2d = recon_img[:, slice_num, :]
+        else: # 'z'
+            slice_2d = recon_img[:, :, slice_num]
+            
+        # Normalize and convert to an 8-bit image for display
+        slice_2d = np.rot90(slice_2d) # Rotate for better viewing orientation
+        if slice_2d.max() > 0:
+            slice_2d = (slice_2d / slice_2d.max()) * 255.0
+        
+        img_pil = Image.fromarray(slice_2d.astype(np.uint8), mode='L') # Grayscale
+
+        # Save image to a memory buffer
+        img_io = io.BytesIO()
+        img_pil.save(img_io, 'PNG')
+        img_io.seek(0)
+
+        return Response(img_io.getvalue(), mimetype='image/png')
+
+    except Exception as e:
+        traceback.print_exc()
+        return str(e), 500
+    
 # -----------------------------------------------------------------------------------
 
 # --- Helper Functions ---

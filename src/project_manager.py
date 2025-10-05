@@ -2483,12 +2483,32 @@ class ProjectManager:
         macro_content.append(f"# Job ID: {job_id}")
         macro_content.append("")
 
+        # --- Configure Sensitive Detectors ---
+        macro_content.append("# --- Sensitive Detectors ---")
+        # Find all LVs marked as sensitive
+        sensitive_lvs = [lv for lv in self.current_geometry_state.logical_volumes.values() if lv.is_sensitive]
+        
+        if not sensitive_lvs:
+            macro_content.append("# No sensitive detectors defined.")
+        else:
+            for lv in sensitive_lvs:
+                sd_name = f"{lv.name}_SD" # Automatic naming
+                macro_content.append(f"/g4pet/detector/addSD {lv.name} {sd_name}")
+        
+        macro_content.append("")
+
         # --- Load Geometry ---
         macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
         macro_content.append("")
 
         # --- Initialize Run ---
         macro_content.append("/run/initialize")
+        macro_content.append("")
+
+        # --- NEW: ADD VERBOSITY FOR DEBUGGING ---
+        macro_content.append("# --- Verbosity Settings ---")
+        #macro_content.append("/tracking/verbose 1") # Print a message for every new track
+        macro_content.append("/hits/verbose 2")     # Print every single hit as it's processed
         macro_content.append("")
 
         # --- Configure Source (using GPS) ---
@@ -2519,20 +2539,6 @@ class ProjectManager:
             macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
             macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
             macro_content.append("")
-
-        # --- Configure Sensitive Detectors ---
-        macro_content.append("# --- Sensitive Detectors ---")
-        # Find all LVs marked as sensitive
-        sensitive_lvs = [lv for lv in self.current_geometry_state.logical_volumes.values() if lv.is_sensitive]
-        
-        if not sensitive_lvs:
-            macro_content.append("# No sensitive detectors defined.")
-        else:
-            for lv in sensitive_lvs:
-                sd_name = f"{lv.name}_SD" # Automatic naming
-                macro_content.append(f"/g4pet/detector/addSD {lv.name} {sd_name}")
-        
-        macro_content.append("")
 
         # --- Configure Output to save tracks in a subdirectory ---
         tracks_dir = os.path.join(run_dir, "tracks")

@@ -47,6 +47,10 @@ let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 // Number of items per group for lists
 const ITEMS_PER_GROUP = 100;
 
+// Reconstruction
+let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
+    reconImageView, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton;
+
 // Callbacks to main.js (controller logic)
 let callbacks = {
     
@@ -197,6 +201,17 @@ export function initUI(cb) {
     simOptionsButton = document.getElementById('simOptionsButton');
     simConsole = document.getElementById('sim_console');
 
+    // Reconstruction elements
+    reconModal = document.getElementById('reconModal');
+    closeReconModalBtn = document.getElementById('closeReconModal');
+    cancelReconBtn = document.getElementById('cancelRecon');
+    runReconstructionBtn = document.getElementById('runReconstructionBtn');
+    reconImageView = document.getElementById('reconImageView');
+    sliceSlider = document.getElementById('sliceSlider');
+    sliceIndicator = document.getElementById('sliceIndicator');
+    reconAxisSelect = document.getElementById('reconAxis');
+    reconModalButton = document.getElementById('reconModalButton');
+
     // Attach Event Listeners
     openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
     openProjectButton.addEventListener('click', () => triggerFileInput('projectFile'));
@@ -329,6 +344,32 @@ export function initUI(cb) {
         }
     });
     stopSimButton.addEventListener('click', callbacks.onStopSimulationClicked);
+
+    // Reconstruction listeners
+    reconModalButton.addEventListener('click', () => callbacks.onReconModalOpen());
+    closeReconModalBtn.addEventListener('click', hideReconstructionModal);
+    cancelReconBtn.addEventListener('click', hideReconstructionModal);
+    runReconstructionBtn.addEventListener('click', () => {
+        // Gather params from the UI and pass them to the main controller
+        const params = {
+            algorithm: document.getElementById('reconAlgorithm').value,
+            iterations: parseInt(document.getElementById('reconIterations').value, 10),
+            image_size: document.getElementById('reconImageSize').value.split(',').map(Number),
+            voxel_size: document.getElementById('reconVoxelSize').value.split(',').map(Number),
+        };
+        callbacks.onRunReconstruction(params);
+    });
+
+    // Listener for the slider
+    sliceSlider.addEventListener('input', () => {
+        const axis = reconAxisSelect.value;
+        callbacks.onSliceChanged(axis, sliceSlider.value);
+    });
+    // Also update when the axis changes
+    reconAxisSelect.addEventListener('change', () => {
+        const axis = reconAxisSelect.value;
+        callbacks.onSliceAxisChanged(axis);
+    });
 
     // --- Tab Navigation for LEFT SIDE PANEL ---
     const leftTabButtons = document.querySelectorAll('#left_panel_tabs .tab_button');
@@ -1831,5 +1872,37 @@ export function appendToSimConsole(text) {
         simConsole.textContent += text + '\n';
         // Auto-scroll to the bottom
         simConsole.parentElement.scrollTop = simConsole.parentElement.scrollHeight;
+    }
+}
+
+export function showReconstructionModal() {
+    if(reconModal) reconModal.style.display = 'block';
+}
+
+export function hideReconstructionModal() {
+    if(reconModal) reconModal.style.display = 'none';
+}
+
+export function setReconModalButtonEnabled(isEnabled) {
+    if(reconModalButton) reconModalButton.disabled = !isEnabled;
+}
+
+export function updateReconstructionSlice(imageUrl, sliceNum, maxSlices) {
+    if(reconImageView) reconImageView.src = imageUrl;
+    if(sliceIndicator) sliceIndicator.textContent = `${sliceNum} / ${maxSlices - 1}`;
+}
+
+export function setupSliceSlider(axis, imageShape) {
+    let maxSlices = 0;
+    if (axis === 'x') maxSlices = imageShape[0];
+    else if (axis === 'y') maxSlices = imageShape[1];
+    else maxSlices = imageShape[2];
+
+    if(sliceSlider) {
+        sliceSlider.max = maxSlices - 1;
+        const middleSlice = Math.floor((maxSlices -1) / 2);
+        sliceSlider.value = middleSlice;
+        // Trigger the input event to load the middle slice
+        sliceSlider.dispatchEvent(new Event('input'));
     }
 }

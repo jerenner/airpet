@@ -99,6 +99,7 @@ void EventAction::EndOfEventAction(const G4Event* event)
         analysisManager->FillNtupleDColumn(1, 10, hit->GetPosition().z());
         analysisManager->FillNtupleDColumn(1, 11, hit->GetTime());
         analysisManager->AddNtupleRow(1);
+
       }
     }
   }

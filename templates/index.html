@@ -419,8 +419,7 @@
         #simEventsInput {
             width: 80px;
         }
-        #runSimButton, #stopSimButton, #simOptionsButton {
-            padding: 5px 5px;
+        #runSimButton, #stopSimButton, #simOptionsButton, #reconModalButton {
             font-size: 12px;
             cursor: pointer;
         }
@@ -1360,6 +1359,7 @@
                         <button id="runSimButton">▶ Run</button>
                         <button id="stopSimButton" disabled>⏹ Stop</button>
                         <button id="simOptionsButton">⚙️ Options</button>
+                        <button id="reconModalButton" title="Open PET Reconstruction" disabled>🔬 Recon</button>
                     </div>
                     <div id="sim_console_wrapper">
                         <pre id="sim_console"></pre>
@@ -1955,6 +1955,62 @@
             <div class="modal-footer">
                 <button id="gpsEditorCancel">Cancel</button>
                 <button id="gpsEditorConfirm" class="confirm-button">Create Source</button>
+            </div>
+        </div>
+    </div>
+    <div id="reconModal" class="editor-modal">
+        <div class="modal-content" style="width: 90%; max-width: 1200px; height: 80vh;">
+            <div class="modal-header">
+                <h4>PET Image Reconstruction</h4>
+                <span class="close-button" id="closeReconModal">×</span>
+            </div>
+            <div class="modal-body" style="flex-direction: row; padding: 10px; gap: 10px;">
+                <!-- Left Side: Image Viewer -->
+                <div id="recon-viewer-panel" style="flex: 3; display: flex; flex-direction: column; background-color: #000; justify-content: center; align-items: center; border-radius: 5px;">
+                    <img id="reconImageView" style="max-width: 100%; max-height: 90%; object-fit: contain;">
+                    <div id="recon-slider-controls" style="width: 80%; padding-top: 10px;">
+                        <label for="sliceSlider" style="color: white; font-size: 12px;">Slice:</label>
+                        <input type="range" id="sliceSlider" min="0" max="1" value="0" style="width: 100%;">
+                        <span id="sliceIndicator" style="color: white; font-size: 12px;">0 / 0</span>
+                    </div>
+                </div>
+                <!-- Right Side: Controls -->
+                <div id="recon-controls-panel" style="flex: 1; padding: 10px; border-left: 1px solid #ccc; overflow-y: auto;">
+                    <h5>Reconstruction Settings</h5>
+                    <div class="property_item">
+                        <label for="reconAlgorithm">Algorithm:</label>
+                        <select id="reconAlgorithm">
+                            <option value="MLEM">MLEM</option>
+                        </select>
+                    </div>
+                    <div class="property_item">
+                        <label for="reconIterations">Iterations:</label>
+                        <input type="number" id="reconIterations" value="5" min="1" step="1">
+                    </div>
+                    <hr>
+                    <h5>Image Grid</h5>
+                    <div class="property_item">
+                        <label for="reconImageSize">Size (voxels):</label>
+                        <input type="text" id="reconImageSize" value="128,128,128">
+                    </div>
+                    <div class="property_item">
+                        <label for="reconVoxelSize">Voxel Size (mm):</label>
+                        <input type="text" id="reconVoxelSize" value="2.0,2.0,2.0">
+                    </div>
+                    <hr>
+                    <div class="property_item">
+                        <label for="reconAxis">Slice Axis:</label>
+                        <select id="reconAxis">
+                            <option value="z">Z (Axial)</option>
+                            <option value="y">Y (Coronal)</option>
+                            <option value="x">X (Sagittal)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelRecon">Close</button>
+                <button id="runReconstructionBtn" class="confirm-button">Run Reconstruction</button>
             </div>
         </div>
     </div>

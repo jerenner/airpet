@@ -825,3 +825,48 @@ export async function stopSimulation(jobId) {
     });
     return handleResponse(response);
 }
+
+/**
+ * Tells the backend to process a simulation's output to generate LORs.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @param {object} params - Coincidence processing parameters.
+ * @returns {Promise<Object>}
+ */
+export async function processLors(versionId, jobId, params) {
+    const response = await fetch(`${API_BASE_URL}/api/simulation/process_lors/${versionId}/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Starts the reconstruction process on the backend.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @param {object} reconParams - Reconstruction parameters (iterations, image size, etc.).
+ * @returns {Promise<Object>}
+ */
+export async function runReconstruction(versionId, jobId, reconParams) {
+    const response = await fetch(`${API_BASE_URL}/api/reconstruction/run/${versionId}/${job_id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reconParams)
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Gets the URL for a specific slice of the reconstructed image.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @param {string} axis - The slicing axis ('x', 'y', or 'z').
+ * @param {number} sliceNum - The index of the slice.
+ * @returns {string} The direct URL to the image slice.
+ */
+export function getReconstructionSliceUrl(versionId, jobId, axis, sliceNum) {
+    // We add a timestamp to prevent the browser from caching the image
+    return `${API_BASE_URL}/api/reconstruction/slice/${versionId}/${jobId}/${axis}/${sliceNum}?t=${new Date().getTime()}`;
+}

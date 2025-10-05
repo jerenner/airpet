@@ -59,6 +59,10 @@ void DetectorConstruction::SetSensitiveDetector(G4String logicalVolumeName, G4St
   fSensitiveDetectorsMap[logicalVolumeName] = sdName;
   G4cout << "--> Requested sensitive detector '" << sdName
          << "' for logical volume '" << logicalVolumeName << "'" << G4endl;
+
+  // Tell the RunManager that the detector setup has changed and needs to be rebuilt.
+  // This will ensure ConstructSDandField() is called again before the next run.
+  //G4RunManager::GetRunManager()->ReinitializeGeometry();
 }
 
 void DetectorConstruction::SetGDMLFile(G4String filename)
@@ -69,14 +73,16 @@ void DetectorConstruction::SetGDMLFile(G4String filename)
     G4Exception("DetectorConstruction::SetGDMLFile",
                 "InvalidFileName", FatalException,
                 ("GDML file not found: " + filename).c_str());
+    fGDMLFilename = "";
     return;
   }
 
   fGDMLFilename = filename;
+  G4cout << "--> Geometry will be loaded from: " << fGDMLFilename << G4endl;
 
   // Inform the RunManager that the geometry needs to be rebuilt
-  G4RunManager::GetRunManager()->ReinitializeGeometry();
-  G4cout << "--> Geometry will be loaded from: " << fGDMLFilename << G4endl;
+  //G4RunManager::GetRunManager()->ReinitializeGeometry();
+  //G4cout << "--> Geometry will be loaded from: " << fGDMLFilename << G4endl;
 }
 
 G4VPhysicalVolume* DetectorConstruction::Construct()
@@ -112,10 +118,14 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
 
 void DetectorConstruction::ConstructSDandField()
 {
+
+  G4cout << G4endl << "-------- DetectorConstruction::ConstructSDandField --------" << G4endl;
+  
   G4SDManager* sdManager = G4SDManager::GetSDMpointer();
   G4LogicalVolumeStore* lvStore = G4LogicalVolumeStore::GetInstance();
-
+  
   // Iterate over all the SD attachment requests made via the messenger
+  //G4cout << "--> Sensitve det map contains " << fSensitiveDetectorsMap.size() << " detector" << G4endl;
   for (const auto& pair : fSensitiveDetectorsMap) {
     const G4String& lvName = pair.first;
     const G4String& sdName = pair.second;
