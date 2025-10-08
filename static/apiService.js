@@ -850,7 +850,7 @@ export async function processLors(versionId, jobId, params) {
  * @returns {Promise<Object>}
  */
 export async function runReconstruction(versionId, jobId, reconParams) {
-    const response = await fetch(`${API_BASE_URL}/api/reconstruction/run/${versionId}/${job_id}`, {
+    const response = await fetch(`${API_BASE_URL}/api/reconstruction/run/${versionId}/${jobId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reconParams)
