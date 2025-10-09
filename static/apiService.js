@@ -870,3 +870,14 @@ export function getReconstructionSliceUrl(versionId, jobId, axis, sliceNum) {
     // We add a timestamp to prevent the browser from caching the image
     return `${API_BASE_URL}/api/reconstruction/slice/${versionId}/${jobId}/${axis}/${sliceNum}?t=${new Date().getTime()}`;
 }
+
+/**
+ * Fetches the metadata for a specific simulation run.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @returns {Promise<Object>} A promise resolving to the metadata.
+ */
+export async function getSimulationMetadata(versionId, jobId) {
+    const response = await fetch(`${API_BASE_URL}/api/simulation/metadata/${versionId}/${jobId}`);
+    return handleResponse(response);
+}

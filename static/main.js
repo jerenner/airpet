@@ -39,6 +39,14 @@ const AppState = {
         pvId: null,
         positionDefineName: null,
         rotationDefineName: null,
+    },
+
+    simOptions: {
+        events: 1000,
+        seed1: 0,
+        seed2: 0,
+        save_tracks: true,
+        save_tracks_range: "0-99", // Default to saving the first 100 tracks
     }
 };
 
@@ -141,6 +149,9 @@ async function initializeApp() {
         // Simulation
         onRunSimulationClicked: handleRunSimulation,
         onStopSimulationClicked: handleStopSimulation,
+        onSimOptionsClicked: handleOpenSimOptions,
+        onSaveSimOptions: handleSaveSimOptions,
+        onDrawTracksToggle: handleDrawTracksToggle,
         // Run/version loading
         onLoadVersionClicked: handleLoadVersion,
         onLoadRunResults: handleLoadRunResults,
@@ -148,7 +159,9 @@ async function initializeApp() {
         onReconModalOpen: handleOpenReconstructionModal,
         onRunReconstruction: handleRunReconstruction,
         onSliceChanged: handleSliceSliderChange,
-        onSliceAxisChanged: handleSliceAxisChange
+        onSliceAxisChanged: handleSliceAxisChange,
+        onProcessLorsClicked: handleProcessLors,
+        onRunReconstruction: handleRunReconstruction
     });
 
     // Initialize the 3D scene and its controls
@@ -867,6 +880,13 @@ async function handleNewProject() {
     try {
         const result = await APIService.newProject();
         syncUIWithState(result); // No selection to restore
+
+        // Clear simulation status
+        AppState.lastSimJobId = null;
+        AppState.lastSimVersionId = null;
+        UIManager.clearSimStatusDisplay();
+        UIManager.setReconModalButtonEnabled(false);
+
     } catch (error) { UIManager.showError("Failed to create new project: " + error.message); }
     finally { UIManager.hideLoading(); }
 }
@@ -942,11 +962,27 @@ async function handleLoadRunResults(versionId, jobId) {
         // This syncs the geometry but doesn't restore selection
         syncUIWithState(loadResult);
 
-        // Step 2: Now fetch and draw the tracks for that run
-        // We can create a new text input in the UI for this, or hardcode 'all' for now.
-        const eventSpec = 'all'; // or document.getElementById('eventSpecInput').value
-        const trackData = await APIService.getEventTracks(versionId, jobId, eventSpec);
-        SceneManager.drawTracks(trackData);
+        // Step 2: Fetch the metadata for this specific run
+        const metaResult = await APIService.getSimulationMetadata(versionId, jobId);
+        if (!metaResult.success) throw new Error(metaResult.error);
+
+        // Step 3: Update the application state with the loaded run info
+        AppState.lastSimVersionId = versionId;
+        AppState.lastSimJobId = jobId;
+        const totalEvents = metaResult.metadata.total_events;
+
+        // Step 4: Update the UI to reflect the loaded run
+        UIManager.updateSimStatusDisplay(jobId, totalEvents);
+        UIManager.setReconModalButtonEnabled(true); // **CRITICAL: Enable the Recon button**
+        UIManager.setLorStatus("Ready to process LORs for loaded run.", false);
+        UIManager.setReconstructionButtonEnabled(false); // Ensure recon button in modal is disabled until LORs are processed
+
+        // Step 5: Check if tracks should be drawn
+        const drawOptions = UIManager.getDrawTracksOptions();
+        SceneManager.clearTracks(); // Always clear old tracks
+        if (drawOptions.draw && drawOptions.range.trim() !== '') {
+            await fetchAndDrawTracks(versionId, jobId, drawOptions.range);
+        }
 
         UIManager.hideHistoryPanel();
 
@@ -2293,10 +2329,17 @@ async function handleRunSimulation(simSettings) {
         return;
     }
 
+     // Get the number of events from the UI
+    const numEvents = parseInt(document.getElementById('simEventsInput').value, 10);
+    if (numEvents <= 0) {
+        UIManager.showError("Please enter a valid number of events.");
+        return;
+    }
+
     // Prepare the final parameters to send to the backend
     const sim_params = {
-        events: simSettings.events,
-        visualize_tracks: true // We can make this a UI option later
+        ...AppState.simOptions, // Use the globally stored options
+        events: numEvents
     };
 
     try {
@@ -2308,6 +2351,10 @@ async function handleRunSimulation(simSettings) {
         const result = await APIService.runSimulation(sim_params);
         AppState.currentSimJobId = result.job_id;
         AppState.lastSimVersionId = result.version_id;
+
+        // When a new simulation starts, the old LORs and reconstruction are invalid
+        UIManager.setReconstructionButtonEnabled(false);
+        UIManager.setLorStatus("No LORs processed for this new run.", false);
 
         // Start polling for status updates
         AppState.simStatusPoller = setInterval(pollSimStatus, 2000); // Poll every 2 seconds
@@ -2346,13 +2393,15 @@ async function pollSimStatus() {
                     AppState.lastSimJobId = AppState.currentSimJobId;
                     // Enable the reconstruction button **
                     UIManager.setReconModalButtonEnabled(true);
+                    // Update status display on completion
+                    UIManager.updateSimStatusDisplay(AppState.lastSimJobId, status.total_events);
                 }
                 AppState.currentSimJobId = null;
                 UIManager.setSimulationState('idle');
                 UIManager.appendToSimConsole(`\n--- Simulation ${status.status} ---`);
-                if (status.status === 'Completed' && UIManager.confirmAction("Simulation finished. Show all tracks?")) {
+                if (status.status === 'Completed' && UIManager.getDrawTracksOptions().draw) {
                     // Call the track fetching and drawing function
-                    fetchAndDrawTracks(AppState.lastSimVersionId, AppState.lastSimJobId, 'all');
+                    fetchAndDrawTracks(AppState.lastSimVersionId, AppState.lastSimJobId, UIManager.getDrawTracksOptions().range);
                 }
             }
         }
@@ -2406,23 +2455,64 @@ async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
     }
 }
 
-async function handleOpenReconstructionModal() {
+function handleOpenSimOptions() {
+    UIManager.setSimOptions(AppState.simOptions); // Pre-fill the modal with current settings
+    UIManager.showSimOptionsModal();
+}
+
+function handleSaveSimOptions() {
+    AppState.simOptions = UIManager.getSimOptions(); // Get values from modal and save to state
+    UIManager.hideSimOptionsModal();
+    //UIManager.showNotification("Simulation options saved for the next run.");
+}
+
+async function handleDrawTracksToggle() {
+    const drawOptions = UIManager.getDrawTracksOptions();
+    
+    // Always clear existing tracks when this is triggered
+    SceneManager.clearTracks();
+
+    if (drawOptions.draw && drawOptions.range.trim() !== '') {
+        if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+            UIManager.showNotification("No completed simulation run available to draw tracks from.");
+            return;
+        }
+        // Fetch and draw the requested range
+        await fetchAndDrawTracks(AppState.lastSimVersionId, AppState.lastSimJobId, drawOptions.range);
+    }
+}
+
+// This handler is now just for opening the modal
+function handleOpenReconstructionModal() {
     if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
-        UIManager.showError("No completed simulation run found for reconstruction.");
+        UIManager.showError("No completed simulation run found.");
+        return;
+    }
+    // Just show the modal. No automatic calculation.
+    UIManager.showReconstructionModal();
+}
+
+// New handler for the "Process LORs" button
+async function handleProcessLors(params) {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+        UIManager.showError("Cannot process LORs: No simulation context.");
         return;
     }
     UIManager.showLoading("Processing coincidences...");
+    UIManager.setLorStatus("Processing...", false);
     try {
-        const result = await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, { coincidence_window_ns: 4.0 });
-        UIManager.showNotification(result.message);
-        UIManager.showReconstructionModal(); // Open the modal on success
+        const result = await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, params);
+        UIManager.setLorStatus(result.message, false);
+        UIManager.setReconstructionButtonEnabled(true); // Enable reconstruction button on success
     } catch (error) {
-        UIManager.showError("Failed to process LORs: " + error.message);
+        UIManager.setLorStatus(error.message, true);
+        UIManager.setReconstructionButtonEnabled(false);
     } finally {
         UIManager.hideLoading();
     }
 }
 
+// The reconstruction handler is now separate
 async function handleRunReconstruction(reconParams) {
     if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
         UIManager.showError("Cannot run reconstruction: No simulation context.");
@@ -2431,12 +2521,10 @@ async function handleRunReconstruction(reconParams) {
     UIManager.showLoading("Running MLEM Reconstruction...");
     try {
         const result = await APIService.runReconstruction(AppState.lastSimVersionId, AppState.lastSimJobId, reconParams);
-        AppState.currentReconShape = result.image_shape; // Store the shape
+        AppState.currentReconShape = result.image_shape;
         
-        // Setup the slider and load the first slice
         const initialAxis = document.getElementById('reconAxis').value;
         UIManager.setupSliceSlider(initialAxis, AppState.currentReconShape);
-
         UIManager.showNotification(result.message);
     } catch (error) {
         UIManager.showError("Reconstruction failed: " + error.message);

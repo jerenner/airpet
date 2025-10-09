@@ -2450,3 +2450,24 @@ export function drawTracks(trackData) {
         tracksGroup.add(trackLine);
     }
 }
+
+/**
+ * Removes all track lines from the scene, freeing up their geometry and materials.
+ */
+export function clearTracks() {
+    const tracksGroup = scene.getObjectByName("TracksGroup");
+    if (tracksGroup) {
+        // To properly free GPU memory, we must dispose of geometry and materials
+        while (tracksGroup.children.length > 0) {
+            const trackLine = tracksGroup.children[0];
+            if (trackLine.geometry) {
+                trackLine.geometry.dispose();
+            }
+            if (trackLine.material) {
+                trackLine.material.dispose();
+            }
+            tracksGroup.remove(trackLine);
+        }
+        console.log("[SceneManager] Cleared all tracks.");
+    }
+}

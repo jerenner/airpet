@@ -2459,6 +2459,17 @@ class ProjectManager:
         Returns:
             str: The path to the generated macro file.
         """
+        # --- Save metadata ---
+        metadata = {
+            'job_id': job_id,
+            'timestamp': datetime.now().isoformat(),
+            'total_events': sim_params.get('events', 1),
+            'sim_options': sim_params 
+        }
+        metadata_path = os.path.join(run_dir, "metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+            
         macro_path = os.path.join(run_dir, "run.mac")
         version_json_path = os.path.join(version_dir, "version.json")
 
@@ -2483,6 +2494,15 @@ class ProjectManager:
         macro_content.append(f"# Job ID: {job_id}")
         macro_content.append("")
 
+        # --- Set random seed ---
+        seed1 = sim_params.get('seed1', 0)
+        seed2 = sim_params.get('seed2', 0)
+        macro_content.append("\n# --- Random Seed ---")
+        if seed1 > 0 and seed2 > 0:
+            macro_content.append(f"/random/setSeeds {seed1} {seed2}")
+        else:
+            macro_content.append("# Using default/random seeds")
+
         # --- Configure Sensitive Detectors ---
         macro_content.append("# --- Sensitive Detectors ---")
         # Find all LVs marked as sensitive
@@ -2505,7 +2525,7 @@ class ProjectManager:
         macro_content.append("/run/initialize")
         macro_content.append("")
 
-        # --- NEW: ADD VERBOSITY FOR DEBUGGING ---
+        # --- ADD VERBOSITY FOR DEBUGGING ---
         macro_content.append("# --- Verbosity Settings ---")
         #macro_content.append("/tracking/verbose 1") # Print a message for every new track
         macro_content.append("/hits/verbose 2")     # Print every single hit as it's processed
@@ -2540,13 +2560,21 @@ class ProjectManager:
             macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
             macro_content.append("")
 
-        # --- Configure Output to save tracks in a subdirectory ---
-        tracks_dir = os.path.join(run_dir, "tracks")
-        os.makedirs(tracks_dir, exist_ok=True)
-        macro_content.append("# --- Output and Visualization ---")
-        if sim_params.get('visualize_tracks', False):
+        # --- Add Track Saving Logic ---
+        macro_content.append("\n# --- Output and Visualization ---")
+        if sim_params.get('save_tracks', False):
+            tracks_dir = os.path.join(run_dir, "tracks")
+            os.makedirs(tracks_dir, exist_ok=True)
             macro_content.append("/g4pet/event/printTracksToFile true")
-            macro_content.append("/g4pet/event/printTracksToDir tracks/")
+            macro_content.append(f"/g4pet/event/printTracksToDir tracks/")
+            
+            # Add range commands
+            save_range = sim_params.get('save_tracks_range', '0-0').replace(' ', '').split('-')
+            start_event = int(save_range[0])
+            end_event = int(save_range[1]) if len(save_range) > 1 else start_event
+            macro_content.append(f"/g4pet/event/setTrackEventRange {start_event} {end_event}")
+        else:
+            macro_content.append("/g4pet/event/printTracksToFile false")
         
         # Set the output HDF5 file name
         macro_content.append(f"/analysis/setFileName output.hdf5")

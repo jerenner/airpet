@@ -2,6 +2,7 @@
 #include "RunAction.hh" // To access RunAction methods if needed
 #include "AirPetHit.hh"
 #include "AirPetTrajectory.hh" // We will create this next
+#include "TrackingAction.hh"
 
 #include "G4Event.hh"
 #include "G4RunManager.hh"
@@ -12,31 +13,87 @@
 #include "G4ios.hh"
 #include "G4HCtable.hh"
 
+// --- Includes for the messenger ---
+#include "G4UIdirectory.hh"
+#include "G4UIcommand.hh"
+#include "G4UIparameter.hh"
+#include "G4Tokenizer.hh"
+
 #include <fstream>
 
 EventAction::EventAction()
  : G4UserEventAction(),
    fPrintTracksToFile(false),
-   fTrackOutputDir(".")
+   fTrackOutputDir("."),
+   fStartEventToTrack(0),
+   fEndEventToTrack(0)
 {
   // Initialize the vector with an invalid ID
   fHitsCollectionIDs.push_back(-1);
 
-  // Messenger to control track output
-  fMessenger = new G4GenericMessenger(this, "/g4pet/event/", "Event control");
-  fMessenger->DeclareMethod("printTracksToFile", &EventAction::SetPrintTracksToFile)
-      .SetGuidance("Enable or disable writing trajectory points to a file for visualization.")
-      .SetParameterName("value", true)
-      .SetDefaultValue("false");
+  // --- Define the UI commands ---
+  fG4petDir = new G4UIdirectory("/g4pet/");
+  fG4petDir->SetGuidance("UI commands specific to the virtual-pet application");
 
-  fMessenger->DeclareMethod("printTracksToDir", &EventAction::SetTrackOutputDir)
-      .SetGuidance("Set the output directory for trajectory files.")
-      .SetParameterName("dir", false);
+  fEventDir = new G4UIdirectory("/g4pet/event/");
+  fEventDir->SetGuidance("Event-level control");
+
+  // Command to enable/disable track saving
+  fPrintTracksCmd = new G4UIcommand("/g4pet/event/printTracksToFile", this);
+  fPrintTracksCmd->SetGuidance("Enable or disable writing trajectory points to a file.");
+  fPrintTracksCmd->SetParameter(new G4UIparameter("value", 'b', true)); // 'b' for boolean
+  fPrintTracksCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
+
+  // Command to set output directory
+  fTrackOutputDirCmd = new G4UIcommand("/g4pet/event/printTracksToDir", this);
+  fTrackOutputDirCmd->SetGuidance("Set the output directory for trajectory files.");
+  fTrackOutputDirCmd->SetParameter(new G4UIparameter("dir", 's', false)); // 's' for string
+  fTrackOutputDirCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
+
+  // Command for event range
+  fSetTrackEventRangeCmd = new G4UIcommand("/g4pet/event/setTrackEventRange", this);
+  fSetTrackEventRangeCmd->SetGuidance("Set the range of event IDs for which to save tracks.");
+  fSetTrackEventRangeCmd->SetGuidance("Usage: /g4pet/event/setTrackEventRange startEventID endEventID");
+
+  G4UIparameter* startParam = new G4UIparameter("startEvent", 'i', false);
+  startParam->SetGuidance("Starting event ID");
+  fSetTrackEventRangeCmd->SetParameter(startParam);
+
+  G4UIparameter* endParam = new G4UIparameter("endEvent", 'i', false);
+  endParam->SetGuidance("Ending event ID");
+  fSetTrackEventRangeCmd->SetParameter(endParam);
+  fSetTrackEventRangeCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
 }
 
 EventAction::~EventAction()
 {
-  delete fMessenger;
+  delete fPrintTracksCmd;
+  delete fTrackOutputDirCmd;
+  delete fSetTrackEventRangeCmd;
+  delete fEventDir;
+  delete fG4petDir;
+}
+
+void EventAction::SetNewValue(G4UIcommand* command, G4String newValue)
+{
+  if (command == fPrintTracksCmd) {
+    fPrintTracksToFile = fPrintTracksCmd->ConvertToBool(newValue);
+  }
+  else if (command == fTrackOutputDirCmd) {
+    fTrackOutputDir = newValue;
+  }
+  else if (command == fSetTrackEventRangeCmd) {
+    G4Tokenizer next(newValue);
+    fStartEventToTrack = StoI(next());
+    fEndEventToTrack = StoI(next());
+  }
+}
+
+void EventAction::SetTrackEventRange(G4int start, G4int end)
+{
+    fStartEventToTrack = start;
+    fEndEventToTrack = end;
+    G4cout << "Track saving range set to events " << start << " through " << end << G4endl;
 }
 
 void EventAction::BeginOfEventAction(const G4Event* /*event*/)
@@ -140,7 +197,8 @@ void EventAction::EndOfEventAction(const G4Event* event)
   }
 
   // --- Trajectory File Output ---
-  if (fPrintTracksToFile) {
+  G4int eventID = event->GetEventID();
+  if (fPrintTracksToFile && (eventID >= fStartEventToTrack && eventID <= fEndEventToTrack)) {
     WriteTracksToFile(event);
   }
 }

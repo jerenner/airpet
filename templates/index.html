@@ -1355,11 +1355,19 @@
                 <div id="tab_sim_panel" class="tab_pane">
                     <div id="sim_controls">
                         <label for="simEventsInput">Events:</label>
-                        <input type="number" id="simEventsInput" value="1000" min="1" step="1">
+                        <input type="number" id="simEventsInput" value="10" min="1" step="1">
                         <button id="runSimButton">▶ Run</button>
                         <button id="stopSimButton" disabled>⏹ Stop</button>
                         <button id="simOptionsButton">⚙️ Options</button>
-                        <button id="reconModalButton" title="Open PET Reconstruction" disabled>🔬 Recon</button>
+                        <button id="reconModalButton" title="Open PET Reconstruction" disabled>PET Reco</button>
+                        <div id="sim_status_display" style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
+                            <span>No simulation run loaded.</span>
+                        </div>
+                        <div style="margin-left: 20px; display: flex; align-items: center; gap: 5px;">
+                            <input type="checkbox" id="drawTracksCheckbox" title="Draw saved tracks in 3D view">
+                            <label for="drawTracksCheckbox" style="font-size: 12px;">Draw Tracks:</label>
+                            <input type="text" id="drawTracksRange" value="0-9" style="width: 60px;">
+                        </div>
                     </div>
                     <div id="sim_console_wrapper">
                         <pre id="sim_console"></pre>
@@ -1958,6 +1966,35 @@
             </div>
         </div>
     </div>
+    <div id="simOptionsModal" class="editor-modal">
+        <div class="modal-content" style="width: 500px; height: auto;">
+            <div class="modal-header">
+                <h4>Simulation Options</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column; padding: 20px;">
+                <div class="property_item">
+                    <label for="simSeed1">Random Seed 1:</label>
+                    <input type="number" id="simSeed1" value="0" min="0" step="1">
+                </div>
+                <div class="property_item">
+                    <label for="simSeed2">Random Seed 2:</label>
+                    <input type="number" id="simSeed2" value="0" min="0" step="1">
+                </div>
+                <hr>
+                <div class="property_item">
+                    <input type="checkbox" id="simSaveTracks" style="width: auto;">
+                    <label for="simSaveTracks" style="width: auto;">Save Event Tracks to File</label>
+                </div>
+                <div class="property_item">
+                    <label for="simSaveTracksRange">Event Range to Save:</label>
+                    <input type="text" id="simSaveTracksRange" placeholder="e.g., 0-99 or 5">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="saveSimOptions" class="confirm-button">Save & Close</button>
+            </div>
+        </div>
+    </div>
     <div id="reconModal" class="editor-modal">
         <div class="modal-content" style="width: 90%; max-width: 1200px; height: 80vh;">
             <div class="modal-header">
@@ -1976,7 +2013,17 @@
                 </div>
                 <!-- Right Side: Controls -->
                 <div id="recon-controls-panel" style="flex: 1; padding: 10px; border-left: 1px solid #ccc; overflow-y: auto;">
-                    <h5>Reconstruction Settings</h5>
+                    <h5>1. Coincidence Processing</h5>
+                    <div class="property_item">
+                        <label for="coincidenceWindow">Time Window (ns):</label>
+                        <input type="number" id="coincidenceWindow" value="4.0" step="0.1">
+                    </div>
+                    <button id="processLorsBtn">Process LORs</button>
+                    <p id="lorStatus" style="font-size: 12px; color: #555; margin-top: 5px;">
+                        Status: No LORs processed for this run.
+                    </p>
+                    <hr>
+                    <h5>2. Image Reconstruction</h5>
                     <div class="property_item">
                         <label for="reconAlgorithm">Algorithm:</label>
                         <select id="reconAlgorithm">
@@ -2010,7 +2057,7 @@
             </div>
             <div class="modal-footer">
                 <button id="cancelRecon">Close</button>
-                <button id="runReconstructionBtn" class="confirm-button">Run Reconstruction</button>
+                <button id="runReconstructionBtn" class="confirm-button" disabled>Run Reconstruction</button>
             </div>
         </div>
     </div>

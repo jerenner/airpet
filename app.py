@@ -250,7 +250,24 @@ def get_simulation_status(job_id):
         status_copy['total_lines'] = len(all_lines)
 
         return jsonify({"success": True, "status": status_copy})
-    
+
+@app.route('/api/simulation/metadata/<version_id>/<job_id>', methods=['GET'])
+def get_simulation_metadata(version_id, job_id):
+    """Fetches the metadata JSON file for a specific simulation run."""
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    metadata_path = os.path.join(run_dir, "metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return jsonify({"success": False, "error": "Simulation metadata not found."}), 404
+
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        return jsonify({"success": True, "metadata": metadata})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])
 def get_simulation_tracks(version_id, job_id, event_spec):
     version_dir = project_manager._get_version_dir(version_id)
@@ -262,17 +279,29 @@ def get_simulation_tracks(version_id, job_id, event_spec):
 
     # --- Handle multiple event files ---
     all_tracks_content = ""
+    track_files = []
     
     if event_spec.lower() == 'all':
-        track_files = sorted(os.listdir(tracks_dir))
+        track_files = sorted([f for f in os.listdir(tracks_dir) if f.endswith('_tracks.txt')])
+    elif '-' in event_spec:
+        try:
+            start_str, end_str = event_spec.split('-', 1)
+            start = int(start_str)
+            end = int(end_str)
+            
+            if start > end: # A small sanity check to allow users to enter ranges backwards
+                start, end = end, start
+
+            for i in range(start, end + 1):
+                track_files.append(f"event_{i:04d}_tracks.txt")
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid event range format. Use 'start-end' (e.g., '0-99')."}), 400
     else:
-        # Simple parsing for now, e.g., "0,1,5-7"
-        # A more robust parser can be added later.
         try:
             event_id = int(event_spec)
             track_files = [f"event_{event_id:04d}_tracks.txt"]
         except ValueError:
-            return jsonify({"success": False, "error": "Invalid event specification."}), 400
+            return jsonify({"success": False, "error": "Invalid event specification. Use a single number, a range 'start-end', or 'all'."}), 400
 
     for filename in track_files:
         filepath = os.path.join(tracks_dir, filename)

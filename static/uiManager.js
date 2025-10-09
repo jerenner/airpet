@@ -19,9 +19,6 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
     currentModeDisplay;
 
-// Simulation control variables
-let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole;
-
 // Hierarchy and Inspector
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
@@ -47,9 +44,16 @@ let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 // Number of items per group for lists
 const ITEMS_PER_GROUP = 100;
 
+// Simulation control variables
+let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
+    simStatusDisplay, simOptionsModal, saveSimOptionsButton, simSeed1Input, simSeed2Input,
+    simSaveTracksCheckbox, simSaveTracksRangeInput,
+    drawTracksCheckbox, drawTracksRangeInput;
+
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
-    reconImageView, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton;
+    reconImageView, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
+    processLorsBtn, reconStatusP, coincidenceWindowInput;
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
@@ -200,6 +204,16 @@ export function initUI(cb) {
     stopSimButton = document.getElementById('stopSimButton');
     simOptionsButton = document.getElementById('simOptionsButton');
     simConsole = document.getElementById('sim_console');
+    simStatusDisplay = document.getElementById('sim_status_display');
+
+    simOptionsModal = document.getElementById('simOptionsModal');
+    saveSimOptionsButton = document.getElementById('saveSimOptions');
+    simSeed1Input = document.getElementById('simSeed1');
+    simSeed2Input = document.getElementById('simSeed2');
+    simSaveTracksCheckbox = document.getElementById('simSaveTracks');
+    simSaveTracksRangeInput = document.getElementById('simSaveTracksRange');
+    drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
+    drawTracksRangeInput = document.getElementById('drawTracksRange');
 
     // Reconstruction elements
     reconModal = document.getElementById('reconModal');
@@ -211,6 +225,9 @@ export function initUI(cb) {
     sliceIndicator = document.getElementById('sliceIndicator');
     reconAxisSelect = document.getElementById('reconAxis');
     reconModalButton = document.getElementById('reconModalButton');
+    processLorsBtn = document.getElementById('processLorsBtn');
+    reconStatusP = document.getElementById('lorStatus');
+    coincidenceWindowInput = document.getElementById('coincidenceWindow');
 
     // Attach Event Listeners
     openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
@@ -344,6 +361,10 @@ export function initUI(cb) {
         }
     });
     stopSimButton.addEventListener('click', callbacks.onStopSimulationClicked);
+    simOptionsButton.addEventListener('click', callbacks.onSimOptionsClicked);
+    saveSimOptionsButton.addEventListener('click', callbacks.onSaveSimOptions);
+    drawTracksCheckbox.addEventListener('change', callbacks.onDrawTracksToggle);
+    drawTracksRangeInput.addEventListener('change', callbacks.onDrawTracksToggle); // Also trigger on range change
 
     // Reconstruction listeners
     reconModalButton.addEventListener('click', () => callbacks.onReconModalOpen());
@@ -358,6 +379,12 @@ export function initUI(cb) {
             voxel_size: document.getElementById('reconVoxelSize').value.split(',').map(Number),
         };
         callbacks.onRunReconstruction(params);
+    });
+    processLorsBtn.addEventListener('click', () => {
+        const params = {
+            coincidence_window_ns: parseFloat(coincidenceWindowInput.value)
+        };
+        callbacks.onProcessLorsClicked(params);
     });
 
     // Listener for the slider
@@ -1904,5 +1931,67 @@ export function setupSliceSlider(axis, imageShape) {
         sliceSlider.value = middleSlice;
         // Trigger the input event to load the middle slice
         sliceSlider.dispatchEvent(new Event('input'));
+    }
+}
+
+export function showSimOptionsModal() {
+    if (simOptionsModal) simOptionsModal.style.display = 'block';
+}
+
+export function hideSimOptionsModal() {
+    if (simOptionsModal) simOptionsModal.style.display = 'none';
+}
+
+export function setSimOptions(options) {
+    if (!options) return;
+    simSeed1Input.value = options.seed1 || 0;
+    simSeed2Input.value = options.seed2 || 0;
+    simSaveTracksCheckbox.checked = options.save_tracks || false;
+    simSaveTracksRangeInput.value = options.save_tracks_range || '';
+}
+
+export function getSimOptions() {
+    return {
+        seed1: parseInt(simSeed1Input.value, 10),
+        seed2: parseInt(simSeed2Input.value, 10),
+        save_tracks: simSaveTracksCheckbox.checked,
+        save_tracks_range: simSaveTracksRangeInput.value
+    };
+}
+
+export function getDrawTracksOptions() {
+    return {
+        draw: drawTracksCheckbox.checked,
+        range: drawTracksRangeInput.value
+    };
+}
+
+export function setReconstructionButtonEnabled(isEnabled) {
+    if (runReconstructionBtn) runReconstructionBtn.disabled = !isEnabled;
+}
+
+export function setLorStatus(message, isError = false) {
+    if (reconStatusP) {
+        reconStatusP.textContent = `Status: ${message}`;
+        reconStatusP.style.color = isError ? '#c53030' : '#2f855a'; // Red for error, green for success
+    }
+}
+
+export function updateSimStatusDisplay(jobId, totalEvents) {
+    if (simStatusDisplay) {
+        if (jobId && totalEvents) {
+            simStatusDisplay.innerHTML = `
+                <span>Loaded Run: <strong>${jobId.substring(0, 8)}...</strong></span>
+                <span style="margin-left: 10px;">Events: <strong>${totalEvents}</strong></span>
+            `;
+        } else {
+            simStatusDisplay.innerHTML = '<span>No simulation run loaded.</span>';
+        }
+    }
+}
+
+export function clearSimStatusDisplay() {
+    if (simStatusDisplay) {
+        simStatusDisplay.innerHTML = '<span>No simulation run loaded.</span>';
     }
 }
