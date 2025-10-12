@@ -22,7 +22,7 @@ void ActionInitialization::BuildForMaster() const
   // events, so it only needs a RunAction.
   // We pass a new EventAction instance to it to satisfy the constructor.
   auto* eventAction = new EventAction();
-  SetUserAction(new RunAction(eventAction));
+  SetUserAction(new RunAction());
 }
 
 void ActionInitialization::Build() const
@@ -39,7 +39,7 @@ void ActionInitialization::Build() const
 
   // The RunAction is also created per thread and takes the thread-local
   // EventAction pointer. This allows it to access event data.
-  SetUserAction(new RunAction(eventAction));
+  SetUserAction(new RunAction());
 
   // SteppingAction is called for every step in the simulation.
   SetUserAction(new SteppingAction());

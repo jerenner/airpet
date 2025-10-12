@@ -31,7 +31,6 @@ public:
   virtual void SetNewValue(G4UIcommand* command, G4String newValue) override;
 
   // Method to be called by a messenger command
-  void SetPrintTracksToFile(G4bool value) { fPrintTracksToFile = value; }
   void SetTrackOutputDir(const G4String& dir) { fTrackOutputDir = dir; }
   void SetTrackEventRange(G4int start, G4int end);
 
@@ -43,13 +42,11 @@ private:
   std::vector<G4int> fHitsCollectionIDs;
 
   // Flag to enable trajectory output to file.
-  G4bool fPrintTracksToFile;
   G4String fTrackOutputDir;
   
   // --- Messenger-related members ---
   G4UIdirectory*   fG4petDir;              
   G4UIdirectory*   fEventDir;              
-  G4UIcommand*     fPrintTracksCmd;        
   G4UIcommand*     fTrackOutputDirCmd;     
   G4UIcommand*     fSetTrackEventRangeCmd;
 

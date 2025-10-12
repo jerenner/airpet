@@ -2525,6 +2525,19 @@ class ProjectManager:
         macro_content.append("/run/initialize")
         macro_content.append("")
 
+        # --- Add production cuts ---
+        macro_content.append("# --- Physics Cuts for Performance ---")
+        macro_content.append("/run/setCut 1.0 mm") # Stop tracking particles that can't travel at least 1mm
+        macro_content.append("")
+
+        # --- Add commands to control n-tuple saving ---
+        macro_content.append("# --- N-tuple Saving Control ---")
+        save_particles = sim_params.get('save_particles', False)
+        save_hits = sim_params.get('save_hits', True)
+        macro_content.append(f"/g4pet/run/saveParticles {str(save_particles).lower()}")
+        macro_content.append(f"/g4pet/run/saveHits {str(save_hits).lower()}")
+        macro_content.append("")
+
         # --- ADD VERBOSITY FOR DEBUGGING ---
         macro_content.append("# --- Verbosity Settings ---")
         #macro_content.append("/tracking/verbose 1") # Print a message for every new track
@@ -2562,22 +2575,22 @@ class ProjectManager:
 
         # --- Add Track Saving Logic ---
         macro_content.append("\n# --- Output and Visualization ---")
-        if sim_params.get('save_tracks', False):
-            tracks_dir = os.path.join(run_dir, "tracks")
-            os.makedirs(tracks_dir, exist_ok=True)
-            macro_content.append("/g4pet/event/printTracksToFile true")
-            macro_content.append(f"/g4pet/event/printTracksToDir tracks/")
-            
-            # Add range commands
-            save_range = sim_params.get('save_tracks_range', '0-0').replace(' ', '').split('-')
-            start_event = int(save_range[0])
-            end_event = int(save_range[1]) if len(save_range) > 1 else start_event
-            macro_content.append(f"/g4pet/event/setTrackEventRange {start_event} {end_event}")
-        else:
-            macro_content.append("/g4pet/event/printTracksToFile false")
+        tracks_dir = os.path.join(run_dir, "tracks")
+        os.makedirs(tracks_dir, exist_ok=True)
+        macro_content.append(f"/g4pet/event/printTracksToDir tracks/")
+        
+        save_range = sim_params.get('save_tracks_range', '0-0').replace(' ', '').split('-')
+        start_event = int(save_range[0])
+        end_event = int(save_range[1]) if len(save_range) > 1 else start_event
+        macro_content.append(f"/g4pet/event/setTrackEventRange {start_event} {end_event}")
         
         # Set the output HDF5 file name
         macro_content.append(f"/analysis/setFileName output.hdf5")
+
+        # --- Add the print progress command ---
+        print_progress = sim_params.get('print_progress', 0)
+        if print_progress > 0:
+            macro_content.append(f"/run/printProgress {print_progress}")
 
         # --- Run Beam On ---
         num_events = sim_params.get('events', 1)

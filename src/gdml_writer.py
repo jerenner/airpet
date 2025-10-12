@@ -665,8 +665,7 @@ class GDMLWriter:
     def _write_physvol_element(self, parent_el, pv_obj, is_assembly_ref=False):
         """Helper to write a physvol or assembly placement tag."""
         pv_el = ET.SubElement(parent_el, "physvol", {"name": pv_obj.name})
-        if pv_obj.copy_number != 0:
-            pv_el.set("copynumber", str(pv_obj.copy_number))
+        pv_el.set("copynumber", str(pv_obj.copy_number))
         
         # The reference tag is different for assemblies vs. volumes
         ref_tag = "assemblyref" if is_assembly_ref else "volumeref"

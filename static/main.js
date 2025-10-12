@@ -34,6 +34,8 @@ const AppState = {
     lastSimVersionId: null,
     lastSimJobId: null,
     currentReconShape: null,
+    simStatusPoller: null,
+    lorStatusPoller: null,
 
     selectedPVContext: {
         pvId: null,
@@ -45,7 +47,9 @@ const AppState = {
         events: 1000,
         seed1: 0,
         seed2: 0,
-        save_tracks: true,
+        print_progress: 1000,
+        save_hits: true,
+        save_particles: false,
         save_tracks_range: "0-99", // Default to saving the first 100 tracks
     }
 };
@@ -973,7 +977,9 @@ async function handleLoadRunResults(versionId, jobId) {
 
         // Step 4: Update the UI to reflect the loaded run
         UIManager.updateSimStatusDisplay(jobId, totalEvents);
-        UIManager.setReconModalButtonEnabled(true); // **CRITICAL: Enable the Recon button**
+        UIManager.setReconModalButtonEnabled(true); // Enable the Recon button
+
+        // --- Reset the reconstruction state when a new run is loaded ---
         UIManager.setLorStatus("Ready to process LORs for loaded run.", false);
         UIManager.setReconstructionButtonEnabled(false); // Ensure recon button in modal is disabled until LORs are processed
 
@@ -2483,13 +2489,37 @@ async function handleDrawTracksToggle() {
 }
 
 // This handler is now just for opening the modal
-function handleOpenReconstructionModal() {
+async function handleOpenReconstructionModal() {
     if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
         UIManager.showError("No completed simulation run found.");
         return;
     }
-    // Just show the modal. No automatic calculation.
-    UIManager.showReconstructionModal();
+
+    UIManager.showLoading("Checking for LORs...");
+    try {
+        // Call the new API endpoint to check for the LOR file
+        const result = await APIService.checkLorFile(AppState.lastSimVersionId, AppState.lastSimJobId);
+
+        // Show the modal regardless of the outcome
+        UIManager.showReconstructionModal();
+
+        if (result.success && result.exists) {
+            // LORs file was found!
+            UIManager.setLorStatus(`Found ${result.num_lors} pre-processed LORs. Ready to reconstruct.`, false);
+            UIManager.setReconstructionButtonEnabled(true);
+        } else {
+            // LORs file was not found
+            UIManager.setLorStatus("No LORs processed for this run. Click 'Process LORs' to begin.", false);
+            UIManager.setReconstructionButtonEnabled(false);
+        }
+    } catch (error) {
+        // If the API call fails, show an error and open the modal in a disabled state
+        UIManager.showReconstructionModal();
+        UIManager.setLorStatus(`Error checking for LOR file: ${error.message}`, true);
+        UIManager.setReconstructionButtonEnabled(false);
+    } finally {
+        UIManager.hideLoading();
+    }
 }
 
 // New handler for the "Process LORs" button
@@ -2498,15 +2528,22 @@ async function handleProcessLors(params) {
         UIManager.showError("Cannot process LORs: No simulation context.");
         return;
     }
-    UIManager.showLoading("Processing coincidences...");
-    UIManager.setLorStatus("Processing...", false);
+
+    // Stop any previous poller
+    if (AppState.lorStatusPoller) {
+        clearInterval(AppState.lorStatusPoller);
+    }
+
+    UIManager.showLoading("Initializing LOR processing...");
     try {
-        const result = await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, params);
-        UIManager.setLorStatus(result.message, false);
-        UIManager.setReconstructionButtonEnabled(true); // Enable reconstruction button on success
+        // This call will now return immediately with a 202 status
+        await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, params);
+        
+        // Start polling for progress
+        AppState.lorStatusPoller = setInterval(pollLorStatus, 1000); // Poll every second
+
     } catch (error) {
-        UIManager.setLorStatus(error.message, true);
-        UIManager.setReconstructionButtonEnabled(false);
+        UIManager.showError("Failed to start LOR processing: " + error.message);
     } finally {
         UIManager.hideLoading();
     }
@@ -2544,4 +2581,38 @@ function handleSliceSliderChange(axis, sliceNum) {
 function handleSliceAxisChange(newAxis) {
     if (!AppState.currentReconShape) return;
     UIManager.setupSliceSlider(newAxis, AppState.currentReconShape);
+}
+
+async function pollLorStatus() {
+    if (!AppState.lastSimJobId) {
+        clearInterval(AppState.lorStatusPoller);
+        AppState.lorStatusPoller = null;
+        return;
+    }
+
+    try {
+        const result = await APIService.getLorStatus(AppState.lastSimJobId);
+        if (result.success) {
+            const status = result.status;
+            if (status.status === "Processing coincidences...") {
+                const percent = status.total > 0 ? ((status.progress / status.total) * 100).toFixed(1) : 0;
+                UIManager.setLorStatus(`Processing... ${status.progress} / ${status.total} events (${percent}%)`, false);
+            } else {
+                UIManager.setLorStatus(status.message || status.status, status.status === 'Error');
+            }
+
+            if (status.status === 'Completed' || status.status === 'Error') {
+                clearInterval(AppState.lorStatusPoller);
+                AppState.lorStatusPoller = null;
+                if (status.status === 'Completed') {
+                    UIManager.setReconstructionButtonEnabled(true);
+                }
+            }
+        }
+    } catch (error) {
+        console.error("LOR status polling error:", error);
+        UIManager.setLorStatus(`Polling failed: ${error.message}`, true);
+        clearInterval(AppState.lorStatusPoller);
+        AppState.lorStatusPoller = null;
+    }
 }

@@ -38,6 +38,29 @@ G4bool AirPetSensitiveDetector::ProcessHits(G4Step* aStep, G4TouchableHistory* /
   // If no energy was deposited, do nothing
   if (edep == 0.) return false;
 
+  // --- Find existing hit or create new one ---
+  G4StepPoint* preStepPoint = aStep->GetPreStepPoint();
+  G4TouchableHistory* touchable = (G4TouchableHistory*)(preStepPoint->GetTouchable());
+  G4int copyNo = touchable->GetReplicaNumber();
+  if (copyNo == 0) {
+        copyNo = touchable->GetVolume()->GetCopyNo();
+  }
+
+  // We check if a hit for this crystal (identified by its name + copy number)
+  // already exists in the collection for this event.
+  for (size_t i = 0; i < fHitsCollection->GetSize(); ++i) {
+    auto existingHit = static_cast<AirPetHit*>(fHitsCollection->GetHit(i));
+
+    if (existingHit->GetPhysicalVolumeName() == touchable->GetVolume()->GetName() && 
+        existingHit->GetVolumeName() == touchable->GetVolume()->GetLogicalVolume()->GetName() && 
+        existingHit->GetCopyNo() == copyNo) {
+      // It exists! Add the energy to it and we're done.
+      existingHit->AddEdep(edep);
+      return true;
+    }
+  }
+
+  // --- If we get here, it's the first time this crystal was hit in this event ---
   // Create a new hit
   AirPetHit* newHit = new AirPetHit();
 
@@ -48,10 +71,9 @@ G4bool AirPetSensitiveDetector::ProcessHits(G4Step* aStep, G4TouchableHistory* /
   newHit->SetParticleName(track->GetDefinition()->GetParticleName());
 
   // Get information from the PreStepPoint (where the step started)
-  G4StepPoint* preStepPoint = aStep->GetPreStepPoint();
-  G4TouchableHistory* touchable = (G4TouchableHistory*)(preStepPoint->GetTouchable());
+  newHit->SetPhysicalVolumeName(touchable->GetVolume()->GetName());
   newHit->SetVolumeName(touchable->GetVolume()->GetLogicalVolume()->GetName());
-  newHit->SetCopyNo(touchable->GetVolume()->GetCopyNo());
+  newHit->SetCopyNo(copyNo);
 
   // Get information from the PostStepPoint (where the step ended)
   G4StepPoint* postStepPoint = aStep->GetPostStepPoint();

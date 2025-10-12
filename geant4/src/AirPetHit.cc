@@ -18,6 +18,7 @@ AirPetHit::AirPetHit()
     fTime(0.),
     fParticleName(""),
     fVolumeName(""),
+    fPhysicalVolumeName(""),
     fCopyNo(-1)
 {}
 
@@ -32,6 +33,7 @@ AirPetHit::AirPetHit(const AirPetHit& right) : G4VHit()
   fTime = right.fTime;
   fParticleName = right.fParticleName;
   fVolumeName = right.fVolumeName;
+  fPhysicalVolumeName = right.fPhysicalVolumeName;
   fCopyNo = right.fCopyNo;
 }
 
@@ -44,6 +46,7 @@ const AirPetHit& AirPetHit::operator=(const AirPetHit& right)
   fTime = right.fTime;
   fParticleName = right.fParticleName;
   fVolumeName = right.fVolumeName;
+  fPhysicalVolumeName = right.fPhysicalVolumeName;
   fCopyNo = right.fCopyNo;
 
   return *this;
@@ -73,6 +76,7 @@ void AirPetHit::Print()
 {
   G4cout << "  trackID: " << fTrackID << " particle: " << fParticleName
          << " parentID: " << fParentID
+         << " phys volume: " << fPhysicalVolumeName
          << " volume: " << fVolumeName << "[" << fCopyNo << "]"
          << " Edep: " << std::setw(7) << G4BestUnit(fEdep,"Energy")
          << " Position: " << std::setw(7) << G4BestUnit(fPos,"Length")

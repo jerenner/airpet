@@ -881,3 +881,25 @@ export async function getSimulationMetadata(versionId, jobId) {
     const response = await fetch(`${API_BASE_URL}/api/simulation/metadata/${versionId}/${jobId}`);
     return handleResponse(response);
 }
+
+/**
+ * Polls the backend for the status of LOR processing.
+ * @param {string} jobId - The ID of the simulation job.
+ * @returns {Promise<Object>}
+ */
+export async function getLorStatus(jobId) {
+    // We can use the same job ID as the simulation run
+    const response = await fetch(`${API_BASE_URL}/api/lors/status/${jobId}`);
+    return handleResponse(response);
+}
+
+/**
+ * Checks if a pre-processed LOR file exists for a given run.
+ * @param {string} versionId - The ID of the project version.
+ * @param {string} jobId - The ID of the simulation job.
+ * @returns {Promise<Object>} A promise resolving to { success, exists, num_lors? }.
+ */
+export async function checkLorFile(versionId, jobId) {
+    const response = await fetch(`${API_BASE_URL}/api/lors/check/${versionId}/${jobId}`);
+    return handleResponse(response);
+}

@@ -47,7 +47,7 @@ const ITEMS_PER_GROUP = 100;
 // Simulation control variables
 let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simSeed1Input, simSeed2Input,
-    simSaveTracksCheckbox, simSaveTracksRangeInput,
+    simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput;
 
 // Reconstruction
@@ -210,10 +210,12 @@ export function initUI(cb) {
     saveSimOptionsButton = document.getElementById('saveSimOptions');
     simSeed1Input = document.getElementById('simSeed1');
     simSeed2Input = document.getElementById('simSeed2');
-    simSaveTracksCheckbox = document.getElementById('simSaveTracks');
+    simSaveHitsCheckbox = document.getElementById('simSaveHits');
+    simSaveParticlesCheckbox = document.getElementById('simSaveParticles');
     simSaveTracksRangeInput = document.getElementById('simSaveTracksRange');
     drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
     drawTracksRangeInput = document.getElementById('drawTracksRange');
+    simPrintProgressInput = document.getElementById('simPrintProgress');
 
     // Reconstruction elements
     reconModal = document.getElementById('reconModal');
@@ -1946,15 +1948,19 @@ export function setSimOptions(options) {
     if (!options) return;
     simSeed1Input.value = options.seed1 || 0;
     simSeed2Input.value = options.seed2 || 0;
-    simSaveTracksCheckbox.checked = options.save_tracks || false;
+    simSaveHitsCheckbox.checked = options.save_hits || false;
+    simSaveParticlesCheckbox.checked = options.save_particles || false;
     simSaveTracksRangeInput.value = options.save_tracks_range || '';
+    simPrintProgressInput.value = options.print_progress || 1000;
 }
 
 export function getSimOptions() {
     return {
         seed1: parseInt(simSeed1Input.value, 10),
         seed2: parseInt(simSeed2Input.value, 10),
-        save_tracks: simSaveTracksCheckbox.checked,
+        print_progress: parseInt(simPrintProgressInput.value, 10),
+        save_hits: simSaveHitsCheckbox.checked,
+        save_particles: simSaveParticlesCheckbox.checked,
         save_tracks_range: simSaveTracksRangeInput.value
     };
 }

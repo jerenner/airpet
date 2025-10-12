@@ -16,7 +16,6 @@ import h5py
 import numpy as np
 import pandas as pd
 import io
-import parallelproj
 
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
@@ -94,6 +93,10 @@ SIMULATION_PROCESSES = {}
 SIMULATION_STATUS = {}
 LATEST_COMPLETED_JOB_ID = None
 SIMULATION_LOCK = threading.Lock()
+
+# Track running LOR computation
+LOR_PROCESSING_STATUS = {}
+LOR_PROCESSING_LOCK = threading.Lock()
 
 # Ensure we terminate any running simulations when the Flask app exits
 def cleanup_processes():
@@ -391,81 +394,94 @@ def process_lors_route(version_id, job_id):
     data = request.get_json()
     coincidence_window_ns = data.get('coincidence_window_ns', 4.0)  # 4 ns window
 
-    version_dir = project_manager._get_version_dir(version_id)
-    run_dir = os.path.join(version_dir, "sim_runs", job_id)
-    hdf5_path = os.path.join(run_dir, "output.hdf5")
-    lors_output_path = os.path.join(run_dir, "lors.npz")
+    # This function will run in the background
+    def process_lors_in_background(app, version_id, job_id, coincidence_window_ns):
+        with app.app_context(): # Needed to work within Flask's context
+            version_dir = project_manager._get_version_dir(version_id)
+            run_dir = os.path.join(version_dir, "sim_runs", job_id)
+            hdf5_path = os.path.join(run_dir, "output.hdf5")
+            lors_output_path = os.path.join(run_dir, "lors.npz")
 
-    if not os.path.exists(hdf5_path):
-        return jsonify({"success": False, "error": "Simulation output file not found."}), 404
+            try:
+                if not os.path.exists(hdf5_path):
+                    raise FileNotFoundError("Simulation output file not found.")
 
-    try:
-        data = {}
-        with h5py.File(hdf5_path, 'r') as f:
-            group = f['/default_ntuples/Hits']
-            
-            # Load data from the non-metadata keys
-            for key in group.keys():
-                if key not in ['columns', 'entries', 'forms', 'names']:
-                    data[key] = group[key]['pages'][:]
+                with LOR_PROCESSING_LOCK:
+                    LOR_PROCESSING_STATUS[job_id] = {"status": "Reading HDF5...", "progress": 0, "total": 0}
 
-        # Use pandas for efficient sorting and searching
-        hits_df = pd.DataFrame(data)
+                data = {}
+                with h5py.File(hdf5_path, 'r') as f:
+                    group = f['/default_ntuples/Hits']
+                    
+                    # Load data from the non-metadata keys
+                    for key in group.keys():
+                        if key not in ['columns', 'entries', 'forms', 'names']:
+                            data[key] = group[key]['pages'][:]
 
-        # Geant4 n-tuple column names can be bytes, so decode if necessary
-        hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
+                # Use pandas for efficient sorting and searching
+                hits_df = pd.DataFrame(data)
 
-        # Use the correct column names from the HDF5 file (case-sensitive)
-        hits_df.sort_values(by='Time', inplace=True)
+                # Geant4 n-tuple column names can be bytes, so decode if necessary
+                hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
 
-        all_start_coords, all_end_coords, all_tof_bins = [], [], []
-
-        # A simple coincidence sorter using pandas groupby for efficiency
-        for event_id, event_hits in hits_df.groupby('EventID'):
-            if len(event_hits) < 2:
-                continue
-
-            # A more robust sorter would iterate through combinations and check energy.
-            # For now, we pair the first two hits in time within the event.
-            hit1 = event_hits.iloc[0]
-            hit2 = event_hits.iloc[1]
-
-            time1, time2 = hit1['Time'], hit2['Time']
-
-            # Geant4 time is in nanoseconds by default, so no conversion needed for the window check
-            if abs(time1 - time2) < coincidence_window_ns:
-                # Position is in mm by default in Geant4
-                pos1 = np.array([hit1['PosX'], hit1['PosY'], hit1['PosZ']])
-                pos2 = np.array([hit2['PosX'], hit2['PosY'], hit2['PosZ']])
+                # Use the correct column names from the HDF5 file (case-sensitive)
+                hits_df.sort_values(by='Time', inplace=True)
                 
-                # For parallelproj, start and end points don't matter, but we'll be consistent
-                if time1 < time2:
-                    all_start_coords.append(pos1)
-                    all_end_coords.append(pos2)
-                else:
-                    all_start_coords.append(pos2)
-                    all_end_coords.append(pos1)
+                unique_event_ids = hits_df['EventID'].unique()
+                total_events = len(unique_event_ids)
+
+                with LOR_PROCESSING_LOCK:
+                    LOR_PROCESSING_STATUS[job_id] = {"status": "Processing coincidences...", "progress": 0, "total": total_events}
+
+                all_start_coords, all_end_coords, all_tof_bins = [], [], []
                 
-                # For non-TOF reconstruction, the TOF bin is always 0
-                all_tof_bins.append(0)
+                # Process events and update progress
+                for i, event_id in enumerate(unique_event_ids):
+                    event_hits = hits_df[hits_df['EventID'] == event_id]
+                    if len(event_hits) >= 2:
+                        hit1 = event_hits.iloc[0]
+                        hit2 = event_hits.iloc[1]
+                        if abs(hit1['Time'] - hit2['Time']) < coincidence_window_ns:
+                            pos1 = np.array([hit1['PosX'], hit1['PosY'], hit1['PosZ']])
+                            pos2 = np.array([hit2['PosX'], hit2['PosY'], hit2['PosZ']])
+                            if hit1['Time'] < hit2['Time']:
+                                all_start_coords.append(pos1)
+                                all_end_coords.append(pos2)
+                            else:
+                                all_start_coords.append(pos2)
+                                all_end_coords.append(pos1)
+                            all_tof_bins.append(0)
 
+                    if (i + 1) % 1000 == 0: # Update status every 1000 events
+                        with LOR_PROCESSING_LOCK:
+                            LOR_PROCESSING_STATUS[job_id]["progress"] = i + 1
+                
+                if not all_start_coords:
+                    raise ValueError("No valid coincidences found.")
+                    
+                np.savez_compressed(
+                    lors_output_path,
+                    start_coords=np.array(all_start_coords),
+                    end_coords=np.array(all_end_coords),
+                    tof_bins=np.array(all_tof_bins)
+                )
 
-        if not all_start_coords:
-            return jsonify({"success": False, "error": "No valid coincidences found within the time window."}), 404
+                with LOR_PROCESSING_LOCK:
+                    LOR_PROCESSING_STATUS[job_id] = {
+                        "status": "Completed", 
+                        "message": f"Processed {len(all_start_coords)} LORs from {total_events} events."
+                    }
 
-        # Save LORs to a compressed file
-        np.savez_compressed(
-            lors_output_path,
-            start_coords=np.array(all_start_coords),
-            end_coords=np.array(all_end_coords),
-            tof_bins=np.array(all_tof_bins)
-        )
+            except Exception as e:
+                with LOR_PROCESSING_LOCK:
+                    LOR_PROCESSING_STATUS[job_id] = {"status": "Error", "message": str(e)}
+                traceback.print_exc()
 
-        return jsonify({"success": True, "message": f"Processed {len(all_start_coords)} LORs.", "num_lors": len(all_start_coords)})
+    # Start the background task
+    thread = threading.Thread(target=process_lors_in_background, args=(app, version_id, job_id, coincidence_window_ns))
+    thread.start()
 
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+    return jsonify({"success": True, "message": "LOR processing started."}), 202
     
 @app.route('/api/reconstruction/run/<version_id>/<job_id>', methods=['POST'])
 def run_reconstruction_route(version_id, job_id):
@@ -493,6 +509,7 @@ def run_reconstruction_route(version_id, job_id):
 
         # Use parallelproj with numpy backend for this example
         import array_api_compat.numpy as xp
+        import parallelproj
         dev = "cpu"
 
         # Convert LOR data to the array type used by parallelproj
@@ -514,12 +531,24 @@ def run_reconstruction_route(version_id, job_id):
         # --- MLEM Reconstruction Loop ---
         x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
 
+        # --- Create a safe version of the sensitivity image for division ---
+        sensitivity_image_safe_for_division = xp.where(sensitivity_image <= 0, 1.0, sensitivity_image)
+
         for i in range(iterations):
             print(f"Running MLEM iteration {i+1}/{iterations}...")
             ybar = lm_proj(x)
             # Add a small epsilon to avoid division by zero
             ybar = xp.where(ybar == 0, 1e-9, ybar)
-            x = (x / sensitivity_image) * lm_proj.adjoint(1 / ybar)
+
+            # Where sensitivity is 0, the image value should remain unchanged (multiplied by 0 update).
+            back_projection = lm_proj.adjoint(1 / ybar)
+
+            # Perform the division using the safe denominator
+            update_term = (x / sensitivity_image_safe_for_division) * back_projection
+
+            # Now, apply the update only where sensitivity is valid, otherwise set to 0.
+            x = xp.where(sensitivity_image > 0, update_term, 0.0)
+
             print(f"Iteration {i+1} done.")
 
         # Save the final numpy array
@@ -561,8 +590,10 @@ def get_recon_slice_route(version_id, job_id, axis, slice_num):
             
         # Normalize and convert to an 8-bit image for display
         slice_2d = np.rot90(slice_2d) # Rotate for better viewing orientation
-        if slice_2d.max() > 0:
-            slice_2d = (slice_2d / slice_2d.max()) * 255.0
+        max_val = slice_2d.max()
+        if max_val > 0:
+            # Normalize to 0-255 range
+            slice_2d = (slice_2d / max_val) * 255.0
         
         img_pil = Image.fromarray(slice_2d.astype(np.uint8), mode='L') # Grayscale
 
@@ -577,6 +608,33 @@ def get_recon_slice_route(version_id, job_id, axis, slice_num):
         traceback.print_exc()
         return str(e), 500
     
+@app.route('/api/lors/status/<job_id>', methods=['GET'])
+def get_lor_processing_status(job_id):
+    with LOR_PROCESSING_LOCK:
+        status = LOR_PROCESSING_STATUS.get(job_id)
+        if not status:
+            return jsonify({"success": False, "error": "LOR processing job not found."}), 404
+        return jsonify({"success": True, "status": status})
+
+@app.route('/api/lors/check/<version_id>/<job_id>', methods=['GET'])
+def check_lor_file_route(version_id, job_id):
+    """Checks if a pre-processed LOR file exists for a given run."""
+    version_dir = project_manager._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    lors_path = os.path.join(run_dir, "lors.npz")
+
+    if os.path.exists(lors_path):
+        try:
+            # If the file exists, open it to count the LORs for a helpful message
+            with np.load(lors_path) as lor_data:
+                num_lors = len(lor_data['start_coords'])
+            return jsonify({"success": True, "exists": True, "num_lors": num_lors})
+        except Exception as e:
+            # If the file is corrupt or unreadable, treat it as non-existent
+            return jsonify({"success": False, "error": f"LOR file is corrupt: {str(e)}"}), 500
+    else:
+        # File does not exist
+        return jsonify({"success": True, "exists": False})
 # -----------------------------------------------------------------------------------
 
 # --- Helper Functions ---

@@ -18,6 +18,7 @@ class AirPetHit : public G4VHit
     AirPetHit();
     virtual ~AirPetHit();
     AirPetHit(const AirPetHit& right);
+
     const AirPetHit& operator=(const AirPetHit& right);
     int operator==(const AirPetHit& right) const;
 
@@ -36,7 +37,9 @@ class AirPetHit : public G4VHit
     void SetTime(G4double time)         { fTime = time; }
     void SetParticleName(const G4String& name) { fParticleName = name; }
     void SetVolumeName(const G4String& name)   { fVolumeName = name; }
+    void SetPhysicalVolumeName(const G4String& name)   { fPhysicalVolumeName = name; }
     void SetCopyNo(G4int copyNo)        { fCopyNo = copyNo; }
+    void AddEdep(G4double edep) { fEdep += edep; };
 
     // --- Getters ---
     G4int GetTrackID() const            { return fTrackID; }
@@ -46,6 +49,7 @@ class AirPetHit : public G4VHit
     G4double GetTime() const            { return fTime; }
     G4String GetParticleName() const    { return fParticleName; }
     G4String GetVolumeName() const      { return fVolumeName; }
+    G4String GetPhysicalVolumeName() const { return fPhysicalVolumeName; }
     G4int GetCopyNo() const             { return fCopyNo; }
 
   private:
@@ -56,6 +60,7 @@ class AirPetHit : public G4VHit
     G4double      fTime;
     G4String      fParticleName;
     G4String      fVolumeName;
+    G4String      fPhysicalVolumeName;
     G4int         fCopyNo;
 
     // Memory management
