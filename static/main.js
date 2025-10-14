@@ -2559,6 +2559,18 @@ async function handleRunReconstruction(reconParams) {
     try {
         const result = await APIService.runReconstruction(AppState.lastSimVersionId, AppState.lastSimJobId, reconParams);
         AppState.currentReconShape = result.image_shape;
+
+        const axis = document.getElementById('reconAxis').value;
+        const voxelSize = reconParams.voxel_size;
+        let aspectRatio = 1.0;
+        if (axis === 'z') { // Axial slice (X vs Y)
+            aspectRatio = (AppState.currentReconShape[0] * voxelSize[0]) / (AppState.currentReconShape[1] * voxelSize[1]);
+        } else if (axis === 'y') { // Coronal slice (X vs Z)
+            aspectRatio = (AppState.currentReconShape[0] * voxelSize[0]) / (AppState.currentReconShape[2] * voxelSize[2]);
+        } else { // Sagittal slice (Y vs Z)
+            aspectRatio = (AppState.currentReconShape[1] * voxelSize[1]) / (AppState.currentReconShape[2] * voxelSize[2]);
+        }
+        UIManager.setReconViewerAspectRatio(aspectRatio);
         
         const initialAxis = document.getElementById('reconAxis').value;
         UIManager.setupSliceSlider(initialAxis, AppState.currentReconShape);

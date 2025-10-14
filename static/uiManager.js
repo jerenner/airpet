@@ -52,7 +52,7 @@ let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
 
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
-    reconImageView, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
+    reconImageView, reconViewerPanel, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
     processLorsBtn, reconStatusP, coincidenceWindowInput;
 
 // Callbacks to main.js (controller logic)
@@ -219,6 +219,7 @@ export function initUI(cb) {
 
     // Reconstruction elements
     reconModal = document.getElementById('reconModal');
+    reconViewerPanel = document.getElementById('recon-viewer-panel');
     closeReconModalBtn = document.getElementById('closeReconModal');
     cancelReconBtn = document.getElementById('cancelRecon');
     runReconstructionBtn = document.getElementById('runReconstructionBtn');
@@ -1999,5 +2000,15 @@ export function updateSimStatusDisplay(jobId, totalEvents) {
 export function clearSimStatusDisplay() {
     if (simStatusDisplay) {
         simStatusDisplay.innerHTML = '<span>No simulation run loaded.</span>';
+    }
+}
+
+/**
+ * Sets the aspect ratio of the reconstruction image viewer panel.
+ * @param {number} ratio - The desired width / height ratio.
+ */
+export function setReconViewerAspectRatio(ratio) {
+    if (reconViewerPanel) {
+        reconViewerPanel.style.aspectRatio = ratio;
     }
 }

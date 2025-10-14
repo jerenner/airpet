@@ -2013,8 +2013,8 @@
             </div>
             <div class="modal-body" style="flex-direction: row; padding: 10px; gap: 10px;">
                 <!-- Left Side: Image Viewer -->
-                <div id="recon-viewer-panel" style="flex: 3; display: flex; flex-direction: column; background-color: #000; justify-content: center; align-items: center; border-radius: 5px;">
-                    <img id="reconImageView" style="max-width: 100%; max-height: 90%; object-fit: contain;">
+                <div id="recon-viewer-panel" style="flex: 3; display: flex; flex-direction: column; background-color: #000; justify-content: center; align-items: center; border-radius: 5px; overflow: hidden; max-height: 100%; position: relative;">
+                    <img id="reconImageView" style="width: 100%; height: 80%; max-height: 80%; object-fit: contain;">
                     <div id="recon-slider-controls" style="width: 80%; padding-top: 10px;">
                         <label for="sliceSlider" style="color: white; font-size: 12px;">Slice:</label>
                         <input type="range" id="sliceSlider" min="0" max="1" value="0" style="width: 100%;">

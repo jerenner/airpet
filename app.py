@@ -494,6 +494,10 @@ def run_reconstruction_route(version_id, job_id):
     img_shape = tuple(data.get('image_size', [128, 128, 128]))
     voxel_size = tuple(data.get('voxel_size', [2.0, 2.0, 2.0]))
 
+    # This ensures the reconstruction grid is centered at (0,0,0) in world coordinates.
+    # We calculate the position of the corner of the first voxel.
+    image_origin = - (np.array(img_shape, dtype=np.float32) / 2 - 0.5) * np.array(voxel_size, dtype=np.float32)
+
     version_dir = project_manager._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     lors_path = os.path.join(run_dir, "lors.npz")
@@ -521,12 +525,14 @@ def run_reconstruction_route(version_id, job_id):
             event_start_coords_xp,
             event_end_coords_xp,
             img_shape,
-            voxel_size
+            voxel_size,
+            img_origin=xp.asarray(image_origin, device=dev)
         )
         
         # We need an "adjoint_ones" image for sensitivity correction in MLEM.
         # This is the backprojection of a list of ones.
-        sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
+        #sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
+        sensitivity_image = xp.ones(img_shape, dtype=xp.float32, device=dev)
 
         # --- MLEM Reconstruction Loop ---
         x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
