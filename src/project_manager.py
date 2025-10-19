@@ -2017,8 +2017,11 @@ class ProjectManager:
         if not self.current_geometry_state:
             return False, "No project loaded."
 
-        print("RECEIVED AI DATA")
-        print(ai_data)
+        # print("RECEIVED AI DATA")
+        # print(ai_data)
+
+        # *** Recursively convert all rotation dictionaries ***
+        self._recursively_convert_rotations(ai_data)
 
         # --- 1. Handle the 'creates' block ---
         # This block defines new, standalone items. We can merge them all at once.
@@ -2070,6 +2073,43 @@ class ProjectManager:
         self._capture_history_state(f"Incorporated AI response")
 
         return success, error_msg
+    
+    def _convert_ai_rotation_to_g4(self, rotation_dict):
+        """
+        Converts a standard intrinsic ZYX Euler rotation dictionary from the AI
+        to the Geant4 extrinsic XYZ Euler rotation with negation.
+        Geant4 extrinsic XYZ is equivalent to intrinsic ZYX with negated angles.
+        """
+        print(f"CONVERTING rotation",rotation_dict)
+        if not isinstance(rotation_dict, dict):
+            # This is likely a reference to a <define>, leave it as is.
+            return rotation_dict
+
+        # We are converting from what Three.js/graphics use (intrinsic ZYX)
+        # to what Geant4 GDML uses (extrinsic XYZ). This happens to be
+        # a simple negation of each angle.
+        converted_rotation = {}
+        for axis in ['x', 'y', 'z']:
+            original_expr = rotation_dict.get(axis, '0').strip()
+            # If the expression is just '0' or '0.0', no need to wrap it
+            if original_expr in ['0', '0.0']:
+                converted_rotation[axis] = "0"
+            else:
+                # Wrap the original expression in parentheses and prepend a minus sign
+                converted_rotation[axis] = f"-({original_expr})"
+        return converted_rotation
+    
+    def _recursively_convert_rotations(self, data):
+        """Recursively traverses a dictionary or list to find and convert 'rotation' dictionaries."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if key == 'rotation' and value is not None:
+                    data[key] = self._convert_ai_rotation_to_g4(value)
+                else:
+                    self._recursively_convert_rotations(value)
+        elif isinstance(data, list):
+            for item in data:
+                self._recursively_convert_rotations(item)
 
     def import_step_with_options(self, step_file_stream, options):
         """
@@ -2541,7 +2581,7 @@ class ProjectManager:
         # --- ADD VERBOSITY FOR DEBUGGING ---
         macro_content.append("# --- Verbosity Settings ---")
         #macro_content.append("/tracking/verbose 1") # Print a message for every new track
-        macro_content.append("/hits/verbose 2")     # Print every single hit as it's processed
+        #macro_content.append("/hits/verbose 2")     # Print every single hit as it's processed
         macro_content.append("")
 
         # --- Configure Source (using GPS) ---
@@ -2579,9 +2619,14 @@ class ProjectManager:
         os.makedirs(tracks_dir, exist_ok=True)
         macro_content.append(f"/g4pet/event/printTracksToDir tracks/")
         
-        save_range = sim_params.get('save_tracks_range', '0-0').replace(' ', '').split('-')
-        start_event = int(save_range[0])
-        end_event = int(save_range[1]) if len(save_range) > 1 else start_event
+        save_range_str = sim_params.get('save_tracks_range', '0-0')
+        try:
+            if '-' in save_range_str:
+                start_event, end_event = map(int, save_range_str.split('-'))
+            else:
+                start_event = end_event = int(save_range_str)
+        except (ValueError, IndexError):
+            start_event, end_event = 0, 0 # Default on error
         macro_content.append(f"/g4pet/event/setTrackEventRange {start_event} {end_event}")
         
         # Set the output HDF5 file name

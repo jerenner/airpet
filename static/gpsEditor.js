@@ -9,21 +9,20 @@ let editingSourceId = null;
 
 export function initGpsEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
+
     modalElement = document.getElementById('gpsEditorModal');
     titleElement = document.getElementById('gpsEditorTitle');
     nameInput = document.getElementById('gpsEditorName');
-    
     particleSelect = document.getElementById('gpsEditorParticle');
     energyContainer = document.getElementById('gps-energy-params');
     shapeSelect = document.getElementById('gpsEditorShape');
     shapeParamsContainer = document.getElementById('gps-shape-params');
-    
     confirmButton = document.getElementById('gpsEditorConfirm');
     cancelButton = document.getElementById('gpsEditorCancel');
 
     cancelButton.addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
-    shapeSelect.addEventListener('change', renderShapeParamsUI);
+    shapeSelect.addEventListener('change', () => renderShapeParamsUI());
 
     console.log("GPS Editor Initialized.");
 }
@@ -39,16 +38,16 @@ export function show(sourceData = null) {
 
         // Pre-fill fields from sourceData.gps_commands
         const commands = sourceData.gps_commands || {};
-        particleSelect.value = commands['particle'] || 'gamma';
+        particleSelect.value = commands['particle'] || 'e+';
 
         energyContainer.innerHTML = '';
-        energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', commands['energy'] || '511'));
-        
+        energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', commands['energy'] || '0'));
+
         const shape = commands['pos/type'] || 'Point';
         shapeSelect.value = shape;
-        const angType = commands['ang/type'] || 'iso';
         
-        renderShapeParamsUI(shape, commands, sourceData.position, sourceData.rotation, angType);
+        // Pass all necessary data to render the UI correctly
+        renderShapeParamsUI(shape, commands, sourceData.position, sourceData.rotation);
 
     } else { // CREATE MODE
         isEditMode = false;
@@ -57,26 +56,29 @@ export function show(sourceData = null) {
         nameInput.value = '';
         nameInput.disabled = false;
         confirmButton.textContent = "Create Source";
-        
+
         // Set defaults
-        particleSelect.value = 'gamma';
+        particleSelect.value = 'e+';
         energyContainer.innerHTML = '';
-        energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', '511'));
+        energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', '0')); // Default to 0 energy for e+
         shapeSelect.value = 'Point';
-        renderShapeParamsUI('Point', {}, {x:'0',y:'0',z:'0'}, {x:'0',y:'0',z:'0'}, 'iso');
+        renderShapeParamsUI('Point', {}, {x:'0',y:'0',z:'0'}, {x:'0',y:'0',z:'0'});
     }
+
     modalElement.style.display = 'block';
 }
+
 
 function hide() {
     modalElement.style.display = 'none';
 }
 
-function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rotation = {}, ang_type = 'iso') {
+
+function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rotation = {}) {
     const shape = shapeType || shapeSelect.value;
     shapeParamsContainer.innerHTML = ''; // Clear previous params
 
-    // --- ADD POSITION EDITOR FOR ALL SHAPES ---
+    // --- Add Position Editor for all shapes ---
     const posGroup = document.createElement('div');
     posGroup.className = 'transform-group';
     posGroup.innerHTML = `<span>Position (mm)</span>`;
@@ -87,7 +89,46 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
         ));
     });
 
-    // --- NEW: ADD ANGULAR DISTRIBUTION EDITOR ---
+    // --- Shape-specific parameters ---
+    if (shape === 'Volume' || shape === 'Surface') {
+        const subShapeContainer = document.createElement('div');
+        subShapeContainer.className = 'property_item';
+        subShapeContainer.innerHTML = `
+            <label for="gpsVolumeShape">Shape:</label>
+            <select id="gpsVolumeShape">
+                <option value="Sphere">Sphere</option>
+                <option value="Cylinder">Cylinder</option>
+                <option value="Box">Box</option>
+            </select>`;
+        shapeParamsContainer.appendChild(subShapeContainer);
+
+        const subShapeSelect = subShapeContainer.querySelector('#gpsVolumeShape');
+        subShapeSelect.value = commands['pos/shape'] || 'Sphere';
+
+        const shapeParamsDiv = document.createElement('div');
+        shapeParamsDiv.id = 'gps-subshape-params';
+        shapeParamsContainer.appendChild(shapeParamsDiv);
+        
+        const renderSubParams = () => {
+            const subShape = subShapeSelect.value;
+            shapeParamsDiv.innerHTML = ''; // Clear sub-params
+            if (subShape === 'Sphere') {
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_radius', 'Radius (mm)', commands['pos/radius'] ? commands['pos/radius'].replace(' mm', '') : '10'));
+            } else if (subShape === 'Cylinder') {
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_radius', 'Radius (mm)', commands['pos/radius'] ? commands['pos/radius'].replace(' mm', '') : '10'));
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_halfz', 'Half-Z (mm)', commands['pos/halfz'] ? commands['pos/halfz'].replace(' mm', '') : '10'));
+            } else if (subShape === 'Box') {
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_halfx', 'Half-X (mm)', commands['pos/halfx'] ? commands['pos/halfx'].replace(' mm', '') : '10'));
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_halfy', 'Half-Y (mm)', commands['pos/halfy'] ? commands['pos/halfy'].replace(' mm', '') : '10'));
+                shapeParamsDiv.appendChild(ExpressionInput.create('gps_halfz', 'Half-Z (mm)', commands['pos/halfz'] ? commands['pos/halfz'].replace(' mm', '') : '10'));
+            }
+        };
+
+        subShapeSelect.addEventListener('change', renderSubParams);
+        renderSubParams(); // Initial render
+    }
+
+    // --- Add Angular Distribution & Rotation ---
     shapeParamsContainer.appendChild(document.createElement('hr'));
     const angGroup = document.createElement('div');
     angGroup.className = 'property_item';
@@ -100,7 +141,7 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
     `;
     shapeParamsContainer.appendChild(angGroup);
     const angTypeSelect = angGroup.querySelector('#gpsAngType');
-    angTypeSelect.value = ang_type;
+    angTypeSelect.value = commands['ang/type'] || 'iso';
 
     const rotGroup = document.createElement('div');
     rotGroup.className = 'transform-group';
@@ -112,50 +153,17 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
         ));
     });
 
-    // Disable rotation inputs if source is isotropic
-    if (angTypeSelect.value === 'iso') {
-        rotGroup.style.opacity = '0.5';
-        rotGroup.querySelectorAll('input').forEach(input => input.disabled = true);
-    }
-    
-    angTypeSelect.addEventListener('change', (e) => {
-        const isIso = e.target.value === 'iso';
-        rotGroup.style.opacity = isIso ? '0.5' : '1.0';
-        rotGroup.querySelectorAll('input').forEach(input => input.disabled = isIso);
-    });
+    const isIso = angTypeSelect.value === 'iso';
+    rotGroup.style.opacity = isIso ? '0.5' : '1.0';
+    rotGroup.querySelectorAll('input').forEach(input => input.disabled = isIso);
 
-    switch (shape) {
-        case 'Point':
-            // No extra parameters for a point source, position is handled separately.
-            break;
-        case 'Volume':
-            const volShapeDiv = document.createElement('div');
-            volShapeDiv.className = 'property_item';
-            volShapeDiv.innerHTML = `
-                <label for="gpsVolumeShape">Volume Type:</label>
-                <select id="gpsVolumeShape">
-                    <option value="Sphere">Sphere</option>
-                    <option value="Cylinder">Cylinder</option>
-                    <option value="Box">Box</option>
-                </select>`;
-            shapeParamsContainer.appendChild(volShapeDiv);
-            shapeParamsContainer.appendChild(ExpressionInput.create('gps_radius', 'Radius (mm)', commands['pos/radius'] || '10'));
-            break;
-        case 'Surface':
-             const surfShapeDiv = document.createElement('div');
-             surfShapeDiv.className = 'property_item';
-             surfShapeDiv.innerHTML = `
-                <label for="gpsSurfaceShape">Surface Type:</label>
-                <select id="gpsSurfaceShape">
-                    <option value="Sphere">Sphere</option>
-                    <option value="Cylinder">Cylinder</option>
-                    <option value="Box">Box</option>
-                </select>`;
-            shapeParamsContainer.appendChild(surfShapeDiv);
-            shapeParamsContainer.appendChild(ExpressionInput.create('gps_radius_surf', 'Radius (mm)', commands['pos/radius'] || '10'));
-            break;
-    }
+    angTypeSelect.addEventListener('change', (e) => {
+        const isNowIso = e.target.value === 'iso';
+        rotGroup.style.opacity = isNowIso ? '0.5' : '1.0';
+        rotGroup.querySelectorAll('input').forEach(input => input.disabled = isNowIso);
+    });
 }
+
 
 function handleConfirm() {
     const name = nameInput.value.trim();
@@ -167,22 +175,33 @@ function handleConfirm() {
     // Collect all GPS commands into a dictionary
     const gpsCommands = {};
     gpsCommands['particle'] = particleSelect.value;
-    gpsCommands['energy'] = document.getElementById('gps_energy').value;
+    // For e+, the energy spectrum is usually handled by the physics list,
+    // so we set a monoenergetic energy of 0 keV by default unless specified otherwise.
+    const energyValue = document.getElementById('gps_energy').value.trim();
+    if (particleSelect.value === 'e+' && energyValue === '') {
+        gpsCommands['energy'] = '0';
+    } else {
+        gpsCommands['energy'] = `${energyValue}`;
+    }
     
+    gpsCommands['ene/type'] = 'Mono'; // For simplicity, always Mono for now
+
     const shape = shapeSelect.value;
     gpsCommands['pos/type'] = shape;
 
     if (shape === 'Volume' || shape === 'Surface') {
-        const subShape = (shape === 'Volume') 
-            ? document.getElementById('gpsVolumeShape').value
-            : document.getElementById('gpsSurfaceShape').value;
-        const radius = (shape === 'Volume')
-            ? document.getElementById('gps_radius').value
-            : document.getElementById('gps_radius_surf').value;
-        
+        const subShape = document.getElementById('gpsVolumeShape').value;
         gpsCommands['pos/shape'] = subShape;
-        gpsCommands['pos/radius'] = radius + ' mm';
-        // Can add more shape parameters here later (halfz, etc.)
+        if (subShape === 'Sphere') {
+            gpsCommands['pos/radius'] = document.getElementById('gps_radius').value + ' mm';
+        } else if (subShape === 'Cylinder') {
+            gpsCommands['pos/radius'] = document.getElementById('gps_radius').value + ' mm';
+            gpsCommands['pos/halfz'] = document.getElementById('gps_halfz').value + ' mm';
+        } else if (subShape === 'Box') {
+            gpsCommands['pos/halfx'] = document.getElementById('gps_halfx').value + ' mm';
+            gpsCommands['pos/halfy'] = document.getElementById('gps_halfy').value + ' mm';
+            gpsCommands['pos/halfz'] = document.getElementById('gps_halfz').value + ' mm';
+        }
     }
 
     // Also collect the position
@@ -211,5 +230,6 @@ function handleConfirm() {
         position: position,
         rotation: rotation
     });
+
     hide();
 }

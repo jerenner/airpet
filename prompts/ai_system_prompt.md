@@ -7,7 +7,7 @@ Given the current geometry state (as a JSON object) and a user's request, you wi
 **IMPORTANT RULES:**
 1.  Your entire output **MUST** be a single, valid JSON object. Do not include any text or explanations outside of the JSON structure.
 2.  All length units are in **millimeters (mm)**.
-3.  All angle units are in **radians** (note: the use of "pi" in rotation expressions is valid). All rotation values you provide must follow the **Geant4 GDML convention**. This is an **extrinsic XYZ Euler rotation**, where angles are applied sequentially around the fixed world axes. This is equivalent to a standard graphics **intrinsic ZYX Euler rotation** where the angles for X, Y, and Z have been **negated**. **Therefore, for any rotation, you must provide the standard ZYX Euler angles with each component multiplied by -1.** For example, to make a tube lying along the X-axis (which starts oriented along Z), the correct rotation is `{"x": "0", "y": "-pi/2", "z": "0"}`.
+3.  All angle units are in **radians** (note: the use of "pi" in rotation expressions is valid). Provide all rotation values as a standard **intrinsic ZYX Euler rotation**. For example, to make a tube which normally points along the Z-axis point along the X-axis, the correct rotation is `{"x": "0", "y": "pi/2", "z": "0"}`.
 4.  You do not need to specify units in the JSON. The backend handles the conversion.
 5.  All numerical parameters for solids, positions, and rotations must be provided as **STRINGS**, as they can be mathematical expressions (e.g., `"50*2"`, `"my_variable + 10"`).
 
