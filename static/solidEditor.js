@@ -25,6 +25,10 @@ let booleanRecipe = []; // An array of {op, solid, transform}
 let rzPointsState = []; // Holds [{r: 'expr', z: 'expr'}]
 let zPlanesState = []; 
 
+// To prevent recentering while working on boolean solids
+let preventRecenter = false;
+let preventRecenterTimer = null;
+
 const editorContainer = document.getElementById('solid_preview_container');
 const modalElement = document.getElementById('solidEditorModal');
 const titleElement = document.getElementById('solidEditorTitle');
@@ -49,7 +53,7 @@ export function initSolidEditor(cb) {
     // Camera
     const aspect = editorContainer.clientWidth / editorContainer.clientHeight;
     camera = new THREE.PerspectiveCamera(50, aspect, 0.1, 10000);
-    camera.position.set(150, 150, 300);
+    camera.position.set(150, 150, -100);
     scene.add(camera);
 
     // Lights
@@ -225,40 +229,7 @@ export function show(solidData = null, projectState = null) {
 
     // Automatically set camera: use a small timeout to ensure the preview mesh has 
     // been rendered once before trying to calculate its bounding box.
-    setTimeout(recenterCamera, 50);
-}
-
-// Helper function to populate and filter the parent LV dropdown
-function updateParentLVSelector() {
-    const projectState = currentProjectState;
-    if (!projectState || !projectState.logical_volumes) {
-        populateSelect(pvParentLVSelect, []);
-        return;
-    }
-
-    let parentCandidates = Object.keys(projectState.logical_volumes);
-    
-    // If "Create LV" is checked, we must prevent self-placement.
-    if (createLVCheckbox.checked) {
-        // The new LV's name will be based on the solid's name.
-        const solidName = nameInput.value.trim();
-        // This is a prospective name; we don't know the final unique name yet,
-        // but we can filter out the base name which is the most likely conflict.
-        const prospectiveLVName = `${solidName}_lv`; 
-        parentCandidates = parentCandidates.filter(lvName => lvName !== prospectiveLVName);
-    }
-    
-    populateSelect(pvParentLVSelect, parentCandidates);
-
-    // Try to intelligently select the current parent from the hierarchy
-    const currentParentContext = callbacks.getSelectedParentContext?.() || { name: projectState.world_volume_ref };
-    console.log("Parent contexts",parentCandidates)
-    console.log("Currnet context",currentParentContext.name)
-    if (currentParentContext && parentCandidates.includes(currentParentContext.name)) {
-        pvParentLVSelect.value = currentParentContext.name;
-    } else if (projectState.world_volume_ref && parentCandidates.includes(projectState.world_volume_ref)) {
-        pvParentLVSelect.value = projectState.world_volume_ref;
-    }
+    // setTimeout(recenterCamera, 50);
 }
 
 function populateSelect(selectElement, optionsArray) {
@@ -887,6 +858,22 @@ function buildSingleTransformUI(index, type, label, defines, transformData) {
                     }
                 }
             );
+            
+            // --- Add focus and blur listeners ---
+            const inputEl = exprComp.querySelector('.expression-input');
+            if (inputEl) {
+                inputEl.addEventListener('focus', () => {
+                    preventRecenter = true; // Disable recentering when user starts typing
+                    clearTimeout(preventRecenterTimer); // Clear any pending re-enable
+                });
+                inputEl.addEventListener('blur', () => {
+                    // Re-enable recentering shortly after the user is done
+                    preventRecenterTimer = setTimeout(() => {
+                        preventRecenter = false;
+                    }, 500); // 500ms delay
+                });
+            }
+
             item.appendChild(exprComp);
         } else {
             // Show grayed-out evaluated values for defines
@@ -1020,7 +1007,7 @@ function attachBooleanListeners() {
             if (solidData) {
                 booleanRecipe[index].solid = solidData;
                 rebuildBooleanUI(); // Rebuild to show the name
-                updatePreview();    // ## FIX: Explicitly update preview after drop
+                updatePreview();    // Update preview after drop
             }
         });
     });
@@ -1572,7 +1559,9 @@ async function updatePreview() {
     }
 
     // After the mesh is created and added to the scene, frame the camera on it.
-    recenterCamera();
+    if (!preventRecenter) {
+        recenterCamera();
+    }
 }
 
 function updateSlotUI(slot, solidData) {
@@ -1661,13 +1650,12 @@ function updateTransformUIFromGizmo() {
 }
 
 /**
- * Frames the editor's camera to fit the current solid mesh.
+ * Frames the editor's camera to fit the current solid mesh and adjusts clipping planes.
  */
 function recenterCamera() {
     if (!controls || !camera) {
         return;
     }
-
     if (!currentSolidMesh) {
         // If there's no mesh, reset the camera to a default state
         controls.target.set(0, 0, 0);
@@ -1681,12 +1669,10 @@ function recenterCamera() {
 
     // 1. Calculate the bounding box of the mesh.
     const boundingBox = new THREE.Box3().setFromObject(currentSolidMesh);
-    
     if (boundingBox.isEmpty()) {
         controls.reset();
         return;
     }
-    
     const center = new THREE.Vector3();
     const size = new THREE.Vector3();
     boundingBox.getCenter(center);
@@ -1694,15 +1680,17 @@ function recenterCamera() {
 
     // 2. Determine the viewing distance
     const maxDim = Math.max(size.x, size.y, size.z);
-    const fitOffset = 1.2;
+    const fitOffset = 2.5; // Increased padding for a less "zoomed-in" feel
     const distance = (maxDim / 2) * fitOffset / Math.tan(Math.PI * camera.fov / 360);
-    const finalDistance = Math.max(distance, 50);
+    
+    // Add a minimum distance to prevent getting too close to very small objects
+    const finalDistance = Math.max(distance, 50); 
 
-    // 3. Adjust the camera's near and far clipping planes based on the object's size and distance.
+    // 3. Adjust the camera's near and far clipping planes
     // The near plane should be close but not so close it causes z-fighting.
-    camera.near = Math.max(0.1, finalDistance / 100); 
+    camera.near = Math.max(0.1, finalDistance / 100);
     // The far plane MUST be larger than the distance to the object PLUS the object's size.
-    camera.far = finalDistance + maxDim * 2; 
+    camera.far = finalDistance + maxDim * 4;
     // After changing near/far, you MUST update the projection matrix.
     camera.updateProjectionMatrix();
 
@@ -1718,7 +1706,7 @@ function recenterCamera() {
 
     // 5. Point the orbit controls' target at the center of the object.
     controls.target.copy(center);
-    
+
     // 6. Update the controls to apply all changes.
     controls.update();
 }

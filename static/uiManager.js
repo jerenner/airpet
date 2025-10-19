@@ -32,6 +32,9 @@ let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyL
 // Button for adding PVs
 let addPVButton;
 
+// Button for creating ring arrays
+let createRingArrayButton;
+
 // Loading overlay
 let loadingOverlay, loadingMessage;
 
@@ -86,6 +89,7 @@ let callbacks = {
     onAddLVClicked: () => {},
     onEditLVClicked: (lvData) => {},
     onAddObjectClicked: () => {}, // To show modal
+    onAddRingArrayClicked: () => {},
     onConfirmAddObject: (type, name, params) => {},
     onDeleteSelectedClicked: () => {},
     onHierarchySelectionChanged: (selectedItems) => {},
@@ -167,6 +171,9 @@ export function initUI(cb) {
     historyListContainer = document.getElementById('history_list_container');
     undoButton = document.getElementById('undoButton');
     redoButton = document.getElementById('redoButton');
+
+    // Create ring array
+    createRingArrayButton = document.getElementById('createRingArrayButton');
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
@@ -313,6 +320,9 @@ export function initUI(cb) {
     // Add listener for physical volume button
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
+
+    // Create ring array button
+    createRingArrayButton.addEventListener('click', () => callbacks.onAddRingArrayClicked());
 
     // Project history and undo/redo listeners
     historyButton.addEventListener('click', callbacks.onHistoryButtonClicked);

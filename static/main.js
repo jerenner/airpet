@@ -13,6 +13,7 @@ import * as ElementEditor from './elementEditor.js';
 import * as MaterialEditor from './materialEditor.js';
 import * as OpticalSurfaceEditor from './opticalSurfaceEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
+import * as RingArrayEditor from './ringArrayEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
@@ -122,6 +123,8 @@ async function initializeApp() {
         // Add/edit GPS clicked
         onAddGpsClicked: handleAddGps,
         onEditGpsClicked: handleEditGps,
+        // Add ring array
+        onAddRingArrayClicked: handleAddRingArray,
 
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
@@ -228,6 +231,11 @@ async function initializeApp() {
     // Initialize physical volume editor
     PVEditor.initPVEditor({ 
         onConfirm: handlePVEditorConfirm 
+    });
+
+    // Ring array editor
+    RingArrayEditor.initRingArrayEditor({
+        onConfirm: handleCreateRingArray
     });
 
     // Initialize solid editor
@@ -1633,6 +1641,22 @@ async function handlePVEditorConfirm(data) {
             syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name, name: data.parent_lv_name }]);
         } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); } 
         finally { UIManager.hideLoading(); }
+    }
+}
+
+function handleAddRingArray() {
+    RingArrayEditor.show(AppState.currentProjectState);
+}
+
+async function handleCreateRingArray(params) {
+    UIManager.showLoading("Creating detector ring...");
+    try {
+        const result = await APIService.createDetectorRing(params);
+        syncUIWithState(result); // This will update everything
+    } catch (error) {
+        UIManager.showError("Failed to create ring array: " + error.message);
+    } finally {
+        UIManager.hideLoading();
     }
 }
 

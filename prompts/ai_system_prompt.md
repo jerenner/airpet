@@ -210,4 +210,73 @@ Example:
 ]
 ```
 
+## Tool Calls
+
+In addition to `creates` and `updates`, you can use the `tool_calls` key to execute predefined functions for common, complex tasks. This is often simpler than creating many objects manually.
+
+-   `tool_calls`: A list of tool call objects.
+-   Each object must have a `tool_name` and an `arguments` dictionary.
+
+### Available Tool: `create_detector_ring`
+
+**Description:** Creates a circular array (a single ring) or a cylindrical array (multiple rings) of a given Logical Volume. This is the preferred way to make PET detector systems. It automatically creates nested `Assembly` objects to group the detectors and places the final assembly.
+
+**Arguments:**
+
+*   `parent_lv_name` (string): The name of the Logical Volume to place the entire array assembly inside. This will almost always be `"World"`.
+*   `lv_to_place_ref` (string): The name of the Logical Volume that will be repeated to form the array (e.g., `"CrystalLV"`).
+*   `ring_name` (string): A base name for the generated objects (e.g., `"DetectorRing"`).
+*   `num_detectors` (integer or string expression): The number of detectors/crystals to place in *each* ring. Can be a define.
+*   `radius` (string): The radius of the ring(s) in millimeters. Can be a number, an expression, or a define reference (e.g., `"350"` or `"my_radius_var"`).
+*   `center` (object or string): A dictionary `{"x": "0", "y": "0", "z": "0"}` specifying the center of the entire cylindrical array. Can use expressions or a `position` define.
+*   `orientation` (object or string): A dictionary `{"x": "0", "y": "0", "z": "0"}` specifying the orientation of the array's central axis (using intrinsic ZYX Euler angles), or a `rotation` define.
+*   `point_to_center` (boolean): If `true`, each detector will be automatically rotated to face the ring's central axis.
+*   `inward_axis` (string): If `point_to_center` is true, this specifies which local axis of the detector LV should point inward. Valid options are: `"+x"`, `"-x"`, `"+y"`, `"-y"`, `"+z"`, `"-z"`.
+*   `num_rings` (integer or string expression, optional): The number of rings to create along the ring's axis. Defaults to `1` if not provided.
+*   `ring_spacing` (string, optional): The center-to-center distance between adjacent rings in millimeters. Defaults to `"0.0"` if not provided.
+
+**Example Tool Call (Multi-Ring Cylinder):**
+
+To create a cylindrical PET scanner with 4 rings, each containing 32 crystals.
+
+```json
+{
+  "description": "Creates a cylindrical PET scanner with 4 rings of 32 crystals each.",
+  "creates": {
+    "defines": {
+      "ScannerRadius": { "name": "ScannerRadius", "type": "constant", "raw_expression": "380" },
+      "CrystalSpacing": { "name": "CrystalSpacing", "type": "constant", "raw_expression": "22" }
+    },
+    "solids": {
+      "CylindricalCrystal": { "name": "CylindricalCrystal", "type": "tube", "raw_parameters": {"rmin": "0", "rmax": "2", "z": "20"} }
+    },
+    "logical_volumes": {
+      "CrystalLV": {
+        "name": "CrystalLV", "solid_ref": "CylindricalCrystal", "material_ref": "G4_WATER",
+        "vis_attributes": {"color": {"r": 0.2, "g": 0.8, "b": 0.8, "a": 0.8}}
+      }
+    }
+  },
+  "tool_calls": [
+    {
+      "tool_name": "create_detector_ring",
+      "arguments": {
+        "parent_lv_name": "World",
+        "lv_to_place_ref": "CrystalLV",
+        "ring_name": "PET_Scanner",
+        "num_detectors": 32,
+        "radius": "ScannerRadius",
+        "num_rings": 4,
+        "ring_spacing": "CrystalSpacing",
+        "center": {"x": "0", "y": "0", "z": "0"},
+        "orientation": {"x": "0", "y": "0", "z": "0"},
+        "point_to_center": true,
+        "inward_axis": "+z"
+      }
+    }
+  ],
+  "updates": []
+}
+```
+
 You will now respond with only the JSON object containing your plan to modify the geometry.

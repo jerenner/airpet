@@ -1301,12 +1301,13 @@
                         <button id="showAllBtn">Show All (Shift+J)</button>
                     </div>
                 </li>
-                <!-- Object Menu
+                <!-- Object Menu -->
                 <li>
                     <button>Object</button>
                     <div class="dropdown_content">
+                        <button id="createRingArrayButton">Create Ring Array</button>
                     </div>
-                </li>-->
+                </li>
                 <!-- Mode Menu -->
                 <li>
                     <button>Mode</button>
@@ -1848,6 +1849,85 @@
             <div class="modal-footer">
                 <button id="assemblyEditorCancel">Cancel</button>
                 <button id="assemblyEditorConfirm" class="confirm-button">Create Assembly</button>
+            </div>
+        </div>
+    </div>
+    <!-- Modal for Creating a Ring Array -->
+    <div id="ringArrayEditorModal" class="editor-modal">
+        <div class="modal-content" style="width: 600px; height: auto;">
+            <div class="modal-header">
+                <h4 id="ringArrayEditorTitle">Create Detector Ring Array</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div class="property_item">
+                    <label for="ringArrayName">Ring Name:</label>
+                    <input type="text" id="ringArrayName" placeholder="e.g., CrystalRing">
+                </div>
+                <div class="property_item">
+                    <label for="ringArrayParentLV">Place Inside:</label>
+                    <select id="ringArrayParentLV"></select>
+                </div>
+                <div class="property_item">
+                    <label for="ringArrayLV">Crystal/Detector LV:</label>
+                    <select id="ringArrayLV"></select>
+                </div>
+                <hr>
+                <div class="property_item">
+                    <label for="ringArrayNumDetectors">Number of Detectors:</label>
+                    <input type="number" id="ringArrayNumDetectors" value="12" min="1" step="1">
+                </div>
+                <div id="ring-radius-container">
+                    <!-- Expression input for radius will go here -->
+                </div>
+                <hr>
+                <!-- Axial Repetition Section -->
+                <div class="property_item">
+                    <input type="checkbox" id="ringAxialRepetition">
+                    <label for="ringAxialRepetition" style="width:auto;">Enable Axial Repetition (create cylinder)</label>
+                </div>
+                <div id="ring-axial-params-container" style="display:none; padding-left: 20px;">
+                    <div class="property_item">
+                        <label for="ringArrayNumRings">Number of Rings:</label>
+                        <input type="number" id="ringArrayNumRings" value="2" min="1" step="1">
+                    </div>
+                    <div id="ring-spacing-container">
+                        <!-- Expression input for ring spacing will go here -->
+                    </div>
+                </div>
+
+                <hr>
+                <div class="transform-group">
+                    <span>Ring Center Position (mm)</span>
+                    <div class="inline-inputs-container" id="ringArrayCenterInputs">
+                        <!-- Expression inputs will be added here -->
+                    </div>
+                </div>
+                <div class="transform-group">
+                    <span>Ring Axis Orientation (rad)</span>
+                    <div class="inline-inputs-container" id="ringArrayOrientationInputs">
+                        <!-- Expression inputs will be added here -->
+                    </div>
+                </div>
+                <hr>
+                <div class="property_item">
+                    <input type="checkbox" id="ringPointToCenter" checked>
+                    <label for="ringPointToCenter" style="width:auto;">Orient detectors to point to ring center</label>
+                </div>
+                <div class="property_item" id="ringInwardAxisContainer">
+                    <label for="ringInwardAxis">Inward-Pointing Axis:</label>
+                    <select id="ringInwardAxis">
+                        <option value="+x">+X</option>
+                        <option value="-x">-X</option>
+                        <option value="+y">+Y</option>
+                        <option value="-y">-Y</option>
+                        <option value="+z" selected>+Z</option>
+                        <option value="-z">-Z</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="ringArrayCancel">Cancel</button>
+                <button id="ringArrayConfirm" class="confirm-button">Create Ring</button>
             </div>
         </div>
     </div>

@@ -1929,5 +1929,34 @@ def update_border_surface_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/api/create_detector_ring', methods=['POST'])
+def create_detector_ring_route():
+    data = request.get_json()
+    # Check for required fields
+    required_fields = ['parent_lv_name', 'lv_to_place', 'ring_name', 'num_detectors',
+                       'radius', 'center', 'orientation', 'point_to_center', 'inward_axis']
+    if not all(k in data for k in required_fields):
+        return jsonify({"success": False, "error": "Missing parameters for ring creation."}), 400
+
+    # Pass all arguments, including optional ones with defaults
+    new_pv_assembly, error_msg = project_manager.create_detector_ring(
+        parent_lv_name=data['parent_lv_name'],
+        lv_to_place_ref=data['lv_to_place'],
+        ring_name=data['ring_name'],
+        num_detectors=data['num_detectors'],
+        radius=data['radius'],
+        center=data['center'],
+        orientation=data['orientation'],
+        point_to_center=data['point_to_center'],
+        inward_axis=data['inward_axis'],
+        num_rings=data.get('num_rings', 1),         
+        ring_spacing=data.get('ring_spacing', 0.0)
+    )
+
+    if error_msg:
+        return jsonify({"success": False, "error": error_msg}), 500
+    else:
+        return create_success_response(f"Detector ring '{data['ring_name']}' created successfully.")
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

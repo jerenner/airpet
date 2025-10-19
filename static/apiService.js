@@ -722,6 +722,20 @@ export async function updateBorderSurface(id, params) {
     return handleResponse(response);
 }
 
+/**
+ * Sends a request to the backend to create a detector ring assembly.
+ * @param {object} params - The parameters for the ring from the RingArrayEditor.
+ * @returns {Promise<Object>} A promise resolving to the backend's response.
+ */
+export async function createDetectorRing(params) {
+    const response = await fetch(`${API_BASE_URL}/api/create_detector_ring`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+    });
+    return handleResponse(response);
+}
+
 export async function addParticleSource(name, gps_commands, position, rotation) {
     const response = await fetch(`${API_BASE_URL}/api/add_source`, {
         method: 'POST',

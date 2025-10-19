@@ -4,6 +4,7 @@ import math
 import tempfile
 import os
 import re
+import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
@@ -2009,6 +2010,167 @@ class ProjectManager:
 
         return success, error_msg
 
+    def _evaluate_vector_expression(self, expr_data, default_dict=None):
+        """
+        Evaluates a vector-like expression which can be a define reference (string)
+        or a dictionary of expression strings.
+        """
+        if default_dict is None:
+            default_dict = {'x': 0.0, 'y': 0.0, 'z': 0.0}
+
+        if isinstance(expr_data, str):
+            # It's a reference to a define
+            success, value = self.expression_evaluator.evaluate(expr_data)
+            if success and isinstance(value, dict):
+                return value
+            else:
+                raise ValueError(f"Define '{expr_data}' did not resolve to a valid dictionary.")
+        elif isinstance(expr_data, dict):
+            evaluated_dict = {}
+            for axis, raw_expr in expr_data.items():
+                success, value = self.expression_evaluator.evaluate(str(raw_expr))
+                if success:
+                    evaluated_dict[axis] = value
+                else:
+                    raise ValueError(f"Failed to evaluate expression '{raw_expr}' for axis '{axis}'.")
+            return evaluated_dict
+        else:
+            return default_dict
+        
+    def create_detector_ring(self, parent_lv_name, lv_to_place_ref, ring_name,
+                             num_detectors, radius, center, orientation,
+                             point_to_center, inward_axis,
+                             num_rings=1, ring_spacing=0.0):
+        """
+        Creates a ring or cylinder of individual physical volumes.
+        This method calculates the absolute world transform for each PV.
+        """
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+
+        try:
+            # --- Evaluate all expression-capable arguments ---
+            success_radius, evaluated_radius = self.expression_evaluator.evaluate(str(radius))
+            if not success_radius: raise ValueError(f"Could not evaluate radius expression: '{radius}'")
+
+            success_num_det, evaluated_num_detectors = self.expression_evaluator.evaluate(str(num_detectors))
+            if not success_num_det: raise ValueError(f"Could not evaluate num_detectors: '{num_detectors}'")
+            evaluated_num_detectors = int(evaluated_num_detectors)
+
+            success_num_rings, evaluated_num_rings = self.expression_evaluator.evaluate(str(num_rings))
+            if not success_num_rings: raise ValueError(f"Could not evaluate num_rings: '{num_rings}'")
+            evaluated_num_rings = int(evaluated_num_rings)
+
+            success_spacing, evaluated_ring_spacing = self.expression_evaluator.evaluate(str(ring_spacing))
+            if not success_spacing: raise ValueError(f"Could not evaluate ring_spacing: '{ring_spacing}'")
+
+            evaluated_center = self._evaluate_vector_expression(center, {'x': 0.0, 'y': 0.0, 'z': 0.0})
+            evaluated_orientation = self._evaluate_vector_expression(orientation, {'x': 0.0, 'y': 0.0, 'z': 0.0})
+
+        except (ValueError, TypeError) as e:
+            return None, f"Error evaluating tool arguments: {e}"
+
+        state = self.current_geometry_state
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if not parent_lv:
+            return None, f"Parent Logical Volume '{parent_lv_name}' not found."
+        if parent_lv.content_type != 'physvol':
+            return None, f"Parent LV '{parent_lv_name}' is procedural and cannot contain new placements."
+
+        # --- Main Transformation for the entire array ---
+        # We use scipy's Rotation which uses intrinsic ZYX order for 'zyx'
+        # This matches our convention for the evaluated values.
+        global_rotation = R.from_euler('zyx', [evaluated_orientation['z'], evaluated_orientation['y'], evaluated_orientation['x']])
+        global_center = np.array([evaluated_center['x'], evaluated_center['y'], evaluated_center['z']])
+
+        total_height = (evaluated_num_rings - 1) * evaluated_ring_spacing
+        start_z = -total_height / 2.0
+
+        copy_number_counter = self._get_next_copy_number(parent_lv)
+
+        placements_to_add = []
+
+        for j in range(evaluated_num_rings):
+            z_pos = start_z + j * evaluated_ring_spacing
+            for i in range(evaluated_num_detectors):
+                angle = 2 * math.pi * i / evaluated_num_detectors
+
+                # 1. Position of the crystal in the local XY plane of the ring
+                local_position = np.array([evaluated_radius * math.cos(angle),
+                                           evaluated_radius * math.sin(angle),
+                                           z_pos])
+
+                # 2. Calculate the "look-at" rotation to point the crystal to the center, without roll
+                if point_to_center:
+                    # The vector from the crystal to the ring axis
+                    z_new = -np.array([local_position[0], local_position[1], 0])
+                    # Normalize, with a safe guard for the center crystal
+                    norm = np.linalg.norm(z_new)
+                    if norm > 1e-9:
+                        z_new /= norm
+                    else:
+                        z_new = np.array([0, -1, 0]) # Fallback for a crystal at the origin
+
+                    # The global "up" vector for the ring is its local Z-axis
+                    up_vector = np.array([0, 0, 1])
+
+                    # Create an orthonormal basis
+                    x_new = np.cross(up_vector, z_new)
+                    x_new /= np.linalg.norm(x_new)
+                    y_new = np.cross(z_new, x_new)
+
+                    # This matrix transforms from standard axes to the "look-at" axes
+                    look_at_matrix = np.column_stack([x_new, y_new, z_new])
+                    R_lookat = R.from_matrix(look_at_matrix)
+                else:
+                    R_lookat = R.identity()
+
+                # 3. Calculate pre-rotation to align the desired crystal axis
+                source_vector_map = {
+                    '+x': R.from_euler('y', -90, degrees=True),
+                    '-x': R.from_euler('y', 90, degrees=True),
+                    '+y': R.from_euler('x', 90, degrees=True),
+                    '-y': R.from_euler('x', -90, degrees=True),
+                    '+z': R.identity(),
+                    '-z': R.from_euler('y', 180, degrees=True)
+                }
+                R_pre_rot = source_vector_map.get(inward_axis, R.identity())
+
+                # 4. Combine rotations: global orientation -> local look-at -> pre-rotation
+                final_rotation = global_rotation * R_lookat * R_pre_rot
+
+                # 5. Transform local position to world position
+                final_position = global_rotation.apply(local_position) + global_center
+
+                # 6. Convert final rotation back to our negated ZYX Euler angles for storage
+                final_euler_rad = final_rotation.as_euler('zyx', degrees=False)
+                final_rotation_dict = {
+                    'x': str(-final_euler_rad[2]),
+                    'y': str(-final_euler_rad[1]),
+                    'z': str(-final_euler_rad[0])
+                }
+
+                # Create the PhysicalVolumePlacement object for this detector
+                pv = PhysicalVolumePlacement(
+                    name=ring_name,  # All PVs share the same base name
+                    volume_ref=lv_to_place_ref,
+                    parent_lv_name=parent_lv_name,
+                    copy_number_expr=str(copy_number_counter),
+                    position_val_or_ref={'x': str(final_position[0]), 'y': str(final_position[1]), 'z': str(final_position[2])},
+                    rotation_val_or_ref=final_rotation_dict
+                )
+                placements_to_add.append(pv)
+                copy_number_counter += 1
+
+        # Add all newly created placements to the parent logical volume
+        parent_lv.content.extend(placements_to_add)
+
+        self._capture_history_state(f"Created detector array '{ring_name}'")
+        self.recalculate_geometry_state()
+
+        # Returning the last created PV as a representative object, or None
+        return placements_to_add[-1].to_dict() if placements_to_add else None, None
+    
     def process_ai_response(self, ai_data: dict):
         """
         Processes a structured dictionary from the AI, creating new objects
@@ -2066,6 +2228,28 @@ class ProjectManager:
             except Exception as e:
                 return False, f"An error occurred during AI update processing: {e}"
 
+        # --- Handle tool calls ---
+        tool_calls = ai_data.get("tool_calls", [])
+        if not isinstance(tool_calls, list):
+            return False, "AI response 'tool_calls' must be a list."
+
+        for call in tool_calls:
+            tool_name = call.get("tool_name")
+            arguments = call.get("arguments", {})
+
+            if tool_name == "create_detector_ring":
+                try:
+                    # The **arguments syntax unpacks the dictionary into keyword arguments
+                    _, error_msg = self.create_detector_ring(**arguments)
+                    if error_msg:
+                        return False, f"Error executing tool '{tool_name}': {error_msg}"
+                except TypeError as e:
+                    return False, f"Mismatched arguments for tool '{tool_name}': {e}"
+                except Exception as e:
+                    return False, f"An unexpected error occurred during tool execution: {e}"
+            else:
+                return False, f"Unknown tool requested by AI: '{tool_name}'"
+            
         # --- 3. Recalculate everything once at the end ---
         success, error_msg = self.recalculate_geometry_state()
 
