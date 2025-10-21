@@ -1,8 +1,8 @@
-# virtual-pet
+# airpet
 
-virtual-pet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts. It was written with extensive assistance from Google Gemini LLMs.
+airpet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts. It was written with extensive assistance from Google Gemini LLMs.
 
-![virtual-pet screenshot](static/virtual_pet_screenshot.png)
+![airpet demo](static/airpet_demo.gif)
 
 ## Installation
 
@@ -17,11 +17,11 @@ First, set up the Python server which handles all the geometry logic.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/virtual-pet.git
-cd virtual-pet
+git clone https://github.com/jerenner/airpet.git
+cd airpet
 
 # 2. Set up a Python 3.10 environment and install OpenCascade bindings
-conda create --name virtualpet python=3.10
+conda create --name airpet python=3.10
 conda install -c conda-forge pythonocc-core
 
 # 3. Install the required Python packages
@@ -62,13 +62,13 @@ If you want to connect to an AI model run locally via Ollama:
     ```bash
     ollama run gemma3:12b
     ```
-3.  **Run in Background:** Make sure the Ollama application is running before you start the virtual-pet server.
+3.  **Run in Background:** Make sure the Ollama application is running before you start the airpet server.
 
 ## Running the Application
 
 With your Python environment and at least one AI service (Ollama or Gemini) configured, you can now run the application.
 
-1.  Make sure you are in the `virtual-pet` directory with your virtual environment activated.
+1.  Make sure you are in the `airpet` directory with your virtual environment activated.
 2.  Start the Flask server:
     ```bash
     python app.py
