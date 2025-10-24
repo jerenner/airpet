@@ -1945,26 +1945,30 @@ export function renderObjects(pvDescriptions, projectState) {
             sourceGroup.name = pvData.name;
 
             // Create a visual marker
-            const markerGeometry = new THREE.SphereGeometry(5, 16, 8); // 5mm radius sphere
+            const markerGeometry = new THREE.SphereGeometry(10, 16, 8); // 10mm radius sphere
             const markerMesh = new THREE.Mesh(markerGeometry, _sourceMaterial);
             markerMesh.name = "SourceMarker"; // For identification
 
             // Add axes to show orientation (useful for directional sources later)
-            const axes = new THREE.AxesHelper(15); // 15mm long axes
+            const axes = new THREE.AxesHelper(30); // 30mm long axes
+            axes.name = "SourceAxesHelper";
             
             sourceGroup.add(markerMesh);
             sourceGroup.add(axes);
 
-            // --- ADD ARROW HELPER ---
-            // The arrow will point along the local Z-axis (0, 0, 1)
-            const dir = new THREE.Vector3(0, 0, 1);
-            const origin = new THREE.Vector3(0, 0, 0);
-            const length = 25; // 25mm long arrow
-            const hexColor = 0xff0000; // Red
-            const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hexColor, 8, 4); // Last two params are head length and width
-            arrowHelper.line.name = "SourceArrowLine";
-            arrowHelper.cone.name = "SourceArrowCone";
-            sourceGroup.add(arrowHelper);
+            // --- ARROW HELPER ---
+            // Only add the direction arrow if the source is a beam
+            const angType = pvData.gps_commands?.['ang/type'];
+            if (angType === 'beam1d') {
+                const dir = new THREE.Vector3(0, 0, -1);
+                const origin = new THREE.Vector3(0, 0, 0);
+                const length = 25; // 25mm long arrow
+                const hexColor = 0xff0000; // Red
+                const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hexColor, 8, 4); // Last two params are head length and width
+                arrowHelper.line.name = "SourceArrowLine";
+                arrowHelper.cone.name = "SourceArrowCone";
+                sourceGroup.add(arrowHelper);
+            }
 
             objectMap.set(pvData.id, sourceGroup);
         } 
@@ -2136,8 +2140,9 @@ export function updateSelectionState(groupsToSelect = []) {
             }
             // --- HIGHLIGHT SOURCE ARROW COLOR ---
             if (child.name === "SourceArrowLine" || child.name === "SourceArrowCone") {
-                child.material.color.setHex(0xff8c00); // Set to bright orange to match
+                child.material.color.setHex(0xff0000); // Keep the arrow red
             }
+            
         });
     });
 }

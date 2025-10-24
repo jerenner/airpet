@@ -2788,7 +2788,7 @@ class ProjectManager:
             macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
 
             rot = active_source._evaluated_rotation
-            r = R.from_euler('zyx', [-rot['z'], -rot['y'], -rot['x']], degrees=False)
+            r = R.from_euler('zyx', [rot['z'], rot['y'], rot['x']], degrees=False)
             rot_matrix = r.as_matrix()
             x_prime = rot_matrix[:, 0]
             y_prime = rot_matrix[:, 1]
