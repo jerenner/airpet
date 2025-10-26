@@ -850,7 +850,7 @@ export async function populateInspector(itemContext, projectState) {
 
         buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState, { isDisabled: false });
         buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState, { isDisabled: false });
-        buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
+        // buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
         
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";

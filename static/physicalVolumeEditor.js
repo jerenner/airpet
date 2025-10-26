@@ -300,6 +300,21 @@ function setupTransformUI(type, value, select, defines, options = {}) {
 
     const isAbsolute = typeof value !== 'string' || !defines.includes(value);
     select.value = isAbsolute ? '[Absolute]' : value;
+
+    // If this is the scale editor, add a warning message
+    if (type === 'scale') {
+        const warning = document.createElement('p');
+        warning.style.fontSize = '11px';
+        warning.style.color = '#718096'; // A muted gray color
+        warning.style.margin = '5px 0 10px 0';
+        warning.innerHTML = `<b>Note:</b> Only the sign of the numbers placed here are taken into account when rendering the object. Inputs with absolute value not equal to 1 may not give the same behavior as in Geant4.`;
+        
+        // Insert the warning right after the dropdown header
+        const header = select.parentElement;
+        if(header) {
+            header.insertAdjacentElement('afterend', warning);
+        }
+    }
     
     let displayValues = (type === 'scale') ? {x: '1', y: '1', z: '1'} : {x: '0', y: '0', z: '0'};
     if (isAbsolute) {
