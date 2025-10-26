@@ -182,6 +182,15 @@ export async function loadVersion(projectName, versionId) {
     return handleResponse(response);
 }
 
+/**
+ * Fetches a list of all available project names from the backend.
+ * @returns {Promise<Object>} A promise that resolves to the list of project names.
+ */
+export async function getProjectList() {
+    const response = await fetch(`${API_BASE_URL}/api/get_project_list`);
+    return handleResponse(response);
+}
+
 // --
 
 /**

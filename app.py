@@ -828,6 +828,18 @@ def load_version_route():
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
+@app.route('/api/get_project_list', methods=['GET'])
+def get_project_list_route():
+    """Scans the projects directory and returns a list of project names."""
+    if not os.path.isdir(PROJECTS_BASE_DIR):
+        return jsonify({"success": True, "projects": []})
+    try:
+        project_names = [d for d in os.listdir(PROJECTS_BASE_DIR)
+                         if os.path.isdir(os.path.join(PROJECTS_BASE_DIR, d))]
+        return jsonify({"success": True, "projects": sorted(project_names)})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to read project directory: {e}"}), 500
+    
 # Function to construct full AI prompt
 def construct_full_ai_prompt(user_prompt):
 

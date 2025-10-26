@@ -15,6 +15,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     toggleWireframeButton, toggleGridButton, toggleAxesButton,
     cameraModeOriginButton, cameraModeSelectedButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
+    bottomPanel, toggleBottomPanelBtn,
     aiPromptInput, aiGenerateButton, aiModelSelect,
     setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
     currentModeDisplay;
@@ -27,7 +28,7 @@ let inspectorContentDiv;
 
 // Project, history and undo/redo
 let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
-    undoButton, redoButton;
+    undoButton, redoButton, projectNameWrapper, projectListDropdown;
 
 // Button for adding PVs
 let addPVButton;
@@ -165,6 +166,8 @@ export function initUI(cb) {
 
     // History and undo/redo buttons
     projectNameDisplay = document.getElementById('projectNameDisplay');
+    projectNameWrapper = document.getElementById('project-name-wrapper');
+    projectListDropdown = document.getElementById('project-list-dropdown');
     historyButton = document.getElementById('historyButton');
     historyPanel = document.getElementById('history_panel');
     closeHistoryPanel = document.getElementById('closeHistoryPanel');
@@ -184,6 +187,11 @@ export function initUI(cb) {
     elementsListRoot = document.getElementById('elements_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
+
+
+    // Bottom panel (AI and simulation)
+    bottomPanel = document.getElementById('bottom_panel');
+    toggleBottomPanelBtn = document.getElementById('toggleBottomPanelBtn');
 
     // AI Panel elements
     aiPromptInput = document.getElementById('ai_prompt_input');
@@ -345,6 +353,44 @@ export function initUI(cb) {
             projectNameDisplay.textContent = cleanName;
         }
         callbacks.onProjectRenamed(projectNameDisplay.textContent);
+    });
+    projectNameWrapper.addEventListener('click', async (event) => {
+        // Stop propagation to prevent the global 'click-off' from closing it immediately
+        event.stopPropagation();
+
+        // If the dropdown is already visible, do nothing
+        if (projectListDropdown.style.display === 'block') return;
+
+        try {
+            const result = await callbacks.onProjectListRequested();
+            if (result.success) {
+                populateProjectListDropdown(result.projects);
+                projectListDropdown.style.display = 'block';
+            }
+        } catch (error) {
+            console.error("Could not fetch project list:", error);
+        }
+    });
+
+    // --- Add a global listener to close the dropdown ---
+    document.addEventListener('click', () => {
+        if (projectListDropdown.style.display === 'block') {
+            projectListDropdown.style.display = 'none';
+        }
+    });
+
+    // Listener for the bottom panel expand/collapse button
+    toggleBottomPanelBtn.addEventListener('click', () => {
+        bottomPanel.classList.toggle('expanded');
+        
+        // Update the button's icon based on the new state
+        if (bottomPanel.classList.contains('expanded')) {
+            toggleBottomPanelBtn.textContent = '↓'; // Down arrow for collapse
+            toggleBottomPanelBtn.title = 'Collapse Panel';
+        } else {
+            toggleBottomPanelBtn.textContent = '↑'; // Up arrow for expand
+            toggleBottomPanelBtn.title = 'Expand Panel';
+        }
     });
 
     // AI Panel Listener
@@ -590,6 +636,36 @@ export function populateHistoryPanel(history, projectName) {
             e.stopPropagation();
             callbacks.onLoadVersionClicked(projectName, version.id);
         });
+    });
+}
+
+function populateProjectListDropdown(projectNames) {
+    projectListDropdown.innerHTML = ''; // Clear previous list
+
+    if (projectNames.length === 0) {
+        const noProjectsItem = document.createElement('div');
+        noProjectsItem.textContent = "No other projects found.";
+        noProjectsItem.style.padding = '10px';
+        noProjectsItem.style.fontStyle = 'italic';
+        noProjectsItem.style.color = '#888';
+        projectListDropdown.appendChild(noProjectsItem);
+        return;
+    }
+
+    projectNames.forEach(name => {
+        const item = document.createElement('div');
+        item.className = 'project-list-item';
+        item.textContent = name;
+        item.dataset.projectName = name; // Store the name in a data attribute
+
+        item.addEventListener('click', (event) => {
+            event.stopPropagation(); // Prevent the global click-off
+            const selectedProject = event.target.dataset.projectName;
+            callbacks.onSwitchProject(selectedProject);
+            projectListDropdown.style.display = 'none'; // Hide dropdown after selection
+        });
+
+        projectListDropdown.appendChild(item);
     });
 }
 

@@ -87,6 +87,8 @@ async function initializeApp() {
         onRedoClicked: handleRedo,
         onHistoryButtonClicked: handleShowHistory,
         onProjectRenamed: handleProjectRenamed,
+        onProjectListRequested: handleProjectListRequested,
+        onSwitchProject: handleSwitchProject,
         onLoadVersionClicked: handleLoadVersion,
         // Add/edit solids
         onAddSolidClicked: handleAddSolid,
@@ -1095,6 +1097,23 @@ async function handleProjectRenamed(newName) {
     } catch (error) {
         UIManager.showError("Error renaming project: " + error.message);
     } 
+}
+
+async function handleProjectListRequested() {
+    // This simply passes the call to the API service
+    return await APIService.getProjectList();
+}
+
+async function handleSwitchProject(projectName) {
+    if (!projectName || projectName === AppState.currentProjectName) {
+        return; // Do nothing if the name is the same
+    }
+
+    // Update the project name display in the UI
+    UIManager.setProjectName(projectName);
+
+    // Call the rename functionality
+    handleProjectRenamed(projectName)
 }
 
 function handleModeChange(newMode) {

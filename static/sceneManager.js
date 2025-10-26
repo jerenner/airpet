@@ -2142,6 +2142,19 @@ export function updateSelectionState(groupsToSelect = []) {
             if (child.name === "SourceArrowLine" || child.name === "SourceArrowCone") {
                 child.material.color.setHex(0xff0000); // Keep the arrow red
             }
+
+            // Find the AxesHelper by name and restore its material properties.
+            // When highlighted, the material's main color is tinted orange,
+            // which overrides the vertex colors. We must reset it to white.
+            if (child.name === "SourceAxesHelper") {
+                // Ensure the material is set to use the geometry's vertex colors.
+                child.material.vertexColors = true;
+                // Reset the material's uniform tint color to white (0xffffff).
+                // This acts as a neutral multiplier, allowing the R,G,B to show correctly.
+                child.material.color.setHex(0xffffff);
+                // Tell three.js to apply the material change for the next frame.
+                child.material.needsUpdate = true;
+            }
             
         });
     });
