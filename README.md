@@ -1,6 +1,6 @@
 # airpet
 
-airpet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts. It was written with extensive assistance from Google Gemini LLMs.
+airpet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts.
 
 ![airpet demo](static/airpet_demo.gif)
 
@@ -76,3 +76,56 @@ With your Python environment and at least one AI service (Ollama or Gemini) conf
 3.  Open your web browser and navigate to: [http://localhost:5003](http://localhost:5003)
 
 The web application should now be running. The AI model dropdown at the bottom-right will be populated with any available Ollama and/or Gemini models based on your setup.
+
+## Contributions
+
+Contributions are welcome! Please submit a pull request with any code contributions. By contributing, you agree to release your code under the MIT License.
+
+## Acknowledgments
+
+AIRPET integrates with several external tools and Python libraries for core functionality, including geometry editing, simulation, AI assistance, and reconstruction.
+
+#### Simulation and reconstruction
+
+- [Geant4](https://geant4.web.cern.ch/)
+- [parallelproj](https://github.com/gschramm/parallelproj)
+
+#### Python Dependencies
+
+- [asteval](https://github.com/lmfit/asteval)
+- [Flask](https://flask.palletsprojects.com/)
+- [Flask-CORS](https://github.com/corydolphin/flask-cors)
+- [NumPy](https://numpy.org/)
+- [Ollama Python Client](https://github.com/ollama/ollama-python)
+- [python-dotenv](https://github.com/theskumar/python-dotenv)
+- [Google Generative AI SDK](https://github.com/googleapis/python-genai)
+- [Gunicorn](https://gunicorn.org/)
+- [SciPy](https://scipy.org/)
+- [h5py](https://www.h5py.org/)
+- [Pandas](https://pandas.pydata.org/)
+- [Pillow](https://pillow.readthedocs.io/)
+
+AIRPET uses the following open-source JavaScript libraries, loaded via CDNs for convenience. Local copies may be added in future releases for better reliability.
+
+- [three.js](https://github.com/mrdoob/three.js) (core library + addons)
+  - Core library loaded from: https://unpkg.com/three@0.160.0/build/three.module.js  
+  - Addons loaded from: https://unpkg.com/three@0.160.0/examples/jsm/  
+
+- [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh), loaded from https://unpkg.com/three-mesh-bvh@0.9.0/build/index.module.js  
+
+- [three-bvh-csg](https://github.com/gkjohnson/three-bvh-csg), loaded from https://unpkg.com/three-bvh-csg@0.0.16/build/index.module.js  
+
+For offline use, consider downloading local copies (e.g., via npm), bundling them in the `static/` folder, and updating paths in `templates/index.html` to reduce external dependencies.
+
+The AIRPET code was written with extensive assistance from Google Gemini LLMs, in particular Gemini Pro 2.5.
+
+## Disclaimers
+
+AIRPET is an open-source tool under active development and has not been formally verified or validated for accuracy, reliability, or safety. It is provided "as is" without any warranty, express or implied, including but not limited to the implied warranties of merchantability and fitness for a particular purpose. Some results may depend on underlying tools like Geant4 and parallelproj—users must independently verify simulations and reconstructions. This tool is intended for research and educational purposes only. It is NOT suitable for clinical, diagnostic, or medical decision-making. We make no claims regarding the accuracy of geometries, simulations, or reconstructions. Users assume all risks associated with its use.
+
+**AI Integration:** AIRPET supports connections to AI models like Google Gemini or local Ollama instances. When using cloud-based models (e.g., Gemini), data (e.g., geometry prompts) may be transmitted to third-party servers. Review the provider's privacy policy (e.g., [Google AI Studio Privacy](https://ai.google.dev/terms)). No user data is stored by AIRPET itself.
+
+As per the MIT License, the authors disclaim all liability for any damages arising from the use of this software.
+
+<!-- ## Citation
+If you use AIRPET in your work, please cite: -->
