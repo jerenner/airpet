@@ -571,7 +571,7 @@ export function hideHistoryPanel() {
 export function populateHistoryPanel(history, projectName) {
     historyListContainer.innerHTML = '';
     if (history.length === 0) {
-        historyListContainer.innerHTML = '<p>No saved versions.</p>';
+        historyListContainer.innerHTML = '<p>&nbsp;&nbsp;No saved versions.</p>';
         return;
     }
 
@@ -579,12 +579,21 @@ export function populateHistoryPanel(history, projectName) {
         const versionItem = document.createElement('div');
         versionItem.className = 'accordion-item';
 
+        // --- Add a special class for the autosave item ---
+        if (version.is_autosave) {
+            versionItem.classList.add('autosave-history-item');
+        }
+
         const header = document.createElement('div');
         header.className = 'accordion-header';
+
+        const descriptionText = version.is_autosave 
+            ? `🕒 ${version.description}` // Add an icon for autosave
+            : version.description;
         header.innerHTML = `
             <span class="accordion-toggle">[+]</span>
             <div class="version-info">
-                <span class="version-desc">&nbsp;&nbsp;${version.description}</span>
+                <span class="version-desc">&nbsp;&nbsp;${descriptionText}</span>
                 <span class="version-ts">&nbsp;&nbsp;${formatTimestamp(version.timestamp)}</span>
             </div>
             <button class="load-version-btn" title="Load this project version">Load</button>

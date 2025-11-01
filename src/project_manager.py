@@ -7,6 +7,7 @@ import re
 import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
+import shutil
 
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
@@ -15,6 +16,8 @@ from .geometry_types import GeometryState, Solid, Define, Material, Element, Iso
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
+
+AUTOSAVE_VERSION_ID = "autosave"
 
 class ProjectManager:
     def __init__(self, expression_evaluator):
@@ -63,11 +66,16 @@ class ProjectManager:
             return False, "No changes to autosave."
         
         project_path = self._get_project_path()
-        os.makedirs(project_path, exist_ok=True)
-        autosave_path = os.path.join(project_path, "autosave.json")
+        autosave_version_dir = os.path.join(project_path, "versions", AUTOSAVE_VERSION_ID)
+        os.makedirs(autosave_version_dir, exist_ok=True)
+
+        # The file inside is named version.json, just like any other version
+        version_filepath = os.path.join(autosave_version_dir, "version.json")
         
+        # Save the current state as a JSON string
         json_string = self.save_project_to_json_string()
-        with open(autosave_path, 'w') as f:
+
+        with open(version_filepath, 'w') as f:
             f.write(json_string)
         
         self.is_changed = False
@@ -135,6 +143,10 @@ class ProjectManager:
     
     def save_project_version(self, description=""):
         """Saves the current geometry state as a new version."""
+        # --- Check to prevent naming a version 'autosave' ---
+        if description.replace(' ', '_') == AUTOSAVE_VERSION_ID:
+            return None, "Cannot use a reserved name for the version description."
+        
         project_path = self._get_project_path()
         versions_path = os.path.join(project_path, "versions")
         os.makedirs(versions_path, exist_ok=True)

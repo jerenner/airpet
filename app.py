@@ -16,9 +16,12 @@ import h5py
 import numpy as np
 import pandas as pd
 import io
+import shutil
+import sched
+import time
 
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response, send_from_directory
+from flask import Flask, request, jsonify, render_template, Response, session
 from flask_cors import CORS
 
 from dotenv import load_dotenv, set_key, find_dotenv
@@ -27,7 +30,7 @@ from google.genai import types # Often useful for advanced features
 from google.genai import client # For type hinting
 
 from src.expression_evaluator import ExpressionEvaluator 
-from src.project_manager import ProjectManager
+from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
@@ -38,45 +41,149 @@ from PIL import Image
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "a-default-secret-key-for-development") 
 CORS(app)
 
-# Expression evaluator object to be used in backend and project manager
-expression_evaluator = ExpressionEvaluator()
-project_manager = ProjectManager(expression_evaluator)
+# --- Read server-wide config on startup ---
+APP_MODE = os.getenv("APP_MODE", "local")  # Default to 'local' if not set
+SERVER_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+
+# ------------------------------------------------------------------------------
+# Session management
+
+# --- Server-Side Cache for Project Managers ---
+# This dictionary holds one ProjectManager instance per user session.
+# The key is the user's session ID (uuid).
+project_managers = {}
 
 # Projects directory
 PROJECTS_BASE_DIR = os.path.join(os.getcwd(), "projects")
 os.makedirs(PROJECTS_BASE_DIR, exist_ok=True)
-project_manager.projects_dir = PROJECTS_BASE_DIR # Give PM access
+
+# For timeout
+last_access = {}
+
+def get_project_manager_for_session() -> ProjectManager:
+    """
+    Retrieves or creates a ProjectManager instance for the current user session.
+    Also handles isolating their project save directories.
+    """
+    # 1. Ensure the user has a unique session ID
+    if APP_MODE == 'local':
+        # In local mode, everyone shares the same "local_user" ID
+        if 'user_id' not in session or session['user_id'] != 'local_user':
+            session['user_id'] = 'local_user'
+    else: # deployed mode
+        if 'user_id' not in session:
+            session['user_id'] = str(uuid.uuid4())
+    
+    user_id = session['user_id']
+
+    # 2. Check if a ProjectManager already exists for this session
+    if user_id not in project_managers:
+        print(f"Creating new session and ProjectManager for user_id: {user_id}")
+        # 3. Create a new ProjectManager if one doesn't exist
+        expression_evaluator = ExpressionEvaluator()
+        pm = ProjectManager(expression_evaluator)
+
+        # 4. Set a session-specific directory for saving projects
+        if APP_MODE == 'local':
+            # Local mode uses the main projects directory directly
+            pm.projects_dir = PROJECTS_BASE_DIR
+        else: # deployed mode
+            # Deployed mode uses isolated session directories
+            session_projects_dir = os.path.join(PROJECTS_BASE_DIR, user_id)
+            os.makedirs(session_projects_dir, exist_ok=True)
+            pm.projects_dir = session_projects_dir
+        
+        # 5. Initialize a new, empty project for the new user
+        pm.create_empty_project()
+
+        # 6. Store the new instance in our cache
+        project_managers[user_id] = pm
+
+        # --- Seed the API key on first-time session creation ---
+        if 'gemini_api_key' not in session and SERVER_GEMINI_API_KEY:
+            print("Using SERVER_GEMINI_API_KEY for this session.")
+            session['gemini_api_key'] = SERVER_GEMINI_API_KEY
+
+    last_access[user_id] = time.time()
+    return project_managers[user_id]
 
 # ------------------------------------------------------------------------------
 # AI setup
 ai_model = "gemma3:12b"
 ai_timeout = 3000 # in seconds
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client: client.Client | None = None # Configure Gemini client
 
-# Configure the Gemini client
-def configure_gemini_client():
-    """Initializes or re-initializes the Gemini client with the current API key."""
-    global GEMINI_API_KEY, gemini_client
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
-        try:
-            gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-            print("Google Gemini client configured successfully.")
-            return True
-        except Exception as e:
-            print(f"Warning: Failed to configure Google Gemini client: {e}")
-            gemini_client = None
-            return False
-    else:
-        print("Warning: GEMINI_API_KEY not found or not set. Gemini models will be unavailable.")
-        gemini_client = None
-        return False
+# --- Server-Side Cache for Gemini Clients ---
+# Key: user_id from session
+# Value: A dictionary {'client': client_instance, 'key': api_key_used}
+gemini_clients = {}
 
-# Initial configuration on startup
-configure_gemini_client()
+def get_gemini_client_for_session() -> client.Client | None:
+    """
+    Retrieves or creates a Gemini client for the current user's session.
+    It uses the API key stored in the session and caches the client.
+    If the key changes, it creates a new client.
+    """
+    if 'user_id' not in session:
+        # This should ideally not happen if get_project_manager_for_session is called first
+        return None
+
+    user_id = session['user_id']
+    api_key = session.get('gemini_api_key')
+
+    # If the user has no API key set in their session, ensure no client is cached and return None.
+    if not api_key:
+        if user_id in gemini_clients:
+            del gemini_clients[user_id]
+        return None
+
+    cached_client_info = gemini_clients.get(user_id)
+
+    # If a client exists and was created with the *same* key, return it.
+    if cached_client_info and cached_client_info['key'] == api_key:
+        return cached_client_info['client']
+
+    # Otherwise, create a new client instance for this user's key.
+    print(f"Configuring new Gemini client for user session: {user_id}")
+    try:
+        new_client = genai.Client(api_key=api_key)
+        # Cache the new client and the key used to create it
+        gemini_clients[user_id] = {'client': new_client, 'key': api_key}
+        return new_client
+    except Exception as e:
+        print(f"Warning: Failed to configure Gemini client for session {user_id}: {e}")
+        # If configuration fails, remove any old entry from the cache
+        if user_id in gemini_clients:
+            del gemini_clients[user_id]
+        return None
+    
+# GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# gemini_client: client.Client | None = None # Configure Gemini client
+
+# # Configure the Gemini client
+# def configure_gemini_client():
+#     """Initializes or re-initializes the Gemini client with the current API key."""
+#     global GEMINI_API_KEY, gemini_client
+#     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+#     if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
+#         try:
+#             gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+#             print("Google Gemini client configured successfully.")
+#             return True
+#         except Exception as e:
+#             print(f"Warning: Failed to configure Google Gemini client: {e}")
+#             gemini_client = None
+#             return False
+#     else:
+#         print("Warning: GEMINI_API_KEY not found or not set. Gemini models will be unavailable.")
+#         gemini_client = None
+#         return False
+
+# # Initial configuration on startup
+# configure_gemini_client()
 
 # --------------------------------------------------------------------------
 # Geant4 integration
@@ -111,10 +218,12 @@ atexit.register(cleanup_processes)
 
 @app.route('/api/set_active_source', methods=['POST'])
 def set_active_source_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     source_id = data.get('source_id') # Can be the ID string or null
     
-    success, error_msg = project_manager.set_active_source(source_id)
+    success, error_msg = pm.set_active_source(source_id)
     
     if success:
         # We don't need to send the whole state back for this, a simple success is fine.
@@ -125,6 +234,8 @@ def set_active_source_route():
 
 @app.route('/api/simulation/run', methods=['POST'])
 def run_simulation():
+    pm = get_project_manager_for_session()
+
     if not os.path.exists(GEANT4_EXECUTABLE):
         return jsonify({
             "success": False,
@@ -138,20 +249,19 @@ def run_simulation():
     job_id = str(uuid.uuid4())
 
     try:
-        version_id = project_manager.current_version_id
+        version_id = pm.current_version_id
         # If the project has changed or no version is active, save a new one.
-        if project_manager.is_changed or not version_id:
-            version_id, _ = project_manager.save_project_version(f"AutoSave_for_Sim_{job_id[:8]}")
+        if pm.is_changed or not version_id:
+            version_id, _ = pm.save_project_version(f"AutoSave_for_Sim_{job_id[:8]}")
 
-        version_dir = project_manager._get_version_dir(version_id)
+        version_dir = pm._get_version_dir(version_id)
         run_dir = os.path.join(version_dir, "sim_runs", job_id)
         os.makedirs(run_dir, exist_ok=True)
 
         # Generate macro and geometry inside the final run directory
-        macro_path = project_manager.generate_macro_file(
+        macro_path = pm.generate_macro_file(
             job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
         )
-        
 
         # This will be the function run in a separate thread
         def run_g4_process(job_id, command):
@@ -257,7 +367,8 @@ def get_simulation_status(job_id):
 @app.route('/api/simulation/metadata/<version_id>/<job_id>', methods=['GET'])
 def get_simulation_metadata(version_id, job_id):
     """Fetches the metadata JSON file for a specific simulation run."""
-    version_dir = project_manager._get_version_dir(version_id)
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     metadata_path = os.path.join(run_dir, "metadata.json")
 
@@ -273,7 +384,8 @@ def get_simulation_metadata(version_id, job_id):
 
 @app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])
 def get_simulation_tracks(version_id, job_id, event_spec):
-    version_dir = project_manager._get_version_dir(version_id)
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     tracks_dir = os.path.join(run_dir, "tracks")
 
@@ -334,21 +446,25 @@ def stop_simulation(job_id):
     
 @app.route('/api/add_source', methods=['POST'])
 def add_source_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name', 'gps_source')
     gps_commands = data.get('gps_commands', {})
     position = data.get('position', {'x': '0', 'y': '0', 'z': '0'})
     rotation = data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
     
-    new_source, error_msg = project_manager.add_particle_source(
+    new_source, error_msg = pm.add_particle_source(
         name_suggestion, gps_commands, position, rotation)
     if new_source:
-        return create_success_response("Particle source created.")
+        return create_success_response(pm, "Particle source created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/api/update_source_transform', methods=['POST'])
 def update_source_transform_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     source_id = data.get('id')
     new_position = data.get('position')
@@ -357,16 +473,18 @@ def update_source_transform_route():
     if not source_id:
         return jsonify({"error": "Source ID missing"}), 400
         
-    success, error_msg = project_manager.update_source_transform(
+    success, error_msg = pm.update_source_transform(
         source_id, new_position, new_rotation
     )
     if success:
-        return create_success_response(f"Source {source_id} transform updated.")
+        return create_success_response(pm, f"Source {source_id} transform updated.")
     else:
         return jsonify({"success": False, "error": error_msg or "Could not update source transform."}), 404
 
 @app.route('/api/update_source', methods=['POST'])
 def update_source_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     source_id = data.get('id')
     new_name = data.get('name')
@@ -377,12 +495,12 @@ def update_source_route():
     if not source_id:
         return jsonify({"success": False, "error": "Source ID is required."}), 400
 
-    success, error_msg = project_manager.update_particle_source(
+    success, error_msg = pm.update_particle_source(
         source_id, new_name, new_gps_commands, new_position, new_rotation
     )
 
     if success:
-        return create_success_response("Particle source updated successfully.")
+        return create_success_response(pm, "Particle source updated successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
     
@@ -391,13 +509,15 @@ def process_lors_route(version_id, job_id):
     """
     Processes Geant4 hits from HDF5, finds coincidences, and saves LORs.
     """
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     coincidence_window_ns = data.get('coincidence_window_ns', 4.0)  # 4 ns window
 
     # This function will run in the background
     def process_lors_in_background(app, version_id, job_id, coincidence_window_ns):
         with app.app_context(): # Needed to work within Flask's context
-            version_dir = project_manager._get_version_dir(version_id)
+            version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
             hdf5_path = os.path.join(run_dir, "output.hdf5")
             lors_output_path = os.path.join(run_dir, "lors.npz")
@@ -488,6 +608,8 @@ def run_reconstruction_route(version_id, job_id):
     """
     Runs MLEM reconstruction using parallelproj on the pre-processed LORs.
     """
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     iterations = data.get('iterations', 1)
     # Get image geometry parameters from the request
@@ -498,7 +620,7 @@ def run_reconstruction_route(version_id, job_id):
     # We calculate the position of the corner of the first voxel.
     image_origin = - (np.array(img_shape, dtype=np.float32) / 2 - 0.5) * np.array(voxel_size, dtype=np.float32)
 
-    version_dir = project_manager._get_version_dir(version_id)
+    version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     lors_path = os.path.join(run_dir, "lors.npz")
     recon_output_path = os.path.join(run_dir, "reconstruction.npy")
@@ -576,7 +698,9 @@ def get_recon_slice_route(version_id, job_id, axis, slice_num):
     """
     Loads the reconstructed 3D numpy array and returns a single 2D slice as a PNG image.
     """
-    version_dir = project_manager._get_version_dir(version_id)
+    pm = get_project_manager_for_session()
+
+    version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     recon_path = os.path.join(run_dir, "reconstruction.npy")
 
@@ -625,7 +749,8 @@ def get_lor_processing_status(job_id):
 @app.route('/api/lors/check/<version_id>/<job_id>', methods=['GET'])
 def check_lor_file_route(version_id, job_id):
     """Checks if a pre-processed LOR file exists for a given run."""
-    version_dir = project_manager._get_version_dir(version_id)
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     lors_path = os.path.join(run_dir, "lors.npz")
 
@@ -658,7 +783,7 @@ def load_system_prompt():
         return "You are a helpful assistant." # Fallback prompt
 
 # Function for Consistent API Responses
-def create_success_response(message="Success",exclude_unchanged_tessellated=True):
+def create_success_response(project_manager, message="Success",exclude_unchanged_tessellated=True):
     """
     Helper to create a standard success response object, including history state.
     """
@@ -689,7 +814,7 @@ def create_success_response(message="Success",exclude_unchanged_tessellated=True
         }
     })
 
-def create_shallow_response(message, scene_patch=None, project_state_patch=None, full_scene=None):
+def create_shallow_response(project_manager, message, scene_patch=None, project_state_patch=None, full_scene=None):
     """Creates a lightweight response with a patch and possibly the full scene update."""
 
     # Construct the patch.
@@ -716,51 +841,59 @@ def create_shallow_response(message, scene_patch=None, project_state_patch=None,
 
 @app.route('/api/begin_transaction', methods=['POST'])
 def begin_transaction_route():
-    project_manager.begin_transaction()
+    pm = get_project_manager_for_session()
+    pm.begin_transaction()
     return jsonify({"success": True, "message": "Transaction started."})
 
 @app.route('/api/end_transaction', methods=['POST'])
 def end_transaction_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json() or {}
     description = data.get('description', 'User action')
-    project_manager.end_transaction(description)
+    pm.end_transaction(description)
     # The final state is captured on the backend, but the frontend needs
     # the updated history status (canUndo/canRedo).
     # We will return the full response so the UI updates correctly.
-    return create_success_response("Transaction ended.") # Use your full response helper
+    return create_success_response(pm, "Transaction ended.") # Use your full response helper
 
 @app.route('/api/undo', methods=['POST'])
 def undo_route():
-    success, message = project_manager.undo()
+    pm = get_project_manager_for_session()
+    success, message = pm.undo()
     if success:
-        return create_success_response(message)
+        return create_success_response(pm, message)
     else:
         return jsonify({"success": False, "error": message}), 400
 
 @app.route('/api/redo', methods=['POST'])
 def redo_route():
-    success, message = project_manager.redo()
+    pm = get_project_manager_for_session()
+    success, message = pm.redo()
     if success:
-        return create_success_response(message)
+        return create_success_response(pm, message)
     else:
         return jsonify({"success": False, "error": message}), 400
 
 @app.route('/rename_project', methods=['POST'])
 def rename_project_route():
+    pm = get_project_manager_for_session()
 
     data = request.get_json()
     project_name = data.get('project_name')
 
     try:
-        project_manager.project_name = project_name
+        pm.project_name = project_name
         return jsonify({"success": True, "message": f"Project set to {project_name}"})
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to save version: {e}"}), 500
     
 @app.route('/autosave', methods=['POST'])
 def autosave_project_api():
+    pm = get_project_manager_for_session()
+
     # No data is needed in the request body. The project manager knows the active project.
-    success, message = project_manager.auto_save_project()
+    success, message = pm.auto_save_project()
     if success:
         return jsonify({"success": True, "message": message})
     else:
@@ -769,11 +902,12 @@ def autosave_project_api():
 
 @app.route('/api/save_version', methods=['POST'])
 def save_version_route():
+    pm = get_project_manager_for_session()
 
     data = request.get_json() or {}
     description = data.get('description', 'User Save')
     try:
-        version_name, message = project_manager.save_project_version(description)
+        version_name, message = pm.save_project_version(description)
         return jsonify({"success": True, "message": f"Version '{version_name}' saved."})
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to save version: {e}"}), 500
@@ -784,35 +918,68 @@ def get_version_dir(project_name, version_id):
 
 @app.route('/api/get_project_history', methods=['GET'])
 def get_project_history_route():
+    pm = get_project_manager_for_session()
+
     project_name = request.args.get('project_name')
     if not project_name:
         return jsonify({"success": False, "error": "Project name is required."}), 400
     
-    versions_path = os.path.join(PROJECTS_BASE_DIR, project_name, "versions")
+    versions_path = os.path.join(pm.projects_dir, project_name, "versions")
     if not os.path.isdir(versions_path):
         return jsonify({"success": True, "history": []})
 
-    # List directories instead of files, sorting reverse-chronologically
-    version_dirs = sorted([d for d in os.listdir(versions_path) if os.path.isdir(os.path.join(versions_path, d))], reverse=True)
+    try:
+
+        # List directories instead of files, sorting reverse-chronologically
+        version_dirs = [d for d in os.listdir(versions_path) if os.path.isdir(os.path.join(versions_path, d))]
+        
+        history = []
+        autosave_data = None
+
+        # Find and process the autosave entry first if it exists
+        if AUTOSAVE_VERSION_ID in version_dirs:
+            version_dirs.remove(AUTOSAVE_VERSION_ID) # Remove it from the main list
+            autosave_path = os.path.join(versions_path, AUTOSAVE_VERSION_ID, "version.json")
+            if os.path.exists(autosave_path):
+                # Get the modification time of the autosave file for sorting
+                mtime = os.path.getmtime(autosave_path)
+                autosave_data = {
+                    "id": AUTOSAVE_VERSION_ID,
+                    "is_autosave": True, # Flag for the frontend
+                    "timestamp": datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H-%M-%S"),
+                    "description": "Latest Autosave",
+                    "runs": [] # Autosaves don't have simulation runs
+                }
+
+        # Sort the remaining normal versions reverse-chronologically
+        version_dirs.sort(reverse=True)
+
+        for version_id in version_dirs:
+            sim_runs_path = os.path.join(versions_path, version_id, "sim_runs")
+            runs = []
+            if os.path.isdir(sim_runs_path):
+                runs = sorted(os.listdir(sim_runs_path), reverse=True)
+            
+            history.append({
+                "id": version_id,
+                "timestamp": version_id.split('_')[0], # Extract timestamp from name
+                "description": version_id.split('_')[1] if '_' in version_id else "Saved",
+                "runs": runs # List of job_ids
+            })
+
+        # Prepend the autosave data to the history list so it appears at the top
+        if autosave_data:
+            history.insert(0, autosave_data)
+            
+        return jsonify({"success": True, "history": history})
     
-    history = []
-    for version_id in version_dirs:
-        sim_runs_path = os.path.join(versions_path, version_id, "sim_runs")
-        runs = []
-        if os.path.isdir(sim_runs_path):
-            runs = sorted(os.listdir(sim_runs_path), reverse=True)
-        
-        history.append({
-            "id": version_id,
-            "timestamp": version_id.split('_')[0], # Extract timestamp from name
-            "description": version_id.split('_')[1] if '_' in version_id else "Saved",
-            "runs": runs # List of job_ids
-        })
-        
-    return jsonify({"success": True, "history": history})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to read project history: {str(e)}"}), 500
 
 @app.route('/api/load_version', methods=['POST'])
 def load_version_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     version_id = data.get('version_id') # This is the filename
     
@@ -820,9 +987,9 @@ def load_version_route():
         return jsonify({"success": False, "error": "Project name and version ID are required."}), 400
 
     try:
-        success, message = project_manager.load_project_version(version_id)
+        success, message = pm.load_project_version(version_id)
         if success:
-            return create_success_response(message, exclude_unchanged_tessellated=False)
+            return create_success_response(pm, message, exclude_unchanged_tessellated=False)
         else:
             return jsonify({"success": False, "error": message}), 500
     except Exception as e:
@@ -830,18 +997,30 @@ def load_version_route():
 
 @app.route('/api/get_project_list', methods=['GET'])
 def get_project_list_route():
-    """Scans the projects directory and returns a list of project names."""
-    if not os.path.isdir(PROJECTS_BASE_DIR):
+    """
+    Scans the correct project directory (session-specific or local)
+    and returns a list of project names for the current user.
+    """
+    # 1. Get the ProjectManager for the current session.
+    pm = get_project_manager_for_session()
+    
+    # 2. Use the manager's projects_dir, which is already correctly set
+    #    to either 'projects/' (local) or 'projects/<session_id>' (deployed).
+    user_projects_dir = pm.projects_dir
+
+    if not os.path.isdir(user_projects_dir):
         return jsonify({"success": True, "projects": []})
+
     try:
-        project_names = [d for d in os.listdir(PROJECTS_BASE_DIR)
-                         if os.path.isdir(os.path.join(PROJECTS_BASE_DIR, d))]
+        # 3. List only the directories within that specific path.
+        project_names = [d for d in os.listdir(user_projects_dir)
+                         if os.path.isdir(os.path.join(user_projects_dir, d))]
         return jsonify({"success": True, "projects": sorted(project_names)})
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to read project directory: {e}"}), 500
     
 # Function to construct full AI prompt
-def construct_full_ai_prompt(user_prompt):
+def construct_full_ai_prompt(project_manager, user_prompt):
 
     system_prompt = load_system_prompt()
     current_geometry_json = project_manager.save_project_to_json_string()
@@ -866,12 +1045,15 @@ def new_project_route():
     """Clears the current project and creates a new one with a default world."""
 
     # Call the helper function for creating an empty project.
-    project_manager.create_empty_project()
+    pm = get_project_manager_for_session()
+    pm.create_empty_project()
 
-    return create_success_response("New project created.",exclude_unchanged_tessellated=False)
+    return create_success_response(pm, "New project created.",exclude_unchanged_tessellated=False)
 
 @app.route('/import_gdml_part', methods=['POST'])
 def import_gdml_part_route():
+    pm = get_project_manager_for_session()
+
     if 'partFile' not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files['partFile']
@@ -881,11 +1063,11 @@ def import_gdml_part_route():
     try:
         gdml_content_str = file.read().decode('utf-8')
         # Parse into a temporary state object
-        temp_state = project_manager.gdml_parser.parse_gdml_string(gdml_content_str)
+        temp_state = pm.gdml_parser.parse_gdml_string(gdml_content_str)
         # Call the new merge method
-        success, error_msg = project_manager.merge_from_state(temp_state)
+        success, error_msg = pm.merge_from_state(temp_state)
         if success:
-            return create_success_response("GDML part(s) imported successfully.")
+            return create_success_response(pm, "GDML part(s) imported successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to merge GDML part."}), 500
     except Exception as e:
@@ -896,6 +1078,8 @@ def import_gdml_part_route():
 
 @app.route('/import_json_part', methods=['POST'])
 def import_json_part_route():
+    pm = get_project_manager_for_session()
+
     if 'partFile' not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files['partFile']
@@ -908,9 +1092,9 @@ def import_json_part_route():
         # Create a temporary GeometryState object from the JSON data
         temp_state = GeometryState.from_dict(data)
         # Call the new merge method
-        success, error_msg = project_manager.merge_from_state(temp_state)
+        success, error_msg = pm.merge_from_state(temp_state)
         if success:
-            return create_success_response("JSON part(s) imported successfully.")
+            return create_success_response(pm, "JSON part(s) imported successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to merge JSON part."}), 500
     except json.JSONDecodeError:
@@ -922,6 +1106,8 @@ def import_json_part_route():
 
 @app.route('/process_gdml', methods=['POST'])
 def process_gdml_route():
+    pm = get_project_manager_for_session()
+
     if 'gdmlFile' not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files['gdmlFile']
@@ -930,8 +1116,8 @@ def process_gdml_route():
     if file:
         gdml_content_str = file.read().decode('utf-8')
         try:
-            project_manager.load_gdml_from_string(gdml_content_str)
-            return create_success_response("GDML file processed successfully.",exclude_unchanged_tessellated=False)
+            pm.load_gdml_from_string(gdml_content_str)
+            return create_success_response(pm, "GDML file processed successfully.",exclude_unchanged_tessellated=False)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -939,14 +1125,16 @@ def process_gdml_route():
 
 @app.route('/load_project_json', methods=['POST'])
 def load_project_json_route():
+    pm = get_project_manager_for_session()
+
     if 'projectFile' not in request.files:
         return jsonify({"error": "No project file part"}), 400
     file = request.files['projectFile']
     if file:
         try:
             project_json_string = file.read().decode('utf-8')
-            project_manager.load_project_from_json_string(project_json_string)
-            return create_success_response("Project loaded successfully.",exclude_unchanged_tessellated=False)
+            pm.load_project_from_json_string(project_json_string)
+            return create_success_response(pm, "Project loaded successfully.",exclude_unchanged_tessellated=False)
         except json.JSONDecodeError:
             return jsonify({"error": "Invalid JSON file format"}), 400
         except Exception as e:
@@ -956,6 +1144,8 @@ def load_project_json_route():
 
 @app.route('/update_object_transform', methods=['POST'])
 def update_object_transform_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     object_id = data.get('id')
     new_position = data.get('position')
@@ -964,15 +1154,17 @@ def update_object_transform_route():
     if not object_id:
         return jsonify({"error": "Object ID missing"}), 400
 
-    success, error_msg = project_manager.update_physical_volume_transform(object_id, new_position, new_rotation)
+    success, error_msg = pm.update_physical_volume_transform(object_id, new_position, new_rotation)
 
     if success:
-        return create_success_response(f"Object {object_id} transform updated.")
+        return create_success_response(pm, f"Object {object_id} transform updated.")
     else:
         return jsonify({"success": False, "error": error_msg or "Could not update transform."}), 404
     
 @app.route('/update_property', methods=['POST'])
 def update_property_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     obj_type = data.get('object_type')
     obj_id = data.get('object_id')
@@ -982,14 +1174,16 @@ def update_property_route():
     if not all([obj_type, obj_id, prop_path]):
         return jsonify({"error": "Missing data for property update"}), 400
 
-    success = project_manager.update_object_property(obj_type, obj_id, prop_path, new_value)
+    success = pm.update_object_property(obj_type, obj_id, prop_path, new_value)
     if success:
-        return create_success_response("Property updated.")
+        return create_success_response(pm, "Property updated.")
     else:
         return jsonify({"success": False, "error": "Failed to update property"}), 500
 
 @app.route('/add_material', methods=['POST'])
 def add_material_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     params = data.get('params')
@@ -997,27 +1191,31 @@ def add_material_route():
     if not name_suggestion or params is None:
         return jsonify({"success": False, "error": "Missing name or parameters for material."}), 400
 
-    new_obj, error_msg = project_manager.add_material(name_suggestion, params)
+    new_obj, error_msg = pm.add_material(name_suggestion, params)
 
     if new_obj:
-        return create_success_response("Material created.")
+        return create_success_response(pm, "Material created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_material', methods=['POST'])
 def update_material_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     mat_name = data.get('id')
     new_params = data.get('params')
     
-    success, error_msg = project_manager.update_material(mat_name, new_params)
+    success, error_msg = pm.update_material(mat_name, new_params)
     if success:
-        return create_success_response(f"Material '{mat_name}' updated.")
+        return create_success_response(pm, f"Material '{mat_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_element', methods=['POST'])
 def add_element_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     params = {
@@ -1030,15 +1228,17 @@ def add_element_route():
     if not name_suggestion:
         return jsonify({"success": False, "error": "Missing name for element."}), 400
     
-    new_obj, error_msg = project_manager.add_element(name_suggestion, params)
+    new_obj, error_msg = pm.add_element(name_suggestion, params)
     
     if new_obj:
-        return create_success_response("Element created.")
+        return create_success_response(pm, "Element created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_element', methods=['POST'])
 def update_element_route():
+    pm = get_project_manager_for_session()
+    
     data = request.get_json()
     element_name = data.get('id')
     new_params = {
@@ -1051,31 +1251,37 @@ def update_element_route():
     if not element_name:
         return jsonify({"success": False, "error": "Missing ID for element update."}), 400
 
-    success, error_msg = project_manager.update_element(element_name, new_params)
+    success, error_msg = pm.update_element(element_name, new_params)
     
     if success:
-        return create_success_response(f"Element '{element_name}' updated.")
+        return create_success_response(pm, f"Element '{element_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_isotope', methods=['POST'])
 def add_isotope_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json(); name = data.get('name'); params = data
     if not name: return jsonify({"success": False, "error": "Missing name for isotope."}), 400
-    new_obj, err = project_manager.add_isotope(name, params)
-    if new_obj: return create_success_response("Isotope created.")
+    new_obj, err = pm.add_isotope(name, params)
+    if new_obj: return create_success_response(pm, "Isotope created.")
     return jsonify({"success": False, "error": err}), 500
 
 @app.route('/update_isotope', methods=['POST'])
 def update_isotope_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json(); name = data.get('id'); params = data
     if not name: return jsonify({"success": False, "error": "Missing ID for isotope update."}), 400
-    ok, err = project_manager.update_isotope(name, params)
-    if ok: return create_success_response(f"Isotope '{name}' updated.")
+    ok, err = pm.update_isotope(name, params)
+    if ok: return create_success_response(pm, f"Isotope '{name}' updated.")
     return jsonify({"success": False, "error": err}), 500
 
 @app.route('/add_define', methods=['POST'])
 def add_define_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name = data.get('name')
     define_type = data.get('type')
@@ -1083,29 +1289,33 @@ def add_define_route():
     unit = data.get('unit')
     category = data.get('category')
     
-    new_obj, error_msg = project_manager.add_define(name, define_type, value, unit, category)
+    new_obj, error_msg = pm.add_define(name, define_type, value, unit, category)
     if new_obj:
-        return create_success_response("Define created.")
+        return create_success_response(pm, "Define created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_define', methods=['POST'])
 def update_define_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     define_name = data.get('id')
     value = data.get('value')
     unit = data.get('unit')
     category = data.get('category')
 
-    success, error_msg = project_manager.update_define(define_name, value, unit, category)
+    success, error_msg = pm.update_define(define_name, value, unit, category)
 
     if success:
-        return create_success_response(f"Define '{define_name}' updated.")
+        return create_success_response(pm, f"Define '{define_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_solid_and_place', methods=['POST'])
 def add_solid_and_place_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     solid_params = data.get('solid_params') # {name, type, params}
     lv_params = data.get('lv_params')       # {name?, material_ref} or None
@@ -1115,15 +1325,17 @@ def add_solid_and_place_route():
     if not solid_params:
         return jsonify({"success": False, "error": "Solid parameters are required."}), 400
 
-    success, error_msg = project_manager.add_solid_and_place(solid_params, lv_params, pv_params)
+    success, error_msg = pm.add_solid_and_place(solid_params, lv_params, pv_params)
 
     if success:
-        return create_success_response("Object(s) created successfully.")
+        return create_success_response(pm, "Object(s) created successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_primitive_solid', methods=['POST'])
 def add_primitive_solid_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     solid_type = data.get('type')
@@ -1132,15 +1344,17 @@ def add_primitive_solid_route():
     if not all([name_suggestion, solid_type, params]):
         return jsonify({"success": False, "error": "Missing data for primitive solid"}), 400
         
-    new_obj, error_msg = project_manager.add_solid(name_suggestion, solid_type, params)
+    new_obj, error_msg = pm.add_solid(name_suggestion, solid_type, params)
     
     if new_obj:
-        return create_success_response("Primitive solid created.")
+        return create_success_response(pm, "Primitive solid created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_solid', methods=['POST'])
 def update_solid_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     solid_id = data.get('id')
     new_raw_params = data.get('params')
@@ -1148,41 +1362,47 @@ def update_solid_route():
     if not solid_id or new_raw_params is None:
         return jsonify({"success": False, "error": "Missing solid ID or new parameters."}), 400
 
-    success, error_msg = project_manager.update_solid(solid_id, new_raw_params)
+    success, error_msg = pm.update_solid(solid_id, new_raw_params)
 
     if success:
-        return create_success_response(f"Solid '{solid_id}' updated successfully.")
+        return create_success_response(pm, f"Solid '{solid_id}' updated successfully.")
     else:
         return jsonify({"success": False, "error": error_msg or "Failed to update solid."}), 500
 
 @app.route('/add_boolean_solid', methods=['POST'])
 def add_boolean_solid_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     recipe = data.get('recipe')
     
-    success, error_msg = project_manager.add_boolean_solid(name_suggestion, recipe)
+    success, error_msg = pm.add_boolean_solid(name_suggestion, recipe)
 
     if success:
-        return create_success_response("Boolean solid created.")
+        return create_success_response(pm, "Boolean solid created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_boolean_solid', methods=['POST'])
 def update_boolean_solid_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     solid_name = data.get('id') # The name of the solid to update
     recipe = data.get('recipe')
     
-    success, error_msg = project_manager.update_boolean_solid(solid_name, recipe)
+    success, error_msg = pm.update_boolean_solid(solid_name, recipe)
 
     if success:
-        return create_success_response(f"Boolean solid '{solid_name}' updated.")
+        return create_success_response(pm, f"Boolean solid '{solid_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_logical_volume', methods=['POST'])
 def add_logical_volume_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name = data.get('name')
     solid_ref = data.get('solid_ref')
@@ -1192,18 +1412,20 @@ def add_logical_volume_route():
     content_type = data.get('content_type', 'physvol')
     content = data.get('content', [])
     
-    new_lv ,error_msg = project_manager.add_logical_volume(
+    new_lv ,error_msg = pm.add_logical_volume(
         name, solid_ref, material_ref, vis_attributes, is_sensitive,
         content_type, content
     )
     
     if new_lv:
-        return create_success_response("Logical Volume created.")
+        return create_success_response(pm, "Logical Volume created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_logical_volume', methods=['POST'])
 def update_logical_volume_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     lv_name = data.get('id')
     solid_ref = data.get('solid_ref')
@@ -1213,18 +1435,20 @@ def update_logical_volume_route():
     content_type = data.get('content_type')
     content = data.get('content')
 
-    success ,error_msg = project_manager.update_logical_volume(
+    success ,error_msg = pm.update_logical_volume(
         lv_name, solid_ref, material_ref, vis_attributes, is_sensitive,
         content_type, content
     )
 
     if success:
-        return create_success_response(f"Logical Volume '{lv_name}' updated.")
+        return create_success_response(pm, f"Logical Volume '{lv_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_physical_volume', methods=['POST'])
 def add_physical_volume_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     parent_lv_name = data.get('parent_lv_name')
     name = data.get('name')
@@ -1233,15 +1457,17 @@ def add_physical_volume_route():
     rotation = data.get('rotation')
     scale = data.get('scale')
     
-    new_pv, error_msg = project_manager.add_physical_volume(parent_lv_name, name, volume_ref, position, rotation, scale)
+    new_pv, error_msg = pm.add_physical_volume(parent_lv_name, name, volume_ref, position, rotation, scale)
     
     if new_pv:
-        return create_success_response("Physical Volume placed.")
+        return create_success_response(pm, "Physical Volume placed.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_physical_volume', methods=['POST'])
 def update_physical_volume_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     pv_id = data.get('id')
     name = data.get('name')
@@ -1249,29 +1475,31 @@ def update_physical_volume_route():
     rotation = data.get('rotation')
     scale = data.get('scale')
 
-    success, error_msg = project_manager.update_physical_volume(pv_id, name, position, rotation, scale)
+    success, error_msg = pm.update_physical_volume(pv_id, name, position, rotation, scale)
 
     if success:
-        return create_success_response(f"Physical Volume '{pv_id}' updated.")
+        return create_success_response(pm, f"Physical Volume '{pv_id}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
     
 @app.route('/api/update_physical_volume_batch', methods=['POST'])
 def update_physical_volume_batch_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     updates_list = data.get('updates')
     if not isinstance(updates_list, list):
         return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
 
     # The project manager will handle the transaction and recalculation internally
-    success, project_state_patch = project_manager.update_physical_volume_batch(updates_list)
+    success, project_state_patch = pm.update_physical_volume_batch(updates_list)
 
     # Compute the full scene again.
-    scene_update = project_manager.get_threejs_description()
+    scene_update = pm.get_threejs_description()
 
     if success:
         # After a successful batch update, send back the complete new state
-        return create_shallow_response(f"Transformed {len(updates_list)} object(s).", 
+        return create_shallow_response(pm, f"Transformed {len(updates_list)} object(s).", 
                                        project_state_patch=project_state_patch, 
                                        full_scene=scene_update)
     else:
@@ -1281,6 +1509,8 @@ def update_physical_volume_batch_route():
 
 @app.route('/api/delete_objects_batch', methods=['POST'])
 def delete_objects_batch_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     objects_to_delete = data.get('objects')
 
@@ -1289,7 +1519,7 @@ def delete_objects_batch_route():
 
     # First, pre-filter for non-deletable items like assembly members
     assembly_member_ids = set()
-    for asm in project_manager.current_geometry_state.assemblies.values():
+    for asm in pm.current_geometry_state.assemblies.values():
         for pv in asm.placements:
             assembly_member_ids.add(pv.id)
             
@@ -1310,10 +1540,11 @@ def delete_objects_batch_route():
         }), 409
 
     # Proceed with the filtered list
-    deleted, patch_or_error_msg = project_manager.delete_objects_batch(filtered_deletions)
+    deleted, patch_or_error_msg = pm.delete_objects_batch(filtered_deletions)
     
     if deleted:
         return create_shallow_response(
+            pm,
             "Objects deleted successfully.",
             scene_patch=None,
             project_state_patch=patch_or_error_msg.get("project_state"),
@@ -1331,22 +1562,24 @@ def get_project_state_route():
     This route is for initial page load state restoration.
     If no project exists, it creates a new default one.
     """
-    state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=False)
-    project_name = project_manager.project_name
+    pm = get_project_manager_for_session()
+
+    state = pm.get_full_project_state_dict(exclude_unchanged_tessellated=False)
+    project_name = pm.project_name
 
     # Check if the project is empty (no world volume defined)
     if not state or not state.get('world_volume_ref'):
         print("No active project found, creating a new default world.")
         
         # Call the same logic as the /new_project route
-        project_manager.create_empty_project()
+        pm.create_empty_project()
         
         # Now get the state and scene again from the newly created project
-        state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=False)
-        scene = project_manager.get_threejs_description()
+        state = pm.get_full_project_state_dict(exclude_unchanged_tessellated=False)
+        scene = pm.get_threejs_description()
     else:
         # Project already exists, just get the scene
-        scene = project_manager.get_threejs_description()
+        scene = pm.get_threejs_description()
 
     # Always return a valid state
     return jsonify({
@@ -1357,6 +1590,8 @@ def get_project_state_route():
 
 @app.route('/get_object_details', methods=['GET'])
 def get_object_details_route():
+    pm = get_project_manager_for_session()
+
     obj_type = request.args.get('type')
     obj_id = request.args.get('id')
     if not obj_type or not obj_id:
@@ -1365,12 +1600,12 @@ def get_object_details_route():
     if obj_type == "particle_source":
         # For sources, the 'id' from the frontend is the unique ID
         details = None
-        for source in project_manager.current_geometry_state.sources.values():
+        for source in pm.current_geometry_state.sources.values():
             if source.id == obj_id:
                 details = source.to_dict()
                 break
     else:
-        details = project_manager.get_object_details(obj_type, obj_id)
+        details = pm.get_object_details(obj_type, obj_id)
 
     if details:
         return jsonify(details)
@@ -1380,7 +1615,9 @@ def get_object_details_route():
 
 @app.route('/save_project_json', methods=['GET'])
 def save_project_json_route():
-    project_json_string = project_manager.save_project_to_json_string()
+    pm = get_project_manager_for_session()
+
+    project_json_string = pm.save_project_to_json_string()
     return Response(
         project_json_string,
         mimetype="application/json",
@@ -1389,7 +1626,9 @@ def save_project_json_route():
 
 @app.route('/export_gdml', methods=['GET'])
 def export_gdml_route():
-    gdml_string = project_manager.export_to_gdml_string()
+    pm = get_project_manager_for_session()
+
+    gdml_string = pm.export_to_gdml_string()
     return Response(
         gdml_string,
         mimetype="application/xml",
@@ -1399,17 +1638,19 @@ def export_gdml_route():
 @app.route('/get_defines_by_type', methods=['GET'])
 def get_defines_by_type_route():
     """Returns a list of define names for a given type (position, rotation, etc.)."""
+    pm = get_project_manager_for_session()
+
     define_type = request.args.get('type')
     if not define_type:
         return jsonify({"error": "Define type parameter is missing"}), 400
 
-    if not project_manager.current_geometry_state:
+    if not pm.current_geometry_state:
         return jsonify([]) # Return empty list if no project
 
     # Filter defines based on the requested type
     filtered_defines = {
         name: define.to_dict()
-        for name, define in project_manager.current_geometry_state.defines.items()
+        for name, define in pm.current_geometry_state.defines.items()
         if define.type == define_type
     }
     
@@ -1430,6 +1671,7 @@ def ai_health_check_route():
         # We don't fail the whole request, just show no Ollama models
 
     # 2. Check for Gemini models if the client was initialized
+    gemini_client = get_gemini_client_for_session()
     if gemini_client:
         try:
             gemini_models = []
@@ -1448,6 +1690,8 @@ def ai_health_check_route():
 
 @app.route('/ai_process_prompt', methods=['POST'])
 def ai_process_prompt_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     user_prompt = data.get('prompt')
     model_name = data.get('model')
@@ -1458,12 +1702,14 @@ def ai_process_prompt_route():
 
     try:
         # Step 1: Construct the full prompt
-        full_prompt = construct_full_ai_prompt(user_prompt)
-
+        full_prompt = construct_full_ai_prompt(pm, user_prompt)
         ai_json_string = ""
 
         # --- Routing logic ---
         if model_name.startswith("models/"): # Gemini models
+
+            # Get the Gemini client for the current session
+            gemini_client = get_gemini_client_for_session()
             if not gemini_client:
                 return jsonify({"success": False, "error": "Gemini client is not configured on the server."}), 500
             
@@ -1483,30 +1729,6 @@ def ai_process_prompt_route():
 
         else: # Assume it's an Ollama model
             print(f"Sending prompt to Ollama model: {model_name}")
-            # messages = [
-            #     {
-            #         "role": "system",
-            #         "content": "You are a helpful assistant. Reasoning: high. Please provide a detailed step-by-step reasoning process before giving the final answer."
-            #     },
-            #     {
-            #         "role": "user",
-            #         "content": full_prompt
-            #     }
-            # ]
-            # ollama_response = requests.post(
-            #     'http://localhost:11434/api/chat',
-            #     json={ "model": model_name,
-            #         "messages": messages, 
-            #         "stream": False, 
-            #         "format": "json",
-            #         "options": {
-            #             "temperature": 0.7,
-            #             "top_p": 0.9,
-            #             "num_ctx": 65536
-            #         }
-            #     },
-            #     timeout=ai_timeout
-            # )
 
             # Process the response
             ollama_response = ollama.generate(model=model_name, prompt=full_prompt)
@@ -1516,29 +1738,12 @@ def ai_process_prompt_route():
 
         # Step 3: Parse and process the response using a new ProjectManager method
         ai_data = json.loads(ai_json_string)
-        success, error_msg = project_manager.process_ai_response(ai_data)
+        success, error_msg = pm.process_ai_response(ai_data)
         
         if success:
-            return create_success_response("AI command processed successfully.")
+            return create_success_response(pm, "AI command processed successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to process AI response."}), 500
-
-            # else:
-            #     print(f"Request failed with status code: {ollama_response.status_code}")
-            #     print(ollama_response.text)
-
-            #ollama_response.raise_for_status()
-            # print(ollama_response.json().get('response'))
-            # response_text = ollama_response.json().get('response').strip()
-            # print("\n\nTEXT")
-            # print(response_text)
-
-            # # Extract JSON from Markdown code fences if present
-            # json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-            # if json_match:
-            #     json_text = json_match.group(1).strip()
-            # else:
-            #     json_text = response_text  # Fallback: try parsing raw response
 
     except requests.exceptions.RequestException as e:
         return jsonify({"success": False, "error": f"Could not connect to AI service: {e}"}), 500
@@ -1553,6 +1758,8 @@ def ai_process_prompt_route():
 
 @app.route('/ai_get_full_prompt', methods=['POST'])
 def ai_get_full_prompt_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     user_prompt = data.get('prompt')
     if not user_prompt:
@@ -1560,7 +1767,7 @@ def ai_get_full_prompt_route():
 
     try:
         # Construct the prompt
-        full_prompt = construct_full_ai_prompt(user_prompt)
+        full_prompt = construct_full_ai_prompt(pm, user_prompt)
 
         # Return the constructed prompt as plain text
         return Response(full_prompt, mimetype="text/markdown")
@@ -1571,6 +1778,8 @@ def ai_get_full_prompt_route():
 
 @app.route('/import_ai_json', methods=['POST'])
 def import_ai_json_route():
+    pm = get_project_manager_for_session()
+
     if 'aiFile' not in request.files:
         return jsonify({"success": False, "error": "No AI file part"}), 400
     file = request.files['aiFile']
@@ -1595,10 +1804,10 @@ def import_ai_json_route():
                 return jsonify({"success": False, "error": "AI returned an invalid JSON or Python dictionary string."}), 500
 
         # Use the existing AI processing logic!
-        success, error_msg = project_manager.process_ai_response(ai_data)
+        success, error_msg = pm.process_ai_response(ai_data)
         
         if success:
-            return create_success_response("AI-generated JSON imported successfully.")
+            return create_success_response(pm, "AI-generated JSON imported successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to process AI JSON file."}), 500
 
@@ -1611,10 +1820,8 @@ def import_ai_json_route():
 # --- Route to get the current API key ---
 @app.route('/api/get_gemini_key', methods=['GET'])
 def get_gemini_key():
-    # Reread the key from the .env file in case it was changed manually
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if api_key == "YOUR_API_KEY_HERE":
-        api_key = "" # Don't show the placeholder text
+    # Read the key directly from the user's session
+    api_key = session.get("gemini_api_key", "")
     return jsonify({"api_key": api_key})
 
 # --- Route to set a new API key ---
@@ -1623,33 +1830,53 @@ def set_gemini_key():
     data = request.get_json()
     new_key = data.get('api_key', '')
 
-    try:
-        # Find the .env file path
-        dotenv_path = find_dotenv()
-        if not dotenv_path:
-            # If .env doesn't exist, create it in the current directory
-            dotenv_path = os.path.join(os.getcwd(), '.env')
-            with open(dotenv_path, 'w') as f:
-                pass # Create an empty file
-        
-        # Write the key to the .env file
-        set_key(dotenv_path, "GEMINI_API_KEY", new_key)
-        
-        # Reload environment variables and re-initialize the client
-        load_dotenv(override=True)
-        success = configure_gemini_client()
+    # Store the new key in the user's session. Flask handles the secure cookie.
+    session['gemini_api_key'] = new_key
+    
+    # Attempt to configure the client for this session to validate the key.
+    client_instance = get_gemini_client_for_session()
 
-        if success:
-            return jsonify({"success": True, "message": "API Key updated successfully."})
-        else:
-            return jsonify({"success": False, "error": "API Key was saved, but failed to configure the client. Key might be invalid."})
+    if client_instance:
+        return jsonify({"success": True, "message": "API Key updated and client configured."})
+    elif not new_key:
+        # This handles the case where the user intentionally clears the key.
+        return jsonify({"success": True, "message": "API Key cleared."})
+    else:
+        # The key was set, but the client failed to initialize (likely an invalid key).
+        return jsonify({
+            "success": False,
+            "error": "API Key was saved to your session, but the Gemini client failed to initialize. The key might be invalid."
+        })
 
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "error": f"Failed to save API key: {e}"}), 500
+    # try:
+    #     # Find the .env file path
+    #     dotenv_path = find_dotenv()
+    #     if not dotenv_path:
+    #         # If .env doesn't exist, create it in the current directory
+    #         dotenv_path = os.path.join(os.getcwd(), '.env')
+    #         with open(dotenv_path, 'w') as f:
+    #             pass # Create an empty file
+        
+    #     # Write the key to the .env file
+    #     set_key(dotenv_path, "GEMINI_API_KEY", new_key)
+        
+    #     # Reload environment variables and re-initialize the client
+    #     load_dotenv(override=True)
+    #     success = configure_gemini_client()
+
+    #     if success:
+    #         return jsonify({"success": True, "message": "API Key updated successfully."})
+    #     else:
+    #         return jsonify({"success": False, "error": "API Key was saved, but failed to configure the client. Key might be invalid."})
+
+    # except Exception as e:
+    #     traceback.print_exc()
+    #     return jsonify({"success": False, "error": f"Failed to save API key: {e}"}), 500
 
 @app.route('/import_step_with_options', methods=['POST'])
 def import_step_with_options_route():
+    pm = get_project_manager_for_session()
+
     if 'stepFile' not in request.files:
         return jsonify({"error": "No STEP file part"}), 400
     if 'options' not in request.form:
@@ -1667,9 +1894,9 @@ def import_step_with_options_route():
         
     try:
         # We need a new method in ProjectManager to handle this
-        success, error_msg = project_manager.import_step_with_options(file, options)
+        success, error_msg = pm.import_step_with_options(file, options)
         if success:
-            return create_success_response("STEP file imported successfully.")
+            return create_success_response(pm, "STEP file imported successfully.")
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to process STEP file."}), 500
             
@@ -1680,28 +1907,34 @@ def import_step_with_options_route():
 
 @app.route('/add_assembly', methods=['POST'])
 def add_assembly_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name = data.get('name')
     placements = data.get('placements', [])
-    new_asm, error_msg = project_manager.add_assembly(name, placements)
+    new_asm, error_msg = pm.add_assembly(name, placements)
     if new_asm:
-        return create_success_response("Assembly created.")
+        return create_success_response(pm, "Assembly created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_assembly', methods=['POST'])
 def update_assembly_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     asm_name = data.get('id')
     placements = data.get('placements', [])
-    success, error_msg = project_manager.update_assembly(asm_name, placements)
+    success, error_msg = pm.update_assembly(asm_name, placements)
     if success:
-        return create_success_response(f"Assembly '{asm_name}' updated.")
+        return create_success_response(pm, f"Assembly '{asm_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/create_group', methods=['POST'])
 def create_group_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     group_type = data.get('group_type')
     group_name = data.get('group_name')
@@ -1709,14 +1942,16 @@ def create_group_route():
     if not all([group_type, group_name]):
         return jsonify({"success": False, "error": "Missing group type or name."}), 400
     
-    success, error_msg = project_manager.create_group(group_type, group_name)
+    success, error_msg = pm.create_group(group_type, group_name)
     if success:
-        return create_success_response(f"Group '{group_name}' created.")
+        return create_success_response(pm, f"Group '{group_name}' created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/rename_group', methods=['POST'])
 def rename_group_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     group_type = data.get('group_type')
     old_name = data.get('old_name')
@@ -1725,14 +1960,16 @@ def rename_group_route():
     if not all([group_type, old_name, new_name]):
         return jsonify({"success": False, "error": "Missing data for group rename."}), 400
         
-    success, error_msg = project_manager.rename_group(group_type, old_name, new_name)
+    success, error_msg = pm.rename_group(group_type, old_name, new_name)
     if success:
-        return create_success_response("Group renamed.")
+        return create_success_response(pm, "Group renamed.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/delete_group', methods=['POST'])
 def delete_group_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     group_type = data.get('group_type')
     group_name = data.get('group_name')
@@ -1740,14 +1977,16 @@ def delete_group_route():
     if not all([group_type, group_name]):
         return jsonify({"success": False, "error": "Missing data for group deletion."}), 400
 
-    success, error_msg = project_manager.delete_group(group_type, group_name)
+    success, error_msg = pm.delete_group(group_type, group_name)
     if success:
-        return create_success_response("Group deleted.")
+        return create_success_response(pm, "Group deleted.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/move_items_to_group', methods=['POST'])
 def move_items_to_group_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     group_type = data.get('group_type')
     item_ids = data.get('item_ids')
@@ -1756,14 +1995,16 @@ def move_items_to_group_route():
     if not all([group_type, item_ids]):
         return jsonify({"success": False, "error": "Missing group type or item IDs."}), 400
         
-    success, error_msg = project_manager.move_items_to_group(group_type, item_ids, target_group_name)
+    success, error_msg = pm.move_items_to_group(group_type, item_ids, target_group_name)
     if success:
-        return create_success_response("Items moved successfully.")
+        return create_success_response(pm, "Items moved successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/api/evaluate_expression', methods=['POST'])
 def evaluate_expression_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     expression = data.get('expression')
     if expression is None: # Check for None, as "" is a valid (empty) expression
@@ -1771,7 +2012,7 @@ def evaluate_expression_route():
 
     # Evaluate the expression (the current project state has been set up in
     # the expression evaluator in ProjectManager's recalculate_geometry_state).
-    success, result = expression_evaluator.evaluate(expression)
+    success, result = pm.expression_evaluator.evaluate(expression)
 
     if success:
         return jsonify({"success": True, "result": result})
@@ -1781,6 +2022,8 @@ def evaluate_expression_route():
 
 @app.route('/create_assembly_from_pvs', methods=['POST'])
 def create_assembly_from_pvs_route():
+    pm = get_project_manager_for_session()
+    
     data = request.get_json()
     pv_ids = data.get('pv_ids')
     assembly_name = data.get('assembly_name')
@@ -1789,45 +2032,51 @@ def create_assembly_from_pvs_route():
     if not all([pv_ids, assembly_name, parent_lv_name]):
         return jsonify({"success": False, "error": "Missing data for assembly creation."}), 400
 
-    new_pv, error_msg = project_manager.create_assembly_from_pvs(
+    new_pv, error_msg = pm.create_assembly_from_pvs(
         pv_ids, assembly_name, parent_lv_name
     )
     
     if error_msg:
         return jsonify({"success": False, "error": error_msg}), 500
     else:
-        return create_success_response(f"Assembly '{assembly_name}' created successfully.")
+        return create_success_response(pm, f"Assembly '{assembly_name}' created successfully.")
 
 @app.route('/move_pv_to_assembly', methods=['POST'])
 def move_pv_to_assembly_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     pv_ids = data.get('pv_ids')
     target_assembly_name = data.get('target_assembly_name')
     if not all([pv_ids, target_assembly_name]):
         return jsonify({"success": False, "error": "Missing PV IDs or target assembly name."}), 400
 
-    success, error_msg = project_manager.move_pv_to_assembly(pv_ids, target_assembly_name)
+    success, error_msg = pm.move_pv_to_assembly(pv_ids, target_assembly_name)
     if success:
-        return create_success_response("PV moved to assembly.")
+        return create_success_response(pm, "PV moved to assembly.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/move_pv_to_lv', methods=['POST'])
 def move_pv_to_lv_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     pv_ids = data.get('pv_ids')
     target_lv_name = data.get('target_lv_name')
     if not all([pv_ids, target_lv_name]):
         return jsonify({"success": False, "error": "Missing PV IDs or target LV name."}), 400
 
-    success, error_msg = project_manager.move_pv_to_lv(pv_ids, target_lv_name)
+    success, error_msg = pm.move_pv_to_lv(pv_ids, target_lv_name)
     if success:
-        return create_success_response("PV moved to logical volume.")
+        return create_success_response(pm, "PV moved to logical volume.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_optical_surface', methods=['POST'])
 def add_optical_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     params = {
@@ -1841,15 +2090,17 @@ def add_optical_surface_route():
     if not name_suggestion:
         return jsonify({"success": False, "error": "Missing name for optical surface."}), 400
     
-    new_obj, error_msg = project_manager.add_optical_surface(name_suggestion, params)
+    new_obj, error_msg = pm.add_optical_surface(name_suggestion, params)
     
     if new_obj:
-        return create_success_response("Optical Surface created.")
+        return create_success_response(pm, "Optical Surface created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_optical_surface', methods=['POST'])
 def update_optical_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     surface_name = data.get('id')
     new_params = {
@@ -1863,15 +2114,17 @@ def update_optical_surface_route():
     if not surface_name:
         return jsonify({"success": False, "error": "Missing ID for optical surface update."}), 400
 
-    success, error_msg = project_manager.update_optical_surface(surface_name, new_params)
+    success, error_msg = pm.update_optical_surface(surface_name, new_params)
     
     if success:
-        return create_success_response(f"Optical Surface '{surface_name}' updated.")
+        return create_success_response(pm, f"Optical Surface '{surface_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_skin_surface', methods=['POST'])
 def add_skin_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     volume_ref = data.get('volume_ref')
@@ -1880,15 +2133,17 @@ def add_skin_surface_route():
     if not all([name_suggestion, volume_ref, surface_ref]):
         return jsonify({"success": False, "error": "Missing name, volume reference, or surface reference."}), 400
     
-    new_obj, error_msg = project_manager.add_skin_surface(name_suggestion, volume_ref, surface_ref)
+    new_obj, error_msg = pm.add_skin_surface(name_suggestion, volume_ref, surface_ref)
     
     if new_obj:
-        return create_success_response("Skin Surface created.")
+        return create_success_response(pm, "Skin Surface created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_skin_surface', methods=['POST'])
 def update_skin_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     surface_name = data.get('id')
     volume_ref = data.get('volume_ref')
@@ -1897,15 +2152,17 @@ def update_skin_surface_route():
     if not all([surface_name, volume_ref, surface_ref]):
         return jsonify({"success": False, "error": "Missing name, volume reference, or surface reference for update."}), 400
 
-    success, error_msg = project_manager.update_skin_surface(surface_name, volume_ref, surface_ref)
+    success, error_msg = pm.update_skin_surface(surface_name, volume_ref, surface_ref)
     
     if success:
-        return create_success_response(f"Skin Surface '{surface_name}' updated.")
+        return create_success_response(pm, f"Skin Surface '{surface_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/add_border_surface', methods=['POST'])
 def add_border_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     name_suggestion = data.get('name')
     pv1_ref = data.get('physvol1_ref')
@@ -1916,15 +2173,17 @@ def add_border_surface_route():
     if not all([name_suggestion, pv1_ref, pv2_ref, surface_ref]):
         return jsonify({"success": False, "error": "Missing name or reference for border surface."}), 400
     
-    new_obj, error_msg = project_manager.add_border_surface(name_suggestion, pv1_ref, pv2_ref, surface_ref)
+    new_obj, error_msg = pm.add_border_surface(name_suggestion, pv1_ref, pv2_ref, surface_ref)
     
     if new_obj:
-        return create_success_response("Border Surface created.")
+        return create_success_response(pm, "Border Surface created.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/update_border_surface', methods=['POST'])
 def update_border_surface_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     surface_name = data.get('id')
     pv1_ref = data.get('physvol1_ref')
@@ -1934,15 +2193,17 @@ def update_border_surface_route():
     if not all([surface_name, pv1_ref, pv2_ref, surface_ref]):
         return jsonify({"success": False, "error": "Missing data for border surface update."}), 400
 
-    success, error_msg = project_manager.update_border_surface(surface_name, pv1_ref, pv2_ref, surface_ref)
+    success, error_msg = pm.update_border_surface(surface_name, pv1_ref, pv2_ref, surface_ref)
     
     if success:
-        return create_success_response(f"Border Surface '{surface_name}' updated.")
+        return create_success_response(pm, f"Border Surface '{surface_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
 @app.route('/api/create_detector_ring', methods=['POST'])
 def create_detector_ring_route():
+    pm = get_project_manager_for_session()
+
     data = request.get_json()
     # Check for required fields
     required_fields = ['parent_lv_name', 'lv_to_place', 'ring_name', 'num_detectors',
@@ -1951,7 +2212,7 @@ def create_detector_ring_route():
         return jsonify({"success": False, "error": "Missing parameters for ring creation."}), 400
 
     # Pass all arguments, including optional ones with defaults
-    new_pv_assembly, error_msg = project_manager.create_detector_ring(
+    new_pv_assembly, error_msg = pm.create_detector_ring(
         parent_lv_name=data['parent_lv_name'],
         lv_to_place_ref=data['lv_to_place'],
         ring_name=data['ring_name'],
@@ -1968,7 +2229,51 @@ def create_detector_ring_route():
     if error_msg:
         return jsonify({"success": False, "error": error_msg}), 500
     else:
-        return create_success_response(f"Detector ring '{data['ring_name']}' created successfully.")
+        return create_success_response(pm, f"Detector ring '{data['ring_name']}' created successfully.")
+
+# -------------------------------------------------------------------------------
+# Session timeout management
+SESSION_TIMEOUT_SECONDS = 300  # 5 mins
+
+def cleanup_inactive_sessions():
+
+    # Do not perform cleanup in local mode
+    if APP_MODE == 'local':
+        return
+    
+    with SIMULATION_LOCK: # Reuse your lock to be safe
+        now = time.time()
+        inactive_sessions = [
+            user_id for user_id, last_time in last_access.items() 
+            if now - last_time > SESSION_TIMEOUT_SECONDS
+        ]
+
+        for user_id in inactive_sessions:
+            print(f"Cleaning up inactive session: {user_id}")
+            # Remove from the manager cache
+            if user_id in project_managers:
+                del project_managers[user_id]
+            # Remove from last access tracker
+            if user_id in last_access:
+                del last_access[user_id]
+            
+            # Remove the user's project directory
+            session_project_dir = os.path.join(PROJECTS_BASE_DIR, user_id)
+            if os.path.exists(session_project_dir):
+                shutil.rmtree(session_project_dir) # Be careful with this!
+
+def run_cleanup_scheduler(sc):
+    cleanup_inactive_sessions()
+    # Re-schedule the cleanup to run again in 1 hour
+    sc.enter(SESSION_TIMEOUT_SECONDS, 1, run_cleanup_scheduler, (sc,))
+
+# --- Scheduler to run the cleanup task ---
+scheduler = sched.scheduler(time.time, time.sleep)
+
+# Start the scheduler in a background thread
+scheduler_thread = threading.Thread(target=run_cleanup_scheduler, args=(scheduler,))
+scheduler_thread.daemon = True
+scheduler_thread.start()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)
