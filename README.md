@@ -1,5 +1,5 @@
-<div style="text-align: center;">
-  <img src="static/AIrPET_logo_small.png" alt="image" width="150">
+<div align="center" style="text-align: center;">
+  <img src="static/AIrPET_logo_small.png" alt="image" width="120">
 </div>
 
 # airpet
