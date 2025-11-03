@@ -1,24 +1,24 @@
 # Use a Miniconda base image to get access to the conda package manager
-FROM continuumio/miniconda3:latest
+FROM jerenner/geant4-airpet-base:11.3.2
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy the environment configuration and requirements files first
-# This helps Docker cache layers efficiently.
-COPY requirements.txt .
+# Copy AIRPET files (Render auto-clones the repo for build context)
+COPY . .
 
 # Create the conda environment and install pythonocc-core and pip dependencies
 # This is the most important step for your complex dependency.
-RUN conda create --name virtualpet python=3.10 && \
-    conda install -c conda-forge --name virtualpet --yes pythonocc-core && \
-    conda run -n virtualpet pip install -r requirements.txt
+RUN conda create --name airpet python=3.10 && \
+    conda install -c conda-forge --name airpet --yes pythonocc-core && \
+    conda run -n airpet pip install -r requirements.txt
+
+# Build custom Geant4 binary from geant4 directory
+RUN mkdir geant4/build && cd geant4/build && \
+    cmake .. && make -j$(nproc)
 
 # Set the entrypoint to use the conda environment
 SHELL ["conda", "run", "-n", "virtualpet", "/bin/bash", "-c"]
-
-# Copy the rest of your application code into the container
-COPY . .
 
 # Expose the port your Flask app runs on
 EXPOSE 5003

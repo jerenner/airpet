@@ -1,6 +1,9 @@
-# airpet
+<div style="text-align: center;">
+  <img src="static/AIrPET_logo_small.png" alt="image" width="150">
+</div>
 
-airpet is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts.
+# airpet
+AIrPET is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts.
 
 ![airpet demo](static/airpet_demo.gif)
 
