@@ -18,7 +18,7 @@ RUN mkdir geant4/build && cd geant4/build && \
     cmake .. && make -j$(nproc)
 
 # Set the entrypoint to use the conda environment
-SHELL ["conda", "run", "-n", "virtualpet", "/bin/bash", "-c"]
+SHELL ["conda", "run", "-n", "airpet", "/bin/bash", "-c"]
 
 # Expose the port your Flask app runs on
 EXPOSE 5003
