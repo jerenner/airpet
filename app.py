@@ -2275,5 +2275,10 @@ scheduler_thread = threading.Thread(target=run_cleanup_scheduler, args=(schedule
 scheduler_thread.daemon = True
 scheduler_thread.start()
 
+# Route for terms/privacy policy
+@app.route('/legal')
+def legal_page():
+    return render_template('legal.html')
+
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

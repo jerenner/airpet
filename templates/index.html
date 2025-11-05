@@ -1150,322 +1150,345 @@
             font-style: italic;
         }
 
+        #app-footer {
+            flex-shrink: 0; /* Prevents the footer from shrinking */
+            padding: 5px 15px;
+            background-color: #333; /* Matches your top menu bar for consistency */
+            color: #ccc;           /* Light text color */
+            font-size: 12px;
+            text-align: right;    /* Aligns the link to the right */
+            border-top: 1px solid #555; /* Subtle top border */
+            z-index: 2500; /* High z-index but below modals */
+        }
+
+        #app-footer a {
+            color: #a0c3ff; /* A pleasant light blue for links on a dark background */
+            text-decoration: none;
+        }
+
+        #app-footer a:hover {
+            text-decoration: underline;
+        }
+
     </style>
 </head>
 <body style="display: flex; width: 100vw; height: 100vh;">
-    <div id="left_panel_container">
-        <div id="left_panel_tabs" class="tab_navigation">
-            <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
-            <button class="tab_button" data-tab="tab_volumes">Volumes</button>
-            <button class="tab_button" data-tab="tab_defines">Defines</button>
-            <button class="tab_button" data-tab="tab_properties">Properties</button>
-            <button class="tab_button" data-tab="tab_solids">Solids</button>
-        </div>
-        <div id="left_panel_content" class="tab_content_area">
-            <div id="tab_structure" class="tab_pane active">
-                <!-- Structure (Volumes) Hierarchy will be built here -->
-                <div class="tab_header">
-                    <span class="tab-title">World Structure</span>
-                    <div>
-                        <button class="add_button" data-add-type="particle_source" title="Add a General Particle Source">+ GPS</button>
-                        <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
-                    </div>
-                </div>
-                <ul id="structure_tree_root"></ul>
-            </div>
-            <div id="tab_volumes" class="tab_pane">
-                <div class="accordion">
-                    <!-- Logical Volumes Accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[-]</span>
-                            <span>&nbsp;Logical Volumes</span>
-                        </div>
-                        <div class="accordion-content active">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="logical_volume" title="Create a new Logical Volume">+ Add</button>
-                            </div>
-                            <ul id="lvolumes_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Assemblies Accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Assemblies</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="assembly" title="Add new Assembly Definition">+ Add</button>
-                            </div>
-                            <ul id="assemblies_list_root"></ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="tab_defines" class="tab_pane">
-                <div class="tab_header">
-                    <span class="tab-title">Defines</span>
-                    <button class="add-group-btn" data-group-type="define" title="Add new Group">📁</button>
-                    <button class="add_button" data-add-type="define" title="Add new Define">+ Add</button>
-                </div>
-                <ul id="defines_list_root"></ul>
-            </div>
-            <div id="tab_properties" class="tab_pane">
-                <div class="accordion">
-                    <!-- Materials accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[-]</span>
-                            <span>&nbsp;Materials</span>
-                        </div>
-                        <div class="accordion-content active">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
-                            </div>
-                            <ul id="materials_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Elements accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Elements</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="element" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="element" title="Create a new Element">+ Add</button>
-                            </div>
-                            <ul id="elements_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Isotopes Accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Isotopes</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="isotope" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="isotope" title="Create a new Isotope">+ Add</button>
-                            </div>
-                            <ul id="isotopes_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Optical surfaces accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Optical Surfaces</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="optical_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="optical_surface" title="Create a new Optical Surface">+ Add</button>
-                            </div>
-                            <ul id="optical_surfaces_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Skin surfaces accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Skin Surfaces</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="skin_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="skin_surface" title="Create a new Skin Surface">+ Add</button>
-                            </div>
-                            <ul id="skin_surfaces_list_root"></ul>
-                        </div>
-                    </div>
-                    <!-- Border surfaces accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[+]</span>
-                            <span>&nbsp;Border Surfaces</span>
-                        </div>
-                        <div class="accordion-content">
-                            <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="border_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="border_surface" title="Create a new Border Surface">+ Add</button>
-                            </div>
-                            <ul id="border_surfaces_list_root"></ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="tab_solids" class="tab_pane">
-                <div class="tab_header">
-                    <span class="tab-title">Solids</span>
-                    <button class="add-group-btn" data-group-type="solid" title="Add new Group">📁</button>
-                    <button class="add_button" data-add-type="solid" title="Add new Solid">+ Add</button>
-                </div>
-                <ul id="solids_list_root"></ul>
-            </div>
-        </div>
-        <div id="inspector_panel">
-            <h3>Inspector</h3>
-            <div id="inspector_content">
-                <p>Select an item.</p>
-            </div>
-        </div>
-    </div>
-    <div id="main_content_area">
-        <div id="menu_bar">
-            <ul>
-                <!-- File Menu -->
-                <li>
-                    <button>File</button>
-                    <div class="dropdown_content">
-                        <button id="newProjectButton">New Geometry</button>
-                        <hr>
-                        <!-- Open entire projects -->
-                        <button id="openGdmlButton">Load Geometry (GDML)...</button>
-                        <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
-                        <button id="openProjectButton">Load Geometry (JSON)...</button>
-                        <input type="file" id="projectFile" accept=".json" style="display: none;">
-                        <hr style="margin: 5px 0;">
-                        <!-- Import functionality -->
-                        <button id="importGdmlButton">Import Part(s) (GDML)...</button>
-                        <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
-                        <button id="importProjectButton">Import Part(s) (JSON)...</button>
-                        <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
-                        <button id="importAiResponseButton">Import AI Response (JSON)...</button>
-                        <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
-                        <button id="importStepButton">Import CAD (STEP)...</button>
-                        <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
-                        <hr style="margin: 5px 0;">
-                        <button id="saveProjectButton">Export JSON...</button>
-                        <button id="exportGdmlButton">Export GDML...</button>
-                        <hr style="margin: 5px 0;">
-                        <button id="setApiKeyButton">Set Gemini API Key...</button>
-                    </div>
-                </li>
-                <!-- Edit Menu -->
-                <li>
-                    <button>Edit</button>
-                    <div class="dropdown_content">
-                        <button id="deleteSelectedObjectButton">Delete Selected (Del/Bksp)</button>
-                        <hr style="margin: 5px 0;">
-                        <button id="undoButton" disabled>Undo (Ctrl+Z)</button>
-                        <button id="redoButton" disabled>Redo (Ctrl+Shift+Z)</button>
-                        <hr style="margin: 5px 0;">
-                        <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
-                        <div class="snap-settings-container">
-                            <div class="snap-input-row">
-                                <label for="gridSnapSizeInput">Translate (mm):</label>
-                                <input type="number" id="gridSnapSizeInput" value="10" step="any">
-                            </div>
-                            <div class="snap-input-row">
-                                <label for="angleSnapSizeInput">Rotate (deg):</label>
-                                <input type="number" id="angleSnapSizeInput" value="45" step="5">
-                            </div>
-                        </div>
-                    </div>
-                </li>
-                <!-- View Menu -->
-                <li>
-                    <button>View</button>
-                    <div class="dropdown_content">
-                        <button id="toggleWireframeButton">Toggle Wireframe</button>
-                        <button id="toggleGridButton">Toggle Grid</button>
-                        <button id="toggleAxesButton">Toggle Axes</button>
-                        <hr style="margin: 5px 0;">
-                        <button id="cameraModeOriginButton" class="active_mode">Camera: Origin (O)</button>
-                        <button id="cameraModeSelectedButton">Camera: Focus Selected (F)</button>
-                        <hr style="margin: 5px 0;">
-                        <button id="hideSelBtn">Hide Selected (H)</button>
-                        <button id="showSelBtn">Show Selected (J)</button>
-                        <button id="hideAllBtn">Hide All (Shift+H)</button>
-                        <button id="showAllBtn">Show All (Shift+J)</button>
-                    </div>
-                </li>
-                <!-- Object Menu -->
-                <li>
-                    <button>Object</button>
-                    <div class="dropdown_content">
-                        <button id="createRingArrayButton">Create Ring Array</button>
-                    </div>
-                </li>
-                <!-- Mode Menu -->
-                <li>
-                    <button>Mode</button>
-                    <div class="dropdown_content">
-                        <button id="modeObserveButton" class="active_mode">Observe (E)</button>
-                        <button id="modeTranslateButton">Translate (T)</button>
-                        <button id="modeRotateButton">Rotate (R)</button>
-                        <!--<button id="modeScaleButton">Scale (E)</button>-->
-                    </div>
-                </li>
-                <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Observe</span></li>
-            </ul>
-            <div id="project_controls" style="display: flex; align-items: center; margin-left: auto;">
-                <div id="project-name-wrapper" style="position: relative;">
-                    <span id="projectNameDisplay" contenteditable="true" title="Click to switch projects or edit name">untitled</span>
-                    <div id="project-list-dropdown" style="display: none;">
-                        <!-- Project names will be populated here by JavaScript -->
-                    </div>
-                </div>
-                <button id="historyButton" title="Show Project History">🕒</button>
-            </div>
-        </div>
-        <div id="viewer_container"></div>
-        <!-- The selection box element -->
-        <div id="selection_box" class="selection-box" style="display:none;"></div>
-        <!-- AI PANEL --- -->
-        <div id="bottom_panel">
-            <div id="bottom_panel_tabs" class="tab_navigation">
-                <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
-                <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
-                <button id="toggleBottomPanelBtn" title="Expand/Collapse Panel">↑</button>
-            </div>
-            <div id="bottom_panel_content" class="tab_content_area">
-                <!-- AI Panel Content -->
-                <div id="tab_ai_panel" class="tab_pane active">
-                    <div id="ai_panel_content">
-                        <textarea id="ai_prompt_input" placeholder="Ask AI to create geometry"></textarea>
-                        <div class="ai-controls-wrapper">
-                            <select id="ai_model_select" title="Select AI Model">
-                                <!-- Add a static option for exporting -->
-                                <option value="--export--">[ Export Prompt ]</option>
-                                <option disabled>──────────</option> <!-- Visual separator -->
-                                <!-- Dynamic options will be added here by JS -->
-                            </select>
-                            <button id="ai_generate_button" title="Generate with AI">
-                                <span class="button-text">➤</span>
-                                <div class="loader"></div>
-                            </button>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Simulation Panel Content -->
-                <div id="tab_sim_panel" class="tab_pane">
-                    <div id="sim_controls">
-                        <label for="simEventsInput">Events:</label>
-                        <input type="number" id="simEventsInput" value="10" min="1" step="1">
-                        <button id="runSimButton">▶ Run</button>
-                        <button id="stopSimButton" disabled>⏹ Stop</button>
-                        <button id="simOptionsButton">⚙️ Options</button>
-                        <button id="reconModalButton" title="Open PET Reconstruction" disabled>PET Reco</button>
-                        <div id="sim_status_display" style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
-                            <span>No simulation run loaded.</span>
-                        </div>
-                        <div style="margin-left: 20px; display: flex; align-items: center; gap: 5px;">
-                            <input type="checkbox" id="drawTracksCheckbox" title="Draw saved tracks in 3D view">
-                            <label for="drawTracksCheckbox" style="font-size: 12px;">Draw Tracks:</label>
-                            <input type="text" id="drawTracksRange" value="0-9" style="width: 60px;">
+    <div id="app-container" style="display: flex; flex-grow: 1; overflow: hidden;">
+        <div id="left_panel_container">
+            <div id="left_panel_tabs" class="tab_navigation">
+                <button class="tab_button active" data-tab="tab_structure">Hierarchy</button>
+                <button class="tab_button" data-tab="tab_volumes">Volumes</button>
+                <button class="tab_button" data-tab="tab_defines">Defines</button>
+                <button class="tab_button" data-tab="tab_properties">Properties</button>
+                <button class="tab_button" data-tab="tab_solids">Solids</button>
+            </div>
+            <div id="left_panel_content" class="tab_content_area">
+                <div id="tab_structure" class="tab_pane active">
+                    <!-- Structure (Volumes) Hierarchy will be built here -->
+                    <div class="tab_header">
+                        <span class="tab-title">World Structure</span>
+                        <div>
+                            <button class="add_button" data-add-type="particle_source" title="Add a General Particle Source">+ GPS</button>
+                            <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                         </div>
                     </div>
-                    <div id="sim_console_wrapper">
-                        <pre id="sim_console"></pre>
+                    <ul id="structure_tree_root"></ul>
+                </div>
+                <div id="tab_volumes" class="tab_pane">
+                    <div class="accordion">
+                        <!-- Logical Volumes Accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[-]</span>
+                                <span>&nbsp;Logical Volumes</span>
+                            </div>
+                            <div class="accordion-content active">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="logical_volume" title="Create a new Logical Volume">+ Add</button>
+                                </div>
+                                <ul id="lvolumes_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Assemblies Accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Assemblies</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="assembly" title="Add new Assembly Definition">+ Add</button>
+                                </div>
+                                <ul id="assemblies_list_root"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="tab_defines" class="tab_pane">
+                    <div class="tab_header">
+                        <span class="tab-title">Defines</span>
+                        <button class="add-group-btn" data-group-type="define" title="Add new Group">📁</button>
+                        <button class="add_button" data-add-type="define" title="Add new Define">+ Add</button>
+                    </div>
+                    <ul id="defines_list_root"></ul>
+                </div>
+                <div id="tab_properties" class="tab_pane">
+                    <div class="accordion">
+                        <!-- Materials accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[-]</span>
+                                <span>&nbsp;Materials</span>
+                            </div>
+                            <div class="accordion-content active">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
+                                </div>
+                                <ul id="materials_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Elements accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Elements</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="element" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="element" title="Create a new Element">+ Add</button>
+                                </div>
+                                <ul id="elements_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Isotopes Accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Isotopes</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="isotope" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="isotope" title="Create a new Isotope">+ Add</button>
+                                </div>
+                                <ul id="isotopes_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Optical surfaces accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Optical Surfaces</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="optical_surface" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="optical_surface" title="Create a new Optical Surface">+ Add</button>
+                                </div>
+                                <ul id="optical_surfaces_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Skin surfaces accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Skin Surfaces</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="skin_surface" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="skin_surface" title="Create a new Skin Surface">+ Add</button>
+                                </div>
+                                <ul id="skin_surfaces_list_root"></ul>
+                            </div>
+                        </div>
+                        <!-- Border surfaces accordion -->
+                        <div class="accordion-item">
+                            <div class="accordion-header">
+                                <span class="accordion-toggle">[+]</span>
+                                <span>&nbsp;Border Surfaces</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="tab_header">
+                                    <button class="add-group-btn" data-group-type="border_surface" title="Add new Group">📁</button>
+                                    <button class="add_button" data-add-type="border_surface" title="Create a new Border Surface">+ Add</button>
+                                </div>
+                                <ul id="border_surfaces_list_root"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="tab_solids" class="tab_pane">
+                    <div class="tab_header">
+                        <span class="tab-title">Solids</span>
+                        <button class="add-group-btn" data-group-type="solid" title="Add new Group">📁</button>
+                        <button class="add_button" data-add-type="solid" title="Add new Solid">+ Add</button>
+                    </div>
+                    <ul id="solids_list_root"></ul>
+                </div>
+            </div>
+            <div id="inspector_panel">
+                <h3>Inspector</h3>
+                <div id="inspector_content">
+                    <p>Select an item.</p>
+                </div>
+            </div>
+        </div>
+        <div id="main_content_area">
+            <div id="menu_bar">
+                <ul>
+                    <!-- File Menu -->
+                    <li>
+                        <button>File</button>
+                        <div class="dropdown_content">
+                            <button id="newProjectButton">New Geometry</button>
+                            <hr>
+                            <!-- Open entire projects -->
+                            <button id="openGdmlButton">Load Geometry (GDML)...</button>
+                            <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
+                            <button id="openProjectButton">Load Geometry (JSON)...</button>
+                            <input type="file" id="projectFile" accept=".json" style="display: none;">
+                            <hr style="margin: 5px 0;">
+                            <!-- Import functionality -->
+                            <button id="importGdmlButton">Import Part(s) (GDML)...</button>
+                            <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
+                            <button id="importProjectButton">Import Part(s) (JSON)...</button>
+                            <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
+                            <button id="importAiResponseButton">Import AI Response (JSON)...</button>
+                            <input type="file" id="aiResponseFile" accept=".json" style="display: none;">
+                            <button id="importStepButton">Import CAD (STEP)...</button>
+                            <input type="file" id="stepFile" accept=".step,.stp" style="display: none;">
+                            <hr style="margin: 5px 0;">
+                            <button id="saveProjectButton">Export JSON...</button>
+                            <button id="exportGdmlButton">Export GDML...</button>
+                            <hr style="margin: 5px 0;">
+                            <button id="setApiKeyButton">Set Gemini API Key...</button>
+                        </div>
+                    </li>
+                    <!-- Edit Menu -->
+                    <li>
+                        <button>Edit</button>
+                        <div class="dropdown_content">
+                            <button id="deleteSelectedObjectButton">Delete Selected (Del/Bksp)</button>
+                            <hr style="margin: 5px 0;">
+                            <button id="undoButton" disabled>Undo (Ctrl+Z)</button>
+                            <button id="redoButton" disabled>Redo (Ctrl+Shift+Z)</button>
+                            <hr style="margin: 5px 0;">
+                            <button id="toggleSnapToGridButton">Snap to Grid: ON</button>
+                            <div class="snap-settings-container">
+                                <div class="snap-input-row">
+                                    <label for="gridSnapSizeInput">Translate (mm):</label>
+                                    <input type="number" id="gridSnapSizeInput" value="10" step="any">
+                                </div>
+                                <div class="snap-input-row">
+                                    <label for="angleSnapSizeInput">Rotate (deg):</label>
+                                    <input type="number" id="angleSnapSizeInput" value="45" step="5">
+                                </div>
+                            </div>
+                        </div>
+                    </li>
+                    <!-- View Menu -->
+                    <li>
+                        <button>View</button>
+                        <div class="dropdown_content">
+                            <button id="toggleWireframeButton">Toggle Wireframe</button>
+                            <button id="toggleGridButton">Toggle Grid</button>
+                            <button id="toggleAxesButton">Toggle Axes</button>
+                            <hr style="margin: 5px 0;">
+                            <button id="cameraModeOriginButton" class="active_mode">Camera: Origin (O)</button>
+                            <button id="cameraModeSelectedButton">Camera: Focus Selected (F)</button>
+                            <hr style="margin: 5px 0;">
+                            <button id="hideSelBtn">Hide Selected (H)</button>
+                            <button id="showSelBtn">Show Selected (J)</button>
+                            <button id="hideAllBtn">Hide All (Shift+H)</button>
+                            <button id="showAllBtn">Show All (Shift+J)</button>
+                        </div>
+                    </li>
+                    <!-- Object Menu -->
+                    <li>
+                        <button>Object</button>
+                        <div class="dropdown_content">
+                            <button id="createRingArrayButton">Create Ring Array</button>
+                        </div>
+                    </li>
+                    <!-- Mode Menu -->
+                    <li>
+                        <button>Mode</button>
+                        <div class="dropdown_content">
+                            <button id="modeObserveButton" class="active_mode">Observe (E)</button>
+                            <button id="modeTranslateButton">Translate (T)</button>
+                            <button id="modeRotateButton">Rotate (R)</button>
+                            <!--<button id="modeScaleButton">Scale (E)</button>-->
+                        </div>
+                    </li>
+                    <li><span id="currentModeDisplay" style="padding: 8px 12px; font-style: italic;">Observe</span></li>
+                </ul>
+                <div id="project_controls" style="display: flex; align-items: center; margin-left: auto;">
+                    <div id="project-name-wrapper" style="position: relative;">
+                        <span id="projectNameDisplay" contenteditable="true" title="Click to switch projects or edit name">untitled</span>
+                        <div id="project-list-dropdown" style="display: none;">
+                            <!-- Project names will be populated here by JavaScript -->
+                        </div>
+                    </div>
+                    <button id="historyButton" title="Show Project History">🕒</button>
+                </div>
+            </div>
+            <div id="viewer_container"></div>
+            <!-- The selection box element -->
+            <div id="selection_box" class="selection-box" style="display:none;"></div>
+            <!-- AI PANEL --- -->
+            <div id="bottom_panel">
+                <div id="bottom_panel_tabs" class="tab_navigation">
+                    <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
+                    <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
+                    <button id="toggleBottomPanelBtn" title="Expand/Collapse Panel">↑</button>
+                </div>
+                <div id="bottom_panel_content" class="tab_content_area">
+                    <!-- AI Panel Content -->
+                    <div id="tab_ai_panel" class="tab_pane active">
+                        <div id="ai_panel_content">
+                            <textarea id="ai_prompt_input" placeholder="Ask AI to create geometry"></textarea>
+                            <div class="ai-controls-wrapper">
+                                <select id="ai_model_select" title="Select AI Model">
+                                    <!-- Add a static option for exporting -->
+                                    <option value="--export--">[ Export Prompt ]</option>
+                                    <option disabled>──────────</option> <!-- Visual separator -->
+                                    <!-- Dynamic options will be added here by JS -->
+                                </select>
+                                <button id="ai_generate_button" title="Generate with AI">
+                                    <span class="button-text">➤</span>
+                                    <div class="loader"></div>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Simulation Panel Content -->
+                    <div id="tab_sim_panel" class="tab_pane">
+                        <div id="sim_controls">
+                            <label for="simEventsInput">Events:</label>
+                            <input type="number" id="simEventsInput" value="10" min="1" step="1">
+                            <button id="runSimButton">▶ Run</button>
+                            <button id="stopSimButton" disabled>⏹ Stop</button>
+                            <button id="simOptionsButton">⚙️ Options</button>
+                            <button id="reconModalButton" title="Open PET Reconstruction" disabled>PET Reco</button>
+                            <div id="sim_status_display" style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
+                                <span>No simulation run loaded.</span>
+                            </div>
+                            <div style="margin-left: 20px; display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" id="drawTracksCheckbox" title="Draw saved tracks in 3D view">
+                                <label for="drawTracksCheckbox" style="font-size: 12px;">Draw Tracks:</label>
+                                <input type="text" id="drawTracksRange" value="0-9" style="width: 60px;">
+                            </div>
+                        </div>
+                        <div id="sim_console_wrapper">
+                            <pre id="sim_console"></pre>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2262,5 +2285,12 @@
         }
     </script>
     <script type="module" src="{{ url_for('static', filename='main.js') }}"></script>
+    <div id="app-footer" style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">
+        <a href="/legal" target="_blank" style="color: #BBB;">Terms & Privacy</a>
+    </div>
+    <div id="cookie-notice" style="display: none; position: fixed; bottom: 0; left: 0; width: 100%; background-color: rgba(0, 0, 0, 0.8); color: white; padding: 15px; text-align: center; z-index: 3000; font-size: 14px;">
+        <span>This site uses a temporary cookie to manage your session. By continuing to use the site, you agree to our <a href="/legal" target="_blank" style="color: #a0c3ff; text-decoration: underline;">Terms and Privacy Policy</a>.</span>
+        <button id="accept-cookies" style="margin-left: 20px; padding: 5px 15px; border: none; background-color: #3b82f6; color: white; border-radius: 5px; cursor: pointer;">OK</button>
+    </div>
 </body>
 </html>

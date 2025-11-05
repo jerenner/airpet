@@ -66,6 +66,20 @@ document.addEventListener('DOMContentLoaded', initializeApp);
 async function initializeApp() {
     console.log("Initializing GDML Editor Application...");
 
+    // --- COOKIE BANNER LOGIC ---
+    const cookieNotice = document.getElementById('cookie-notice');
+    const acceptCookiesBtn = document.getElementById('accept-cookies');
+
+    if (localStorage.getItem('cookies_accepted') !== 'true') {
+        cookieNotice.style.display = 'block';
+    }
+
+    acceptCookiesBtn.addEventListener('click', () => {
+        localStorage.setItem('cookies_accepted', 'true');
+        cookieNotice.style.display = 'none';
+    });
+    // ---------------------------
+
     // Initialize UI elements and pass callback handlers for UI-triggered actions
     UIManager.initUI({
         onNewProjectClicked: handleNewProject,
