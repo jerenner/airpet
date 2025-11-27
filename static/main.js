@@ -180,10 +180,10 @@ async function initializeApp() {
         //onObjectTransformLive: handleTransformLive,       // Live transformations
         onMultiObjectSelected: handle3DMultiSelection, // Selector box
         getInspectorSnapSettings: () => { // Provide snap settings to SceneManager/TransformControls
-            return { 
-                snapEnabled: InteractionManager.isSnapEnabled(), 
+            return {
+                snapEnabled: InteractionManager.isSnapEnabled(),
                 translationSnap: InteractionManager.getTranslationSnapValue(),
-                rotationSnap: InteractionManager.getRotationSnapValue() 
+                rotationSnap: InteractionManager.getRotationSnapValue()
             };
         }
     });
@@ -192,7 +192,7 @@ async function initializeApp() {
     GpsEditor.initGpsEditor({
         onConfirm: handleGpsEditorConfirm
     });
-    
+
     // Initialize interaction manager (modes, keyboard shortcuts for transforms)
     InteractionManager.initInteractionManager(
         SceneManager.getTransformControls(), // Pass the TransformControls instance
@@ -200,7 +200,7 @@ async function initializeApp() {
     );
 
     // Initialize define editor
-    DefineEditor.initDefineEditor({ 
+    DefineEditor.initDefineEditor({
         onConfirm: handleDefineEditorConfirm,
         getProjectState: () => AppState.currentProjectState // Provide access to state
     });
@@ -226,13 +226,13 @@ async function initializeApp() {
     });
 
     // Initialize the isotopes editor
-    IsotopeEditor.initIsotopeEditor({ 
-        onConfirm: handleIsotopeEditorConfirm 
+    IsotopeEditor.initIsotopeEditor({
+        onConfirm: handleIsotopeEditorConfirm
     });
 
     // Initialize physical volume editor
-    PVEditor.initPVEditor({ 
-        onConfirm: handlePVEditorConfirm 
+    PVEditor.initPVEditor({
+        onConfirm: handlePVEditorConfirm
     });
 
     // Ring array editor
@@ -243,7 +243,7 @@ async function initializeApp() {
     // Initialize solid editor
     SolidEditor.initSolidEditor({
         onConfirm: handleSolidEditorConfirm,
-        getSelectedParentContext: () => UIManager.getSelectedParentContext() 
+        getSelectedParentContext: () => UIManager.getSelectedParentContext()
     });
 
     // Initialize the optical surface editor
@@ -280,7 +280,7 @@ async function initializeApp() {
     const initialState = await APIService.getProjectState();
     // No try/catch needed, as the backend now guarantees a valid response
     if (initialState && initialState.project_state) {
-        
+
         // Set the project name
         AppState.currentProjectName = initialState.project_name;
         UIManager.setProjectName(AppState.currentProjectName);
@@ -290,7 +290,7 @@ async function initializeApp() {
         AppState.currentProjectScene = initialState.scene_update;
 
         // Update the UI and scene.
-        UIManager.updateHierarchy(initialState.project_state,initialState.scene_update);
+        UIManager.updateHierarchy(initialState.project_state, initialState.scene_update);
         SceneManager.renderObjects(initialState.scene_update || [], initialState.project_state);
         SceneManager.frameScene();
 
@@ -305,9 +305,9 @@ async function initializeApp() {
         // If the user is typing in ANY input field, textarea, or contenteditable element,
         // do not trigger any of the global shortcuts (except for Undo/Redo/Save which are universal).
         const isTyping = document.activeElement.tagName === 'INPUT' ||
-                         document.activeElement.tagName === 'TEXTAREA' ||
-                         document.activeElement.isContentEditable;
-        
+            document.activeElement.tagName === 'TEXTAREA' ||
+            document.activeElement.isContentEditable;
+
         // Undo
         if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === 'z') {
             event.preventDefault();
@@ -444,7 +444,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
         // This is a partial state update. We need to merge it.
         // We can't just replace the whole state.
         const newSolids = responseData.project_state.solids || {};
-        
+
         // Keep all existing solids that are NOT in the incoming update.
         // This preserves our large, static tessellated solids on the client.
         const preservedSolids = {};
@@ -453,10 +453,10 @@ function syncUIWithState(responseData, selectionToRestore = []) {
                 preservedSolids[solidName] = AppState.currentProjectState.solids[solidName];
             }
         }
-        
+
         // Combine the preserved solids with the newly received ones.
         const combinedSolids = { ...preservedSolids, ...newSolids };
-        
+
         // Update the project state with the combined solids list.
         AppState.currentProjectState = responseData.project_state;
         AppState.currentProjectState.solids = combinedSolids;
@@ -477,7 +477,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // 2. Re-render the 3D scene
     if (responseData.scene_update) {
         SceneManager.renderObjects(AppState.currentProjectScene, AppState.currentProjectState);
-        
+
         // --- Frame the scene after a full update ---
         // We only do this for "full" loads, not for every small patch.
         // const responseType = responseData.response_type || "full";
@@ -490,7 +490,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     }
 
     // 3. Re-render the hierarchy panels
-    UIManager.updateHierarchy(responseData.project_state,responseData.scene_update);
+    UIManager.updateHierarchy(responseData.project_state, responseData.scene_update);
 
     // 4. Update Undo/Redo button states
     if (responseData.history_status) {
@@ -502,7 +502,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
 
     // 6. Re-apply persistent visibility state ---
     restoreVisibility();
-    
+
 }
 
 function restoreVisibility() {
@@ -525,8 +525,8 @@ function restoreSelection(selectionToRestore) {
 
         // Filter the old selection, keeping only items that still exist in the new state.
         validatedSelectionToRestore = selectionToRestore.filter(item => {
-                const itemId = item.id || item.canonical_id;
-                return (findItemInScene(itemId) != null);
+            const itemId = item.id || item.canonical_id;
+            return (findItemInScene(itemId) != null);
         });
 
         if (validatedSelectionToRestore.length > 0) {
@@ -541,7 +541,7 @@ function restoreSelection(selectionToRestore) {
             UIManager.clearInspector();
             UIManager.clearHierarchySelection();
             SceneManager.unselectAllInScene();
-        }  
+        }
     } else {
         // If there was no previous selection, also clear everything.
         UIManager.clearInspector();
@@ -558,7 +558,7 @@ function syncUIWithState_shallow(responseData) {
 
     // Set changed state for autosave
     markProjectAsChanged();
-    
+
     const patch = responseData.patch;
 
     // Apply project state patch
@@ -584,7 +584,7 @@ function syncUIWithState_shallow(responseData) {
                             }
                         }
                     });
-                } 
+                }
                 else {
                     // Map the category to the correct AppState dictionary
                     const targetDictName = category === 'physical_volumes' ? null : category;
@@ -607,7 +607,7 @@ function syncUIWithState_shallow(responseData) {
                         });
                     }
                 }
-                
+
             }
         }
 
@@ -615,7 +615,7 @@ function syncUIWithState_shallow(responseData) {
         if (projectPatch.updated && projectPatch.updated.physical_volumes) {
             for (const [pvId, updatedPvData] of Object.entries(projectPatch.updated.physical_volumes)) {
                 let found = false;
-                
+
                 // Search in Logical Volumes
                 for (const lv of Object.values(AppState.currentProjectState.logical_volumes)) {
                     if (lv.content_type === 'physvol') {
@@ -628,7 +628,7 @@ function syncUIWithState_shallow(responseData) {
                         }
                     }
                 }
-                
+
                 // If not found, search in Assemblies
                 if (!found) {
                     for (const asm of Object.values(AppState.currentProjectState.assemblies)) {
@@ -667,24 +667,24 @@ function syncUIWithState_shallow(responseData) {
     }
 
     //if (patch.project_state && patch.project_state.updated) {
-        // ... logic to merge updated objects into AppState.currentProjectState ...
+    // ... logic to merge updated objects into AppState.currentProjectState ...
     //}
 
     // Re-render the hierarchy panels
     UIManager.updateHierarchy(AppState.currentProjectState, AppState.currentProjectScene);
-    
+
     // Update the undo/redo buttons
     if (responseData.history_status) {
         UIManager.updateUndoRedoButtons(responseData.history_status);
     }
-    
+
     // 5. Restore selection and repopulate inspector ---
     const selectionToRestore = AppState.selectedHierarchyItems;
     restoreSelection(selectionToRestore);
 
     // 6. Re-apply persistent visibility state ---
     restoreVisibility();
-    
+
 }
 
 // --- Autosave functions
@@ -693,12 +693,12 @@ function syncUIWithState_shallow(responseData) {
  */
 function markProjectAsChanged() {
     isProjectChanged = true;
-    
+
     // Reset any existing timer
     if (autoSaveTimer) {
         clearTimeout(autoSaveTimer);
     }
-    
+
     // Set a new timer to trigger the autosave after the interval
     console.log(`[AutoSave] Project is in changed state. Scheduling autosave in ${AUTO_SAVE_INTERVAL / 1000}s.`);
     autoSaveTimer = setTimeout(triggerAutoSave, AUTO_SAVE_INTERVAL);
@@ -712,9 +712,9 @@ async function triggerAutoSave() {
         console.log("[AutoSave] Aborting: Project is not in changed state.");
         return;
     }
-    
+
     console.log("[AutoSave] Idle timer expired. Triggering autosave...");
-    
+
     try {
         const result = await APIService.autoSaveProject(); // A new API service function
         if (result.success && result.message !== "No changes to autosave.") {
@@ -767,7 +767,7 @@ async function handleSaveApiKey(apiKey) {
 function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     // --- Start with the current selection if Ctrl is held ---
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
-    
+
     // --- Use a Map to consolidate procedural volumes and track standard PVs ---
     // The key will be the canonical ID (either the PV's own ID or its owner's ID)
     const consolidatedSelectionMap = new Map();
@@ -776,16 +776,16 @@ function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     selectedMeshes.forEach(mesh => {
         // The ID is the parent ID for procedural slices, or its own ID for standard PVs.
         const selectedId = mesh.userData.id;
-        
+
         // If we haven't processed this canonical object yet, add it to our map.
         if (!consolidatedSelectionMap.has(selectedId)) {
             const itemContext = findItemInScene(selectedId);
             if (itemContext) {
                 // Select the parent for procedural instances
-                if(itemContext.selData.is_procedural_instance) {
+                if (itemContext.selData.is_procedural_instance) {
                     const parentId = itemContext.selData.parent_id;
                     const parentItem = findItemInScene(parentId);
-                    if(parentItem) consolidatedSelectionMap.set(parentId, parentItem);
+                    if (parentItem) consolidatedSelectionMap.set(parentId, parentItem);
                 }
                 else {
                     consolidatedSelectionMap.set(selectedId, itemContext);
@@ -814,7 +814,7 @@ async function handleOpenGdmlProject(file) {
         const result = await APIService.openGdmlProject(file);
         syncUIWithState(result);
         //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
-    } catch (error) { 
+    } catch (error) {
         // Show the specific error message from the backend
         UIManager.showError("Failed to open GDML Project: " + error.message);
     } finally {
@@ -833,7 +833,7 @@ async function handleOpenJsonProject(file) {
     try {
         const result = await APIService.openJsonProject(file);
         syncUIWithState(result);
-    } catch (error) { 
+    } catch (error) {
         UIManager.showError("Failed to open JSON Project: " + (error.message || error));
     } finally {
         document.getElementById('projectFile').value = null;
@@ -848,7 +848,7 @@ async function handleImportGdmlPart(file) {
         const result = await APIService.importGdmlPart(file);
         syncUIWithState(result); // The sync function handles the refresh perfectly
         //UIManager.showNotification("GDML part(s) imported. Note: Any <file> or <!ENTITY> references were ignored.");
-    } catch (error) { 
+    } catch (error) {
         // Show the specific error from the backend
         UIManager.showError("Failed to import GDML Part: " + error.message);
     } finally {
@@ -863,7 +863,7 @@ async function handleImportJsonPart(file) {
     try {
         const result = await APIService.importJsonPart(file);
         syncUIWithState(result);
-    } catch (error) { 
+    } catch (error) {
         UIManager.showError("Failed to import JSON Part: " + (error.message || error));
     } finally {
         document.getElementById('jsonPartFile').value = null;
@@ -878,7 +878,7 @@ async function handleImportAiResponse(file) {
         const result = await APIService.importAiResponse(file);
         syncUIWithState(result); // The sync function handles the refresh
         UIManager.showNotification("AI Response imported successfully!");
-    } catch (error) { 
+    } catch (error) {
         UIManager.showError("Failed to import AI Response: " + (error.message || error));
     } finally {
         // Reset the file input so the user can upload the same file again if they want
@@ -967,12 +967,12 @@ async function handleLoadVersion(projectName, versionId) {
 }
 
 async function handleLoadRunResults(versionId, jobId) {
-    UIManager.showLoading(`Loading results for run ${jobId.substring(0,8)}...`);
+    UIManager.showLoading(`Loading results for run ${jobId.substring(0, 8)}...`);
     try {
         // Step 1: Load the geometry of the associated version first
         const loadResult = await APIService.loadVersion(AppState.currentProjectName, versionId);
         if (!loadResult.success) throw new Error(loadResult.error);
-        
+
         // This syncs the geometry but doesn't restore selection
         syncUIWithState(loadResult);
 
@@ -1033,7 +1033,7 @@ async function handleAddObject(objectType, nameSuggestion, paramsFromModal) {
 // --- Delete all selected items ---
 async function handleDeleteSelected() {
     const selectionContexts = getSelectionContext();
-    
+
     if (!selectionContexts) {
         UIManager.showNotification("Please select one or more items to delete.");
         return;
@@ -1070,7 +1070,7 @@ async function handleDeleteSpecificItem(type, id, name) {
     // We can reuse the main handler's logic.
     // For simplicity, we'll make a direct API call here.
     const itemToDelete = [{ type: type, id: id, name: name }];
-    
+
     UIManager.showLoading("Deleting object...");
     try {
         const result = await APIService.deleteObjectsBatch(itemToDelete);
@@ -1090,13 +1090,13 @@ async function handleProjectRenamed(newName) {
 
     // Set the frontend current project name
     AppState.currentProjectName = newName;
- 
+
     // Send the new name to the backend
     try {
         const result = await APIService.renameProject(newName);
     } catch (error) {
         UIManager.showError("Error renaming project: " + error.message);
-    } 
+    }
 }
 
 async function handleProjectListRequested() {
@@ -1119,10 +1119,10 @@ async function handleSwitchProject(projectName) {
 function handleModeChange(newMode) {
     UIManager.setActiveModeButton(newMode);
     InteractionManager.setMode(newMode, AppState.selectedThreeObjects.length > 0 ? AppState.selectedThreeObjects[0] : null);
-    
+
     if (newMode === 'observe' && SceneManager.getTransformControls().object) {
         SceneManager.getTransformControls().detach();
-    } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length > 0){
+    } else if (newMode !== 'observe' && AppState.selectedThreeObjects.length > 0) {
         // Pass the entire array of selected objects
         SceneManager.attachTransformControls(AppState.selectedThreeObjects);
     }
@@ -1131,7 +1131,7 @@ function handleModeChange(newMode) {
 async function handleHierarchySelection(newSelection) {
     //console.log("Hierarchy selection changed. New selection count:", newSelection.length);
     AppState.selectedHierarchyItems = newSelection;
-    
+
     // --- 1. Check selection type and manage UI state ---
     // let transformState = { translate: true, rotate: true, scale: false }; // Default for standard PVs
     // let reason = '';
@@ -1186,7 +1186,7 @@ async function handleHierarchySelection(newSelection) {
     // --- 3. Update the 3D Scene (Visuals and Gizmo) ---
     SceneManager.updateSelectionState(meshesToProcess);
     AppState.selectedThreeObjects = meshesToProcess;
-    
+
     // Consolidate the gizmo logic. Always detach first, then attach if needed.
     SceneManager.getTransformControls().detach();
     if (InteractionManager.getCurrentMode() !== 'observe' && meshesToProcess.length > 0) {
@@ -1195,7 +1195,7 @@ async function handleHierarchySelection(newSelection) {
 
     // --- 4. Update the UI (Hierarchy List and Inspector) ---
     const selectedIds = newSelection.map(item => {
-        if(item.selData.is_procedural_instance) {
+        if (item.selData.is_procedural_instance) {
             return item.canonical_id;
         }
         return item.id;
@@ -1212,12 +1212,12 @@ async function handleHierarchySelection(newSelection) {
             try {
                 const details = await APIService.getObjectDetails(singleItem.type, singleItem.id);
                 UIManager.populateInspector(
-                    {...singleItem, data: details}, // Use fresh data
+                    { ...singleItem, data: details }, // Use fresh data
                     AppState.currentProjectState
                 );
             } catch (error) {
-                 UIManager.showError(error.message);
-                 UIManager.clearInspector();
+                UIManager.showError(error.message);
+                UIManager.clearInspector();
             }
 
         } else {
@@ -1226,7 +1226,7 @@ async function handleHierarchySelection(newSelection) {
             const type = singleItem.type;
             const name = singleItem.name;
             const id = singleItem.canonical_id;
-            
+
             const idForApi = (type === 'physical_volume') ? id : name;
             try {
                 const details = await APIService.getObjectDetails(type, idForApi);
@@ -1234,7 +1234,7 @@ async function handleHierarchySelection(newSelection) {
                     singleItem.data = details; // Ensure data is up-to-date
 
                     // Hack-fix for procedurals
-                    if(singleItem.selData.is_procedural_instance) {
+                    if (singleItem.selData.is_procedural_instance) {
                         singleItem.id = singleItem.canonical_id;
                     }
                     UIManager.populateInspector(singleItem, AppState.currentProjectState);
@@ -1261,7 +1261,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
     let currentSelection = isCtrlHeld ? [...AppState.selectedHierarchyItems] : [];
     let clickedItemInstanceId = null;
-    
+
     if (clickedMesh) {
         const userData = clickedMesh.userData;
         clickedItemInstanceId = userData.id
@@ -1269,32 +1269,32 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 
     if (clickedItemInstanceId) {
         const existingIndex = currentSelection.findIndex(item => item.id === clickedItemInstanceId);
-        
+
         if (isCtrlHeld) {
             if (existingIndex > -1) {
                 currentSelection.splice(existingIndex, 1);
             } else {
                 const newItem = findItemInScene(clickedItemInstanceId);
-                if(newItem) {
+                if (newItem) {
                     // For a procedural, always select the parent.
-                    if(newItem.selData.is_procedural_instance) {
+                    if (newItem.selData.is_procedural_instance) {
                         const parentItem = findItemInScene(newItem.selData.parent_id);
-                        if(parentItem) currentSelection.push(parentItem);
+                        if (parentItem) currentSelection.push(parentItem);
                     }
-                    else{
+                    else {
                         currentSelection.push(newItem);
                     }
                 }
             }
         } else {
             const newItem = findItemInScene(clickedItemInstanceId);
-            if(newItem) {
+            if (newItem) {
                 // For a procedural, always select the parent.
-                if(newItem.selData.is_procedural_instance) {
+                if (newItem.selData.is_procedural_instance) {
                     const parentItem = findItemInScene(newItem.selData.parent_id);
                     currentSelection = parentItem ? [parentItem] : [];
                 }
-                else{
+                else {
                     currentSelection = [newItem];
                 }
             }
@@ -1302,7 +1302,7 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
     } else if (!isCtrlHeld) {
         currentSelection = [];
     }
-    
+
     // Now that we have the final list of selected items, trigger the main handler.
     // This becomes the single point of truth for updating the UI, inspector, and 3D scene.
     handleHierarchySelection(currentSelection);
@@ -1311,14 +1311,14 @@ function handle3DSelection(clickedMesh, isCtrlHeld, isShiftHeld) {
 function findItemInScene(itemId) {
 
     const obj = SceneManager.findObjectByPvId(itemId);
-    if(obj){
+    if (obj) {
         // Determine the type from userData
         const type = obj.userData.is_source ? "particle_source" : "physical_volume";
         return {
-            type: type, 
-            id: obj.userData.id, 
-            name: obj.userData.name, 
-            selData: obj.userData, 
+            type: type,
+            id: obj.userData.id,
+            name: obj.userData.name,
+            selData: obj.userData,
             canonical_id: obj.userData.canonical_id
         };
     }
@@ -1336,7 +1336,7 @@ function findItemInState(itemCanonicalId) {
     // if(itemInstanceId) {
     //    sceneItem = findItemInScene(itemInstanceId)
     // }
-    
+
     // --- Find the item in the project state
 
     // Search standard PVs
@@ -1384,7 +1384,7 @@ function findItemInState(itemCanonicalId) {
 async function handleTransformEnd(transformedObject) {
     if (!transformedObject) {
         // If nothing was transformed, we should still end the transaction cleanly.
-        try { await APIService.endTransaction("Empty transform"); } catch(e) { console.error(e); }
+        try { await APIService.endTransaction("Empty transform"); } catch (e) { console.error(e); }
         return;
     }
 
@@ -1425,7 +1425,7 @@ async function handleTransformEnd(transformedObject) {
 
             const pvId = item.canonical_id;
             const pvInstanceId = item.id || pvId;
-            
+
             // Find the THREE.Group for the PV being updated.
             const currentThreeJsObject = SceneManager.findObjectByPvId(pvInstanceId);
             if (!currentThreeJsObject) continue;
@@ -1455,13 +1455,13 @@ async function handleTransformEnd(transformedObject) {
             const scl = new THREE.Vector3();
             newLocalMatrix.decompose(pos, rot, scl);
             const euler = new THREE.Euler().setFromQuaternion(rot, 'XYZ');
-            
+
             updates.push({
                 id: pvId, // Send the canonical ID to the backend
                 name: null, // Name is not changed here
                 position: { x: pos.x, y: pos.y, z: pos.z },
                 rotation: { x: -euler.x, y: -euler.y, z: -euler.z },
-                scale:    { x: scl.x, y: scl.y, z: scl.z }
+                scale: { x: scl.x, y: scl.y, z: scl.z }
             });
         }
 
@@ -1469,7 +1469,7 @@ async function handleTransformEnd(transformedObject) {
             UIManager.hideLoading();
             return;
         }
-        
+
         //UIManager.showLoading(`Updating ${updates.length} transform(s)...`);
         try {
             const result = await APIService.updatePhysicalVolumeBatch(updates);
@@ -1478,7 +1478,7 @@ async function handleTransformEnd(transformedObject) {
         } catch (error) {
             UIManager.showError("Error saving transform: " + error.message);
             // Optional: Revert frontend visuals to initialTransforms on error
-        } 
+        }
         //finally { UIManager.hideLoading();}
     }
 }
@@ -1495,7 +1495,7 @@ function findPVThatPlacesLV(lvName, projectState) {
     for (const asm of Object.values(projectState.assemblies)) {
         allPVs.push(...asm.placements);
     }
-    
+
     return allPVs.find(pv => pv.volume_ref === lvName);
 }
 
@@ -1518,11 +1518,11 @@ function handleAddSolid() {
 // Open solid editor for editing.
 function handleEditSolid(solidData) {
     // Pass the full project state so the editor knows about other solids
-    SolidEditor.show(solidData, AppState.currentProjectState); 
+    SolidEditor.show(solidData, AppState.currentProjectState);
 }
 
 async function handleSolidEditorConfirm(data) {
-    
+
     if (data.isEdit) {
         // --- EDIT LOGIC ---
         if (data.isChainedBoolean) {
@@ -1552,7 +1552,7 @@ async function handleSolidEditorConfirm(data) {
         // --- CREATE LOGIC ---
         UIManager.showLoading("Adding object...");
         try {
-            
+
             const solidParams = {
                 name: data.name,
                 type: data.type,
@@ -1569,24 +1569,24 @@ async function handleSolidEditorConfirm(data) {
             let pvParams = null;
             if (data.createLV && data.placePV) {
                 // Use the parent name from the dropdown box in the solid editor
-                 if (!data.parentLVName) {
+                if (!data.parentLVName) {
                     UIManager.showError("A parent volume must be selected for placement.");
                     UIManager.hideLoading();
                     return;
                 }
                 pvParams = { parent_lv_name: data.parentLVName };
             }
-            
+
             const result = await APIService.addSolidAndPlace(solidParams, lvParams, pvParams);
-            
+
             // After creation, select the new solid in the hierarchy
             const newSolidName = result.project_state.solids[data.name] ? data.name : Object.keys(result.project_state.solids).find(k => k.startsWith(data.name));
-            syncUIWithState(result, [{type: 'solid', id: newSolidName, name: newSolidName}]);
+            syncUIWithState(result, [{ type: 'solid', id: newSolidName, name: newSolidName }]);
 
-        } catch (error) { 
-            UIManager.showError("Error adding solid: " + (error.message || error)); 
-        } finally { 
-            UIManager.hideLoading(); 
+        } catch (error) {
+            UIManager.showError("Error adding solid: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
         }
     }
 }
@@ -1616,7 +1616,7 @@ async function handleLVEditorConfirm(data) {
         try {
             const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
             syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
-        } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); } 
+        } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); }
         finally { UIManager.hideLoading(); }
     }
 }
@@ -1634,7 +1634,7 @@ function handleAddPV() {
             return;
         }
     }
-    
+
     PVEditor.show(null, null, AppState.currentProjectState, parentContext);
 }
 
@@ -1649,16 +1649,16 @@ async function handlePVEditorConfirm(data) {
         try {
             const result = await APIService.updatePhysicalVolume(data.id, data.name, data.position, data.rotation, data.scale);
             syncUIWithState(result, selectionContext);
-        } catch (error) { UIManager.showError("Error updating PV: " + (error.message || error)); } 
+        } catch (error) { UIManager.showError("Error updating PV: " + (error.message || error)); }
         finally { UIManager.hideLoading(); }
     } else {
         UIManager.showLoading("Placing Physical Volume...");
         try {
             const result = await APIService.addPhysicalVolume(data.parent_lv_name, data.name, data.volume_ref, data.position, data.rotation, data.scale);
-            
+
             // After placement, we want the PARENT LV to remain selected
             syncUIWithState(result, [{ type: 'logical_volume', id: data.parent_lv_name, name: data.parent_lv_name }]);
-        } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); } 
+        } catch (error) { UIManager.showError("Error placing PV: " + (error.message || error)); }
         finally { UIManager.hideLoading(); }
     }
 }
@@ -1701,7 +1701,7 @@ async function handleDefineEditorConfirm(data) {
         UIManager.showLoading("Creating Define...");
         try {
             const result = await APIService.addDefine(data.name, data.type, data.raw_expression, data.unit, data.category);
-            
+
             const newDefineName = result.project_state.defines[data.name] ? data.name : Object.keys(result.project_state.defines).find(k => k.startsWith(data.name));
             syncUIWithState(result, [{ type: 'define', id: newDefineName, name: newDefineName }]);
         } catch (error) {
@@ -1724,7 +1724,7 @@ async function handleMaterialEditorConfirm(data) {
         try {
             const result = await APIService.updateMaterial(data.id, data.params);
             syncUIWithState(result);
-        } catch (error) { /* ... */ } 
+        } catch (error) { /* ... */ }
         finally { UIManager.hideLoading(); }
     } else {
         UIManager.showLoading("Creating Material...");
@@ -1741,17 +1741,17 @@ async function handleMaterialEditorConfirm(data) {
     }
 }
 
-function handleAddIsotope() { 
-    IsotopeEditor.show(null); 
+function handleAddIsotope() {
+    IsotopeEditor.show(null);
 }
 
-function handleEditIsotope(isoData) { 
-    IsotopeEditor.show(isoData); 
+function handleEditIsotope(isoData) {
+    IsotopeEditor.show(isoData);
 }
 
 async function handleIsotopeEditorConfirm(data) {
     const selectionContext = getSelectionContext();
-    const apiCall = data.isEdit 
+    const apiCall = data.isEdit
         ? APIService.updateIsotope(data.id, data)
         : APIService.addIsotope(data.name, data);
 
@@ -1759,17 +1759,17 @@ async function handleIsotopeEditorConfirm(data) {
     UIManager.showLoading(loadingMessage);
     try {
         const result = await apiCall;
-        
+
         // Find the final name in case the backend had to make it unique
         const newIsotopeName = Object.keys(result.project_state.isotopes).find(k => k.startsWith(data.name)) || data.name;
-        
-        const newSelection = [{ 
-            type: 'isotope', 
-            id: newIsotopeName, 
-            name: newIsotopeName, 
-            data: result.project_state.isotopes[newIsotopeName] 
+
+        const newSelection = [{
+            type: 'isotope',
+            id: newIsotopeName,
+            name: newIsotopeName,
+            data: result.project_state.isotopes[newIsotopeName]
         }];
-        
+
         syncUIWithState(result, data.isEdit ? selectionContext : newSelection);
     } catch (error) {
         UIManager.showError("Error processing Isotope: " + (error.message || error));
@@ -1789,12 +1789,12 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
 
     // 3. Find all descendant PV IDs
     let descendantIds = UIManager.getDescendantPvIds(pvElement); // Use the new helper
-    
+
     // 4. If recursive, toggle visibility of all descendants.
     const pvContext = findItemInScene(pvId);
     const isAssemblyContainer = pvContext.selData.is_assembly_container;
     const isProceduralContainer = pvContext.selData.is_procedural_container;
-    if(isRecursive || isAssemblyContainer || isProceduralContainer) {
+    if (isRecursive || isAssemblyContainer || isProceduralContainer) {
         descendantIds.forEach(id => {
             // Update the 3D scene
             SceneManager.setPVVisibility(id, isVisible);
@@ -1878,7 +1878,7 @@ async function handleAiGenerate(promptText) {
         UIManager.showError("No AI model is selected or available.");
         return;
     }
-    
+
     if (selectedModel === '--export--') {
         // --- NEW: Call backend to get the prompt ---
         UIManager.showLoading("Building prompt for export...");
@@ -1897,10 +1897,10 @@ async function handleAiGenerate(promptText) {
     // If not exporting, proceed with the API call
     UIManager.showLoading("Processing AI prompt...");
     UIManager.setAiPanelState('loading'); // Set loading state
-    
+
     try {
         const result = await APIService.processAiPrompt(promptText, selectedModel);
-        syncUIWithState(result); 
+        syncUIWithState(result);
         UIManager.clearAiPrompt();
         UIManager.showNotification("AI command processed successfully!");
     } catch (error) {
@@ -1908,7 +1908,7 @@ async function handleAiGenerate(promptText) {
     } finally {
         UIManager.hideLoading();
         // Set state back to idle, regardless of success or failure
-        UIManager.setAiPanelState('idle'); 
+        UIManager.setAiPanelState('idle');
     }
 }
 
@@ -2017,7 +2017,7 @@ async function handleGroupIntoAssembly() {
         return;
     }
     const parentLvName = parentContext.data.name || parentContext.name;
-    
+
     const assemblyName = prompt("Enter a name for the new assembly:", "MyAssembly");
     if (!assemblyName || !assemblyName.trim()) {
         return; // User cancelled
@@ -2087,7 +2087,7 @@ function handleEditOpticalSurface(osData) {
 async function handleOpticalSurfaceEditorConfirm(data) {
     const selectionContext = getSelectionContext();
     // These API functions don't exist yet, but we are setting up the frontend for them
-    const apiCall = data.isEdit 
+    const apiCall = data.isEdit
         ? APIService.updateOpticalSurface(data.id, data)
         : APIService.addOpticalSurface(data.name, data);
 
@@ -2115,7 +2115,7 @@ function handleEditSkinSurface(ssData) {
 async function handleSkinSurfaceEditorConfirm(data) {
     const selectionContext = getSelectionContext();
     // These API functions will be created in the next step
-    const apiCall = data.isEdit 
+    const apiCall = data.isEdit
         ? APIService.updateSkinSurface(data.id, data)
         : APIService.addSkinSurface(data.name, data);
 
@@ -2143,7 +2143,7 @@ function handleEditBorderSurface(bsData) {
 async function handleBorderSurfaceEditorConfirm(data) {
     const selectionContext = getSelectionContext();
     // These API functions will be created in the next step
-    const apiCall = data.isEdit 
+    const apiCall = data.isEdit
         ? APIService.updateBorderSurface(data.id, data)
         : APIService.addBorderSurface(data.name, data);
 
@@ -2170,7 +2170,7 @@ function handleEditElement(elData) {
 
 async function handleElementEditorConfirm(data) {
     const selectionContext = getSelectionContext();
-    const apiCall = data.isEdit 
+    const apiCall = data.isEdit
         ? APIService.updateElement(data.id, data)
         : APIService.addElement(data.name, data);
 
@@ -2247,7 +2247,7 @@ function handleCameraModeChange(mode) {
         UIManager.setActiveCameraModeButton('origin');
     } else if (mode === 'selected') {
         const selection = AppState.selectedThreeObjects;
-        
+
         if (selection && selection.length > 0) {
             let target; // This will be either a single object or a Vector3 for the center
 
@@ -2259,13 +2259,13 @@ function handleCameraModeChange(mode) {
                 // If multiple objects are selected, calculate their collective center.
                 // This works regardless of the current mode or if the gizmo is visible.
                 const multiSelectBox = new THREE.Box3();
-                
+
                 selection.forEach(obj => {
                     // Important: Ensure the object's bounding box is up-to-date with its world matrix
                     const box = new THREE.Box3().setFromObject(obj);
                     multiSelectBox.union(box); // Expand the main box to include this object's box
                 });
-                
+
                 // The target is now the center of this combined bounding box.
                 target = new THREE.Vector3();
                 multiSelectBox.getCenter(target);
@@ -2286,7 +2286,7 @@ async function handleConfirmStepImport(options) {
     if (!options || !options.file) return;
 
     UIManager.showLoading(`Importing ${options.file.name}... This may take a moment.`);
-    
+
     try {
         const formData = new FormData();
         formData.append('stepFile', options.file);
@@ -2296,7 +2296,7 @@ async function handleConfirmStepImport(options) {
         const optionsForJson = { ...options };
         delete optionsForJson.file;
         formData.append('options', JSON.stringify(options));
-        
+
         const result = await APIService.importStepWithOptions(formData); // This API call is still needed
         syncUIWithState(result);
         UIManager.hideLoading();
@@ -2343,10 +2343,10 @@ async function handleGpsEditorConfirm(data) {
             const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation);
             // After creating, find the new source in the response to select it
             const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
-            const newSelection = newSource ? [{ 
-                type: 'particle_source', 
-                id: newSource.id, 
-                name: newSource.name, 
+            const newSelection = newSource ? [{
+                type: 'particle_source',
+                id: newSource.id,
+                name: newSource.name,
                 data: newSource,
                 selData: { is_source: true }
             }] : [];
@@ -2378,7 +2378,7 @@ async function handleRunSimulation(simSettings) {
         return;
     }
 
-     // Get the number of events from the UI
+    // Get the number of events from the UI
     const numEvents = parseInt(document.getElementById('simEventsInput').value, 10);
     if (numEvents <= 0) {
         UIManager.showError("Please enter a valid number of events.");
@@ -2396,7 +2396,7 @@ async function handleRunSimulation(simSettings) {
         UIManager.clearSimConsole();
         AppState.simConsoleLineCount = 0;
         UIManager.appendToSimConsole("Starting simulation...");
-        
+
         const result = await APIService.runSimulation(sim_params);
         AppState.currentSimJobId = result.job_id;
         AppState.lastSimVersionId = result.version_id;
@@ -2423,7 +2423,7 @@ async function pollSimStatus() {
 
         if (result.success) {
             const status = result.status;
-            
+
             // Append any new stdout/stderr lines to the console
             if (status.new_stdout) {
                 status.new_stdout.forEach(line => UIManager.appendToSimConsole(line));
@@ -2434,7 +2434,7 @@ async function pollSimStatus() {
 
             // Update the line count
             AppState.simConsoleLineCount = status.total_lines;
-            
+
             if (status.status === 'Completed' || status.status === 'Error') {
                 clearInterval(AppState.simStatusPoller);
                 AppState.simStatusPoller = null;
@@ -2465,7 +2465,7 @@ async function pollSimStatus() {
 
 async function handleStopSimulation() {
     if (!AppState.currentSimJobId) return;
-    
+
     UIManager.appendToSimConsole("Sending stop request...");
     // We need a new API endpoint for this
     try {
@@ -2487,15 +2487,15 @@ async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
         UIManager.showError("Cannot fetch tracks: Missing version or job ID.");
         return;
     }
-    
+
     UIManager.showLoading("Loading simulation tracks...");
     try {
         // 1. Call the API service to get the raw text data for the tracks
         const trackData = await APIService.getEventTracks(versionId, jobId, eventSpec);
-        
+
         // 2. Pass the raw text data to the SceneManager to parse and draw
         SceneManager.drawTracks(trackData);
-        
+
     } catch (error) {
         // The apiService function will throw a detailed error if the fetch fails
         UIManager.showError(`Could not load tracks: ${error.message}`);
@@ -2517,7 +2517,7 @@ function handleSaveSimOptions() {
 
 async function handleDrawTracksToggle() {
     const drawOptions = UIManager.getDrawTracksOptions();
-    
+
     // Always clear existing tracks when this is triggered
     SceneManager.clearTracks();
 
@@ -2548,7 +2548,17 @@ async function handleOpenReconstructionModal() {
 
         if (result.success && result.exists) {
             // LORs file was found!
-            UIManager.setLorStatus(`Found ${result.num_lors} pre-processed LORs. Ready to reconstruct.`, false);
+            let details = [];
+            if (result.energy_cut > 0) details.push(`E>${result.energy_cut}MeV`);
+            if (result.position_resolution) {
+                const pr = result.position_resolution;
+                if (pr.x > 0 || pr.y > 0 || pr.z > 0) details.push(`Smear:[${pr.x},${pr.y},${pr.z}]mm`);
+            }
+
+            let msg = `Found ${result.num_lors} LORs.`;
+            if (details.length > 0) msg += ` (${details.join(', ')})`;
+
+            UIManager.setLorStatus(msg, false);
             UIManager.setReconstructionButtonEnabled(true);
         } else {
             // LORs file was not found
@@ -2581,7 +2591,7 @@ async function handleProcessLors(params) {
     try {
         // This call will now return immediately with a 202 status
         await APIService.processLors(AppState.lastSimVersionId, AppState.lastSimJobId, params);
-        
+
         // Start polling for progress
         AppState.lorStatusPoller = setInterval(pollLorStatus, 1000); // Poll every second
 
@@ -2614,7 +2624,7 @@ async function handleRunReconstruction(reconParams) {
             aspectRatio = (AppState.currentReconShape[1] * voxelSize[1]) / (AppState.currentReconShape[2] * voxelSize[2]);
         }
         UIManager.setReconViewerAspectRatio(aspectRatio);
-        
+
         const initialAxis = document.getElementById('reconAxis').value;
         UIManager.setupSliceSlider(initialAxis, AppState.currentReconShape);
         UIManager.showNotification(result.message);
@@ -2627,7 +2637,7 @@ async function handleRunReconstruction(reconParams) {
 
 function handleSliceSliderChange(axis, sliceNum) {
     if (!AppState.lastSimVersionId || !AppState.lastSimJobId || !AppState.currentReconShape) return;
-    
+
     const maxSlice = (axis === 'x') ? AppState.currentReconShape[0] : (axis === 'y') ? AppState.currentReconShape[1] : AppState.currentReconShape[2];
     const imageUrl = APIService.getReconstructionSliceUrl(AppState.lastSimVersionId, AppState.lastSimJobId, axis, sliceNum);
     UIManager.updateReconstructionSlice(imageUrl, sliceNum, maxSlice);

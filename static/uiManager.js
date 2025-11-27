@@ -57,7 +57,8 @@ let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
     reconImageView, reconViewerPanel, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
-    processLorsBtn, reconStatusP, coincidenceWindowInput;
+    processLorsBtn, reconStatusP, coincidenceWindowInput, energyCutInput, posResXInput, posResYInput, posResZInput,
+    reconNormalizationCheckbox;
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
@@ -246,6 +247,11 @@ export function initUI(cb) {
     processLorsBtn = document.getElementById('processLorsBtn');
     reconStatusP = document.getElementById('lorStatus');
     coincidenceWindowInput = document.getElementById('coincidenceWindow');
+    energyCutInput = document.getElementById('energyCut');
+    posResXInput = document.getElementById('posResX');
+    posResYInput = document.getElementById('posResY');
+    posResZInput = document.getElementById('posResZ');
+    reconNormalizationCheckbox = document.getElementById('reconNormalization');
 
     // Attach Event Listeners
     openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
@@ -436,12 +442,19 @@ export function initUI(cb) {
             iterations: parseInt(document.getElementById('reconIterations').value, 10),
             image_size: document.getElementById('reconImageSize').value.split(',').map(Number),
             voxel_size: document.getElementById('reconVoxelSize').value.split(',').map(Number),
+            normalization: document.getElementById('reconNormalization').checked
         };
         callbacks.onRunReconstruction(params);
     });
     processLorsBtn.addEventListener('click', () => {
         const params = {
-            coincidence_window_ns: parseFloat(coincidenceWindowInput.value)
+            coincidence_window_ns: parseFloat(coincidenceWindowInput.value),
+            energy_cut: parseFloat(energyCutInput.value),
+            position_resolution: {
+                x: parseFloat(posResXInput.value),
+                y: parseFloat(posResYInput.value),
+                z: parseFloat(posResZInput.value)
+            }
         };
         callbacks.onProcessLorsClicked(params);
     });

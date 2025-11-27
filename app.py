@@ -513,9 +513,11 @@ def process_lors_route(version_id, job_id):
 
     data = request.get_json()
     coincidence_window_ns = data.get('coincidence_window_ns', 4.0)  # 4 ns window
+    energy_cut = data.get('energy_cut', 0.0)
+    position_resolution = data.get('position_resolution', {'x': 0.0, 'y': 0.0, 'z': 0.0})
 
     # This function will run in the background
-    def process_lors_in_background(app, version_id, job_id, coincidence_window_ns):
+    def process_lors_in_background(app, version_id, job_id, coincidence_window_ns, energy_cut, position_resolution):
         with app.app_context(): # Needed to work within Flask's context
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
@@ -544,6 +546,24 @@ def process_lors_route(version_id, job_id):
                 # Geant4 n-tuple column names can be bytes, so decode if necessary
                 hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
 
+                # --- Apply Energy Cut ---
+                if energy_cut > 0:
+                    initial_count = len(hits_df)
+                    hits_df = hits_df[hits_df['Edep'] >= energy_cut]
+                    print(f"Applied energy cut > {energy_cut} MeV. Hits reduced from {initial_count} to {len(hits_df)}.")
+
+                # --- Apply Position Smearing ---
+                sigma_x = position_resolution.get('x', 0.0)
+                sigma_y = position_resolution.get('y', 0.0)
+                sigma_z = position_resolution.get('z', 0.0)
+
+                if sigma_x > 0:
+                    hits_df['PosX'] += np.random.normal(0, sigma_x, size=len(hits_df))
+                if sigma_y > 0:
+                    hits_df['PosY'] += np.random.normal(0, sigma_y, size=len(hits_df))
+                if sigma_z > 0:
+                    hits_df['PosZ'] += np.random.normal(0, sigma_z, size=len(hits_df))
+
                 # Use the correct column names from the HDF5 file (case-sensitive)
                 hits_df.sort_values(by='Time', inplace=True)
                 
@@ -559,6 +579,7 @@ def process_lors_route(version_id, job_id):
                 for i, event_id in enumerate(unique_event_ids):
                     event_hits = hits_df[hits_df['EventID'] == event_id]
                     if len(event_hits) >= 2:
+                        # Take the first two hits in time (naive approach, but standard for simple simulations)
                         hit1 = event_hits.iloc[0]
                         hit2 = event_hits.iloc[1]
                         if abs(hit1['Time'] - hit2['Time']) < coincidence_window_ns:
@@ -583,7 +604,9 @@ def process_lors_route(version_id, job_id):
                     lors_output_path,
                     start_coords=np.array(all_start_coords),
                     end_coords=np.array(all_end_coords),
-                    tof_bins=np.array(all_tof_bins)
+                    tof_bins=np.array(all_tof_bins),
+                    energy_cut=energy_cut,
+                    position_resolution=position_resolution
                 )
 
                 with LOR_PROCESSING_LOCK:
@@ -598,7 +621,7 @@ def process_lors_route(version_id, job_id):
                 traceback.print_exc()
 
     # Start the background task
-    thread = threading.Thread(target=process_lors_in_background, args=(app, version_id, job_id, coincidence_window_ns))
+    thread = threading.Thread(target=process_lors_in_background, args=(app, version_id, job_id, coincidence_window_ns, energy_cut, position_resolution))
     thread.start()
 
     return jsonify({"success": True, "message": "LOR processing started."}), 202
@@ -615,6 +638,7 @@ def run_reconstruction_route(version_id, job_id):
     # Get image geometry parameters from the request
     img_shape = tuple(data.get('image_size', [128, 128, 128]))
     voxel_size = tuple(data.get('voxel_size', [2.0, 2.0, 2.0]))
+    normalization = data.get('normalization', True)
 
     # This ensures the reconstruction grid is centered at (0,0,0) in world coordinates.
     # We calculate the position of the corner of the first voxel.
@@ -623,13 +647,15 @@ def run_reconstruction_route(version_id, job_id):
     version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     lors_path = os.path.join(run_dir, "lors.npz")
-    recon_output_path = os.path.join(run_dir, "reconstruction.npy")
+
+    # Save to HDF5
+    recon_output_path = os.path.join(run_dir, "reconstruction.h5")
 
     if not os.path.exists(lors_path):
         return jsonify({"success": False, "error": "LOR file not found. Please process coincidences first."}), 404
 
     try:
-        lor_data = np.load(lors_path)
+        lor_data = np.load(lors_path, allow_pickle=True)
         event_start_coords = lor_data['start_coords']
         event_end_coords = lor_data['end_coords']
 
@@ -668,20 +694,40 @@ def run_reconstruction_route(version_id, job_id):
             # Add a small epsilon to avoid division by zero
             ybar = xp.where(ybar == 0, 1e-9, ybar)
 
-            # Where sensitivity is 0, the image value should remain unchanged (multiplied by 0 update).
+            # Backprojection of the ratio
             back_projection = lm_proj.adjoint(1 / ybar)
 
-            # Perform the division using the safe denominator
-            update_term = (x / sensitivity_image_safe_for_division) * back_projection
-
-            # Now, apply the update only where sensitivity is valid, otherwise set to 0.
-            x = xp.where(sensitivity_image > 0, update_term, 0.0)
+            if normalization:
+                # Perform the division using the safe denominator (Sensitivity Correction)
+                update_term = (x / sensitivity_image_safe_for_division) * back_projection
+                # Now, apply the update only where sensitivity is valid, otherwise set to 0.
+                x = xp.where(sensitivity_image > 0, update_term, 0.0)
+            else:
+                # No normalization (just simple backprojection update - not standard MLEM but requested option)
+                # Standard MLEM without sensitivity is: x_new = x_old * back_projection
+                # But usually sensitivity is required for quantitative accuracy.
+                # If user disables normalization, we just skip the division by sensitivity.
+                x = x * back_projection
 
             print(f"Iteration {i+1} done.")
 
-        # Save the final numpy array
+        # Save the final numpy array to HDF5
         reconstructed_image_np = parallelproj.to_numpy_array(x)
-        np.save(recon_output_path, reconstructed_image_np)
+        
+        with h5py.File(recon_output_path, 'w') as f:
+            dset = f.create_dataset("image", data=reconstructed_image_np)
+            dset.attrs['voxel_size'] = voxel_size
+            dset.attrs['origin'] = image_origin
+            dset.attrs['iterations'] = iterations
+            dset.attrs['normalization'] = normalization
+            # Save LOR processing params if available in lors.npz
+            if 'energy_cut' in lor_data:
+                dset.attrs['energy_cut'] = lor_data['energy_cut']
+            if 'position_resolution' in lor_data:
+                # position_resolution is a dictionary, save as string or individual attrs
+                # h5py doesn't support dicts directly as attrs easily without serialization
+                import json
+                dset.attrs['position_resolution'] = str(lor_data['position_resolution'])
 
         return jsonify({
             "success": True, 
@@ -702,13 +748,17 @@ def get_recon_slice_route(version_id, job_id, axis, slice_num):
 
     version_dir = pm._get_version_dir(version_id)
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
-    recon_path = os.path.join(run_dir, "reconstruction.npy")
-
-    if not os.path.exists(recon_path):
-        return "Reconstruction file not found", 404
+    recon_h5_path = os.path.join(run_dir, "reconstruction.h5")
+    recon_npy_path = os.path.join(run_dir, "reconstruction.npy")
 
     try:
-        recon_img = np.load(recon_path)
+        if os.path.exists(recon_h5_path):
+            with h5py.File(recon_h5_path, 'r') as f:
+                recon_img = f['image'][:]
+        elif os.path.exists(recon_npy_path):
+            recon_img = np.load(recon_npy_path)
+        else:
+            return "Reconstruction file not found", 404
 
         # Select the slice
         if axis == 'x':
@@ -759,7 +809,20 @@ def check_lor_file_route(version_id, job_id):
             # If the file exists, open it to count the LORs for a helpful message
             with np.load(lors_path) as lor_data:
                 num_lors = len(lor_data['start_coords'])
-            return jsonify({"success": True, "exists": True, "num_lors": num_lors})
+                info = {"success": True, "exists": True, "num_lors": num_lors}
+                if 'energy_cut' in lor_data:
+                    info['energy_cut'] = float(lor_data['energy_cut'])
+                if 'position_resolution' in lor_data:
+                    # It's saved as a 0-d array containing the dict if using save_z with dict
+                    try:
+                        pos_res = lor_data['position_resolution']
+                        if pos_res.shape == ():
+                            info['position_resolution'] = pos_res.item()
+                        else:
+                            info['position_resolution'] = pos_res.tolist()
+                    except:
+                        pass
+            return jsonify(info)
         except Exception as e:
             # If the file is corrupt or unreadable, treat it as non-existent
             return jsonify({"success": False, "error": f"LOR file is corrupt: {str(e)}"}), 500
@@ -1678,8 +1741,8 @@ def ai_health_check_route():
             # Use the initialized client to list models
             for model in gemini_client.models.list():
                 if 'generateContent' in model.supported_actions:
-                    # Filter for 2.5 Flash and 2.5 Pro only
-                    if(model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
+                    # Filter for certain Gemini models only
+                    if(model.name == "models/gemini-3-pro-preview" or model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
                         gemini_models.append(model.name)
             response_data["models"]["gemini"] = gemini_models
         except Exception as e:

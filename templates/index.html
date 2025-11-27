@@ -1,13 +1,22 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>GDML Viewer & Editor</title>
     <style>
-        body { margin: 0; font-family: Arial, sans-serif; overflow: hidden; display: flex; }
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            display: flex;
+        }
+
         #left_panel_container {
-            width: 600px; /* Fixed width for now */
+            width: 600px;
+            /* Fixed width for now */
             height: 100vh;
-            background-color: #e9e9e9; /* Slightly different background */
+            background-color: #e9e9e9;
+            /* Slightly different background */
             border-right: 1px solid #ccc;
             display: flex;
             flex-direction: column;
@@ -27,7 +36,8 @@
         }
 
         .tab_header .tab-title {
-            flex-grow: 1; /* This makes the title take up all available space */
+            flex-grow: 1;
+            /* This makes the title take up all available space */
         }
 
         .tab_header button {
@@ -47,24 +57,32 @@
             border-bottom: 1px solid #ccc;
             background-color: #f8f8f8;
         }
+
         .tab_button {
             flex-grow: 1;
-            padding: 8px 5px; /* Reduced padding for more tabs */
+            padding: 8px 5px;
+            /* Reduced padding for more tabs */
             cursor: pointer;
             border: none;
             border-right: 1px solid #ddd;
             background-color: #f0f0f0;
-            font-size: 11px; /* Smaller font for tab buttons */
+            font-size: 11px;
+            /* Smaller font for tab buttons */
             text-align: center;
         }
+
         .tab_button:last-child {
             border-right: none;
         }
+
         .tab_button.active {
-            background-color: #e9e9e9; /* Match panel bg */
-            border-bottom: 1px solid #e9e9e9; /* Hide bottom border of active tab */
+            background-color: #e9e9e9;
+            /* Match panel bg */
+            border-bottom: 1px solid #e9e9e9;
+            /* Hide bottom border of active tab */
             font-weight: bold;
         }
+
         .tab_button:hover {
             background-color: #ddd;
         }
@@ -73,23 +91,28 @@
         .tab_content_area {
             /*flex-grow: 1; /* Takes up available space for hierarchy */
             flex-basis: 400px;
-            overflow-y: auto; /* Scroll within this area */
+            overflow-y: auto;
+            /* Scroll within this area */
             background-color: #e9e9e9;
         }
+
         .tab_pane {
-            display: none; /* Hidden by default */
+            display: none;
+            /* Hidden by default */
             padding: 10px;
             font-size: 13px;
         }
+
         .tab_pane.active {
             display: block;
         }
-        
+
         /* The main list container */
-        .tab_pane ul { 
-            list-style-type: none; 
-            padding-left: 0; /* Remove default padding */
-            margin: 0; 
+        .tab_pane ul {
+            list-style-type: none;
+            padding-left: 0;
+            /* Remove default padding */
+            margin: 0;
         }
 
         /* Individual list items */
@@ -98,19 +121,27 @@
             padding: 0;
             margin: 0;
         }
-        .tab_pane li:hover { background-color: #d8d8d8; } /* Slightly darker hover */
+
+        .tab_pane li:hover {
+            background-color: #d8d8d8;
+        }
+
+        /* Slightly darker hover */
 
         /* Nested lists for hierarchy */
         .tab_pane li ul {
-            padding-left: 20px; /* Indent nested items */
+            padding-left: 20px;
+            /* Indent nested items */
         }
-        
+
         /* Selected item style */
-        .tab_pane li.selected_item > .tree-item-content {
-            background-color: #3b82f6; /* A modern blue */
+        .tab_pane li.selected_item>.tree-item-content {
+            background-color: #3b82f6;
+            /* A modern blue */
             color: white;
             font-weight: bold;
-            border-bottom-color: #2563eb; /* Darker blue separator */
+            border-bottom-color: #2563eb;
+            /* Darker blue separator */
         }
 
         /* Change icon colors on a selected item for better visibility */
@@ -118,15 +149,20 @@
         .tab_pane li.selected_item .delete-item-btn {
             color: white;
         }
+
         .tab_pane li.selected_item .delete-item-btn:hover {
-            color: #fecaca; /* A light red for hover on delete */
+            color: #fecaca;
+            /* A light red for hover on delete */
         }
 
         /* Matrix grid */
         #def_matrix_grid_container {
-            overflow-x: auto; /* Enable horizontal scrolling */
-            padding-bottom: 8px; /* Add some space for the scrollbar so it doesn't overlap content */
-            max-width: 100%; /* Ensure it doesn't push the modal wider */
+            overflow-x: auto;
+            /* Enable horizontal scrolling */
+            padding-bottom: 8px;
+            /* Add some space for the scrollbar so it doesn't overlap content */
+            max-width: 100%;
+            /* Ensure it doesn't push the modal wider */
             border: 1px solid #e0e0e0;
             background-color: #fdfdfd;
             padding: 8px;
@@ -135,35 +171,55 @@
 
         #inspector_panel {
             /* height: 300px; /* Fixed height, or use flex-basis for proportions */
-            flex-basis: 300px; /* Alternative to height if using flex for parent */
+            flex-basis: 300px;
+            /* Alternative to height if using flex for parent */
             /* flex-shrink: 1; /* Prevent shrinking if content is too much */
             overflow-y: auto;
             padding: 10px;
             border-top: 1px solid #ccc;
-            background-color: #fdfdfd; /* Lighter inspector */
+            background-color: #fdfdfd;
+            /* Lighter inspector */
         }
-        #inspector_panel h3 { margin-top: 0; font-size: 14px; border-bottom: 1px solid #bbb; padding-bottom: 5px;}
-        #inspector_panel .property_item { margin-bottom: 8px; }
+
+        #inspector_panel h3 {
+            margin-top: 0;
+            font-size: 14px;
+            border-bottom: 1px solid #bbb;
+            padding-bottom: 5px;
+        }
+
+        #inspector_panel .property_item {
+            margin-bottom: 8px;
+        }
+
         #inspector_panel .property_item label {
             display: inline-block;
-            width: 90px; 
+            width: 90px;
             font-weight: bold;
             font-size: 12px;
             vertical-align: top;
         }
+
         #inspector_panel .property_item input[type="text"],
         #inspector_panel .property_item input[type="number"] {
-            width: calc(100% - 100px); 
+            width: calc(100% - 100px);
             padding: 3px;
             border: 1px solid #ccc;
             border-radius: 3px;
             font-size: 12px;
         }
-        #inspector_panel button { margin-top: 5px; padding: 3px 8px; font-size: 11px;}
+
+        #inspector_panel button {
+            margin-top: 5px;
+            padding: 3px 8px;
+            font-size: 11px;
+        }
+
         #inspector_panel .property_item.readonly label {
             font-weight: normal;
             color: #555;
         }
+
         #inspector_panel .property_item.readonly span {
             color: #000;
             font-family: monospace;
@@ -171,39 +227,91 @@
 
 
         #main_content_area {
-            flex-grow: 1; /* Takes remaining width */
+            flex-grow: 1;
+            /* Takes remaining width */
             height: 100vh;
-            position: relative; /* For positioning menu bar and viewer */
-            display: flex; /* Use flexbox for vertical layout */
-            flex-direction: column; /* Stack children vertically */
+            position: relative;
+            /* For positioning menu bar and viewer */
+            display: flex;
+            /* Use flexbox for vertical layout */
+            flex-direction: column;
+            /* Stack children vertically */
         }
+
         #menu_bar {
-            flex-shrink: 0; /* Prevent the menu bar from shrinking */
-            background-color: #333; color: white; padding: 0; z-index: 1000; display: flex;
+            flex-shrink: 0;
+            /* Prevent the menu bar from shrinking */
+            background-color: #333;
+            color: white;
+            padding: 0;
+            z-index: 1000;
+            display: flex;
         }
-        #menu_bar ul { list-style-type: none; margin: 0; padding: 1px; display: flex; }
-        #menu_bar li { position: relative; }
-        #menu_bar li > button, #menu_bar li > span {
-            display: block; color: white; text-align: center; padding: 8px 12px;
-            text-decoration: none; border: none; background-color: transparent;
-            cursor: pointer; font-size: 15px;
+
+        #menu_bar ul {
+            list-style-type: none;
+            margin: 0;
+            padding: 1px;
+            display: flex;
         }
-        #menu_bar li > button:hover, #menu_bar li .dropdown_content button:hover { background-color: #555; }
+
+        #menu_bar li {
+            position: relative;
+        }
+
+        #menu_bar li>button,
+        #menu_bar li>span {
+            display: block;
+            color: white;
+            text-align: center;
+            padding: 8px 12px;
+            text-decoration: none;
+            border: none;
+            background-color: transparent;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        #menu_bar li>button:hover,
+        #menu_bar li .dropdown_content button:hover {
+            background-color: #555;
+        }
+
         #menu_bar .dropdown_content {
-            display: none; position: absolute; background-color: #f9f9f9; min-width: 210px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 1;
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 210px;
+            box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+            z-index: 1;
         }
+
         #menu_bar .dropdown_content button {
-            color: black; padding: 10px 14px; text-decoration: none; display: block;
-            text-align: left; width: 100%; border: none; background-color: transparent; cursor: pointer;
+            color: black;
+            padding: 10px 14px;
+            text-decoration: none;
+            display: block;
+            text-align: left;
+            width: 100%;
+            border: none;
+            background-color: transparent;
+            cursor: pointer;
         }
-        #menu_bar li:hover .dropdown_content { display: block; }
-        #menu_bar button.active_mode { background-color: #007bff; color: white; }
+
+        #menu_bar li:hover .dropdown_content {
+            display: block;
+        }
+
+        #menu_bar button.active_mode {
+            background-color: #007bff;
+            color: white;
+        }
 
         /* Snap-to-grid formatting */
         #menu_bar .dropdown_content .snap-settings-container {
             padding: 8px 12px;
-            background-color: #f9f9f9; /* Match dropdown background */
+            background-color: #f9f9f9;
+            /* Match dropdown background */
         }
 
         #menu_bar .dropdown_content .snap-input-row {
@@ -211,7 +319,8 @@
             justify-content: space-between;
             align-items: center;
             font-size: 14px;
-            color: #333; /* Text color for the label */
+            color: #333;
+            /* Text color for the label */
             margin-bottom: 5px;
         }
 
@@ -220,7 +329,8 @@
         }
 
         #menu_bar .dropdown_content .snap-input-row label {
-            margin-right: 8px; /* Space between label and input */
+            margin-right: 8px;
+            /* Space between label and input */
         }
 
         #menu_bar .dropdown_content .snap-input-row input[type="number"] {
@@ -228,52 +338,71 @@
             padding: 2px;
             border: 1px solid #ccc;
         }
+
         /* Styles for the project controls on the right */
         #project_controls {
             display: flex;
             align-items: center;
-            gap: 20px; /* Space between name and button */
+            gap: 20px;
+            /* Space between name and button */
         }
+
         #projectNameDisplay {
             padding: 2px 10px;
             font-weight: bold;
             cursor: text;
-            background-color: #333; /* Slightly different background */
+            background-color: #333;
+            /* Slightly different background */
             border-radius: 4px;
-            border: 1px solid transparent; /* Placeholder for focus state */
-            white-space: nowrap; /* Prevent line breaks */
-            outline: none; /* Remove default outline on focus */
+            border: 1px solid transparent;
+            /* Placeholder for focus state */
+            white-space: nowrap;
+            /* Prevent line breaks */
+            outline: none;
+            /* Remove default outline on focus */
         }
+
         #projectNameDisplay:hover {
             padding: 2px 10px;
             font-weight: bold;
             cursor: text;
-            background-color: #333; /* Slightly different background */
+            background-color: #333;
+            /* Slightly different background */
             border-radius: 4px;
             border-color: #777;
-            border: 1px solid; /* Placeholder for focus state */
-            white-space: nowrap; /* Prevent line breaks */
-            outline: none; /* Remove default outline on focus */
+            border: 1px solid;
+            /* Placeholder for focus state */
+            white-space: nowrap;
+            /* Prevent line breaks */
+            outline: none;
+            /* Remove default outline on focus */
         }
+
         #projectNameDisplay:focus {
             background-color: #333;
             border-color: #777;
         }
+
         #project-name-wrapper {
-            position: relative; /* Crucial for positioning the dropdown */
+            position: relative;
+            /* Crucial for positioning the dropdown */
         }
 
         #project-list-dropdown {
-            display: none; /* Hidden by default */
+            display: none;
+            /* Hidden by default */
             position: absolute;
-            top: 100%; /* Position it right below the name display */
+            top: 100%;
+            /* Position it right below the name display */
             right: 0;
             background-color: #f1f1f1;
             min-width: 200px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            z-index: 1001; /* Ensure it's on top of other content */
+            box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.2);
+            z-index: 1001;
+            /* Ensure it's on top of other content */
             border-radius: 4px;
-            max-height: 300px; /* Limit height and make it scrollable */
+            max-height: 300px;
+            /* Limit height and make it scrollable */
             overflow-y: auto;
         }
 
@@ -290,6 +419,7 @@
         #project-list-dropdown .project-list-item:hover {
             background-color: #ddd;
         }
+
         #historyButton {
             background: none;
             border: none;
@@ -300,18 +430,27 @@
             line-height: 1;
             margin-right: 10px;
         }
+
         #historyButton:hover {
             background-color: #555;
             border-radius: 4px;
         }
 
-        #viewer_container { /* Now relative within main_content_area */
+        #viewer_container {
+            /* Now relative within main_content_area */
             width: 100%;
-            flex-grow: 1; /* Will fill available space in #top_section */
-            position: relative; /* For positioning selection box */
+            flex-grow: 1;
+            /* Will fill available space in #top_section */
+            position: relative;
+            /* For positioning selection box */
             overflow: hidden;
         }
-        canvas { display: block; width: 100% !important; height: 100% !important; }
+
+        canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
 
         /* Bottom panel containing AI and simulation options */
         #bottom_panel {
@@ -333,7 +472,8 @@
             min-height: 50px;
             max-height: 120px;
             resize: vertical;
-            overflow: auto; /* Let the content area itself scroll if needed */
+            overflow: auto;
+            /* Let the content area itself scroll if needed */
         }
 
         #bottom_panel .tab_pane {
@@ -342,7 +482,8 @@
             /* ...and are flex containers for their internal content. */
             display: flex;
             flex-direction: column;
-            height: 82%; /* Make the pane fill the content area's height */
+            height: 82%;
+            /* Make the pane fill the content area's height */
         }
 
         #bottom_panel .tab_pane.active {
@@ -356,7 +497,8 @@
         }
 
         #toggleBottomPanelBtn {
-            margin-left: auto; /* This is the magic that pushes the button to the right */
+            margin-left: auto;
+            /* This is the magic that pushes the button to the right */
             padding: 0 12px;
             font-size: 16px;
             line-height: 1;
@@ -374,9 +516,9 @@
         /* Style for the panel when it is expanded */
         #bottom_panel.expanded .tab_content_area {
             /* Use a significant portion of the viewport height */
-            max-height: 60vh; 
+            max-height: 60vh;
             /* Disable manual resizing when in the fixed expanded state */
-            resize: none; 
+            resize: none;
         }
 
         /* Add a smooth transition for the height change */
@@ -386,14 +528,17 @@
 
         /* --- AI PANEL --- */
         #ai_panel {
-            flex-shrink: 0; 
-            padding: 8px 12px; /* A bit tighter */
+            flex-shrink: 0;
+            padding: 8px 12px;
+            /* A bit tighter */
             background-color: #f0f2f5;
-            border-top: 1px solid #ccc; /* Thinner border */
+            border-top: 1px solid #ccc;
+            /* Thinner border */
             display: flex;
             gap: 10px;
             align-items: center;
         }
+
         #ai_panel_content {
             display: flex;
             flex-direction: row;
@@ -404,32 +549,43 @@
             padding: 8px 12px;
             box-sizing: border-box;
         }
+
         #ai_prompt_input {
             flex-grow: 1;
-            height: auto; /* Two lines of text + padding */
+            height: auto;
+            /* Two lines of text + padding */
             /*min-height: 38px; /* Prevent resizing smaller */
-            max-height: none; /* Allow resizing up to a certain point */
+            max-height: none;
+            /* Allow resizing up to a certain point */
             resize: none;
-            padding: 12px 12px; /* More padding inside */
+            padding: 12px 12px;
+            /* More padding inside */
             font-family: Arial, sans-serif;
             font-size: 14px;
             border: 1px solid #ddd;
-            border-radius: 24px; /* Rounded corners */
+            border-radius: 24px;
+            /* Rounded corners */
             background-color: #ffffff;
-            outline: none; /* Remove default browser outline */
+            outline: none;
+            /* Remove default browser outline */
             transition: box-shadow 0.2s;
         }
+
         /* Container for the bottom AI controls */
         .ai-controls-wrapper {
             display: flex;
             gap: 10px;
-            align-items: center; /* Vertically align items in the bottom row */
-            flex-shrink: 0;      /* Prevent this row from shrinking */
+            align-items: center;
+            /* Vertically align items in the bottom row */
+            flex-shrink: 0;
+            /* Prevent this row from shrinking */
         }
+
         #ai_prompt_input:focus {
             border-color: #a0c3ff;
             box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
         }
+
         #ai_model_select {
             height: 40px;
             padding: 0 10px;
@@ -437,39 +593,50 @@
             border: 1px solid #ddd;
             background-color: #ffffff;
             font-size: 13px;
-            flex-shrink: 0; /* Prevent it from shrinking */
+            flex-shrink: 0;
+            /* Prevent it from shrinking */
             outline: none;
         }
+
         #ai_model_select:disabled {
             background-color: #e2e8f0;
             color: #718096;
             cursor: not-allowed;
         }
+
         #ai_generate_button {
-            height: 40px; /* Match input height */
-            width: 40px; /* Make it a circle */
+            height: 40px;
+            /* Match input height */
+            width: 40px;
+            /* Make it a circle */
             padding: 0;
-            font-size: 20px; /* Larger icon/text */
+            font-size: 20px;
+            /* Larger icon/text */
             cursor: pointer;
             border: none;
             background-color: #3b82f6;
             color: white;
-            border-radius: 50%; /* Make it a circle */
+            border-radius: 50%;
+            /* Make it a circle */
             display: flex;
             align-items: center;
             justify-content: center;
             position: relative;
             transition: background-color 0.2s, color 0.2s;
         }
+
         #ai_generate_button:hover {
             background-color: #2563eb;
         }
+
         #ai_generate_button:disabled {
             background-color: #a0aec0;
             cursor: not-allowed;
         }
+
         #ai_prompt_input:disabled {
-            background-color: #e2e8f0; /* Lighter gray for disabled input */
+            background-color: #e2e8f0;
+            /* Lighter gray for disabled input */
             color: #718096;
             cursor: not-allowed;
         }
@@ -482,17 +649,24 @@
             margin-bottom: 8px;
             flex-shrink: 0;
         }
+
         #sim_controls label {
             font-size: 13px;
             font-weight: bold;
         }
+
         #simEventsInput {
             width: 80px;
         }
-        #runSimButton, #stopSimButton, #simOptionsButton, #reconModalButton {
+
+        #runSimButton,
+        #stopSimButton,
+        #simOptionsButton,
+        #reconModalButton {
             font-size: 12px;
             cursor: pointer;
         }
+
         #stopSimButton:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -500,14 +674,18 @@
 
         #sim_console_wrapper {
             flex-grow: 1;
-            background-color: #2d3748; /* Dark background */
-            color: #f7fafc; /* Light text */
+            background-color: #2d3748;
+            /* Dark background */
+            color: #f7fafc;
+            /* Light text */
             font-family: monospace;
             font-size: 12px;
             border-radius: 4px;
             padding: 10px;
-            overflow-y: scroll; /* Make the console scrollable */
-            white-space: pre-wrap; /* Wrap long lines */
+            overflow-y: scroll;
+            /* Make the console scrollable */
+            white-space: pre-wrap;
+            /* Wrap long lines */
             word-break: break-all;
         }
 
@@ -518,34 +696,49 @@
 
         /* AI loader */
         .loader {
-            border: 3px solid #f3f3f3; /* Light grey */
-            border-top: 3px solid #ffffff; /* White */
+            border: 3px solid #f3f3f3;
+            /* Light grey */
+            border-top: 3px solid #ffffff;
+            /* White */
             border-radius: 50%;
             width: 20px;
             height: 20px;
             animation: spin 1s linear infinite;
         }
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
+
         #ai_generate_button.loading .button-text {
-            visibility: hidden; /* Hide the '➤' text when loading */
+            visibility: hidden;
+            /* Hide the '➤' text when loading */
         }
-        
+
         #ai_generate_button .loader {
-            display: none; /* Hide loader by default */
-            position: absolute; /* Position it in the center of the button */
+            display: none;
+            /* Hide loader by default */
+            position: absolute;
+            /* Position it in the center of the button */
             left: 18%;
             top: 18%;
         }
+
         #ai_generate_button.loading .loader {
-            display: block; /* Show loader when button has .loading class */
+            display: block;
+            /* Show loader when button has .loading class */
         }
 
         /* Solid editor */
         .editor-modal {
-            display: none; /* Hidden by default */
+            display: none;
+            /* Hidden by default */
             position: fixed;
             z-index: 1001;
             left: 0;
@@ -553,7 +746,7 @@
             width: 100%;
             height: 100%;
             overflow: auto;
-            background-color: rgba(0,0,0,0.4);
+            background-color: rgba(0, 0, 0, 0.4);
         }
 
         .modal-content {
@@ -577,7 +770,9 @@
             align-items: center;
         }
 
-        .modal-header h4 { margin: 0; }
+        .modal-header h4 {
+            margin: 0;
+        }
 
         .close-button {
             color: #aaa;
@@ -585,6 +780,7 @@
             font-size: 28px;
             font-weight: bold;
         }
+
         .close-button:hover,
         .close-button:focus {
             color: #fff;
@@ -593,11 +789,16 @@
         }
 
         .modal-body {
-            padding: 10px; /* Adds space around the content */
-            flex-grow: 1;  /* This ensures the body fills available space */
-            overflow-y: auto; /* Allow content to scroll if it's too tall */
-            display: flex; /* Often useful to make the body a flex container */
-            flex-direction: column; /* Stack items vertically by default */
+            padding: 10px;
+            /* Adds space around the content */
+            flex-grow: 1;
+            /* This ensures the body fills available space */
+            overflow-y: auto;
+            /* Allow content to scroll if it's too tall */
+            display: flex;
+            /* Often useful to make the body a flex container */
+            flex-direction: column;
+            /* Stack items vertically by default */
         }
 
         /* The solid editor has internal panels, so we remove the body's padding
@@ -605,7 +806,8 @@
         .solid_editor_modal-body {
             display: flex;
             flex-grow: 1;
-            overflow: hidden; /* Prevent body from scrolling */
+            overflow: hidden;
+            /* Prevent body from scrolling */
             padding: 0px;
         }
 
@@ -615,11 +817,26 @@
             display: flex;
             flex-direction: column;
         }
-        .editor-panel:last-child { border-right: none; }
 
-        #solid-ingredients-panel { flex: 0 0 200px; overflow-y: auto; }
-        #solid-preview-panel { flex: 1 1 auto; padding: 0; position: relative; }
-        #solid-params-panel { flex: 0 0 340px; overflow-y: auto; }
+        .editor-panel:last-child {
+            border-right: none;
+        }
+
+        #solid-ingredients-panel {
+            flex: 0 0 200px;
+            overflow-y: auto;
+        }
+
+        #solid-preview-panel {
+            flex: 1 1 auto;
+            padding: 0;
+            position: relative;
+        }
+
+        #solid-params-panel {
+            flex: 0 0 340px;
+            overflow-y: auto;
+        }
 
         #solid_preview_container {
             width: 100%;
@@ -627,26 +844,41 @@
             background-color: #e0e0e0;
         }
 
-        .ingredient-list { border-top: 1px solid #ccc; margin-top: 5px; padding-top: 5px;}
-        .ingredient-list div { padding: 4px; cursor: grab; border-bottom: 1px solid #eee; }
-        .ingredient-list div:hover { background-color: #f0f0f0; }
+        .ingredient-list {
+            border-top: 1px solid #ccc;
+            margin-top: 5px;
+            padding-top: 5px;
+        }
+
+        .ingredient-list div {
+            padding: 4px;
+            cursor: grab;
+            border-bottom: 1px solid #eee;
+        }
+
+        .ingredient-list div:hover {
+            background-color: #f0f0f0;
+        }
 
         #solid-editor-dynamic-params .property_item {
             display: flex;
             align-items: center;
             margin-bottom: 10px;
         }
+
         #solid-editor-dynamic-params .property_item label {
             flex-basis: 100px;
             flex-shrink: 0;
         }
+
         #solid-editor-dynamic-params .property_item input {
             flex-grow: 1;
         }
 
         /* Boolean specific styles */
         .boolean-slot {
-            flex-grow: 1; /* Let the slot take the remaining space */
+            flex-grow: 1;
+            /* Let the slot take the remaining space */
             border: 2px dashed #ccc;
             padding: 10px;
             background-color: #f9f9f9;
@@ -654,15 +886,21 @@
             color: #888;
             position: relative;
         }
-        .boolean-slot h6 { margin: 0 0 5px 0; }
+
+        .boolean-slot h6 {
+            margin: 0 0 5px 0;
+        }
+
         .boolean-slot.filled {
             border-style: solid;
             border-color: #4CAF50;
             color: #333;
             background-color: #e8f5e9;
         }
+
         .boolean-slot .remove-solid-btn {
-            display: none; /* Hide by default */
+            display: none;
+            /* Hide by default */
             position: absolute;
             top: 2px;
             right: 5px;
@@ -671,9 +909,12 @@
             color: #999;
             cursor: pointer;
         }
+
         .boolean-slot.filled .remove-solid-btn {
-            display: block; /* Show when slot is filled */
+            display: block;
+            /* Show when slot is filled */
         }
+
         .boolean-slot .remove-solid-btn:hover {
             color: #333;
         }
@@ -687,42 +928,51 @@
             border-radius: 4px;
             margin-bottom: 10px;
         }
+
         .boolean-top-part {
             display: flex;
             align-items: center;
             gap: 10px;
         }
+
         .op-container {
             flex-shrink: 0;
         }
+
         .op-and-slot {
             flex-grow: 1;
         }
+
         .transform-controls-inline {
             display: flex;
-            flex-wrap: wrap; 
+            flex-wrap: wrap;
             gap: 10px;
             margin-top: 5px;
             padding-top: 8px;
             border-top: 1px dotted #ccc;
         }
+
         .transform-controls-inline .property_item label {
             flex-basis: 20px;
             flex-shrink: 0;
             text-align: right;
             margin-right: 5px;
         }
+
         .transform-controls-inline .transform-group {
-            flex: 1; 
+            flex: 1;
             min-width: 250px;
         }
+
         .transform-controls-inline .transform-group label {
             font-size: 11px;
             font-weight: bold;
         }
+
         .transform-controls-inline input {
             width: 50px;
         }
+
         .remove-op-btn {
             background: none;
             border: none;
@@ -738,12 +988,14 @@
             gap: 10px;
             margin-top: 10px;
         }
+
         .transform-group {
             border: 1px solid #e0e0e0;
             padding: 8px;
             border-radius: 4px;
             flex: 1;
         }
+
         .transform-group span {
             font-weight: bold;
             font-size: 12px;
@@ -751,8 +1003,10 @@
             display: block;
             margin-bottom: 5px;
         }
+
         .transform-group .property_item label {
-            flex-basis: 20px !important; /* Smaller label for X/Y/Z */
+            flex-basis: 20px !important;
+            /* Smaller label for X/Y/Z */
         }
 
         .modal-footer {
@@ -773,7 +1027,8 @@
             position: absolute;
             top: 5px;
             right: 5px;
-            z-index: 10; /* Ensure it's above the canvas */
+            z-index: 10;
+            /* Ensure it's above the canvas */
             border: 1px solid #999;
             background-color: rgba(240, 240, 240, 0.8);
             border-radius: 50%;
@@ -783,6 +1038,7 @@
             cursor: pointer;
             line-height: 24px;
         }
+
         #recenter-solid-preview-btn:hover {
             background-color: rgba(220, 220, 220, 1.0);
         }
@@ -794,11 +1050,13 @@
             align-items: center;
             margin-bottom: 8px;
         }
+
         .define-header span {
             font-weight: bold;
             font-size: 12px;
             color: #555;
         }
+
         .define-select {
             max-width: 120px;
         }
@@ -810,15 +1068,21 @@
             justify-content: space-between;
             align-items: center;
             width: 100%;
-            padding: 4px 8px; /* Consistent padding */
-            box-sizing: border-box; /* Ensures padding doesn't increase width */
-            border-bottom: 1px solid #e0e0e0; /* Subtle separator line */
+            padding: 4px 8px;
+            /* Consistent padding */
+            box-sizing: border-box;
+            /* Ensures padding doesn't increase width */
+            border-bottom: 1px solid #e0e0e0;
+            /* Subtle separator line */
             cursor: pointer;
-            transition: background-color 0.15s ease-in-out; /* Smooth transition */
+            transition: background-color 0.15s ease-in-out;
+            /* Smooth transition */
         }
+
         /* Hover effect */
         .tree-item-content:hover {
-            background-color: #e2e8f0; /* A light, cool gray/blue */
+            background-color: #e2e8f0;
+            /* A light, cool gray/blue */
         }
 
         .item-name {
@@ -830,23 +1094,28 @@
 
         /* Item controls (buttons) */
         .item-controls {
-            display: flex; /* Changed from none to flex to always show them */
+            display: flex;
+            /* Changed from none to flex to always show them */
             align-items: center;
             margin-left: 5px;
-            opacity: 0; /* Hidden by default, will fade in on hover */
+            opacity: 0;
+            /* Hidden by default, will fade in on hover */
             transition: opacity 0.15s ease-in-out;
         }
 
-        li:hover > .tree-item-content > .item-controls {
-            opacity: 1; /* Fade in controls on hover */
+        li:hover>.tree-item-content>.item-controls {
+            opacity: 1;
+            /* Fade in controls on hover */
         }
 
         .selected_item .item-controls {
-            opacity: 1; /* Always show controls for the selected item */
+            opacity: 1;
+            /* Always show controls for the selected item */
         }
 
         /* Delete item and visibility controls */
-        .delete-item-btn, .visibility-btn {
+        .delete-item-btn,
+        .visibility-btn {
             background: none;
             border: none;
             cursor: pointer;
@@ -854,32 +1123,45 @@
             line-height: 1;
             border-radius: 4px;
         }
-        .delete-item-btn { font-size: 18px; color: #9ca3af; }
-        .visibility-btn { font-size: 14px; color: #9ca3af; }
 
-        .delete-item-btn:hover, .visibility-btn:hover {
-            background-color: rgba(0,0,0,0.1);
+        .delete-item-btn {
+            font-size: 18px;
+            color: #9ca3af;
         }
 
-        li.item-hidden > .tree-item-content > .item-name {
+        .visibility-btn {
+            font-size: 14px;
+            color: #9ca3af;
+        }
+
+        .delete-item-btn:hover,
+        .visibility-btn:hover {
+            background-color: rgba(0, 0, 0, 0.1);
+        }
+
+        li.item-hidden>.tree-item-content>.item-name {
             /* ...target the item-name span inside its direct content div. */
             color: #999;
             font-style: italic;
         }
 
-        li.item-hidden > .tree-item-content > .item-controls > .visibility-btn {
+        li.item-hidden>.tree-item-content>.item-controls>.visibility-btn {
             /* ...and target the visibility button inside its direct content div. */
-            opacity: 0.4 !important; /* Force the opacity for this specific button */
+            opacity: 0.4 !important;
+            /* Force the opacity for this specific button */
         }
 
         /* Toggle for expanding/collapsing */
-        .toggle { 
-            display: inline-block; 
-            width: 15px; /* Slightly reduce width to make room for margin */
-            text-align: left; /* Align to the left of its box */
+        .toggle {
+            display: inline-block;
+            width: 15px;
+            /* Slightly reduce width to make room for margin */
+            text-align: left;
+            /* Align to the left of its box */
             font-family: monospace;
-            cursor: pointer; /* Indicate it's clickable */
-            margin-right: 10px; 
+            cursor: pointer;
+            /* Indicate it's clickable */
+            margin-right: 10px;
         }
 
         /* Selection box */
@@ -887,47 +1169,60 @@
             position: absolute;
             border: 1px solid #007bff;
             background-color: rgba(0, 123, 255, 0.2);
-            pointer-events: none; /* Allows mouse events to pass through to the canvas */
+            pointer-events: none;
+            /* Allows mouse events to pass through to the canvas */
         }
 
         /* Hierarchy groups */
-        .hierarchy-folder > .tree-item-content {
-            background-color: #e0e0e0; /* A slightly different color for folders */
+        .hierarchy-folder>.tree-item-content {
+            background-color: #e0e0e0;
+            /* A slightly different color for folders */
             font-weight: bold;
         }
-        .hierarchy-folder > ul {
+
+        .hierarchy-folder>ul {
             border-left: 1px dashed #aaa;
-            margin-left: 10px; /* Visual indent for folder content */
+            margin-left: 10px;
+            /* Visual indent for folder content */
         }
 
         .add-group-btn {
             padding: 2px 6px !important;
             font-size: 11px !important;
-            margin-right: 5px; /* Space between group and add buttons */
+            margin-right: 5px;
+            /* Space between group and add buttons */
         }
 
         /* Visual feedback for drag-and-drop */
         .drop-target-hover {
-            background-color: #a0c3ff !important; /* A light blue to indicate a valid drop target */
+            background-color: #a0c3ff !important;
+            /* A light blue to indicate a valid drop target */
             outline: 2px dashed #3b82f6;
         }
+
         .ungrouped-drop-target {
             height: 10px;
             margin: 5px 0;
-            border: 2px dashed transparent; /* Invisible by default */
+            border: 2px dashed transparent;
+            /* Invisible by default */
         }
+
         .ungrouped-drop-target.drop-target-hover {
             border-color: #3b82f6;
         }
 
         /* Controls for folders (rename, delete) */
         .folder-controls {
-            display: none; /* Hide by default */
+            display: none;
+            /* Hide by default */
         }
+
         .hierarchy-folder:hover .folder-controls,
         .hierarchy-folder.selected_item .folder-controls {
-            display: inline-block; /* Show on hover */
+            display: inline-block;
+            /* Show on hover */
         }
+
         .folder-controls button {
             background: none;
             border: none;
@@ -936,27 +1231,35 @@
             font-size: 14px;
             color: #555;
         }
+
         .hierarchy-folder.selected_item .folder-controls button {
-            color: white; /* Make icons white on selected folder */
+            color: white;
+            /* Make icons white on selected folder */
         }
 
         /* Styles for the Expression Input Component ## */
         .expression-component {
             display: flex;
-            flex-direction: column; /* Stack label on top of input wrapper */
-            margin-bottom: 8px; /* Consistent spacing */
+            flex-direction: column;
+            /* Stack label on top of input wrapper */
+            margin-bottom: 8px;
+            /* Consistent spacing */
         }
+
         .expression-component label {
-            margin-bottom: 4px; /* Space between label and input */
+            margin-bottom: 4px;
+            /* Space between label and input */
             font-size: 12px;
             font-weight: bold;
             color: #333;
         }
+
         .expression-component .input-wrapper {
             display: flex;
             width: 100%;
             align-items: center;
         }
+
         .expression-component .expression-input {
             width: 150px;
             font-family: monospace;
@@ -964,9 +1267,11 @@
             padding: 4px;
             border-radius: 3px;
         }
+
         .expression-component .expression-result {
             flex-shrink: 0;
-            width: 70px; /* Fixed width for the result */
+            width: 70px;
+            /* Fixed width for the result */
             margin-left: 5px;
             text-align: right;
             font-family: monospace;
@@ -976,12 +1281,14 @@
             padding: 4px;
             border-radius: 3px;
         }
-    
+
         /* Assembly CSS */
         .assembly-icon {
             display: inline-block;
-            color: #6b7280; /* A neutral gray */
+            color: #6b7280;
+            /* A neutral gray */
         }
+
         .selected_item .assembly-icon {
             color: white;
         }
@@ -990,44 +1297,57 @@
         .accordion {
             width: 100%;
         }
+
         .accordion-item {
             border-bottom: 1px solid #ccc;
         }
+
         /* This is now the clickable header, styled like a folder */
         .accordion-header {
             background-color: #e0e0e0;
             cursor: pointer;
-            padding: 6px 8px; /* Tighter padding */
+            padding: 6px 8px;
+            /* Tighter padding */
             width: 100%;
             border: none;
             text-align: left;
             outline: none;
             font-size: 13px;
             font-weight: bold;
-            display: flex; /* Use flex to align items */
+            display: flex;
+            /* Use flex to align items */
             align-items: center;
         }
+
         .accordion-header:hover {
             background-color: #d8d8d8;
         }
+
         /* This is the [+] / [-] toggle */
         .accordion-toggle {
             font-family: monospace;
             font-size: 14px;
             margin-right: 8px;
-            width: 15px; /* Fixed width for alignment */
+            width: 15px;
+            /* Fixed width for alignment */
         }
+
         .accordion-content {
             padding: 0;
-            display: none; /* IMPORTANT: Default to hidden */
+            display: none;
+            /* IMPORTANT: Default to hidden */
             overflow: hidden;
             background-color: #e9e9e9;
-            border-left: 1px dashed #aaa; /* Add indent like hierarchy folders */
+            border-left: 1px dashed #aaa;
+            /* Add indent like hierarchy folders */
             margin-left: 10px;
         }
+
         .accordion-content.active {
-            display: block; /* Class to show the content */
+            display: block;
+            /* Class to show the content */
         }
+
         .accordion-content .tab_header {
             background-color: #f0f0f0;
             padding: 4px;
@@ -1042,7 +1362,8 @@
         }
 
         #history_list_container .accordion-header {
-            background-color: #f9fafb; /* Lighter than the property accordions */
+            background-color: #f9fafb;
+            /* Lighter than the property accordions */
             cursor: pointer;
             padding: 8px 10px;
             width: 100%;
@@ -1052,7 +1373,8 @@
             font-size: 13px;
             display: flex;
             align-items: center;
-            justify-content: space-between; /* Pushes button to the right */
+            justify-content: space-between;
+            /* Pushes button to the right */
             box-sizing: border-box;
         }
 
@@ -1068,18 +1390,20 @@
             color: #6b7280;
         }
 
-        #history_list_container .autosave-history-item > .accordion-header {
-            background-color: #eef2ff; /* A light indigo/blue background */
+        #history_list_container .autosave-history-item>.accordion-header {
+            background-color: #eef2ff;
+            /* A light indigo/blue background */
             border-bottom: 1px solid #c7d2fe;
         }
 
-        #history_list_container .autosave-history-item > .accordion-header:hover {
+        #history_list_container .autosave-history-item>.accordion-header:hover {
             background-color: #e0e7ff;
         }
 
         #history_list_container .autosave-history-item .version-desc {
             font-style: italic;
-            color: #4338ca; /* A darker indigo for the text */
+            color: #4338ca;
+            /* A darker indigo for the text */
         }
 
         .version-info {
@@ -1117,7 +1441,8 @@
             padding: 0;
             display: none;
             overflow: hidden;
-            background-color: #ffffff; /* White background for the run list */
+            background-color: #ffffff;
+            /* White background for the run list */
         }
 
         #history_list_container .accordion-content.active {
@@ -1131,7 +1456,8 @@
         }
 
         .run-item {
-            padding: 8px 10px 8px 35px; /* Indent to align under description */
+            padding: 8px 10px 8px 35px;
+            /* Indent to align under description */
             font-size: 12px;
             font-family: monospace;
             color: #374151;
@@ -1140,7 +1466,8 @@
         }
 
         .run-item:hover {
-            background-color: #eff6ff; /* A light blue hover */
+            background-color: #eff6ff;
+            /* A light blue hover */
         }
 
         .no-runs-text {
@@ -1149,9 +1476,9 @@
             color: #9ca3af;
             font-style: italic;
         }
-
     </style>
 </head>
+
 <body style="display: flex; width: 100vw; height: 100vh;">
     <div id="left_panel_container">
         <div id="left_panel_tabs" class="tab_navigation">
@@ -1167,7 +1494,8 @@
                 <div class="tab_header">
                     <span class="tab-title">World Structure</span>
                     <div>
-                        <button class="add_button" data-add-type="particle_source" title="Add a General Particle Source">+ GPS</button>
+                        <button class="add_button" data-add-type="particle_source"
+                            title="Add a General Particle Source">+ GPS</button>
                         <button id="addPVButton" title="Place a volume inside the selected one" disabled>+ PV</button>
                     </div>
                 </div>
@@ -1183,8 +1511,10 @@
                         </div>
                         <div class="accordion-content active">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="logical_volume" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="logical_volume" title="Create a new Logical Volume">+ Add</button>
+                                <button class="add-group-btn" data-group-type="logical_volume"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="logical_volume"
+                                    title="Create a new Logical Volume">+ Add</button>
                             </div>
                             <ul id="lvolumes_list_root"></ul>
                         </div>
@@ -1197,8 +1527,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="assembly" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="assembly" title="Add new Assembly Definition">+ Add</button>
+                                <button class="add-group-btn" data-group-type="assembly"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="assembly"
+                                    title="Add new Assembly Definition">+ Add</button>
                             </div>
                             <ul id="assemblies_list_root"></ul>
                         </div>
@@ -1223,8 +1555,10 @@
                         </div>
                         <div class="accordion-content active">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="material" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="material" title="Add new Material">+ Add</button>
+                                <button class="add-group-btn" data-group-type="material"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="material" title="Add new Material">+
+                                    Add</button>
                             </div>
                             <ul id="materials_list_root"></ul>
                         </div>
@@ -1237,8 +1571,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="element" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="element" title="Create a new Element">+ Add</button>
+                                <button class="add-group-btn" data-group-type="element"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="element" title="Create a new Element">+
+                                    Add</button>
                             </div>
                             <ul id="elements_list_root"></ul>
                         </div>
@@ -1251,8 +1587,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="isotope" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="isotope" title="Create a new Isotope">+ Add</button>
+                                <button class="add-group-btn" data-group-type="isotope"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="isotope" title="Create a new Isotope">+
+                                    Add</button>
                             </div>
                             <ul id="isotopes_list_root"></ul>
                         </div>
@@ -1265,8 +1603,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="optical_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="optical_surface" title="Create a new Optical Surface">+ Add</button>
+                                <button class="add-group-btn" data-group-type="optical_surface"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="optical_surface"
+                                    title="Create a new Optical Surface">+ Add</button>
                             </div>
                             <ul id="optical_surfaces_list_root"></ul>
                         </div>
@@ -1279,8 +1619,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="skin_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="skin_surface" title="Create a new Skin Surface">+ Add</button>
+                                <button class="add-group-btn" data-group-type="skin_surface"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="skin_surface"
+                                    title="Create a new Skin Surface">+ Add</button>
                             </div>
                             <ul id="skin_surfaces_list_root"></ul>
                         </div>
@@ -1293,8 +1635,10 @@
                         </div>
                         <div class="accordion-content">
                             <div class="tab_header">
-                                <button class="add-group-btn" data-group-type="border_surface" title="Add new Group">📁</button>
-                                <button class="add_button" data-add-type="border_surface" title="Create a new Border Surface">+ Add</button>
+                                <button class="add-group-btn" data-group-type="border_surface"
+                                    title="Add new Group">📁</button>
+                                <button class="add_button" data-add-type="border_surface"
+                                    title="Create a new Border Surface">+ Add</button>
                             </div>
                             <ul id="border_surfaces_list_root"></ul>
                         </div>
@@ -1408,7 +1752,8 @@
             </ul>
             <div id="project_controls" style="display: flex; align-items: center; margin-left: auto;">
                 <div id="project-name-wrapper" style="position: relative;">
-                    <span id="projectNameDisplay" contenteditable="true" title="Click to switch projects or edit name">untitled</span>
+                    <span id="projectNameDisplay" contenteditable="true"
+                        title="Click to switch projects or edit name">untitled</span>
                     <div id="project-list-dropdown" style="display: none;">
                         <!-- Project names will be populated here by JavaScript -->
                     </div>
@@ -1455,7 +1800,8 @@
                         <button id="stopSimButton" disabled>⏹ Stop</button>
                         <button id="simOptionsButton">⚙️ Options</button>
                         <button id="reconModalButton" title="Open PET Reconstruction" disabled>PET Reco</button>
-                        <div id="sim_status_display" style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
+                        <div id="sim_status_display"
+                            style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
                             <span>No simulation run loaded.</span>
                         </div>
                         <div style="margin-left: 20px; display: flex; align-items: center; gap: 5px;">
@@ -1472,7 +1818,8 @@
         </div>
     </div>
     <!-- History panel -->
-     <div id="history_panel" style="display:none; width: 450px; height: 100vh; background-color: #f0f2f5; border-left: 1px solid #ccc; flex-direction: column;">
+    <div id="history_panel"
+        style="display:none; width: 450px; height: 100vh; background-color: #f0f2f5; border-left: 1px solid #ccc; flex-direction: column;">
         <div class="tab_header" style="flex-shrink: 0;">
             <span class="tab-title">History</span>
             <button id="closeHistoryPanel" style="font-size: 18px; line-height: 1;">×</button>
@@ -1528,15 +1875,19 @@
                     <label for="materialEditorName">Name:</label>
                     <input type="text" id="materialEditorName" placeholder="e.g., G4_WATER">
                 </div>
-                
+
                 <!-- Radio buttons to switch definition type -->
                 <div class="property_item">
                     <label>Definition:</label><br><br>
-                    <input type="radio" name="mat_type" value="simple" id="mat_type_simple" checked> <label for="mat_type_simple">Simple Element&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</label>
-                    <input type="radio" name="mat_type" value="composite" id="mat_type_composite"> <label for="mat_type_composite">By Element (# of Atoms)</label>
+                    <input type="radio" name="mat_type" value="simple" id="mat_type_simple" checked> <label
+                        for="mat_type_simple">Simple Element&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</label>
+                    <input type="radio" name="mat_type" value="composite" id="mat_type_composite"> <label
+                        for="mat_type_composite">By Element (# of Atoms)</label>
                     <br>
-                    <input type="radio" name="mat_type" value="mixture" id="mat_type_mixture"> <label for="mat_type_mixture">Mixture/Compound&nbsp;&nbsp;</label>
-                    <input type="radio" name="mat_type" value="nist" id="mat_type_nist"> <label for="mat_type_nist">NIST Pre-defined</label>
+                    <input type="radio" name="mat_type" value="mixture" id="mat_type_mixture"> <label
+                        for="mat_type_mixture">Mixture/Compound&nbsp;&nbsp;</label>
+                    <input type="radio" name="mat_type" value="nist" id="mat_type_nist"> <label for="mat_type_nist">NIST
+                        Pre-defined</label>
                 </div>
                 <hr>
 
@@ -1570,8 +1921,10 @@
                 <div class="property_item">
                     <label>Definition:</label>
                     <div>
-                        <input type="radio" name="el_type" value="simple" id="el_type_simple" checked> <label for="el_type_simple">Simple (by Z, A)</label>
-                        <input type="radio" name="el_type" value="isotope" id="el_type_isotope"> <label for="el_type_isotope">By Isotope Fraction</label>
+                        <input type="radio" name="el_type" value="simple" id="el_type_simple" checked> <label
+                            for="el_type_simple">Simple (by Z, A)</label>
+                        <input type="radio" name="el_type" value="isotope" id="el_type_isotope"> <label
+                            for="el_type_isotope">By Isotope Fraction</label>
                     </div>
                 </div>
                 <hr>
@@ -1850,10 +2203,14 @@
                 <div class="property_item">
                     <label>Content Type:</label>
                     <div id="lvContentTypeRadios">
-                        <input type="radio" name="lv_content_type" value="physvol" id="lv_type_physvol" checked> <label for="lv_type_physvol">Standard</label>
-                        <input type="radio" name="lv_content_type" value="replica" id="lv_type_replica"> <label for="lv_type_replica">Replica</label>
-                        <input type="radio" name="lv_content_type" value="division" id="lv_type_division"> <label for="lv_type_division">Division</label>
-                        <input type="radio" name="lv_content_type" value="parameterised" id="lv_type_parameterised"> <label for="lv_type_parameterised">Parameterised</label>
+                        <input type="radio" name="lv_content_type" value="physvol" id="lv_type_physvol" checked> <label
+                            for="lv_type_physvol">Standard</label>
+                        <input type="radio" name="lv_content_type" value="replica" id="lv_type_replica"> <label
+                            for="lv_type_replica">Replica</label>
+                        <input type="radio" name="lv_content_type" value="division" id="lv_type_division"> <label
+                            for="lv_type_division">Division</label>
+                        <input type="radio" name="lv_content_type" value="parameterised" id="lv_type_parameterised">
+                        <label for="lv_type_parameterised">Parameterised</label>
                     </div>
                 </div>
                 <hr>
@@ -1861,9 +2218,10 @@
                     <label for="lvEditorSensitive">Sensitive Detector:</label>
                     <input type="checkbox" id="lvEditorSensitive" style="width: auto;">
                 </div>
-                
+
                 <!-- Placeholder for procedural parameters -->
-                <div id="lv-procedural-params" style="border-top: 1px dotted #ccc; margin-top: 10px; padding-top: 10px;">
+                <div id="lv-procedural-params"
+                    style="border-top: 1px dotted #ccc; margin-top: 10px; padding-top: 10px;">
                     <!-- Content will be generated by JS -->
                 </div>
                 <hr>
@@ -1935,10 +2293,12 @@
                 </div>
                 <hr>
                 <h6>Placements within Assembly</h6>
-                <div id="assembly-placements-list" style="flex-grow: 1; overflow-y: auto; border: 1px solid #ccc; padding: 5px;">
+                <div id="assembly-placements-list"
+                    style="flex-grow: 1; overflow-y: auto; border: 1px solid #ccc; padding: 5px;">
                     <!-- Placements will be dynamically generated here -->
                 </div>
-                <button id="add-assembly-placement-btn" class="add_button" style="margin-top: 10px;">+ Add Placement</button>
+                <button id="add-assembly-placement-btn" class="add_button" style="margin-top: 10px;">+ Add
+                    Placement</button>
             </div>
             <div class="modal-footer">
                 <button id="assemblyEditorCancel">Cancel</button>
@@ -1977,7 +2337,8 @@
                 <!-- Axial Repetition Section -->
                 <div class="property_item">
                     <input type="checkbox" id="ringAxialRepetition">
-                    <label for="ringAxialRepetition" style="width:auto;">Enable Axial Repetition (create cylinder)</label>
+                    <label for="ringAxialRepetition" style="width:auto;">Enable Axial Repetition (create
+                        cylinder)</label>
                 </div>
                 <div id="ring-axial-params-container" style="display:none; padding-left: 20px;">
                     <div class="property_item">
@@ -2036,7 +2397,8 @@
                 </p>
                 <div class="property_item">
                     <label for="apiKeyInput" style="width: 80px;">API Key:</label>
-                    <input type="password" id="apiKeyInput" style="width: calc(100% - 90px);" placeholder="Enter your key here...">
+                    <input type="password" id="apiKeyInput" style="width: calc(100% - 90px);"
+                        placeholder="Enter your key here...">
                 </div>
             </div>
             <div class="modal-footer">
@@ -2057,7 +2419,7 @@
                     <label for="stepImportGroupName">Grouping Name:</label>
                     <input type="text" id="stepImportGroupName" placeholder="Prefix for new objects...">
                 </div>
-                
+
                 <div class="property_item">
                     <label>Placement Mode:</label>
                     <div>
@@ -2127,7 +2489,7 @@
                         <option value="Surface">Surface</option>
                     </select>
                 </div>
-                
+
                 <!-- Dynamic parameters based on shape -->
                 <div id="gps-shape-params">
                     <!-- JS will populate this section -->
@@ -2159,7 +2521,8 @@
                     <label for="simPrintProgress">Print Progress Every:</label>
                     <input type="number" id="simPrintProgress" value="1000" min="0" step="100">
                 </div>
-                <div style="font-size: 11px; color: #666; text-align: right; margin-top: -8px;">(Set to 0 to disable)</div>
+                <div style="font-size: 11px; color: #666; text-align: right; margin-top: -8px;">(Set to 0 to disable)
+                </div>
                 <hr>
                 <div class="property_item">
                     <input type="checkbox" id="simSaveHits" style="width: auto;" checked>
@@ -2187,7 +2550,8 @@
             </div>
             <div class="modal-body" style="flex-direction: row; padding: 10px; gap: 10px;">
                 <!-- Left Side: Image Viewer -->
-                <div id="recon-viewer-panel" style="flex: 3; display: flex; flex-direction: column; background-color: #000; justify-content: center; align-items: center; border-radius: 5px; overflow: hidden; max-height: 100%; position: relative;">
+                <div id="recon-viewer-panel"
+                    style="flex: 3; display: flex; flex-direction: column; background-color: #000; justify-content: center; align-items: center; border-radius: 5px; overflow: hidden; max-height: 100%; position: relative;">
                     <img id="reconImageView" style="width: 100%; height: 80%; max-height: 80%; object-fit: contain;">
                     <div id="recon-slider-controls" style="width: 80%; padding-top: 10px;">
                         <label for="sliceSlider" style="color: white; font-size: 12px;">Slice:</label>
@@ -2196,11 +2560,27 @@
                     </div>
                 </div>
                 <!-- Right Side: Controls -->
-                <div id="recon-controls-panel" style="flex: 1; padding: 10px; border-left: 1px solid #ccc; overflow-y: auto;">
+                <div id="recon-controls-panel"
+                    style="flex: 1; padding: 10px; border-left: 1px solid #ccc; overflow-y: auto;">
                     <h5>1. Coincidence Processing</h5>
                     <div class="property_item">
                         <label for="coincidenceWindow">Time Window (ns):</label>
                         <input type="number" id="coincidenceWindow" value="4.0" step="0.1">
+                    </div>
+                    <div class="property_item">
+                        <label for="energyCut">Energy Cut (MeV):</label>
+                        <input type="number" id="energyCut" value="0.0" step="0.01" min="0">
+                    </div>
+                    <div class="property_item">
+                        <label>Pos. Resolution (mm):</label>
+                        <div style="display: flex; gap: 5px;">
+                            <input type="number" id="posResX" placeholder="X" value="0.0" step="0.1" min="0"
+                                style="width: 30%;">
+                            <input type="number" id="posResY" placeholder="Y" value="0.0" step="0.1" min="0"
+                                style="width: 30%;">
+                            <input type="number" id="posResZ" placeholder="Z" value="0.0" step="0.1" min="0"
+                                style="width: 30%;">
+                        </div>
                     </div>
                     <button id="processLorsBtn">Process LORs</button>
                     <p id="lorStatus" style="font-size: 12px; color: #555; margin-top: 5px;">
@@ -2217,6 +2597,10 @@
                     <div class="property_item">
                         <label for="reconIterations">Iterations:</label>
                         <input type="number" id="reconIterations" value="5" min="1" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="reconNormalization">Normalization:</label>
+                        <input type="checkbox" id="reconNormalization" checked>
                     </div>
                     <hr>
                     <h5>Image Grid</h5>
@@ -2246,11 +2630,14 @@
         </div>
     </div>
     <!-- Add a full-screen loading overlay -->
-    <div id="loading-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 1.2em;">
+    <div id="loading-overlay"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 1.2em;">
         <div class="loader" style="width: 50px; height: 50px; border-width: 5px;"></div>
         <span id="loading-message" style="margin-top: 20px;">Loading...</span>
     </div>
-    <div id="drag-image-helper" style="position: absolute; top: -1000px; left: -1000px; padding: 5px 10px; background-color: #4a90e2; color: white; border-radius: 8px; font-family: Arial, sans-serif; font-size: 14px; display: flex; align-items: center; gap: 8px;"></div>
+    <div id="drag-image-helper"
+        style="position: absolute; top: -1000px; left: -1000px; padding: 5px 10px; background-color: #4a90e2; color: white; border-radius: 8px; font-family: Arial, sans-serif; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+    </div>
     <script type="importmap">
         {
             "imports": {
@@ -2263,4 +2650,5 @@
     </script>
     <script type="module" src="{{ url_for('static', filename='main.js') }}"></script>
 </body>
+
 </html>
