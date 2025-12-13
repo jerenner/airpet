@@ -2,7 +2,6 @@
 import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
 import * as ExpressionInput from './expressionInput.js';
-import * as GpsEditor from './gpsEditor.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -21,8 +20,8 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     currentModeDisplay;
 
 // Hierarchy and Inspector
-let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot, 
-    elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot, 
+let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot,
+    elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot,
     borderSurfacesListRoot;
 let inspectorContentDiv;
 
@@ -62,62 +61,63 @@ let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
-    
-    onOpenGdmlClicked: (file) => {},
-    onOpenProjectClicked: (file) => {},
-    onImportGdmlClicked: (file) => {},
-    onImportProjectClicked: (file) => {},
-    onImportAiResponseClicked: (file) => {},
-    onImportStepClicked: (file) => {},
-    onNewProjectClicked: () => {},
-    onSaveProjectClicked: () => {},
-    onExportGdmlClicked: () => {},
-    onUndoClicked: () => {},
-    onRedoClicked: () => {},
-    onHistoryButtonClicked: () => {},
+
+    onOpenGdmlClicked: (file) => { },
+    onOpenProjectClicked: (file) => { },
+    onImportGdmlClicked: (file) => { },
+    onImportProjectClicked: (file) => { },
+    onImportAiResponseClicked: (file) => { },
+    onImportStepClicked: (file) => { },
+    onNewProjectClicked: () => { },
+    onSaveProjectClicked: () => { },
+    onExportGdmlClicked: () => { },
+    onUndoClicked: () => { },
+    onRedoClicked: () => { },
+    onHistoryButtonClicked: () => { },
     onProjectRenamed: (newName) => { },
-    onLoadVersionClicked: () => {},
-    onEditSolidClicked: (solidData) => {},
-    onAddDefineClicked: () => {},
-    onEditDefineClicked: (defineData) => {},
-    onAddMaterialClicked: ()=>{}, 
-    onEditMaterialClicked: (d)=>{},
-    onAddElementClicked: ()=>{}, 
-    onEditElementClicked: (d)=>{},
-    onAddOpticalSurfaceClicked: ()=>{}, 
-    onEditOpticalSurfaceClicked: (surfaceData)=>{},
-    onAddSkinSurfaceClicked: ()=>{}, 
-    onEditSkinSurfaceClicked: (surfaceData)=>{},
-    onAddLVClicked: () => {},
-    onEditLVClicked: (lvData) => {},
-    onAddObjectClicked: () => {}, // To show modal
-    onAddRingArrayClicked: () => {},
-    onConfirmAddObject: (type, name, params) => {},
-    onDeleteSelectedClicked: () => {},
-    onHierarchySelectionChanged: (selectedItems) => {},
-    onModeChangeClicked: (mode) => {},
-    onSnapToggleClicked: () => {},
-    onSnapSettingsChanged: (transSnap, angleSnap) => {},
-    onCameraModeChangeClicked: (mode) => {},
-    onWireframeToggleClicked: () => {},
-    onGridToggleClicked: () => {},
-    onAxesToggleClicked: () => {},
-    onInspectorPropertyChanged: (type, id, path, value) => {},
-    onPVVisibilityToggle: (pvId, isVisible) => {},
-    onAiGenerateClicked: (promptText) => {},
-    onSetApiKeyClicked: () => {},
-    onSaveApiKeyClicked: (apiKey) => {}
+    onLoadVersionClicked: () => { },
+    onEditSolidClicked: (solidData) => { },
+    onAddDefineClicked: () => { },
+    onEditDefineClicked: (defineData) => { },
+    onAddMaterialClicked: () => { },
+    onEditMaterialClicked: (d) => { },
+    onAddElementClicked: () => { },
+    onEditElementClicked: (d) => { },
+    onAddOpticalSurfaceClicked: () => { },
+    onEditOpticalSurfaceClicked: (surfaceData) => { },
+    onAddSkinSurfaceClicked: () => { },
+    onEditSkinSurfaceClicked: (surfaceData) => { },
+    onAddLVClicked: () => { },
+    onEditLVClicked: (lvData) => { },
+    onAddObjectClicked: () => { }, // To show modal
+    onAddRingArrayClicked: () => { },
+    onConfirmAddObject: (type, name, params) => { },
+    onDeleteSelectedClicked: () => { },
+    onHierarchySelectionChanged: (selectedItems) => { },
+    onModeChangeClicked: (mode) => { },
+    onSnapToggleClicked: () => { },
+    onSnapSettingsChanged: (transSnap, angleSnap) => { },
+    onCameraModeChangeClicked: (mode) => { },
+    onWireframeToggleClicked: () => { },
+    onGridToggleClicked: () => { },
+    onAxesToggleClicked: () => { },
+    onInspectorPropertyChanged: (type, id, path, value) => { },
+    onPVVisibilityToggle: (pvId, isVisible) => { },
+    onAiGenerateClicked: (promptText) => { },
+    onSetApiKeyClicked: () => { },
+    onSaveApiKeyClicked: (apiKey) => { },
+    onSourceActivationToggled: (sourceId) => { }
 };
 
 // --- Initialization ---
 export function initUI(cb) {
-    callbacks = {...callbacks, ...cb}; // Merge provided callbacks
+    callbacks = { ...callbacks, ...cb }; // Merge provided callbacks
 
     // Get Menu Buttons
     // Open Project
     openGdmlButton = document.getElementById('openGdmlButton')
     gdmlFileInput = document.getElementById('gdmlFile')
-    
+
     openProjectButton = document.getElementById('openProjectButton')
     projectFileInput = document.getElementById('projectFile')
 
@@ -291,7 +291,7 @@ export function initUI(cb) {
         // The mode is still "Orbit", we are just changing its target.
         callbacks.onCameraModeChangeClicked('selected');
     });
-    
+
     toggleSnapToGridButton.addEventListener('click', () => {
         const isNowEnabled = callbacks.onSnapToggleClicked(); // Callback should return new state
         toggleSnapToGridButton.textContent = `Snap to Grid: ${isNowEnabled ? 'ON' : 'OFF'}`;
@@ -299,11 +299,19 @@ export function initUI(cb) {
     gridSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(gridSnapSizeInput.value, undefined));
     angleSnapSizeInput.addEventListener('change', () => callbacks.onSnapSettingsChanged(undefined, angleSnapSizeInput.value));
 
+    // --- Active Source Checkbox Listener (Delegation) ---
+    structureTreeRoot.addEventListener('change', (event) => {
+        if (event.target.classList.contains('active-source-checkbox')) {
+            const sourceId = event.target.value;
+            callbacks.onSourceActivationToggled(sourceId);
+        }
+    });
+
     // Add listeners for add object buttons
     addButtons.forEach(button => {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.addType;
-            if(type.startsWith('define')) {
+            if (type.startsWith('define')) {
                 callbacks.onAddDefineClicked();
             } else if (type.startsWith('solid')) {
                 callbacks.onAddSolidClicked();
@@ -388,7 +396,7 @@ export function initUI(cb) {
     // Listener for the bottom panel expand/collapse button
     toggleBottomPanelBtn.addEventListener('click', () => {
         bottomPanel.classList.toggle('expanded');
-        
+
         // Update the button's icon based on the new state
         if (bottomPanel.classList.contains('expanded')) {
             toggleBottomPanelBtn.textContent = '↓'; // Down arrow for collapse
@@ -503,7 +511,7 @@ export function initUI(cb) {
     // Set default active tabs for both panels
     document.querySelector('#left_panel_tabs .tab_button[data-tab="tab_structure"]').classList.add('active');
     document.querySelector('#left_panel_content #tab_structure').classList.add('active');
-    
+
     document.querySelector('#bottom_panel_tabs .tab_button[data-tab="tab_ai_panel"]').classList.add('active');
     document.querySelector('#bottom_panel_content #tab_ai_panel').classList.add('active');
 
@@ -511,9 +519,9 @@ export function initUI(cb) {
     document.querySelectorAll('.add-group-btn').forEach(button => {
         button.addEventListener('click', (event) => {
             const type = event.target.dataset.groupType;
-            const groupName = prompt(`Enter a name for the new ${type.replace('_',' ')} group:`);
+            const groupName = prompt(`Enter a name for the new ${type.replace('_', ' ')} group:`);
             if (groupName && groupName.trim()) {
-                callbacks.onAddGroup(type, groupName.trim()); 
+                callbacks.onAddGroup(type, groupName.trim());
             }
         });
     });
@@ -524,7 +532,7 @@ export function initUI(cb) {
         accordion.addEventListener('click', () => {
             const content = accordion.nextElementSibling;
             const toggle = accordion.querySelector('.accordion-toggle');
-            
+
             // Toggle the 'active' class on the content
             content.classList.toggle('active');
 
@@ -558,10 +566,10 @@ export function initUI(cb) {
 
 export function showTemporaryStatus(message, duration = 2000) {
     if (!statusIndicator) return;
-    
+
     statusIndicator.textContent = message;
     statusIndicator.style.opacity = '1';
-    
+
     setTimeout(() => {
         statusIndicator.style.opacity = '0';
     }, duration);
@@ -600,7 +608,7 @@ export function populateHistoryPanel(history, projectName) {
         const header = document.createElement('div');
         header.className = 'accordion-header';
 
-        const descriptionText = version.is_autosave 
+        const descriptionText = version.is_autosave
             ? `🕒 ${version.description}` // Add an icon for autosave
             : version.description;
         header.innerHTML = `
@@ -611,7 +619,7 @@ export function populateHistoryPanel(history, projectName) {
             </div>
             <button class="load-version-btn" title="Load this project version">Load</button>
         `;
-        
+
         const content = document.createElement('div');
         content.className = 'accordion-content';
 
@@ -725,7 +733,7 @@ export function updateDefineInspectorValues(defineName, newValues, isRotation = 
 
 // Helper for building transform UI inside the Inspector
 function buildInspectorTransformEditor(parent, type, label, pvData, defines, projectState, options = {}) {
-    const { isDisabled = false } = options; 
+    const { isDisabled = false } = options;
 
     const group = document.createElement('div');
     group.className = 'transform-group';
@@ -733,7 +741,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
         group.style.opacity = '0.5';
         group.title = `Scaling is not supported for placements of procedural volumes (${pvData.volume_ref})`;
     }
-    
+
     const header = document.createElement('div');
     header.className = 'define-header';
     header.innerHTML = `<span>${label}</span>`;
@@ -743,7 +751,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     group.appendChild(header);
 
     // Set a warning for scale |values| != 1
-    if(type === 'scale') {
+    if (type === 'scale') {
         const warning = document.createElement('p');
         warning.style.fontSize = '11px';
         warning.style.color = '#AA0000';
@@ -759,10 +767,10 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     populateDefineSelect(select, Object.keys(defines));
 
     // --- Set default values and determine if units are needed ---
-    let displayValues = {x: '0', y: '0', z: '0'};
+    let displayValues = { x: '0', y: '0', z: '0' };
     //let wrapInUnit = false;
     if (type === 'scale') {
-        displayValues = {x: '1', y: '1', z: '1'}; // Scale defaults to 1
+        displayValues = { x: '1', y: '1', z: '1' }; // Scale defaults to 1
     }//} else if (type === 'rotation') {
     //    wrapInUnit = true; // Rotations are sent to backend with *deg
     //}
@@ -770,7 +778,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     const data = pvData[type];
     const isAbsolute = typeof data !== 'string' || !defines[data];
     select.value = isAbsolute ? '[Absolute]' : data;
-    
+
     // Determine the initial values to display
     if (isAbsolute) {
         // If it's absolute, the data itself is the dictionary of raw expressions
@@ -805,7 +813,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
             }
         );
         inputsContainer.appendChild(comp);
-        
+
         // Disable inputs if a define is selected
         const inputEl = comp.querySelector('.expression-input');
         if (inputEl) inputEl.disabled = !isAbsolute || isDisabled;
@@ -814,7 +822,7 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     select.addEventListener('change', (e) => {
 
         // Prevent changes if disabled
-        if (isDisabled) { 
+        if (isDisabled) {
             e.target.value = isAbsolute ? '[Absolute]' : data; // Revert selection
             return;
         }
@@ -849,12 +857,12 @@ export async function populateInspector(itemContext, projectState) {
 
     if (type === 'particle_source') {
         createReadOnlyProperty(inspectorContentDiv, "Source Type:", data.type.toUpperCase());
-        
+
         const commands = data.gps_commands || {};
         for (const [key, value] of Object.entries(commands)) {
             createReadOnlyProperty(inspectorContentDiv, `/gps/${key}:`, value);
         }
-        
+
     } else if (type === 'physical_volume') {
         const allDefines = projectState.defines || {};
         const posDefines = {};
@@ -863,17 +871,17 @@ export async function populateInspector(itemContext, projectState) {
         for (const defName in allDefines) {
             if (allDefines[defName].type === 'position') posDefines[defName] = allDefines[defName];
             if (allDefines[defName].type === 'rotation') rotDefines[defName] = allDefines[defName];
-            if (allDefines[defName].type === 'scale')    sclDefines[defName] = allDefines[defName];
+            if (allDefines[defName].type === 'scale') sclDefines[defName] = allDefines[defName];
         }
 
         // Check if the placed LV is procedural
         const lvData = projectState.logical_volumes[data.volume_ref];
         const isProcedural = lvData && lvData.content_type !== 'physvol';
 
-        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)',  data, posDefines, projectState, { isDisabled: false });
+        buildInspectorTransformEditor(inspectorContentDiv, 'position', 'Position (mm)', data, posDefines, projectState, { isDisabled: false });
         buildInspectorTransformEditor(inspectorContentDiv, 'rotation', 'Rotation (rad)', data, rotDefines, projectState, { isDisabled: false });
         // buildInspectorTransformEditor(inspectorContentDiv, 'scale', 'Scale', data, sclDefines, projectState, { isDisabled: isProcedural });
-        
+
         const otherPropsLabel = document.createElement('h5');
         otherPropsLabel.textContent = "Other Properties";
         otherPropsLabel.style.marginTop = '15px';
@@ -885,7 +893,7 @@ export async function populateInspector(itemContext, projectState) {
         createReadOnlyProperty(inspectorContentDiv, "Copy Number:", data.copy_number);
 
     } else if (type === 'logical_volume') {
-        
+
         // Check its content type to decide what to show
         if (data.content_type === 'replica') {
             // Show the Replica editor UI
@@ -900,9 +908,9 @@ export async function populateInspector(itemContext, projectState) {
             createReadOnlyProperty(inspectorContentDiv, "Direction:", `(x: ${dir.x}, y: ${dir.y}, z: ${dir.z})`);
         }
         else { // It's a standard LV (or another procedural type for later)
-             createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
-             createReadOnlyProperty(inspectorContentDiv, "Material Ref:", data.material_ref);
-             // Could add a list of its physvol children here if desired
+            createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
+            createReadOnlyProperty(inspectorContentDiv, "Material Ref:", data.material_ref);
+            // Could add a list of its physvol children here if desired
         }
     } else if (type === 'replica') {
         createReadOnlyProperty(inspectorContentDiv, "Volume Ref:", data.volume_ref);
@@ -940,7 +948,7 @@ function createReadOnlyProperty(parent, labelText, value) {
     const label = document.createElement('label');
     label.textContent = labelText;
     propDiv.appendChild(label);
-    
+
     const valueSpan = document.createElement('span');
     valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
     propDiv.appendChild(valueSpan);
@@ -984,7 +992,7 @@ export function updateInspectorTransform(liveObject) {
 
     // Only update if the inspector is showing numeric inputs (not a reference string)
     const posXInput = inspectorContentDiv.querySelector('input[data-live-update="position.x"]');
-    if (!posXInput) return; 
+    if (!posXInput) return;
 
     // Update Position Fields
     posXInput.value = liveObject.position.x.toFixed(3);
@@ -1006,16 +1014,16 @@ export function updateInspectorTransform(liveObject) {
 // --- The rest of the file is unchanged, but included for completeness ---
 // --- UI Update Functions ---
 export function setActiveModeButton(mode) {
-    if(modeObserveButton) modeObserveButton.classList.toggle('active_mode', mode === 'observe');
-    if(modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
-    if(modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
-    if(modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
-    if(currentModeDisplay) currentModeDisplay.textContent = `${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
+    if (modeObserveButton) modeObserveButton.classList.toggle('active_mode', mode === 'observe');
+    if (modeTranslateButton) modeTranslateButton.classList.toggle('active_mode', mode === 'translate');
+    if (modeRotateButton) modeRotateButton.classList.toggle('active_mode', mode === 'rotate');
+    if (modeScaleButton) modeScaleButton.classList.toggle('active_mode', mode === 'scale');
+    if (currentModeDisplay) currentModeDisplay.textContent = `${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
 }
 
 export function setActiveCameraModeButton(mode) {
     // This function visually updates which "centering" mode is conceptually active.
-    if(cameraModeOriginButton) cameraModeOriginButton.classList.toggle('active_mode', mode === 'origin');
+    if (cameraModeOriginButton) cameraModeOriginButton.classList.toggle('active_mode', mode === 'origin');
 }
 
 export function triggerFileInput(inputId) {
@@ -1044,17 +1052,17 @@ export function updateHierarchy(projectState, sceneUpdate) {
     borderSurfacesListRoot = document.getElementById('border_surfaces_list_root');
 
     // Clear all lists
-    if(structureTreeRoot) structureTreeRoot.innerHTML = '';
-    if(assembliesListRoot) assembliesListRoot.innerHTML = '';
-    if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
-    if(definesListRoot) definesListRoot.innerHTML = '';
-    if(materialsListRoot) materialsListRoot.innerHTML = '';
-    if(elementsListRoot) elementsListRoot.innerHTML = '';
-    if(isotopesListRoot) isotopesListRoot.innerHTML = '';
-    if(solidsListRoot) solidsListRoot.innerHTML = '';
-    if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
-    if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
-    if(borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
+    if (structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if (assembliesListRoot) assembliesListRoot.innerHTML = '';
+    if (lvolumesListRoot) lvolumesListRoot.innerHTML = '';
+    if (definesListRoot) definesListRoot.innerHTML = '';
+    if (materialsListRoot) materialsListRoot.innerHTML = '';
+    if (elementsListRoot) elementsListRoot.innerHTML = '';
+    if (isotopesListRoot) isotopesListRoot.innerHTML = '';
+    if (solidsListRoot) solidsListRoot.innerHTML = '';
+    if (opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
+    if (skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
+    if (borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
 
     // --- Grouped Population ---
     populateListWithGrouping(assembliesListRoot, Object.values(projectState.assemblies || {}), 'assembly');
@@ -1102,7 +1110,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
                 worldLV,
                 { instanceId: worldPvId, hideDeleteButton: true, hideVisibilityButton: true } // Pass instanceId and a special flag
             );
-            
+
             // 3. Start the recursive build from the world's direct children
             const childrenUl = document.createElement('ul');
             const worldChildren = sceneGraph.get(worldPvId) || [];
@@ -1147,7 +1155,7 @@ function buildVolumeNodeRecursive(pvData, projectState, sceneGraph) {
 
     const isAssemblyPlacement = allAssemblies[pvData.volume_ref];
     const childLVData = allLVs[pvData.volume_ref];
-    
+
     let displayName = pvData.name || `pv_${pvData.id.substring(0, 4)}`;
     if (isAssemblyPlacement) {
         displayName = `⚙️ ` + displayName + ` (Assembly: ${pvData.volume_ref})`;
@@ -1162,12 +1170,14 @@ function buildVolumeNodeRecursive(pvData, projectState, sceneGraph) {
         'physical_volume',
         pvData.canonical_id, // The ID for editing/deleting is the canonical ID
         pvData,              // The appData is the full pvDescription
-        { instanceId: pvData.id,
+        {
+            instanceId: pvData.id,
             lvData: childLVData,
-            hideDeleteButton: pvData.is_procedural_instance, 
-            hideVisibilityButton: false } // The unique ID for this specific instance in the scene
+            hideDeleteButton: pvData.is_procedural_instance,
+            hideVisibilityButton: false
+        } // The unique ID for this specific instance in the scene
     );
-    
+
     if (isAssemblyPlacement || childLVData) {
         const childrenOfThisNode = sceneGraph.get(pvData.id) || [];
         if (childrenOfThisNode.length > 0) {
@@ -1180,16 +1190,6 @@ function buildVolumeNodeRecursive(pvData, projectState, sceneGraph) {
                 addToggle(itemElement, childrenUl);
                 itemElement.appendChild(childrenUl);
             }
-        }
-    }
-
-    // --- SET THE ACTIVE SOURCE RADIO BUTTON ---
-    // We need to know which source is active. We'll store this in the main AppState.
-    const activeSourceId = callbacks.getActiveSourceId?.(); // Add a callback to get this
-    if (activeSourceId) {
-        const activeRadio = structureTreeRoot.querySelector(`.active-source-radio[value="${activeSourceId}"]`);
-        if (activeRadio) {
-            activeRadio.checked = true;
         }
     }
 
@@ -1250,11 +1250,11 @@ function createFolderElement(name, itemType, isDroppable) {
 
     const folderContent = document.createElement('div');
     folderContent.className = 'tree-item-content';
-    
+
     const toggle = document.createElement('span');
     toggle.className = 'toggle';
     toggle.textContent = '[-] ';
-    
+
     const nameSpan = document.createElement('span');
     nameSpan.className = 'item-name';
     nameSpan.textContent = name;
@@ -1265,11 +1265,11 @@ function createFolderElement(name, itemType, isDroppable) {
         <button class="rename-group-btn" title="Rename Group">✏️</button>
         <button class="delete-group-btn" title="Delete Group">🗑️</button>
     `;
-    
+
     folderContent.appendChild(toggle);
     folderContent.appendChild(nameSpan);
     folderContent.appendChild(controlsDiv);
-    
+
     const childrenUl = document.createElement('ul');
     folderLi.appendChild(folderContent);
     folderLi.appendChild(childrenUl);
@@ -1299,7 +1299,7 @@ function createFolderElement(name, itemType, isDroppable) {
     if (isDroppable) {
         addDropHandling(folderContent, itemType, name);
     }
-    
+
     return folderLi;
 }
 
@@ -1334,11 +1334,11 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     // This automatically excludes 'physical_volume' from the Structure tab.
     if (draggableInLists.includes(itemType)) {
         item.draggable = true; // Make the item draggable!
-        
+
         // --- Add dragstart listener ---
         item.addEventListener('dragstart', (event) => {
             event.stopPropagation();
-            
+
             const selectedItems = document.querySelectorAll('#left_panel_container .selected_item');
             let dragData;
 
@@ -1350,9 +1350,9 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
                 // Dragging a part of a multi-selection
                 const itemsToDrag = Array.from(selectedItems)
                     // IMPORTANT: Only drag items of the same type!
-                    .filter(el => el.dataset.type === itemType) 
+                    .filter(el => el.dataset.type === itemType)
                     .map(el => ({ id: el.dataset.id, type: el.dataset.type }));
-                
+
                 dragData = { type: 'multi-selection', items: itemsToDrag };
 
                 // --- CUSTOM DRAG IMAGE LOGIC ---
@@ -1372,14 +1372,14 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
                 // Dragging a single item (even if others are selected)
                 dragData = { type: 'single-item', id: itemIdForBackend, itemType: itemType };
             }
-            
+
             event.dataTransfer.setData('application/json', JSON.stringify(dragData));
             event.dataTransfer.effectAllowed = 'move';
-            
+
             // Add a class to all dragged items for styling
             if (isMultiDrag) {
                 selectedItems.forEach(el => {
-                    if(el.dataset.type === itemType) el.classList.add('dragging');
+                    if (el.dataset.type === itemType) el.classList.add('dragging');
                 });
             } else {
                 item.classList.add('dragging');
@@ -1411,12 +1411,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         finalDisplayName = icon + ' ' + displayName;
     }
 
-    // --- SOURCE RADIO BUTTON ---
+    // --- SOURCE CHECKBOX ---
     if (itemType === 'particle_source') {
         finalDisplayName = `&nbsp;&nbsp;${displayName}&nbsp;&nbsp;⚛️`;
-        // Create a radio button. The 'name' attribute ensures only one can be checked.
-        // We will check it later based on a global state.
-        leadingContent = `<input type="radio" name="active_source_selector" class="active-source-radio" value="${itemIdForBackend}" title="Set as active source for the next run">`;
+        const activeSourceIds = callbacks.getActiveSourceIds?.() || [];
+        const isChecked = activeSourceIds.includes(itemIdForBackend) ? 'checked' : '';
+        // Create a checkbox. 
+        leadingContent = `<input type="checkbox" class="active-source-checkbox" value="${itemIdForBackend}" ${isChecked} title="Toggle active status for this source">`;
     }
 
     item.innerHTML = `
@@ -1429,13 +1430,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
     item.dataset.type = itemType;
     item.dataset.id = itemIdForBackend;  // note: this will be an "ID" for physical volumes and a name for everything else
     if (instanceId) {  // UNIQUE ID for scene interaction
-        item.dataset.instanceId = instanceId; 
+        item.dataset.instanceId = instanceId;
     }
     else {
         item.dataset.instanceId = itemIdForBackend;
     }
     item.dataset.name = displayName;
-    item.appData = {...fullItemData, ...lvData};
+    item.appData = { ...fullItemData, ...lvData };
 
     // Main click listener for selection
     item.addEventListener('click', (event) => {
@@ -1443,7 +1444,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
         const parentList = item.closest('ul');
         if (!parentList) return;
-        
+
         const isCtrlHeld = event.ctrlKey;
         const isShiftHeld = event.shiftKey; // We'll handle shift-click later, for now just pass it.
 
@@ -1453,7 +1454,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             const allItems = Array.from(parentList.children);
             const startIndex = allItems.indexOf(lastSelectedItem);
             const endIndex = allItems.indexOf(item);
-            
+
             // Clear previous selections IN THIS LIST ONLY before applying the new range
             allItems.forEach(li => li.classList.remove('selected_item'));
 
@@ -1479,13 +1480,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             item.classList.add('selected_item');
             lastSelectedItem = item; // This is the new anchor for future shift-clicks
         }
-        
+
         // --- UNIFIED NOTIFICATION ---
         // After any selection change, gather all selected items across all lists and notify main.js
         const selectedItemContexts = [];
         document.querySelectorAll('#left_panel_container .selected_item').forEach(sel => {
             // We need to ensure we don't select the folder 'li' itself, only item 'li's
-            if (sel.dataset.id) { 
+            if (sel.dataset.id) {
                 selectedItemContexts.push({
                     type: sel.dataset.type,
                     canonical_id: sel.dataset.id,
@@ -1510,7 +1511,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         // We want Ctrl+Click to behave EXACTLY like a normal click with the Ctrl key held.
         //    So, we can simply dispatch a new 'click' event on the same element,
         //    making sure to pass along the modifier key states.
-        
+
         // This is a more robust way than duplicating the selection logic.
         const clickEvent = new MouseEvent('click', {
             bubbles: true,
@@ -1520,7 +1521,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
             metaKey: event.metaKey, // Pass along metaKey state
             shiftKey: event.shiftKey // Pass along shiftKey state
         });
-        
+
         // Dispatch the synthetic click event on the item.
         item.dispatchEvent(clickEvent);
     });
@@ -1543,13 +1544,13 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
 
         // Add visibility button
         const visBtn = item.querySelector('.visibility-btn');
-        if(visBtn) {
+        if (visBtn) {
 
             const idForVisibility = instanceId || itemIdForBackend; // Use instanceId if available
             const isHidden = SceneManager.isPvHidden(itemIdForBackend);
             item.classList.toggle('item-hidden', isHidden);
             //visBtn.style.opacity = isHidden ? '0.4' : '1.0';
-            
+
             visBtn.addEventListener('click', (event) => {
                 event.stopPropagation();
 
@@ -1566,7 +1567,7 @@ function createTreeItem(displayName, itemType, itemIdForBackend, fullItemData, a
         }
 
         // Add double-click listener if we have a physvol we can delete
-        if(!hideDeleteButton) {
+        if (!hideDeleteButton) {
             item.addEventListener('dblclick', (event) => {
                 event.stopPropagation();
                 callbacks.onEditPVClicked(item.dataset, item.appData);
@@ -1657,7 +1658,7 @@ function addDropHandling(element, itemType, targetGroupName) {
     element.addEventListener('drop', (event) => {
         event.preventDefault();
         element.classList.remove('drop-target-hover');
-        
+
         const data = JSON.parse(event.dataTransfer.getData('application/json'));
         let itemIdsToMove;
         let dragItemType;
@@ -1693,7 +1694,7 @@ export function setHierarchySelection(selectedIds = []) {
         // Check if the item's ID is in the array of IDs to select
         const shouldBeSelected = selectedIds.includes(item.dataset.instanceId);
         item.classList.toggle('selected_item', shouldBeSelected);
-        
+
         // Scroll the last selected item into view
         if (shouldBeSelected && item.dataset.instanceId === selectedIds[selectedIds.length - 1]) {
             item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1704,7 +1705,7 @@ export function setHierarchySelection(selectedIds = []) {
 // Helper to find the parent LV element in the DOM tree
 function findParentLV(pvElement) {
     let current = pvElement.parentElement;
-    while(current) {
+    while (current) {
         if (current.tagName === 'LI' && (current.dataset.type === 'logical_volume' || current.dataset.type === 'physical_volume')) {
             return current;
         }
@@ -1775,7 +1776,7 @@ export function getSelectedParentContext() {
             data: firstParent.appData
         };
     }
-    
+
     return null;
 }
 
@@ -1787,7 +1788,7 @@ export function getSelectedParentContext() {
 function findParentInHierarchy(element) {
     if (!element) return null;
     // Go up two levels (from <li> to <ul> to parent <li>)
-    let parent = element.parentElement?.parentElement; 
+    let parent = element.parentElement?.parentElement;
     if (parent && parent.tagName === 'LI' && parent.dataset.id) {
         return parent;
     }
@@ -1800,21 +1801,21 @@ export function clearHierarchySelection() {
 }
 
 export function clearHierarchy() {
-    if(structureTreeRoot) structureTreeRoot.innerHTML = '';
-    if(assembliesListRoot) assembliesListRoot.innerHTML = '';
-    if(lvolumesListRoot) lvolumesListRoot.innerHTML = '';
-    if(definesListRoot) definesListRoot.innerHTML = '';
-    if(materialsListRoot) materialsListRoot.innerHTML = '';
-    if(elementsListRoot) elementsListRoot.innerHTML = '';
-    if(isotopesListRoot) isotopesListRoot.innerHTML = '';
-    if(solidsListRoot) solidsListRoot.innerHTML = '';
-    if(opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
-    if(skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
-    if(borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
+    if (structureTreeRoot) structureTreeRoot.innerHTML = '';
+    if (assembliesListRoot) assembliesListRoot.innerHTML = '';
+    if (lvolumesListRoot) lvolumesListRoot.innerHTML = '';
+    if (definesListRoot) definesListRoot.innerHTML = '';
+    if (materialsListRoot) materialsListRoot.innerHTML = '';
+    if (elementsListRoot) elementsListRoot.innerHTML = '';
+    if (isotopesListRoot) isotopesListRoot.innerHTML = '';
+    if (solidsListRoot) solidsListRoot.innerHTML = '';
+    if (opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
+    if (skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
+    if (borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
 }
 
 export function clearInspector() {
-    if(inspectorContentDiv) inspectorContentDiv.innerHTML = '<p>Select an item.</p>';
+    if (inspectorContentDiv) inspectorContentDiv.innerHTML = '<p>Select an item.</p>';
 }
 
 /**
@@ -1905,7 +1906,7 @@ export function setTreeItemVisibility(pvId, isVisible) {
     // Use querySelectorAll to find ALL items that match the pvId.
     // This correctly handles cases where an assembly is placed multiple times.
     const items = document.querySelectorAll(`#structure_tree_root li[data-instance-id="${pvId}"]`);
-    
+
     if (items.length > 0) {
         items.forEach(item => {
             // The CSS handles styling the inner content based on this class on the <li>
@@ -1934,7 +1935,7 @@ export function clearAiPrompt() {
  */
 export function populateAiModelSelector(models) {
     if (!aiModelSelect) return;
-    
+
     // Remove all existing model groups before adding new ones.
     const existingGroups = aiModelSelect.querySelectorAll('.model-group, .no-models-option');
     existingGroups.forEach(group => group.remove());
@@ -1944,7 +1945,7 @@ export function populateAiModelSelector(models) {
             const optgroup = document.createElement('optgroup');
             optgroup.label = label;
             optgroup.classList.add('model-group'); // <-- Add a class for easy removal
-            
+
             modelList.forEach(modelName => {
                 const option = document.createElement('option');
                 option.value = modelName;
@@ -1955,7 +1956,7 @@ export function populateAiModelSelector(models) {
             aiModelSelect.appendChild(optgroup);
         }
     };
-    
+
     createGroup("Gemini Models", models.gemini);
     createGroup("Ollama Models", models.ollama);
 
@@ -2002,11 +2003,11 @@ export function setSimulationState(state) {
 }
 
 export function clearSimConsole() {
-    if(simConsole) simConsole.textContent = '';
+    if (simConsole) simConsole.textContent = '';
 }
 
 export function appendToSimConsole(text) {
-    if(simConsole) {
+    if (simConsole) {
         simConsole.textContent += text + '\n';
         // Auto-scroll to the bottom
         simConsole.parentElement.scrollTop = simConsole.parentElement.scrollHeight;
@@ -2014,20 +2015,20 @@ export function appendToSimConsole(text) {
 }
 
 export function showReconstructionModal() {
-    if(reconModal) reconModal.style.display = 'block';
+    if (reconModal) reconModal.style.display = 'block';
 }
 
 export function hideReconstructionModal() {
-    if(reconModal) reconModal.style.display = 'none';
+    if (reconModal) reconModal.style.display = 'none';
 }
 
 export function setReconModalButtonEnabled(isEnabled) {
-    if(reconModalButton) reconModalButton.disabled = !isEnabled;
+    if (reconModalButton) reconModalButton.disabled = !isEnabled;
 }
 
 export function updateReconstructionSlice(imageUrl, sliceNum, maxSlices) {
-    if(reconImageView) reconImageView.src = imageUrl;
-    if(sliceIndicator) sliceIndicator.textContent = `${sliceNum} / ${maxSlices - 1}`;
+    if (reconImageView) reconImageView.src = imageUrl;
+    if (sliceIndicator) sliceIndicator.textContent = `${sliceNum} / ${maxSlices - 1}`;
 }
 
 export function setupSliceSlider(axis, imageShape) {
@@ -2036,9 +2037,9 @@ export function setupSliceSlider(axis, imageShape) {
     else if (axis === 'y') maxSlices = imageShape[1];
     else maxSlices = imageShape[2];
 
-    if(sliceSlider) {
+    if (sliceSlider) {
         sliceSlider.max = maxSlices - 1;
-        const middleSlice = Math.floor((maxSlices -1) / 2);
+        const middleSlice = Math.floor((maxSlices - 1) / 2);
         sliceSlider.value = middleSlice;
         // Trigger the input event to load the middle slice
         sliceSlider.dispatchEvent(new Event('input'));

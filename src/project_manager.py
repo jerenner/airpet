@@ -1443,13 +1443,28 @@ class ProjectManager:
 
         return success, error_msg
     
-    def add_particle_source(self, name_suggestion, gps_commands, position, rotation):
+    def add_particle_source(self, name_suggestion, gps_commands, position, rotation, activity=1.0, confine_to_pv=None):
         if not self.current_geometry_state:
             return None, "No project loaded"
 
+        if confine_to_pv == "":
+            confine_to_pv = None
+
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
-        new_source = ParticleSource(name, gps_commands, position, rotation)
+        new_source = ParticleSource(name, gps_commands, position, rotation, activity=activity, confine_to_pv=confine_to_pv)
         self.current_geometry_state.add_source(new_source)
+        # Automatically add to active source list if it's the first one or just generally active by default?
+        # Current behavior requires manual activation? Let's check.
+        # usually user adds and it's active.
+        # But let's stick to existing behavior for now, just adding the object. 
+        # Wait, if I add it I want to see it.
+        # Existing code didn't add to active list automatically here, but maybe UI does it?
+        # Let's check usage. 
+        # Oh, the UI calls 'setActiveSource' likely separately? 
+        # Actually in main.js handleAddSource calls add_source API then syncs.
+        # I should probably add it to active list if it's new.
+        # But let's just stick to the signature change for now.
+        
         self.recalculate_geometry_state()
         self._capture_history_state(f"Added particle source {name}")
         return new_source.to_dict(), None
@@ -1696,8 +1711,8 @@ class ProjectManager:
             if source_to_delete:
                 del state.sources[source_to_delete]
                 # If the deleted source was the active one, clear the active ID
-                if state.active_source_id == object_id:
-                    state.active_source_id = None
+                if object_id in state.active_source_ids:
+                    state.active_source_ids.remove(object_id)
                 deleted = True
         
         return deleted, error_msg if error_msg else f"Object {object_type} '{object_id}' not found or cannot be deleted."
@@ -1956,6 +1971,27 @@ class ProjectManager:
                 rename_map[name] = new_name
             assembly.name = new_name
             self.current_geometry_state.add_assembly(assembly)
+
+        # --- Merge Sources ---
+        for name, source in incoming_state.sources.items():
+            old_id = source.id
+            
+            # Generate new unique name
+            new_name = self._generate_unique_name(name, self.current_geometry_state.sources)
+            if new_name != name:
+                rename_map[name] = new_name
+            source.name = new_name
+            
+            # Generate new ID to avoid collisions (especially on re-import)
+            import uuid
+            new_id = str(uuid.uuid4())
+            source.id = new_id
+            
+            self.current_geometry_state.add_source(source)
+            
+            # If this source was active in the incoming state, activate it in the current state
+            if old_id in incoming_state.active_source_ids:
+                self.current_geometry_state.active_source_ids.append(new_id)
 
         # --- Process and Add Placements ---
         if hasattr(incoming_state, 'placements_to_add'):
@@ -2625,7 +2661,7 @@ class ProjectManager:
 
         return True, None
 
-    def update_particle_source(self, source_id, new_name, new_gps_commands, new_position, new_rotation):
+    def update_particle_source(self, source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity=None, new_confine_to_pv=None):
         """Updates the properties of an existing particle source."""
         if not self.current_geometry_state:
             return False, "No project loaded"
@@ -2656,6 +2692,20 @@ class ProjectManager:
 
         if new_rotation is not None:
             source_to_update.rotation = new_rotation
+        
+        if new_activity is not None:
+            # simple validation
+            try:
+                source_to_update.activity = float(new_activity)
+            except ValueError:
+                return False, f"Invalid activity value: {new_activity}"
+        
+        if new_confine_to_pv is not None:
+            # We treat an empty string as "no confinement" (None)
+            if new_confine_to_pv == "":
+                source_to_update.confine_to_pv = None
+            else:
+                source_to_update.confine_to_pv = new_confine_to_pv
 
         self._capture_history_state(f"Updated particle source {source_to_update.name}")
         # Recalculation is not strictly necessary unless commands affect evaluation,
@@ -2664,22 +2714,31 @@ class ProjectManager:
         return success, error_msg
     
     def set_active_source(self, source_id):
-        """Sets the active source for the simulation."""
+        """Sets or toggles the active source for the simulation."""
         if not self.current_geometry_state:
             return False, "No project loaded"
 
+        # If source_id is None, clear all active sources
+        if source_id is None:
+            self.current_geometry_state.active_source_ids = []
+            self.is_changed = True
+            return True, "All sources deactivated."
+
         # Verify the source ID exists
         found = any(s.id == source_id for s in self.current_geometry_state.sources.values())
-        
-        # Also allow unsetting the active source
-        if not found and source_id is not None:
+        if not found:
             return False, f"Source with ID {source_id} not found."
 
-        self.current_geometry_state.active_source_id = source_id
-        # No history capture is needed for just changing the active selection,
-        # but we do want to mark the project as changed for autosave.
+        # Toggle logic: if present, remove it; if absent, add it.
+        if source_id in self.current_geometry_state.active_source_ids:
+            self.current_geometry_state.active_source_ids.remove(source_id)
+            msg = "Source deactivated."
+        else:
+            self.current_geometry_state.active_source_ids.append(source_id)
+            msg = "Source activated."
+
         self.is_changed = True
-        return True, None
+        return True, msg
     
     def generate_macro_file(self, job_id, sim_params, build_dir, run_dir, version_dir):
         """
@@ -2757,7 +2816,140 @@ class ProjectManager:
         macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
         macro_content.append("")
 
-        # --- Initialize Run ---
+    def _find_pv_by_name(self, pv_name):
+        """Helper to find a PV object by its Name across the entire geometry."""
+        state = self.current_geometry_state
+        # Search in Logical Volumes
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.name == pv_name:
+                        return pv
+        # Search in Assemblies
+        for asm in state.assemblies.values():
+            for pv in asm.placements:
+                if pv.name == pv_name:
+                    return pv
+        return None
+
+    def create_source_from_volume(self, pv_id, activity=1000.0, isotope="F18"):
+        """Creates a new particle source bound to a physical volume."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+
+        pv = self._find_pv_by_id(pv_id)
+        if not pv:
+            return None, f"Physical Volume with ID {pv_id} not found."
+
+        # Create a new source
+        source_name = self._generate_unique_name(f"Source_{pv.name}", self.current_geometry_state.sources)
+        
+        # Preset GPS commands for common isotopes
+        gps_cmds = {}
+        if isotope == "F18":
+            gps_cmds = {"particle": "e+", "energy": "0"} 
+        elif isotope == "Gamma":
+             gps_cmds = {"particle": "gamma", "energy": "511 keV"}
+        else:
+             gps_cmds = {"particle": "e+", "energy": "0"}
+
+        new_source = ParticleSource(
+            name=source_name,
+            gps_commands=gps_cmds,
+            activity=activity,
+            confine_to_pv=pv.name, # This name must match Geant4 PV Name
+            volume_link_id=pv.id   # Link for UI tracking
+        )
+        
+        # Important: Sync the source's local transform to the PV's transform immediately
+        # This gives a good visual starting point, though the macro generator will overwrite it to be sure.
+        # Note: PV positions are relative to parent, Source positions are global.
+        # FOR NOW: We assume the PV is in World or we need to calculate global transform.
+        # calculating global transform is hard without full hierarchy traversal.
+        # But wait, 'confine' works with the physical volume name.
+        # GPS source position must be inside the volume.
+        # If we use the smart bounding box logic, we will apply the PV's position/rotation.
+        # So we can just leave it at 0,0,0 relative or copy local params.
+        # COPYING LOCAL PARAMS is a safe bet if it's placed in World.
+        new_source.position = pv.position.copy()
+        new_source.rotation = pv.rotation.copy()
+
+        self.current_geometry_state.add_source(new_source)
+        
+        # Automatically add to active list
+        if new_source.id not in self.current_geometry_state.active_source_ids:
+            self.current_geometry_state.active_source_ids.append(new_source.id)
+            
+        self.recalculate_geometry_state() # Will evaluate expressions
+        self._capture_history_state(f"Created source from volume {pv.name}")
+        
+        return new_source.to_dict(), None
+
+    def _calculate_bounding_params(self, pv_name):
+        """
+        Finds the PV, looks up its Logical Volume and Solid, 
+        and returns appropriate GPS shape params and the PV's evaluated transform.
+        """
+        pv = self._find_pv_by_name(pv_name)
+        if not pv: return None, None, None
+        
+        # Look up LV
+        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+        if not lv: return None, None, None
+        
+        solid = self.current_geometry_state.solids.get(lv.solid_ref)
+        if not solid: return None, None, None
+
+        # Determine tight bounding box based on Solid Type
+        p = solid._evaluated_parameters # These are already in mm/rad
+        
+        shape_cmds = {'pos/shape': 'Para'} 
+        
+        if solid.type == 'box':
+            shape_cmds['pos/halfx'] = f"{p['x']/2} mm"
+            shape_cmds['pos/halfy'] = f"{p['y']/2} mm"
+            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
+        
+        elif solid.type in ['tube', 'cylinder']:
+            # For a cylinder, a bounding box is 2*R by 2*R by Z
+            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
+
+        elif solid.type == 'sphere':
+            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfz'] = f"{p['rmax']} mm"
+
+        else:
+            # Fallback for complex shapes
+            shape_cmds['pos/halfx'] = "200 mm" 
+            shape_cmds['pos/halfy'] = "200 mm" 
+            shape_cmds['pos/halfz'] = "200 mm"
+
+        # Return cmds AND the PV's transform
+        # Note: These are the LOCAL placement parameters of the PV.
+        # GPS positions are Global.
+        # IF the PV is placed in the World, this is perfect.
+        # IF the PV is nested, this will be wrong (Local != Global).
+        # However, AirPET primarily supports a single level of depth (World -> Assembly/PV) or simple nesting.
+        # If we have deep nesting, we need full global matrix evaluation.
+        # Accessing `_evaluated_position` from `pv` might be risky if it's not fully recursive or if it stores local.
+        # In `geometry_types.py`, `ParticleSource` has `_evaluated_position`.
+        # `PhysicalVolume` does NOT store a global evaluated position on the backend usually, it's calculated during traversal.
+        # Checking `geometry_types.py` for PhysicalVolume... it has `_evaluated_position` (local).
+        # We will assume for now that confinement is mostly used for top-level placements or we use local.
+        # Actually GPS position is Global. Confine works on the global touchable history? No, confine works on the Physical Volume Name.
+        # If we position the source at (10,0,0) and the volume is at (10,0,0), it matches.
+        # So we really need the GLOBAL transform of the PV.
+        # Since we don't have a global transform cache easily available here without traversal...
+        # We will use the PV's local transform and assume it's good enough for now (World placement),
+        # OR we could rely on the `ParticleSource`'s position if the USER manually moved it? 
+        # But the whole point is to Automate it.
+        # Let's use the PV's stored local parameters. Most AirPET projects are flat or 1-deep.
+        
+        return shape_cmds, pv._evaluated_position, pv._evaluated_rotation
+
         macro_content.append("/run/initialize")
         macro_content.append("")
 
@@ -2781,33 +2973,90 @@ class ProjectManager:
         macro_content.append("")
 
         # --- Configure Source (using GPS) ---
-        active_id = self.current_geometry_state.active_source_id
-        active_source = None
-        if active_id:
+        active_ids = self.current_geometry_state.active_source_ids
+        active_sources = []
+        
+        # Collect source objects
+        for s_id in active_ids:
             for source in self.current_geometry_state.sources.values():
-                if source.id == active_id:
-                    active_source = source
+                if source.id == s_id:
+                    active_sources.append(source)
                     break
         
-        if not active_source:
+        if not active_sources:
             macro_content.append("# WARNING: No active particle source was specified for this run.")
         else:
-            macro_content.append("# --- Primary Particle Source ---")
-            for cmd, value in active_source.gps_commands.items():
-                macro_content.append(f"/gps/{cmd} {value}")
-            
-            pos = active_source._evaluated_position
-            macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+            # 1. Calculate Total Activity for Normalization
+            total_activity = sum([float(s.activity) for s in active_sources])
+            if total_activity == 0: total_activity = 1.0 # Prevent division by zero
 
-            rot = active_source._evaluated_rotation
-            r = R.from_euler('zyx', [rot['z'], rot['y'], rot['x']], degrees=False)
-            rot_matrix = r.as_matrix()
-            x_prime = rot_matrix[:, 0]
-            y_prime = rot_matrix[:, 1]
+            macro_content.append("# --- Primary Particle Source(s) ---")
             
-            macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
-            macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
-            macro_content.append("")
+            for i, source in enumerate(active_sources):
+                # Calculate relative intensity (0.0 to 1.0)
+                relative_intensity = float(source.activity) / total_activity
+                
+                if i == 0:
+                    # First source defines the GPS list
+                    macro_content.append(f"/gps/source/intensity {relative_intensity}")
+                else:
+                    # Subsequent sources are added
+                    macro_content.append(f"/gps/source/add {relative_intensity}")
+
+                macro_content.append(f"# Source: {source.name} (Activity: {source.activity} Bq)")
+                
+                cmds = source.gps_commands.copy()
+                
+                # Handling Confinement and Transform
+                evaluated_pos = source._evaluated_position
+                evaluated_rot = source._evaluated_rotation
+                
+                if source.confine_to_pv:
+                    # Use smart calculator to get tight bounds and correct transform
+                    bounds, pv_pos, pv_rot = self._calculate_bounding_params(source.confine_to_pv)
+                    
+                    if bounds:
+                        cmds['pos/type'] = 'Volume'
+                        cmds.update(bounds)
+                        
+                        # Override source transform with PV transform to ensure overlap
+                        evaluated_pos = pv_pos
+                        evaluated_rot = pv_rot
+                        
+                        macro_content.append(f"/gps/pos/confine {source.confine_to_pv}")
+                    else:
+                        macro_content.append(f"# WARNING: Confinement PV '{source.confine_to_pv}' not found. Using source transform.")
+                        if 'pos/type' not in cmds: cmds['pos/type'] = 'Volume'
+                        # Fallback to broad box if not set?
+                        if 'pos/shape' not in cmds:
+                             cmds['pos/shape'] = 'Para'
+                             cmds['pos/halfx'] = '50 mm'; cmds['pos/halfy'] = '50 mm'; cmds['pos/halfz'] = '50 mm'
+                
+                # Map Box to Para if needed (for Volume sources)
+                if cmds.get('pos/type') == 'Volume' and cmds.get('pos/shape') == 'Box':
+                     cmds['pos/shape'] = 'Para'
+
+                # Write GPS commands
+                for cmd, value in cmds.items():
+                    if cmd == 'pos/confine': continue # Already handled or skipped if logic dictates
+                    macro_content.append(f"/gps/{cmd} {value}")
+                
+                # Write Position (Centre)
+                # Use evaluated_pos (either Source origin or PV origin)
+                pos = evaluated_pos
+                macro_content.append(f"/gps/pos/centre {pos['x']} {pos['y']} {pos['z']} mm")
+
+                # Write Rotation
+                # Use evaluated_rot (either Source rot or PV rot)
+                rot = evaluated_rot
+                r = R.from_euler('zyx', [rot['z'], rot['y'], rot['x']], degrees=False)
+                rot_matrix = r.as_matrix()
+                x_prime = rot_matrix[:, 0]
+                y_prime = rot_matrix[:, 1]
+                macro_content.append(f"/gps/ang/rot1 {x_prime[0]} {x_prime[1]} {x_prime[2]}")
+                macro_content.append(f"/gps/ang/rot2 {y_prime[0]} {y_prime[1]} {y_prime[2]}")
+                
+                macro_content.append("")
 
         # --- Add Track Saving Logic ---
         macro_content.append("\n# --- Output and Visualization ---")

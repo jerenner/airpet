@@ -15,7 +15,7 @@ async function handleResponse(response) {
             // Not a JSON response
             throw new Error(`Network error: ${response.status} ${response.statusText}`);
         }
-        
+
         // --- Custom error object ---
         const error = new Error(errorData.error || `Request failed with status ${response.status}`);
         error.type = errorData.error_type || 'generic'; // Add the error type if it exists
@@ -34,7 +34,7 @@ async function handleBlobResponse(response, defaultFilename) {
         }
         throw new Error(errorData.error || `Request failed with status ${response.status}`);
     }
-    
+
     // Create a link and trigger a download for the blob data
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
@@ -519,7 +519,7 @@ export async function getFullAiPrompt(userPrompt) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: userPrompt })
     });
-    
+
     // Handle text response instead of JSON
     if (!response.ok) {
         // Try to parse error from JSON, else use status text
@@ -531,7 +531,7 @@ export async function getFullAiPrompt(userPrompt) {
         }
         throw new Error(errorData.error || `Request failed with status ${response.status}`);
     }
-    
+
     return response.text(); // Return the response body as a string
 }
 
@@ -567,6 +567,16 @@ export async function importStepWithOptions(formData) {
     const response = await fetch(`${API_BASE_URL}/import_step_with_options`, {
         method: 'POST',
         body: formData, // FormData sets the correct Content-Type header automatically
+    });
+    return handleResponse(response);
+}
+
+export async function importPhantom(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE_URL}/api/import_phantom`, {
+        method: 'POST',
+        body: formData,
     });
     return handleResponse(response);
 }
@@ -745,11 +755,20 @@ export async function createDetectorRing(params) {
     return handleResponse(response);
 }
 
-export async function addParticleSource(name, gps_commands, position, rotation) {
+export async function addParticleSource(name, gps_commands, position, rotation, activity, confine_to_pv) {
     const response = await fetch(`${API_BASE_URL}/api/add_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, gps_commands, position, rotation })
+        body: JSON.stringify({ name, gps_commands, position, rotation, activity, confine_to_pv })
+    });
+    return handleResponse(response);
+}
+
+export async function createSourceFromVolume(pvId, activity, isotope) {
+    const response = await fetch(`${API_BASE_URL}/api/create_source_from_volume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pv_id: pvId, activity, isotope })
     });
     return handleResponse(response);
 }
@@ -763,16 +782,18 @@ export async function updateSourceTransform(sourceId, position, rotation) {
     return handleResponse(response);
 }
 
-export async function updateParticleSource(sourceId, name, gps_commands, position, rotation) {
+export async function updateParticleSource(sourceId, name, gps_commands, position, rotation, activity, confine_to_pv) {
     const response = await fetch(`${API_BASE_URL}/api/update_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            id: sourceId, 
-            name: name, 
+        body: JSON.stringify({
+            id: sourceId,
+            name: name,
             gps_commands: gps_commands,
             position: position,
-            rotation: rotation
+            rotation: rotation,
+            activity: activity,
+            confine_to_pv: confine_to_pv
         })
     });
     return handleResponse(response);
@@ -821,14 +842,14 @@ export async function getSimulationStatus(jobId, sinceLine = 0) {
 export async function getEventTracks(versionId, jobId, eventSpec) {
     // Construct the URL, e.g., /api/simulation/tracks/2024-08.../uuid.../all
     const response = await fetch(`${API_BASE_URL}/api/simulation/tracks/${versionId}/${jobId}/${eventSpec}`);
-    
+
     if (!response.ok) {
         // Try to get a structured error message from the body (which might be JSON)
         let errorData;
         try {
             errorData = await response.json();
             throw new Error(errorData.error || `Failed to fetch tracks: ${response.statusText}`);
-        } catch(e) {
+        } catch (e) {
             // If the body is not JSON or another error occurs, use the status text
             throw new Error(`Failed to fetch tracks: ${response.statusText}`);
         }

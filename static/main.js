@@ -25,10 +25,9 @@ const AppState = {
     currentProjectState: null,    // Full state dict from backend (defines, materials, solids, LVs, world_ref)
     currentProjectScene: null,    // Full scene dict from backend (THREE.js objects to be rendered)
     currentProjectName: "untitled",
-    activeSourceId: null,
+    activeSourceIds: [],
     currentSimJobId: null,
     simStatusPoller: null,
-    activeSourceId: null,
     selectedHierarchyItems: [],   // array of { type, id, name, data (raw from projectState) }
     selectedThreeObjects: [],     // Managed by SceneManager, but AppState might need to know for coordination
     simConsoleLineCount: 0,
@@ -154,13 +153,14 @@ async function initializeApp() {
         onMoveItemsToGroup: handleMoveItemsToGroup,
         // Source activation
         onSourceActivationChanged: handleSourceActivation,
-        getActiveSourceId: () => AppState.activeSourceId,
+        getActiveSourceIds: () => AppState.activeSourceIds,
         // Simulation
         onRunSimulationClicked: handleRunSimulation,
         onStopSimulationClicked: handleStopSimulation,
         onSimOptionsClicked: handleOpenSimOptions,
         onSaveSimOptions: handleSaveSimOptions,
         onDrawTracksToggle: handleDrawTracksToggle,
+        onSourceActivationToggled: handleSourceActivation,
         // Run/version loading
         onLoadVersionClicked: handleLoadVersion,
         onLoadRunResults: handleLoadRunResults,
@@ -469,7 +469,7 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // 1. Update the global AppState cache
     //AppState.currentProjectState updated in logic above
     AppState.currentProjectScene = responseData.scene_update;
-    AppState.activeSourceId = responseData.project_state.active_source_id;
+    AppState.activeSourceIds = responseData.project_state.active_source_ids || [];
     AppState.selectedHierarchyItems = []; // Clear old selections
     AppState.selectedThreeObjects = [];
     AppState.selectedPVContext.pvId = null;
@@ -576,9 +576,9 @@ function syncUIWithState_shallow(responseData) {
                         for (const sourceName in AppState.currentProjectState.sources) {
                             if (AppState.currentProjectState.sources[sourceName].id === sourceIdToDelete) {
                                 delete AppState.currentProjectState.sources[sourceName];
-                                // Also check if it was the active source
-                                if (AppState.activeSourceId === sourceIdToDelete) {
-                                    AppState.activeSourceId = null;
+                                // Also check if it was in the active list
+                                if (AppState.activeSourceIds.includes(sourceIdToDelete)) {
+                                    AppState.activeSourceIds = AppState.activeSourceIds.filter(id => id !== sourceIdToDelete);
                                 }
                                 break; // Found and deleted, move to next ID
                             }
@@ -761,6 +761,29 @@ async function handleSaveApiKey(apiKey) {
         UIManager.showError("Failed to save API key: " + error.message);
     } finally {
         UIManager.hideLoading();
+    }
+}
+
+async function handleSourceActivation(sourceId) {
+    // The backend now toggles the source status
+    try {
+        const result = await APIService.setActiveSource(sourceId);
+        if (result.success) {
+
+            // Check current backend state if possible, or just toggle locally based on previous knowledge.
+            if (AppState.activeSourceIds.includes(sourceId)) {
+                AppState.activeSourceIds = AppState.activeSourceIds.filter(id => id !== sourceId);
+            } else {
+                AppState.activeSourceIds.push(sourceId);
+            }
+            console.log("Updated activeSourceIds:", AppState.activeSourceIds);
+
+
+        } else {
+            UIManager.showError(result.error);
+        }
+    } catch (error) {
+        UIManager.showError("Failed to toggle source: " + error.message);
     }
 }
 
@@ -2309,12 +2332,34 @@ async function handleConfirmStepImport(options) {
     }
 }
 
+function getAvailableVolumes() {
+    if (!AppState.currentProjectState) return [];
+    const volumes = [];
+
+    // Collect from Logical Volumes
+    Object.values(AppState.currentProjectState.logical_volumes || {}).forEach(lv => {
+        if (lv.content_type === 'physvol' && lv.content) {
+            lv.content.forEach(pv => volumes.push(pv));
+        }
+    });
+
+    // Collect from Assemblies
+    Object.values(AppState.currentProjectState.assemblies || {}).forEach(asm => {
+        if (asm.placements) {
+            asm.placements.forEach(pv => volumes.push(pv));
+        }
+    });
+
+    // Sort by name
+    return volumes.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function handleAddGps() {
-    GpsEditor.show(null);
+    GpsEditor.show(null, getAvailableVolumes());
 }
 
 function handleEditGps(sourceData) {
-    GpsEditor.show(sourceData);
+    GpsEditor.show(sourceData, getAvailableVolumes());
 }
 
 async function handleGpsEditorConfirm(data) {
@@ -2329,7 +2374,7 @@ async function handleGpsEditorConfirm(data) {
             if (!sourceId) {
                 throw new Error("Could not determine the unique ID of the source to update.");
             }
-            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands, data.position, data.rotation);
+            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands, data.position, data.rotation, data.confine_to_pv);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating source: " + (error.message || error));
@@ -2340,7 +2385,7 @@ async function handleGpsEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Particle Source...");
         try {
-            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation);
+            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation, data.confine_to_pv);
             // After creating, find the new source in the response to select it
             const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
             const newSelection = newSource ? [{
@@ -2359,21 +2404,23 @@ async function handleGpsEditorConfirm(data) {
     }
 }
 
-async function handleSourceActivation(sourceId) {
-    console.log(`Setting source ${sourceId} as active on the backend.`);
-    try {
-        await APIService.setActiveSource(sourceId);
-        // Update the local state cache
-        AppState.activeSourceId = sourceId;
-    } catch (error) {
-        UIManager.showError("Failed to set active source: " + error.message);
-        // Optional: Re-render the hierarchy to revert the radio button
-    }
-}
-
 // --- Simulation functions ---
 async function handleRunSimulation(simSettings) {
-    if (!AppState.activeSourceId) {
+    console.log("Checking active sources before run...");
+    console.log("AppState.activeSourceIds:", AppState.activeSourceIds);
+
+    // Fallback: Check the DOM if AppState seems empty but user claims to have selected something
+    if (!AppState.activeSourceIds || AppState.activeSourceIds.length === 0) {
+        console.warn("AppState.activeSourceIds is empty. Checking DOM for checked boxes...");
+        const checkedBoxes = document.querySelectorAll('.active-source-checkbox:checked');
+        if (checkedBoxes.length > 0) {
+            const domIds = Array.from(checkedBoxes).map(cb => cb.value);
+            console.log("Found active sources in DOM:", domIds);
+            AppState.activeSourceIds = domIds;
+        }
+    }
+
+    if (!AppState.activeSourceIds || AppState.activeSourceIds.length === 0) {
         UIManager.showError("Please select an active particle source in the hierarchy.");
         return;
     }

@@ -700,7 +700,7 @@ class BorderSurface:
     
 class ParticleSource:
     """Represents a particle source (G4GeneralParticleSource) in the project."""
-    def __init__(self, name, gps_commands=None, position=None, rotation=None, vis_attributes=None):
+    def __init__(self, name, gps_commands=None, position=None, rotation=None, vis_attributes=None, activity=1.0, confine_to_pv=None, volume_link_id=None):
         self.id = str(uuid.uuid4())
         self.name = name
         self.type = "gps" # To distinguish from other potential source types later
@@ -712,6 +712,16 @@ class ParticleSource:
         self.position = position if position is not None else {'x': '0', 'y': '0', 'z': '0'}
         self.rotation = rotation if rotation is not None else {'x': '0', 'y': '0', 'z': '0'}
         
+        # Activity in Becquerels (default to 1.0 Bq if not specified).
+        # For non-bound sources or relative comparisons, this acts as a relative weight.
+        self.activity = activity
+
+        # Optional: Confine source to a specific physical volume (by Name)
+        self.confine_to_pv = confine_to_pv
+        
+        # Optional: Link to a Physical Volume ID (UUID) for UI tracking/syncing
+        self.volume_link_id = volume_link_id
+
         # Evaluated position for rendering
         self._evaluated_position = {'x': 0, 'y': 0, 'z': 0}
         self._evaluated_rotation = {'x': 0, 'y': 0, 'z': 0}
@@ -723,17 +733,28 @@ class ParticleSource:
             "type": self.type,
             "gps_commands": self.gps_commands,
             "position": self.position,
+            "activity": self.activity,
+            "confine_to_pv": self.confine_to_pv,
+            "volume_link_id": self.volume_link_id,
             "_evaluated_position": self._evaluated_position,
             "_evaluated_rotation": self._evaluated_rotation,
         }
 
     @classmethod
     def from_dict(cls, data):
+        # Handle legacy 'intensity' field by mapping it to activity if activity is missing
+        activity = data.get('activity')
+        if activity is None:
+            activity = data.get('intensity', 1.0)
+            
         instance = cls(
             data['name'],
             data.get('gps_commands', {}),
             data.get('position', {'x': '0', 'y': '0', 'z': '0'}),
-            data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
+            data.get('rotation', {'x': '0', 'y': '0', 'z': '0'}),
+            activity=activity,
+            confine_to_pv=data.get('confine_to_pv'),
+            volume_link_id=data.get('volume_link_id')
         )
         instance.id = data.get('id', str(uuid.uuid4()))
         instance._evaluated_position = data.get('_evaluated_position', {'x': 0, 'y': 0, 'z': 0})
@@ -759,7 +780,8 @@ class GeometryState:
 
         # To hold radioactive sources
         self.sources = {}
-        self.active_source_id = None
+        # Changed from single ID to list of IDs for multiple active sources
+        self.active_source_ids = [] 
 
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
@@ -798,6 +820,63 @@ class GeometryState:
     def add_source(self, source_obj):
         self.sources[source_obj.name] = source_obj
     
+    def to_dict(self):
+        return {
+            "defines": {k: v.to_dict() for k, v in self.defines.items()},
+            "materials": {k: v.to_dict() for k, v in self.materials.items()},
+            "elements": {k: v.to_dict() for k, v in self.elements.items()},
+            "isotopes": {k: v.to_dict() for k, v in self.isotopes.items()},
+            "solids": {k: v.to_dict() for k, v in self.solids.items()},
+            "logical_volumes": {k: v.to_dict() for k, v in self.logical_volumes.items()},
+            "assemblies": {k: v.to_dict() for k, v in self.assemblies.items()},
+            "world_volume_ref": self.world_volume_ref,
+            "optical_surfaces": {k: v.to_dict() for k, v in self.optical_surfaces.items()},
+            "skin_surfaces": {k: v.to_dict() for k, v in self.skin_surfaces.items()},
+            "border_surfaces": {k: v.to_dict() for k, v in self.border_surfaces.items()},
+            "sources": {k: v.to_dict() for k, v in self.sources.items()},
+            "active_source_ids": self.active_source_ids,
+            "ui_groups": self.ui_groups
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        instance = cls(data.get('world_volume_ref'))
+        
+        # Helper to safely load dicts
+        def load_objects(key, cls_type, target_dict):
+            for k, v in data.get(key, {}).items():
+                try:
+                    target_dict[k] = cls_type.from_dict(v)
+                except Exception as e:
+                    print(f"Error loading {key} '{k}': {e}")
+
+        load_objects('defines', Define, instance.defines)
+        load_objects('materials', Material, instance.materials)
+        load_objects('elements', Element, instance.elements)
+        load_objects('isotopes', Isotope, instance.isotopes)
+        load_objects('solids', Solid, instance.solids)
+        load_objects('logical_volumes', LogicalVolume, instance.logical_volumes)
+        load_objects('assemblies', Assembly, instance.assemblies)
+        load_objects('optical_surfaces', OpticalSurface, instance.optical_surfaces)
+        load_objects('skin_surfaces', SkinSurface, instance.skin_surfaces)
+        load_objects('border_surfaces', BorderSurface, instance.border_surfaces)
+        load_objects('sources', ParticleSource, instance.sources)
+
+        # Migration: Handle legacy active_source_id (single string)
+        legacy_id = data.get('active_source_id')
+        new_ids = data.get('active_source_ids')
+        
+        if new_ids is not None:
+            instance.active_source_ids = new_ids
+        elif legacy_id:
+            instance.active_source_ids = [legacy_id]
+        else:
+            instance.active_source_ids = []
+
+        instance.ui_groups = data.get('ui_groups', instance.ui_groups)
+
+        return instance
+        
     def get_define(self, name): return self.defines.get(name)
     def get_material(self, name): return self.materials.get(name)
     def get_element(self, name): return self.elements.get(name)
@@ -809,55 +888,6 @@ class GeometryState:
     def get_skin_surface(self, name): return self.skin_surfaces.get(name)
     def get_border_surface(self, name): return self.border_surfaces.get(name)
     def get_source(self, name): return self.sources.get(name)
-
-    def to_dict(self):
-        return {
-            "defines": {name: define.to_dict() for name, define in self.defines.items()},
-            "materials": {name: material.to_dict() for name, material in self.materials.items()},
-            "elements": {name: element.to_dict() for name, element in self.elements.items()},
-            "isotopes": {name: isotope.to_dict() for name, isotope in self.isotopes.items()},
-            "solids": {name: solid.to_dict() for name, solid in self.solids.items()},
-            "logical_volumes": {name: lv.to_dict() for name, lv in self.logical_volumes.items()},
-            "assemblies": {name: asm.to_dict() for name, asm in self.assemblies.items()},
-            "world_volume_ref": self.world_volume_ref,
-            "optical_surfaces": {name: surf.to_dict() for name, surf in self.optical_surfaces.items()},
-            "skin_surfaces": {name: surf.to_dict() for name, surf in self.skin_surfaces.items()},
-            "border_surfaces": {name: surf.to_dict() for name, surf in self.border_surfaces.items()},
-            "sources": {name: source.to_dict() for name, source in self.sources.items()},
-            "active_source_id": self.active_source_id,
-            "ui_groups": self.ui_groups
-        }
-
-    @classmethod
-    def from_dict(cls, data):
-        instance = cls(data.get('world_volume_ref'))
-        instance.defines = {name: Define.from_dict(d) for name, d in data.get('defines', {}).items()}
-        instance.materials = {name: Material.from_dict(d) for name, d in data.get('materials', {}).items()}
-        instance.elements = {name: Element.from_dict(d) for name, d in data.get('elements', {}).items()}
-        instance.isotopes = {name: Isotope.from_dict(d) for name, d in data.get('isotopes', {}).items()}
-        instance.solids = {name: Solid.from_dict(d) for name, d in data.get('solids', {}).items()}
-        instance.sources = {name: ParticleSource.from_dict(d) for name, d in data.get('sources', {}).items()}
-        instance.active_source_id = data.get('active_source_id')
-        
-        # For logical volumes, pass the instance itself to resolve internal refs if needed during from_dict
-        instance.logical_volumes = {
-            name: LogicalVolume.from_dict(lv_data, instance)
-            for name, lv_data in data.get('logical_volumes', {}).items()
-        }
-        instance.assemblies = {name: Assembly.from_dict(d) for name, d in data.get('assemblies', {}).items()}
-
-        # Deserialize the surface dictionaries
-        instance.optical_surfaces = {name: OpticalSurface.from_dict(d) for name, d in data.get('optical_surfaces', {}).items()}
-        instance.skin_surfaces = {name: SkinSurface.from_dict(d) for name, d in data.get('skin_surfaces', {}).items()}
-        instance.border_surfaces = {name: BorderSurface.from_dict(d) for name, d in data.get('border_surfaces', {}).items()}
-
-        # --- Deserialize the groups ---
-        # Use data.get to provide a default empty dict for older project files
-        default_groups = {'define': [], 'material': [], 'element': [], 'solid': [], 'logical_volume': [], 'assembly': [],
-                          'optical_surface': [], 'skin_surface': [], 'border_surface': []}
-        instance.ui_groups = data.get('ui_groups', default_groups)
-
-        return instance
 
     def get_threejs_scene_description(self):
         if not self.world_volume_ref or self.world_volume_ref not in self.logical_volumes:
@@ -895,7 +925,8 @@ class GeometryState:
                 "position": source._evaluated_position,
                 "rotation": source._evaluated_rotation,
                 "scale": {'x': 1, 'y': 1, 'z': 1},
-                "gps_commands": source.gps_commands
+                "gps_commands": source.gps_commands,
+                "confine_to_pv": source.confine_to_pv
             })
 
         return threejs_objects

@@ -6,6 +6,7 @@ let particleSelect, energyContainer, shapeSelect, shapeParamsContainer;
 let onConfirmCallback = null;
 let isEditMode = false;
 let editingSourceId = null;
+let currentAvailableVolumes = [];
 
 export function initGpsEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -27,7 +28,9 @@ export function initGpsEditor(callbacks) {
     console.log("GPS Editor Initialized.");
 }
 
-export function show(sourceData = null) {
+export function show(sourceData = null, availableVolumes = []) {
+    currentAvailableVolumes = availableVolumes || [];
+
     if (sourceData) { // EDIT MODE
         isEditMode = true;
         editingSourceId = sourceData.id;
@@ -45,9 +48,10 @@ export function show(sourceData = null) {
 
         const shape = commands['pos/type'] || 'Point';
         shapeSelect.value = shape;
-        
+
+        console.log("Edit Source Data:", sourceData);
         // Pass all necessary data to render the UI correctly
-        renderShapeParamsUI(shape, commands, sourceData.position, sourceData.rotation);
+        renderShapeParamsUI(shape, commands, sourceData.position, sourceData.rotation, sourceData.confine_to_pv);
 
     } else { // CREATE MODE
         isEditMode = false;
@@ -62,7 +66,7 @@ export function show(sourceData = null) {
         energyContainer.innerHTML = '';
         energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', '0')); // Default to 0 energy for e+
         shapeSelect.value = 'Point';
-        renderShapeParamsUI('Point', {}, {x:'0',y:'0',z:'0'}, {x:'0',y:'0',z:'0'});
+        renderShapeParamsUI('Point', {}, { x: '0', y: '0', z: '0' }, { x: '0', y: '0', z: '0' }, null);
     }
 
     modalElement.style.display = 'block';
@@ -74,7 +78,7 @@ function hide() {
 }
 
 
-function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rotation = {}) {
+function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rotation = {}, confineToPv = null) {
     const shape = shapeType || shapeSelect.value;
     shapeParamsContainer.innerHTML = ''; // Clear previous params
 
@@ -108,7 +112,7 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
         const shapeParamsDiv = document.createElement('div');
         shapeParamsDiv.id = 'gps-subshape-params';
         shapeParamsContainer.appendChild(shapeParamsDiv);
-        
+
         const renderSubParams = () => {
             const subShape = subShapeSelect.value;
             shapeParamsDiv.innerHTML = ''; // Clear sub-params
@@ -126,6 +130,39 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
 
         subShapeSelect.addEventListener('change', renderSubParams);
         renderSubParams(); // Initial render
+    }
+
+    // --- Confinement UI ---
+    shapeParamsContainer.appendChild(document.createElement('hr'));
+    const confineGroup = document.createElement('div');
+    confineGroup.className = 'property_item';
+    confineGroup.innerHTML = `
+        <div style="display: flex; align-items: center; margin-bottom: 5px;">
+            <input type="checkbox" id="gpsConfineEnabled" style="margin-right: 8px;">
+            <label for="gpsConfineEnabled" style="margin: 0;">Confine to Volume</label>
+        </div>
+        <select id="gpsConfineVolume" style="width: 100%; display: none;">
+            <option value="">-- Select Volume --</option>
+        </select>
+    `;
+    shapeParamsContainer.appendChild(confineGroup);
+
+    const confineCheckbox = confineGroup.querySelector('#gpsConfineEnabled');
+    const confineSelect = confineGroup.querySelector('#gpsConfineVolume');
+
+    // Populate volumes
+    if (currentAvailableVolumes && currentAvailableVolumes.length > 0) {
+        currentAvailableVolumes.forEach(vol => {
+            const option = document.createElement('option');
+            option.value = vol.name; // Use name as the confinement target
+            option.textContent = vol.name;
+            confineSelect.appendChild(option);
+        });
+    } else {
+        const option = document.createElement('option');
+        option.textContent = "No volumes available";
+        option.disabled = true;
+        confineSelect.appendChild(option);
     }
 
     // --- Add Angular Distribution & Rotation ---
@@ -162,6 +199,46 @@ function renderShapeParamsUI(shapeType = null, commands = {}, position = {}, rot
         rotGroup.style.opacity = isNowIso ? '0.5' : '1.0';
         rotGroup.querySelectorAll('input').forEach(input => input.disabled = isNowIso);
     });
+
+    // --- Handling Confinement UI Interactions ---
+    const updateConfinementState = () => {
+        const isConfined = confineCheckbox.checked;
+        confineSelect.style.display = isConfined ? 'block' : 'none';
+
+        // When confined, we WANT the user to be able to set the sampling volume (Shape & Dimensions).
+        // But we must enforce Shape = Volume (or Surface) for confinement to make sense.
+        // Actually, you can confine a Point source, but it's inefficient.
+        // Standard practice is Volume.
+
+        if (isConfined) {
+            // If Point or Beam is selected, switch to Volume (default box)
+            if (shapeSelect.value !== 'Volume' && shapeSelect.value !== 'Surface') {
+                shapeSelect.value = 'Volume';
+                // Trigger change to render sub-params
+                renderShapeParamsUI();
+                return; // renderShapeParamsUI will call us back if we set it up that way, 
+                // but actually we passed parameters in render.
+                // Let's just manually trigger the redraw or let the user see the switch.
+            }
+        }
+
+        // We do NOT disable the other inputs anymore.
+        // The user needs to define the "Search Volume" (e.g. Box 100mm) that GPS will sample from.
+        // GPS then checks if point is in Confine Volume.
+
+        // Ensure visual feedback is clear.
+        // Maybe highlight that these params define the "Search Region".
+    };
+
+    // Attach listener
+    confineCheckbox.addEventListener('change', updateConfinementState);
+
+    // Apply Initial State
+    if (confineToPv) {
+        confineCheckbox.checked = true;
+        confineSelect.value = confineToPv;
+    }
+    updateConfinementState();
 }
 
 
@@ -183,7 +260,7 @@ function handleConfirm() {
     } else {
         gpsCommands['energy'] = `${energyValue}`;
     }
-    
+
     gpsCommands['ene/type'] = 'Mono'; // For simplicity, always Mono for now
 
     const shape = shapeSelect.value;
@@ -222,13 +299,22 @@ function handleConfirm() {
         z: document.getElementById('gps_rot_z').value
     };
 
+    // Collect Confinement
+    let confineToPv = "";
+    const confineCheckbox = document.getElementById('gpsConfineEnabled');
+    if (confineCheckbox && confineCheckbox.checked) {
+        const confineSelect = document.getElementById('gpsConfineVolume');
+        confineToPv = confineSelect.value; // Can be "" if selection is empty, which is fine
+    }
+
     onConfirmCallback({
         isEdit: isEditMode,
         id: isEditMode ? editingSourceId : name,
         name: name,
         gps_commands: gpsCommands,
         position: position,
-        rotation: rotation
+        rotation: rotation,
+        confine_to_pv: confineToPv
     });
 
     hide();

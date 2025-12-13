@@ -453,9 +453,11 @@ def add_source_route():
     gps_commands = data.get('gps_commands', {})
     position = data.get('position', {'x': '0', 'y': '0', 'z': '0'})
     rotation = data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
+    confine_to_pv = data.get('confine_to_pv')
+    activity = data.get('activity', 1.0)
     
     new_source, error_msg = pm.add_particle_source(
-        name_suggestion, gps_commands, position, rotation)
+        name_suggestion, gps_commands, position, rotation, activity, confine_to_pv)
     if new_source:
         return create_success_response(pm, "Particle source created.")
     else:
@@ -491,18 +493,39 @@ def update_source_route():
     new_gps_commands = data.get('gps_commands')
     new_position = data.get('position')
     new_rotation = data.get('rotation')
+    new_activity = data.get('activity')
+    new_confine_to_pv = data.get('confine_to_pv')
 
     if not source_id:
         return jsonify({"success": False, "error": "Source ID is required."}), 400
 
     success, error_msg = pm.update_particle_source(
-        source_id, new_name, new_gps_commands, new_position, new_rotation
+        source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity, new_confine_to_pv
     )
 
     if success:
         return create_success_response(pm, "Particle source updated successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+    
+@app.route('/api/create_source_from_volume', methods=['POST'])
+def create_source_from_volume_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json()
+    
+    pv_id = data.get('pv_id')
+    activity = data.get('activity', 1000.0)
+    isotope = data.get('isotope', 'F18')
+    
+    if not pv_id:
+        return jsonify({"success": False, "error": "Physical Volume ID is required."}), 400
+        
+    result, error = pm.create_source_from_volume(pv_id, activity, isotope)
+    
+    if result:
+         return create_success_response(pm, f"Created source from volume.")
+    else:
+         return jsonify({"success": False, "error": error}), 500
     
 @app.route('/api/simulation/process_lors/<version_id>/<job_id>', methods=['POST'])
 def process_lors_route(version_id, job_id):
