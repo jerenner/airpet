@@ -170,6 +170,7 @@ async function initializeApp() {
         onSliceChanged: handleSliceSliderChange,
         onSliceAxisChanged: handleSliceAxisChange,
         onProcessLorsClicked: handleProcessLors,
+        onProcessLorsClicked: handleProcessLors,
         onRunReconstruction: handleRunReconstruction
     });
 
@@ -2354,9 +2355,13 @@ function getAvailableVolumes() {
     return volumes.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function handleAddGps() {
-    GpsEditor.show(null, getAvailableVolumes());
+async function handleAddGps() {
+    // Show empty editor
+    const availableVolumes = getAvailableVolumes();
+    GpsEditor.show(null, availableVolumes);
 }
+
+
 
 function handleEditGps(sourceData) {
     GpsEditor.show(sourceData, getAvailableVolumes());
@@ -2374,7 +2379,7 @@ async function handleGpsEditorConfirm(data) {
             if (!sourceId) {
                 throw new Error("Could not determine the unique ID of the source to update.");
             }
-            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands, data.position, data.rotation, data.confine_to_pv);
+            const result = await APIService.updateParticleSource(sourceId, data.name, data.gps_commands, data.position, data.rotation, data.activity, data.confine_to_pv, data.volume_link_id);
             syncUIWithState(result, selectionContext);
         } catch (error) {
             UIManager.showError("Error updating source: " + (error.message || error));
@@ -2385,7 +2390,7 @@ async function handleGpsEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Particle Source...");
         try {
-            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation, data.confine_to_pv);
+            const result = await APIService.addParticleSource(data.name, data.gps_commands, data.position, data.rotation, data.activity, data.confine_to_pv, data.volume_link_id);
             // After creating, find the new source in the response to select it
             const newSource = Object.values(result.project_state.sources).find(s => s.name === data.name);
             const newSelection = newSource ? [{

@@ -455,9 +455,10 @@ def add_source_route():
     rotation = data.get('rotation', {'x': '0', 'y': '0', 'z': '0'})
     confine_to_pv = data.get('confine_to_pv')
     activity = data.get('activity', 1.0)
+    volume_link_id = data.get('volume_link_id')
     
-    new_source, error_msg = pm.add_particle_source(
-        name_suggestion, gps_commands, position, rotation, activity, confine_to_pv)
+    new_source, error_msg = pm.add_source(
+        name_suggestion, gps_commands, position, rotation, activity, confine_to_pv, volume_link_id)
     if new_source:
         return create_success_response(pm, "Particle source created.")
     else:
@@ -483,6 +484,17 @@ def update_source_transform_route():
     else:
         return jsonify({"success": False, "error": error_msg or "Could not update source transform."}), 404
 
+@app.route('/api/get_source_params_from_volume', methods=['POST'])
+def get_source_params_from_volume_route():
+    data = request.json
+    volume_id = data.get('volume_id')
+    if not volume_id:
+        return jsonify({'success': False, 'error': 'No volume_id provided'}), 400
+    
+    pm = get_project_manager_for_session()
+    result = pm.get_source_params_from_volume(volume_id)
+    return jsonify(result)
+
 @app.route('/api/update_source', methods=['POST'])
 def update_source_route():
     pm = get_project_manager_for_session()
@@ -495,37 +507,19 @@ def update_source_route():
     new_rotation = data.get('rotation')
     new_activity = data.get('activity')
     new_confine_to_pv = data.get('confine_to_pv')
+    new_volume_link_id = data.get('volume_link_id')
 
     if not source_id:
         return jsonify({"success": False, "error": "Source ID is required."}), 400
 
     success, error_msg = pm.update_particle_source(
-        source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity, new_confine_to_pv
+        source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity, new_confine_to_pv, new_volume_link_id
     )
 
     if success:
         return create_success_response(pm, "Particle source updated successfully.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
-    
-@app.route('/api/create_source_from_volume', methods=['POST'])
-def create_source_from_volume_route():
-    pm = get_project_manager_for_session()
-    data = request.get_json()
-    
-    pv_id = data.get('pv_id')
-    activity = data.get('activity', 1000.0)
-    isotope = data.get('isotope', 'F18')
-    
-    if not pv_id:
-        return jsonify({"success": False, "error": "Physical Volume ID is required."}), 400
-        
-    result, error = pm.create_source_from_volume(pv_id, activity, isotope)
-    
-    if result:
-         return create_success_response(pm, f"Created source from volume.")
-    else:
-         return jsonify({"success": False, "error": error}), 500
     
 @app.route('/api/simulation/process_lors/<version_id>/<job_id>', methods=['POST'])
 def process_lors_route(version_id, job_id):

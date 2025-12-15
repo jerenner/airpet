@@ -926,7 +926,8 @@ class GeometryState:
                 "rotation": source._evaluated_rotation,
                 "scale": {'x': 1, 'y': 1, 'z': 1},
                 "gps_commands": source.gps_commands,
-                "confine_to_pv": source.confine_to_pv
+                "confine_to_pv": source.confine_to_pv,
+                "volume_link_id": source.volume_link_id
             })
 
         return threejs_objects

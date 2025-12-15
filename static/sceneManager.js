@@ -68,6 +68,14 @@ const _sourceHighlightMaterial = new THREE.MeshBasicMaterial({
     depthTest: false // Render on top
 });
 
+const _activeSourceBoundMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff3333, // Red-ish
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+    depthTest: false // Render on top to ensure visibility
+});
+
 // --- Initialization ---
 export function initScene(callbacks) {
     onObjectSelectedCallback = callbacks.onObjectSelectedIn3D;
@@ -105,7 +113,7 @@ export function initScene(callbacks) {
     const light2 = new THREE.DirectionalLight(0xffffff, 1.0);
     light2.position.set(-1, -0.5, -1).normalize();
     scene.add(light2);
-    
+
     // Add a light from below to illuminate bottom faces
     const light3 = new THREE.DirectionalLight(0xffffff, 0.5);
     light3.position.set(0, -1, 0).normalize();
@@ -136,7 +144,7 @@ export function initScene(callbacks) {
         if (object === gizmoAttachmentHelper) {
             initialTransforms.set('helper', gizmoAttachmentHelper.clone());
         }
-        
+
         _selectedThreeObjects.forEach(group => {
             const ownerId = group.userData.id;
             const ownerObject = findObjectByPvId(ownerId);
@@ -169,12 +177,12 @@ export function initScene(callbacks) {
 
         // This single block now handles all cases: single, multi, procedural, and mixed.
         if (object === gizmoAttachmentHelper && initialTransforms.has('helper')) {
-            
+
             // --- This is a multi-object or procedural transform ---
             const helperStart = initialTransforms.get('helper');
             const helperStartMatrixInv = new THREE.Matrix4().copy(helperStart.matrixWorld).invert();
             const deltaMatrix = new THREE.Matrix4().multiplyMatrices(gizmoAttachmentHelper.matrixWorld, helperStartMatrixInv);
-            
+
             // Iterate over the initial transforms we stored. The keys are the unique IDs
             // of the top-level objects we are transforming.
             initialTransforms.forEach((initialObjectState, objectId) => {
@@ -189,10 +197,10 @@ export function initScene(callbacks) {
                     // relative to the object's parent.
                     const parentInverse = new THREE.Matrix4();
                     if (liveObject.parent) {
-                       parentInverse.copy(liveObject.parent.matrixWorld).invert();
+                        parentInverse.copy(liveObject.parent.matrixWorld).invert();
                     }
                     liveObject.matrix.multiplyMatrices(parentInverse, finalMatrix);
-                    
+
                     // Update the object's local properties from the new local matrix
                     liveObject.matrix.decompose(liveObject.position, liveObject.quaternion, liveObject.scale);
                 }
@@ -229,7 +237,7 @@ export function initScene(callbacks) {
         const context = canvas.getContext('2d');
         const font_size = 64;
         context.font = `Bold ${font_size}px Arial`;
-        
+
         // Measure text width to make canvas fit
         const metrics = context.measureText(text);
         const textWidth = metrics.width;
@@ -242,12 +250,12 @@ export function initScene(callbacks) {
         context.textAlign = 'center';
         context.textBaseline = 'middle';
         context.fillText(text, canvas.width / 2, canvas.height / 2);
-        
+
         const texture = new THREE.CanvasTexture(canvas);
         const spriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false });
         const sprite = new THREE.Sprite(spriteMaterial);
         sprite.scale.set(size, size * (canvas.height / canvas.width), 1); // Adjust scale based on aspect ratio
-        
+
         return sprite;
     }
 
@@ -261,7 +269,7 @@ export function initScene(callbacks) {
     // We define a square viewing area.
     cameraAxes = new THREE.OrthographicCamera(
         -axesSize, axesSize, // left, right
-         axesSize, -axesSize, // top, bottom
+        axesSize, -axesSize, // top, bottom
         -1000, 1000           // near, far
     );
     cameraAxes.up = camera.up;
@@ -270,7 +278,7 @@ export function initScene(callbacks) {
     const axesGroup = new THREE.Group();
     const origin = [0, 0, 0];
     const axisLength = axesSize * 0.5;
-    
+
     // X Axis (Red)
     const xGeo = new LineGeometry();
     xGeo.setPositions([...origin, axisLength, 0, 0]);;
@@ -297,7 +305,7 @@ export function initScene(callbacks) {
     const zLabel = createAxisLabel('Z', '#8888ff', 15);
     zLabel.position.set(0, 0, axisLength + 25);
     axesGroup.add(zAxis, zLabel);
-    
+
     sceneAxes.add(axesGroup);
 
     // ---
@@ -324,13 +332,13 @@ let mouse; // Normalized device coordinates
 function initRaycaster(containerElement) {
     raycaster = new THREE.Raycaster();
     mouse = new THREE.Vector2();
-    
+
     // Add event listeners
-    const canvas = renderer.domElement; 
+    const canvas = renderer.domElement;
     canvas.addEventListener('pointerdown', onPointerDown);
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
-    
+
     // Prevent the default browser context menu on right-click
     containerElement.addEventListener('contextmenu', event => event.preventDefault());
 }
@@ -344,9 +352,9 @@ function onPointerDown(event) {
         orbitControls.enabled = false;
 
         selectionBoxElement.style.display = 'block';
-        
+
         // Use the event's currentTarget, which is now the canvas.
-        const rect = event.currentTarget.getBoundingClientRect();        
+        const rect = event.currentTarget.getBoundingClientRect();
 
         startPoint.set(event.clientX - rect.left, event.clientY); // For some reason, we don't need to subtract rect.top from Y
 
@@ -379,7 +387,7 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
     if (!isBoxSelecting) return;
-    
+
     const rect = event.currentTarget.getBoundingClientRect();
     const endPoint = new THREE.Vector2();
     endPoint.x = event.clientX - rect.left;
@@ -396,8 +404,8 @@ function onPointerUp(event) {
     // --- Perform the 3D Selection ---
     // Convert 2D screen coordinates to normalized device coordinates (-1 to +1)
     // (For some reason, here we have to subtract rect.top from the y-points)
-    const startNDC = new THREE.Vector3( (startPoint.x / rect.width) * 2 - 1, -((startPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
-    const endNDC = new THREE.Vector3( (endPoint.x / rect.width) * 2 - 1, -((endPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
+    const startNDC = new THREE.Vector3((startPoint.x / rect.width) * 2 - 1, -((startPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
+    const endNDC = new THREE.Vector3((endPoint.x / rect.width) * 2 - 1, -((endPoint.y - rect.top) / rect.height) * 2 + 1, 0.5);
 
     // The SelectionBox helper does the hard work of finding meshes inside the frustum
     const allSelectedMeshes = selectionBox.select(startNDC, endNDC);
@@ -433,7 +441,7 @@ function onPointerUp(event) {
             }
         }
     });
-    
+
     // Pass the final, expanded array of selected groups to the main controller.
     if (onMultiObjectSelectedCallback) {
         onMultiObjectSelectedCallback(expandedSelection, event.ctrlKey);
@@ -467,11 +475,11 @@ function handlePointerDownForSelection(event) {
                 clickedOnGizmo = true;
             }
         } else {
-             // Fallback for safety in case the internal structure changes in a future version.
-             // This uses the whole helper, which is less precise but won't crash.
+            // Fallback for safety in case the internal structure changes in a future version.
+            // This uses the whole helper, which is less precise but won't crash.
             const gizmoIntersects = raycaster.intersectObject(transformControls.getHelper(), true);
             if (gizmoIntersects.length > 0) {
-                 clickedOnGizmo = true;
+                clickedOnGizmo = true;
             }
         }
     }
@@ -483,16 +491,16 @@ function handlePointerDownForSelection(event) {
     }
 
     // If we reach here, the user did NOT click a gizmo handle.
-    
+
     // 1. Raycast against the *entire* geometry group, recursively. Do NOT pre-filter.
     // We don't need firstHitOnly because we need to check visibility on all hits.
-    raycaster.firstHitOnly = false; 
+    raycaster.firstHitOnly = false;
     const intersects = raycaster.intersectObject(geometryGroup, true);
 
     // 2. Find the first intersected object that is globally visible.
     // Our isObjectGloballyVisible function correctly checks the entire chain up to the scene root.
     const firstVisibleIntersect = intersects.find(intersect => isObjectGloballyVisible(intersect.object));
-    
+
     // 3. Process the result
     if (firstVisibleIntersect) {
         // We found a valid, visible object.
@@ -534,7 +542,7 @@ export function setPVVisibility(pvId, isVisible) {
     if (group) {
 
         // If it's procedural, we have to traverse to handle the PVs it generates.
-        if(group.userData.is_procedural_container) { // || group.userData.is_assembly_container) {
+        if (group.userData.is_procedural_container) { // || group.userData.is_assembly_container) {
             group.traverse(child => {
                 if (child.isMesh || child.isLineSegments) {
                     child.visible = isVisible;
@@ -547,7 +555,7 @@ export function setPVVisibility(pvId, isVisible) {
                 }
             });
         }
-        
+
         if (isVisible) {
             hiddenPvIds.delete(pvId);
         } else {
@@ -561,7 +569,7 @@ export function getHiddenPvIds() {
 }
 
 export function setAllPVVisibility(isVisible, projectState) {
-    
+
     // We need to traverse the entire geometry in each case to catch all PVs (including procedurals).
     // At the same time, we need to populate the hiddenPvIds list correctly (including all PVs
     // except the ones that are children of procedurals).
@@ -659,7 +667,7 @@ export function findObjectByPvId(pvId) { // Renamed
  */
 export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
     let geometry;
-    
+
     // Use the _evaluated_parameters for rendering
     const p = solidData._evaluated_parameters;
 
@@ -687,7 +695,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         }
         return false; // All good
     };
-    
+
     let requiredParams = [];
     const solidType = solidData.type;
 
@@ -714,7 +722,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             break;
         case 'tube':
             // The solid cylinder case is correct and does not need to change.
-            if (p.rmin <= 1e-9 && Math.abs(p.deltaphi - 6.283185307179586) < 1e-3) { 
+            if (p.rmin <= 1e-9 && Math.abs(p.deltaphi - 6.283185307179586) < 1e-3) {
                 geometry = new THREE.CylinderGeometry(p.rmax, p.rmax, p.z, 50, 1, false, p.startphi, p.deltaphi);
                 geometry.rotateX(Math.PI / 2);
 
@@ -724,19 +732,19 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 // --- The robust manual path creation ---
                 const shape = new THREE.Shape();
-                
+
                 // 1. Move to the start of the outer arc
                 shape.moveTo(p.rmax * Math.cos(startAngle), p.rmax * Math.sin(startAngle));
-                
+
                 // 2. Draw the outer arc (CCW)
-                shape.absarc(0, 0, p.rmax, startAngle, endAngle, false); 
-                
+                shape.absarc(0, 0, p.rmax, startAngle, endAngle, false);
+
                 // 3. Draw a line to the start of the inner arc
                 shape.lineTo(p.rmin * Math.cos(endAngle), p.rmin * Math.sin(endAngle));
-                
+
                 // 4. Draw the inner arc in the REVERSE direction (CW) to close the shape
-                shape.absarc(0, 0, p.rmin, endAngle, startAngle, true); 
-                
+                shape.absarc(0, 0, p.rmin, endAngle, startAngle, true);
+
                 // 5. Close the path with a final line back to the start
                 shape.closePath();
 
@@ -758,18 +766,18 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     p.startphi,
                     p.deltaphi
                 );
-                
+
                 // If there's no inner radius, we are done.
                 if (p.rmin1 <= 1e-9 && p.rmin2 <= 1e-9) {
                     geometry = outerConeGeom;
                 } else {
                     // There is an inner radius, so we must perform a CSG subtraction.
-                    
+
                     // Create the inner cone shape to subtract
                     const innerConeGeom = new THREE.CylinderGeometry(
                         p.rmin2,       // radiusTop
                         p.rmin1,       // radiusBottom
-                        p.z     + 0.1, // height (make it slightly taller to ensure a clean cut)
+                        p.z + 0.1,     // height (make it slightly taller to ensure a clean cut)
                         50,            // radialSegments
                         1,
                         false,
@@ -792,7 +800,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     const resultBrush = csgEvaluator.evaluate(outerBrush, innerBrush, SUBTRACTION);
                     geometry = resultBrush.geometry;
                 }
-                
+
                 // All G4Cons are aligned with the Z-axis. THREE.CylinderGeometry is aligned with Y.
                 // We must rotate it into the correct orientation.
                 geometry.rotateX(Math.PI / 2);
@@ -816,7 +824,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 // An ellipsoid is a scaled sphere. To handle z-cuts, we must use CSG.
                 const sphereGeom = new THREE.SphereGeometry(1, 48, 24); // Unit sphere
                 let resultBrush = new Brush(sphereGeom);
-                
+
                 // Apply non-uniform scaling to create the ellipsoid shape
                 resultBrush.scale.set(p.ax, p.by, p.cz);
                 resultBrush.updateMatrixWorld(); // Apply the scale
@@ -842,13 +850,13 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     cutBoxBrush.updateMatrixWorld();
                     resultBrush = csgEvaluator.evaluate(resultBrush, cutBoxBrush, SUBTRACTION);
                 }
-                
+
                 geometry = resultBrush.geometry;
             }
             break;
         case 'torus':
             geometry = new THREE.TorusGeometry(p.rtor, p.rmax, 16, 100, p.deltaphi);
-            if(p.startphi !== 0) geometry.rotateZ(p.startphi);
+            if (p.startphi !== 0) geometry.rotateZ(p.startphi);
             break;
         case 'paraboloid':
             {
@@ -862,7 +870,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 // Solving for a and b:
                 // a = (rhi^2 - rlo^2) / (2 * dz)
                 // b = (rhi^2 + rlo^2) / 2
-                
+
                 const points = [];
                 const segments = 20;
 
@@ -912,7 +920,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 // Close the shape if rmin is not zero
                 if (rmin > 1e-9) {
-                     points.push(points[0]);
+                    points.push(points[0]);
                 }
 
 
@@ -934,7 +942,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 if (zplanes.length > 1) {
                     // Sort planes by Z just in case they are out of order
                     zplanes.sort((a, b) => a.z - b.z);
-                    
+
                     // Trace the outer profile from bottom to top
                     for (let i = 0; i < zplanes.length; i++) {
                         points.push(new THREE.Vector2(zplanes[i].rmax, zplanes[i].z));
@@ -943,7 +951,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     for (let i = zplanes.length - 1; i >= 0; i--) {
                         points.push(new THREE.Vector2(zplanes[i].rmin, zplanes[i].z));
                     }
-                    
+
                     geometry = new THREE.LatheGeometry(points, 50, p.startphi, p.deltaphi);
                     geometry.rotateX(Math.PI / 2); // Align with Z-axis
                 } else {
@@ -966,7 +974,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     // Create the profile for lathing.
                     // Start at the bottom-outer point
                     points.push(new THREE.Vector2(zplanes[0].rmax, zplanes[0].z));
-                    
+
                     // Inner profile edge
                     for (let i = 0; i < zplanes.length; i++) {
                         points.push(new THREE.Vector2(zplanes[i].rmin, zplanes[i].z));
@@ -982,7 +990,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                         points.push(new THREE.Vector2(point.r, point.z));
                     });
                 }
-                
+
                 if (points.length > 0) {
                     geometry = new THREE.LatheGeometry(points, numSides, p.startphi, p.deltaphi);
                     // LatheGeometry revolves around Y, so we must rotate it to align with Z.
@@ -1024,7 +1032,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 sectionVertices.forEach(verts => {
                     verts.forEach(v => vertices.push(v.x, v.y, v.z));
                 });
-                
+
                 // Create the side faces by connecting vertices between sections
                 for (let i = 0; i < sections.length - 1; i++) {
                     const baseIndex1 = i * twoDimVertices.length;
@@ -1040,21 +1048,21 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                         indices.push(p1, p3, p4);
                     }
                 }
-                
+
                 // --- Capping ---
                 // We must add the vertices of the caps to our main vertex array
                 // and then add the indices. Using ShapeGeometry is better.
 
                 // Let's use a more robust method with ExtrudeGeometry and a custom path.
-                
+
                 // 1. Create the 2D base shape
                 const shapePoints = twoDimVertices.map(v => new THREE.Vector2(v.x, v.y));
                 const shape = new THREE.Shape(shapePoints);
-                
+
                 // 2. Define the extrusion settings. Since the path is not a simple line,
                 // we have to build the geometry manually. The previous manual logic was correct
                 // in principle, but flawed. Let's fix the manual cap triangulation.
-                
+
                 // Start Cap (at the first section)
                 const startCapPoints = sectionVertices[0]; // These are already transformed Vector3s
                 // We need to project them onto a 2D plane for triangulation.
@@ -1088,7 +1096,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
             {
                 const v1 = p.vertex1; const v2 = p.vertex2;
                 const v3 = p.vertex3; const v4 = p.vertex4;
-                
+
                 const points = [
                     new THREE.Vector3(v1.x, v1.y, v1.z),
                     new THREE.Vector3(v2.x, v2.y, v2.z),
@@ -1149,7 +1157,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                             const v3 = facet.vertices[2];
                             const v4 = facet.vertices[3];
                             const newIndex = vertices.length / 3;
-                            
+
                             // Push all four vertices to the main vertices array
                             vertices.push(
                                 v1.x, v1.y, v1.z,
@@ -1157,13 +1165,13 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                                 v3.x, v3.y, v3.z,
                                 v4.x, v4.y, v4.z
                             );
-                            
+
                             // Create two triangles using the new indices
                             // Triangle 1: (v1, v2, v3) -> indices (newIndex, newIndex+1, newIndex+2)
                             indices.push(newIndex, newIndex + 1, newIndex + 2);
                             // Triangle 2: (v1, v3, v4) -> indices (newIndex, newIndex+2, newIndex+3)
                             indices.push(newIndex, newIndex + 2, newIndex + 3);
-                            
+
                         } else if (facet.vertex_refs) {
                             // --- Define-based Quadrangular Facet ---
                             const i1 = getVertexIndex(facet.vertex_refs[0]);
@@ -1209,13 +1217,13 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     tubeGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
                     tubeGeom.translate(0, 0, -p.z);
                 }
-                
+
                 // G4CutTubs is aligned to Z axis, which matches our tube extrusion.
                 let resultBrush = new Brush(tubeGeom);
 
                 // 2. Create two large boxes representing the half-spaces to KEEP.
                 const boxSize = (p.rmax + p.z) * 4;
-                
+
                 // Low normal cut
                 const lowNormal = new THREE.Vector3(p.lowX, p.lowY, p.lowZ).normalize();
                 const boxGeomLow = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
@@ -1224,7 +1232,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 boxBrushLow.position.copy(lowNormal).multiplyScalar(-boxSize / 2.0);
                 boxBrushLow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), lowNormal);
                 boxBrushLow.updateMatrixWorld();
-                
+
                 // 3. Intersect the tube with the first half-space.
                 resultBrush = csgEvaluator.evaluate(resultBrush, boxBrushLow, INTERSECTION);
 
@@ -1236,7 +1244,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 boxBrushHigh.position.copy(highNormal).multiplyScalar(boxSize / 2.0);
                 boxBrushHigh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), highNormal);
                 boxBrushHigh.updateMatrixWorld();
-                
+
                 // 4. Intersect the result with the second half-space.
                 resultBrush = csgEvaluator.evaluate(resultBrush, boxBrushHigh, INTERSECTION);
 
@@ -1249,16 +1257,16 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 const t_alpha = Math.tan(p.alpha);
                 const t_theta_cp = Math.tan(p.theta) * Math.cos(p.phi);
                 const t_theta_sp = Math.tan(p.theta) * Math.sin(p.phi);
-                
+
                 const points = [
-                    new THREE.Vector3(-dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz),
-                    new THREE.Vector3( dx - dy*t_alpha - dz*t_theta_cp, -dy - dz*t_theta_sp, -dz),
-                    new THREE.Vector3( dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz),
-                    new THREE.Vector3(-dx + dy*t_alpha - dz*t_theta_cp,  dy - dz*t_theta_sp, -dz),
-                    new THREE.Vector3(-dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz),
-                    new THREE.Vector3( dx - dy*t_alpha + dz*t_theta_cp, -dy + dz*t_theta_sp,  dz),
-                    new THREE.Vector3( dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz),
-                    new THREE.Vector3(-dx + dy*t_alpha + dz*t_theta_cp,  dy + dz*t_theta_sp,  dz)
+                    new THREE.Vector3(-dx - dy * t_alpha - dz * t_theta_cp, -dy - dz * t_theta_sp, -dz),
+                    new THREE.Vector3(dx - dy * t_alpha - dz * t_theta_cp, -dy - dz * t_theta_sp, -dz),
+                    new THREE.Vector3(dx + dy * t_alpha - dz * t_theta_cp, dy - dz * t_theta_sp, -dz),
+                    new THREE.Vector3(-dx + dy * t_alpha - dz * t_theta_cp, dy - dz * t_theta_sp, -dz),
+                    new THREE.Vector3(-dx - dy * t_alpha + dz * t_theta_cp, -dy + dz * t_theta_sp, dz),
+                    new THREE.Vector3(dx - dy * t_alpha + dz * t_theta_cp, -dy + dz * t_theta_sp, dz),
+                    new THREE.Vector3(dx + dy * t_alpha + dz * t_theta_cp, dy + dz * t_theta_sp, dz),
+                    new THREE.Vector3(-dx + dy * t_alpha + dz * t_theta_cp, dy + dz * t_theta_sp, dz)
                 ];
 
                 geometry = new ConvexGeometry(points);
@@ -1269,14 +1277,14 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 const dx1 = p.dx1; const dx2 = p.dx2;
                 const dy1 = p.dy1; const dy2 = p.dy2;
                 const dz = p.dz;
-                
+
                 const points = [
-                    new THREE.Vector3(-dx1, -dy1, -dz), new THREE.Vector3( dx1, -dy1, -dz),
-                    new THREE.Vector3( dx1,  dy1, -dz), new THREE.Vector3(-dx1,  dy1, -dz),
-                    new THREE.Vector3(-dx2, -dy2,  dz), new THREE.Vector3( dx2, -dy2,  dz),
-                    new THREE.Vector3( dx2,  dy2,  dz), new THREE.Vector3(-dx2,  dy2,  dz)
+                    new THREE.Vector3(-dx1, -dy1, -dz), new THREE.Vector3(dx1, -dy1, -dz),
+                    new THREE.Vector3(dx1, dy1, -dz), new THREE.Vector3(-dx1, dy1, -dz),
+                    new THREE.Vector3(-dx2, -dy2, dz), new THREE.Vector3(dx2, -dy2, dz),
+                    new THREE.Vector3(dx2, dy2, dz), new THREE.Vector3(-dx2, dy2, dz)
                 ];
-                
+
                 geometry = new ConvexGeometry(points);
 
                 // Add dummy UVs to make the geometry compatible with CSG operations.
@@ -1291,11 +1299,11 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 // Create a circular cylinder with radius dx
                 geometry = new THREE.CylinderGeometry(dx, dx, halfZ * 2, 32);
-                
+
                 // Scale it non-uniformly in the Y direction to make it elliptical
                 // (note since we're rotating later, we have to apply the scale to the Z-direction)
-                geometry.scale(1, 1, dy/dx);
-                
+                geometry.scale(1, 1, dy / dx);
+
                 // Rotate to align with the Z-axis
                 geometry.rotateX(Math.PI / 2);
             }
@@ -1310,14 +1318,14 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 // The radius of the circular cone at height z is: r(z) = (dx/zMax) * z
                 // For our cone geometry, we need the radius at the base (z=zMax).
                 const baseRadius = dx;
-                
+
                 // 1. Create a basic circular cone pointing up the Z-axis.
                 // It goes from z=0 to z=zMax.
                 const coneGeom = new THREE.ConeGeometry(baseRadius, zMax, 32);
-                
+
                 // 2. Translate it so its base is at z=0 and its tip is at z=zMax.
                 coneGeom.translate(0, zMax / 2, 0);
-                
+
                 // 3. Scale it to make it elliptical.
                 coneGeom.scale(1, 1, dy / dx); // Scale along Z-axis in this frame
 
@@ -1349,16 +1357,16 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 const ta2 = Math.tan(a2);
 
                 const points = [
-                    new THREE.Vector3(-dz*tth_cp - dy1*ta1 - dx1, -dz*tth_sp - dy1, -dz),
-                    new THREE.Vector3(-dz*tth_cp - dy1*ta1 + dx1, -dz*tth_sp - dy1, -dz),
-                    new THREE.Vector3(-dz*tth_cp + dy1*ta1 + dx2, -dz*tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
-                    new THREE.Vector3(-dz*tth_cp + dy1*ta1 - dx2, -dz*tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
-                    new THREE.Vector3( dz*tth_cp - dy2*ta2 - dx3,  dz*tth_sp - dy2,  dz),
-                    new THREE.Vector3( dz*tth_cp - dy2*ta2 + dx3,  dz*tth_sp - dy2,  dz),
-                    new THREE.Vector3( dz*tth_cp + dy2*ta2 + dx4,  dz*tth_sp + dy2,  dz), // Note: Swapped sign from GDML spec for vertex order
-                    new THREE.Vector3( dz*tth_cp + dy2*ta2 - dx4,  dz*tth_sp + dy2,  dz)  // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3(-dz * tth_cp - dy1 * ta1 - dx1, -dz * tth_sp - dy1, -dz),
+                    new THREE.Vector3(-dz * tth_cp - dy1 * ta1 + dx1, -dz * tth_sp - dy1, -dz),
+                    new THREE.Vector3(-dz * tth_cp + dy1 * ta1 + dx2, -dz * tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3(-dz * tth_cp + dy1 * ta1 - dx2, -dz * tth_sp + dy1, -dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3(dz * tth_cp - dy2 * ta2 - dx3, dz * tth_sp - dy2, dz),
+                    new THREE.Vector3(dz * tth_cp - dy2 * ta2 + dx3, dz * tth_sp - dy2, dz),
+                    new THREE.Vector3(dz * tth_cp + dy2 * ta2 + dx4, dz * tth_sp + dy2, dz), // Note: Swapped sign from GDML spec for vertex order
+                    new THREE.Vector3(dz * tth_cp + dy2 * ta2 - dx4, dz * tth_sp + dy2, dz)  // Note: Swapped sign from GDML spec for vertex order
                 ];
-                
+
                 geometry = new ConvexGeometry(points);
             }
             break;
@@ -1368,7 +1376,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 // A twistedbox is just a twistedtrd with dx1=dx2 and dy1=dy2.
                 const dz = p.z;
                 const phiTwist = p.PhiTwist;
-                
+
                 // Define the 2D vertices for the bottom and top faces
                 const dx1 = p.x1 !== undefined ? p.x1 : p.x; // Use 'dx' for twistedbox
                 const dy1 = p.y1 !== undefined ? p.y1 : p.y;
@@ -1377,29 +1385,29 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 const bottomVerts = [
                     new THREE.Vector2(-dx1, -dy1),
-                    new THREE.Vector2( dx1, -dy1),
-                    new THREE.Vector2( dx1,  dy1),
-                    new THREE.Vector2(-dx1,  dy1),
+                    new THREE.Vector2(dx1, -dy1),
+                    new THREE.Vector2(dx1, dy1),
+                    new THREE.Vector2(-dx1, dy1),
                 ];
 
                 const topVerts = [
                     new THREE.Vector2(-dx2, -dy2),
-                    new THREE.Vector2( dx2, -dy2),
-                    new THREE.Vector2( dx2,  dy2),
-                    new THREE.Vector2(-dx2,  dy2),
+                    new THREE.Vector2(dx2, -dy2),
+                    new THREE.Vector2(dx2, dy2),
+                    new THREE.Vector2(-dx2, dy2),
                 ];
 
                 // The core algorithm for a twisted prism:
                 const vertices = [];
                 const indices = [];
                 const rotationAxis = new THREE.Vector3(0, 0, 1);
-                
+
                 // Calculate the 3D vertices for top and bottom faces
                 const bottom3D = bottomVerts.map(v => new THREE.Vector3(v.x, v.y, -dz));
-                const top3D = topVerts.map(v => 
+                const top3D = topVerts.map(v =>
                     new THREE.Vector3(v.x, v.y, 0).applyAxisAngle(rotationAxis, phiTwist).setZ(dz)
                 );
-                
+
                 vertices.push(...bottom3D.flatMap(v => [v.x, v.y, v.z]));
                 vertices.push(...top3D.flatMap(v => [v.x, v.y, v.z]));
 
@@ -1410,12 +1418,12 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     const p2 = next_i;    // bottom face, next vertex
                     const p3 = next_i + 4;// top face, next vertex
                     const p4 = i + 4;     // top face, current vertex
-                    indices.push(p1, p2, p3,  p1, p3, p4);
+                    indices.push(p1, p2, p3, p1, p3, p4);
                 }
 
                 // Create caps
-                indices.push(0, 2, 1,  0, 3, 2); // Bottom cap
-                indices.push(4, 5, 6,  4, 6, 7); // Top cap
+                indices.push(0, 2, 1, 0, 3, 2); // Bottom cap
+                indices.push(4, 5, 6, 4, 6, 7); // Top cap
 
                 geometry = new THREE.BufferGeometry();
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
@@ -1447,12 +1455,12 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     new THREE.Vector3(-tanTheta_cosPhi * halfZ - tanAlph * y1 + x1, -tanTheta_sinPhi * halfZ - y1, -halfZ), // 1
                     new THREE.Vector3(-tanTheta_cosPhi * halfZ + tanAlph * y1 - x2, -tanTheta_sinPhi * halfZ + y1, -halfZ), // 2
                     new THREE.Vector3(-tanTheta_cosPhi * halfZ + tanAlph * y1 + x2, -tanTheta_sinPhi * halfZ + y1, -halfZ), // 3
-                    new THREE.Vector3( tanTheta_cosPhi * halfZ - tanAlph * y2 - x3,  tanTheta_sinPhi * halfZ - y2,  halfZ), // 4
-                    new THREE.Vector3( tanTheta_cosPhi * halfZ - tanAlph * y2 + x3,  tanTheta_sinPhi * halfZ - y2,  halfZ), // 5
-                    new THREE.Vector3( tanTheta_cosPhi * halfZ + tanAlph * y2 - x4,  tanTheta_sinPhi * halfZ + y2,  halfZ), // 6
-                    new THREE.Vector3( tanTheta_cosPhi * halfZ + tanAlph * y2 + x4,  tanTheta_sinPhi * halfZ + y2,  halfZ)  // 7
+                    new THREE.Vector3(tanTheta_cosPhi * halfZ - tanAlph * y2 - x3, tanTheta_sinPhi * halfZ - y2, halfZ), // 4
+                    new THREE.Vector3(tanTheta_cosPhi * halfZ - tanAlph * y2 + x3, tanTheta_sinPhi * halfZ - y2, halfZ), // 5
+                    new THREE.Vector3(tanTheta_cosPhi * halfZ + tanAlph * y2 - x4, tanTheta_sinPhi * halfZ + y2, halfZ), // 6
+                    new THREE.Vector3(tanTheta_cosPhi * halfZ + tanAlph * y2 + x4, tanTheta_sinPhi * halfZ + y2, halfZ)  // 7
                 ];
-                
+
                 // Apply the twist to the top face (+z) vertices
                 const rot = new THREE.Matrix4().makeRotationZ(phiTwist);
                 for (let i = 4; i < 8; i++) {
@@ -1473,30 +1481,30 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                 // Define the 2D vertices for the bottom (-z) and top (+z) faces
                 const bottomVerts = [
                     new THREE.Vector2(-p.x1, -p.y1),
-                    new THREE.Vector2( p.x1, -p.y1),
-                    new THREE.Vector2( p.x1,  p.y1),
-                    new THREE.Vector2(-p.x1,  p.y1),
+                    new THREE.Vector2(p.x1, -p.y1),
+                    new THREE.Vector2(p.x1, p.y1),
+                    new THREE.Vector2(-p.x1, p.y1),
                 ];
                 const topVerts = [
                     new THREE.Vector2(-p.x2, -p.y2),
-                    new THREE.Vector2( p.x2, -p.y2),
-                    new THREE.Vector2( p.x2,  p.y2),
-                    new THREE.Vector2(-p.x2,  p.y2),
+                    new THREE.Vector2(p.x2, -p.y2),
+                    new THREE.Vector2(p.x2, p.y2),
+                    new THREE.Vector2(-p.x2, p.y2),
                 ];
 
                 // The rendering algorithm is identical to twistedbox, just with different vertices.
                 const vertices = [];
                 const indices = [];
                 const rotationAxis = new THREE.Vector3(0, 0, 1);
-                
+
                 const bottom3D = bottomVerts.map(v => new THREE.Vector3(v.x, v.y, -dz));
                 const top3D = topVerts.map(v =>
                     new THREE.Vector3(v.x, v.y, 0).applyAxisAngle(rotationAxis, phiTwist).setZ(dz)
                 );
-                
+
                 vertices.push(...bottom3D.flatMap(v => [v.x, v.y, v.z]));
                 vertices.push(...top3D.flatMap(v => [v.x, v.y, v.z]));
-                
+
                 // Create side faces
                 for (let i = 0; i < 4; i++) {
                     const next_i = (i + 1) % 4;
@@ -1504,12 +1512,12 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     const p2 = next_i;    // bottom face, next vertex
                     const p3 = next_i + 4;// top face, next vertex
                     const p4 = i + 4;     // top face, current vertex
-                    indices.push(p1, p2, p3,  p1, p3, p4);
+                    indices.push(p1, p2, p3, p1, p3, p4);
                 }
                 // Create caps
-                indices.push(0, 1, 2,  0, 2, 3); // Bottom cap (flipped winding)
-                indices.push(4, 6, 5,  4, 7, 6); // Top cap
-                
+                indices.push(0, 1, 2, 0, 2, 3); // Bottom cap (flipped winding)
+                indices.push(4, 6, 5, 4, 7, 6); // Top cap
+
                 geometry = new THREE.BufferGeometry();
                 geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(vertices), 3));
                 geometry.setIndex(indices);
@@ -1530,7 +1538,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
 
                 const radialSegments = 32;
                 const heightSegments = 10;
-                
+
                 const vertices = [];
                 const indices = [];
 
@@ -1553,10 +1561,10 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     for (let i = 0; i <= radialSegments; i++) {
                         const u = i / radialSegments; // Fractional angle
                         const phi = u * dphi;
-                        
+
                         // Outer surface vertex
                         vertices.push(getVertex(rmax, phi, z, currentTwist));
-                        
+
                         // Inner surface vertex (if it exists)
                         if (rmin > 0) {
                             vertices.push(getVertex(rmin, phi, z, currentTwist));
@@ -1601,8 +1609,8 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                         const row1 = j * pointsPerRow;
                         const row2 = (j + 1) * pointsPerRow;
                         if (rmin > 0) {
-                           const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
-                           indices.push(p1, p3, p2); indices.push(p1, p4, p3);
+                            const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
+                            indices.push(p1, p3, p2); indices.push(p1, p4, p3);
                         }
                     }
                     // Add side face at phi = dphi
@@ -1610,12 +1618,12 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                         const row1 = j * pointsPerRow + radialSegments * ((rmin > 0) ? 2 : 1);
                         const row2 = (j + 1) * pointsPerRow + radialSegments * ((rmin > 0) ? 2 : 1);
                         if (rmin > 0) {
-                           const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
-                           indices.push(p1, p2, p3); indices.push(p1, p4, p2);
+                            const p1 = row1; const p2 = row1 + 1; const p3 = row2 + 1; const p4 = row2;
+                            indices.push(p1, p2, p3); indices.push(p1, p4, p2);
                         }
                     }
                 }
-                
+
                 // Add top and bottom caps (triangulation)
                 for (let i = 0; i < radialSegments; i++) {
                     const pointsPerSegment = (rmin > 0) ? 2 : 1;
@@ -1658,12 +1666,12 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
                     new THREE.Vector3(p.v2x, p.v2y, -dz),
                     new THREE.Vector3(p.v3x, p.v3y, -dz),
                     new THREE.Vector3(p.v4x, p.v4y, -dz),
-                    new THREE.Vector3(p.v5x, p.v5y,  dz),
-                    new THREE.Vector3(p.v6x, p.v6y,  dz),
-                    new THREE.Vector3(p.v7x, p.v7y,  dz),
-                    new THREE.Vector3(p.v8x, p.v8y,  dz)
+                    new THREE.Vector3(p.v5x, p.v5y, dz),
+                    new THREE.Vector3(p.v6x, p.v6y, dz),
+                    new THREE.Vector3(p.v7x, p.v7y, dz),
+                    new THREE.Vector3(p.v8x, p.v8y, dz)
                 ];
-                
+
                 geometry = new ConvexGeometry(vertices);
             }
             break;
@@ -1686,7 +1694,7 @@ export function createPrimitiveGeometry(solidData, projectState, csgEvaluator) {
         // 3. Add dummy UVs, which are still required by the CSG library.
         ensureUvAttribute(geometry);
     }
-    
+
     return geometry;
 }
 
@@ -1748,8 +1756,8 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             }
         }
         if (!finalGeometry) { // Handle error case
-             console.error(`Could not build scaledSolid '${solidName}'`);
-             return new THREE.BoxGeometry(10,10,10); // Return a placeholder
+            console.error(`Could not build scaledSolid '${solidName}'`);
+            return new THREE.BoxGeometry(10, 10, 10); // Return a placeholder
         }
     } else if (solidData.type === 'reflectedSolid') {
         const p = solidData._evaluated_parameters;
@@ -1758,11 +1766,11 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             const baseGeometry = _getOrBuildGeometry(p.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
             if (baseGeometry) {
                 finalGeometry = baseGeometry.clone();
-                
+
                 // Create a transformation matrix from the evaluated parameters
-                const pos = p.transform._evaluated_position || {x:0, y:0, z:0};
-                const rot = p.transform._evaluated_rotation || {x:0, y:0, z:0};
-                const scl = p.transform._evaluated_scale || {x:1, y:1, z:1};
+                const pos = p.transform._evaluated_position || { x: 0, y: 0, z: 0 };
+                const rot = p.transform._evaluated_rotation || { x: 0, y: 0, z: 0 };
+                const scl = p.transform._evaluated_scale || { x: 1, y: 1, z: 1 };
 
                 const positionVec = new THREE.Vector3(pos.x, pos.y, pos.z);
                 const euler = new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ');
@@ -1778,8 +1786,8 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             }
         }
         if (!finalGeometry) {
-             console.error(`Could not build reflectedSolid '${solidName}'`);
-             return new THREE.BoxGeometry(10,10,10);
+            console.error(`Could not build reflectedSolid '${solidName}'`);
+            return new THREE.BoxGeometry(10, 10, 10);
         }
     } else if (solidData.type === 'boolean') {
         const recipe = solidData.raw_parameters.recipe;
@@ -1800,8 +1808,8 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
             const baseTransform = recipe[0].transform;
             if (baseTransform) {
                 // Base transform needs to use evaluated values if they exist
-                const pos = baseTransform._evaluated_position || {x:0, y:0, z:0};
-                const rot = baseTransform._evaluated_rotation || {x:0, y:0, z:0};
+                const pos = baseTransform._evaluated_position || { x: 0, y: 0, z: 0 };
+                const rot = baseTransform._evaluated_rotation || { x: 0, y: 0, z: 0 };
                 resultBrush.position.set(pos.x, pos.y, pos.z);
                 resultBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ'));
                 resultBrush.updateMatrixWorld();
@@ -1812,13 +1820,13 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
                 const item = recipe[i];
                 const nextSolidGeom = _getOrBuildGeometry(item.solid_ref, solidsDict, projectState, geometryCache, csgEvaluator);
                 if (!nextSolidGeom) continue;
-                
+
                 const nextBrush = new Brush(nextSolidGeom);
                 const transform = item.transform || {};
-                
+
                 // Use evaluated values for CSG operations
-                const pos = transform._evaluated_position || {x:0, y:0, z:0};
-                const rot = transform._evaluated_rotation || {x:0, y:0, z:0};
+                const pos = transform._evaluated_position || { x: 0, y: 0, z: 0 };
+                const rot = transform._evaluated_rotation || { x: 0, y: 0, z: 0 };
                 nextBrush.position.set(pos.x, pos.y, pos.z);
                 nextBrush.quaternion.setFromEuler(new THREE.Euler(rot.x, rot.y, rot.z, 'XYZ'));
                 nextBrush.updateMatrixWorld();
@@ -1826,27 +1834,27 @@ export function _getOrBuildGeometry(solidRef, solidsDict, projectState, geometry
                 const op = (item.op === 'union') ? ADDITION : (item.op === 'intersection') ? INTERSECTION : SUBTRACTION;
                 resultBrush = csgEvaluator.evaluate(resultBrush, nextBrush, op);
             }
-            
+
             finalGeometry = resultBrush.geometry;
-            
+
             // After a CSG operation, the geometry's bounding box/sphere is often incorrect.
             // Re-computing it ensures the camera and renderer behave as expected.
             finalGeometry.computeBoundingSphere();
             finalGeometry.computeBoundingBox();
-        } catch(e) {
+        } catch (e) {
             // --- CATCH BLOCK ---
             console.error(`CSG evaluation failed for boolean solid '${solidName}'. The operation will be skipped and a placeholder shown. Error:`, e);
-            
+
             // Create a box as a visual error indicator.
-            finalGeometry = new THREE.BoxGeometry(100, 100, 100); 
+            finalGeometry = new THREE.BoxGeometry(100, 100, 100);
             // We can also add a property to the geometry's userData to indicate it's an error placeholder
-            finalGeometry.userData.isErrorPlaceholder = true; 
+            finalGeometry.userData.isErrorPlaceholder = true;
         }
 
     } else {
         finalGeometry = createPrimitiveGeometry(solidData, projectState, csgEvaluator);
     }
-    
+
     // 3. Cache and return the final geometry
     //    Only cache permanent solids, not temporary slices from divisions.
     if (finalGeometry && !isTemporary) {
@@ -1864,10 +1872,10 @@ function ensureUvAttribute(geometry) {
     if (!geometry.attributes.uv) {
         const vertexCount = geometry.attributes.position.count;
         const uvs = new Float32Array(vertexCount * 2); // 2 coordinates (u, v) per vertex
-        
+
         // You could do more complex mapping here, but for non-textured objects,
         // (0,0) for every vertex is sufficient to prevent the error.
-        uvs.fill(0); 
+        uvs.fill(0);
 
         geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     }
@@ -1882,7 +1890,7 @@ export function frameScene() {
 
     // 1. Calculate the bounding box of the entire scene
     const box = new THREE.Box3().setFromObject(geometryGroup);
-    
+
     if (box.isEmpty()) return; // Nothing to frame
 
     const center = new THREE.Vector3();
@@ -1893,7 +1901,7 @@ export function frameScene() {
     // 2. Adjust camera's far plane to be able to see everything
     const maxDim = Math.max(size.x, size.y, size.z);
     let cameraFar = maxDim * 5; // Make it much larger than the scene
-    if(cameraFar < 10000) { cameraFar = 10000; }
+    if (cameraFar < 10000) { cameraFar = 10000; }
     camera.far = cameraFar;
     camera.near = cameraFar / 1000; // Keep a reasonable near/far ratio
     camera.updateProjectionMatrix();
@@ -1901,7 +1909,7 @@ export function frameScene() {
     // 3. Move the camera to a suitable viewing position
     const fitOffset = 5; // Add some padding
     const distance = (maxDim / 2) * fitOffset / Math.tan(Math.PI * camera.fov / 360);
-    
+
     // Position camera away from the center along a diagonal
     const offset = new THREE.Vector3(2, 1, 1).normalize().multiplyScalar(distance);
     camera.position.copy(center).add(offset);
@@ -1925,7 +1933,7 @@ export function renderObjects(pvDescriptions, projectState) {
         console.error("[SceneManager] Invalid data for rendering.", { pvDescriptions, projectState });
         return;
     }
-    
+
     const geometryCache = new Map();
     const csgEvaluator = new Evaluator();
     for (const solidName in projectState.solids) {
@@ -1934,6 +1942,7 @@ export function renderObjects(pvDescriptions, projectState) {
 
     // Use a map to build the hierarchy
     const objectMap = new Map();
+    const boundSources = [];
 
     // First pass: create all THREE.Group objects
     pvDescriptions.forEach(pvData => {
@@ -1944,34 +1953,93 @@ export function renderObjects(pvDescriptions, projectState) {
             sourceGroup.userData = pvData; // Attach all data
             sourceGroup.name = pvData.name;
 
-            // Create a visual marker
-            const markerGeometry = new THREE.SphereGeometry(10, 16, 8); // 10mm radius sphere
-            const markerMesh = new THREE.Mesh(markerGeometry, _sourceMaterial);
-            markerMesh.name = "SourceMarker"; // For identification
+            // If confined to a volume, multiple things change:
+            // 1. We want to suppress the default marker.
+            // 2. We want to highlight the volume it is confined to.
+            if (pvData.confine_to_pv) {
+                boundSources.push(pvData);
+                // We add an empty group so it exists in the hierarchy/map, 
+                // but has no visual representation of its own.
+            }
+            else {
+                // Independent Source: Create a visual marker
+                // Try to parse GPS shape to make a better marker
+                const gpsCmds = pvData.gps_commands || {};
+                const shapeType = gpsCmds['pos/type'] || 'Point';
+                const subShape = gpsCmds['pos/shape'];
 
-            // Add axes to show orientation (useful for directional sources later)
-            const axes = new THREE.AxesHelper(30); // 30mm long axes
-            axes.name = "SourceAxesHelper";
-            
-            sourceGroup.add(markerMesh);
-            sourceGroup.add(axes);
+                let markerGeometry;
 
-            // --- ARROW HELPER ---
-            // Only add the direction arrow if the source is a beam
-            const angType = pvData.gps_commands?.['ang/type'];
-            if (angType === 'beam1d') {
-                const dir = new THREE.Vector3(0, 0, -1);
-                const origin = new THREE.Vector3(0, 0, 0);
-                const length = 25; // 25mm long arrow
-                const hexColor = 0xff0000; // Red
-                const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hexColor, 8, 4); // Last two params are head length and width
-                arrowHelper.line.name = "SourceArrowLine";
-                arrowHelper.cone.name = "SourceArrowCone";
-                sourceGroup.add(arrowHelper);
+                // Helper to parse '10 mm' -> 10
+                const parseDim = (val, def) => {
+                    if (!val) return def;
+                    // Simple regex to grab the float part
+                    const match = val.toString().match(/([0-9.]+)/);
+                    return match ? parseFloat(match[1]) : def;
+                };
+
+                if (shapeType === 'Volume' || shapeType === 'Surface') {
+                    if (subShape === 'Sphere') {
+                        const r = parseDim(gpsCmds['pos/radius'], 10);
+                        markerGeometry = new THREE.SphereGeometry(r, 16, 16);
+                    } else if (subShape === 'Cylinder') {
+                        const r = parseDim(gpsCmds['pos/radius'], 10);
+                        const hz = parseDim(gpsCmds['pos/halfz'], 10);
+                        markerGeometry = new THREE.CylinderGeometry(r, r, hz * 2, 16);
+                        // Cylinder is usually Y-up in Three.js, GPS Cylinder is usually Z-axis. Rotate.
+                        markerGeometry.rotateX(Math.PI / 2);
+                    } else if (subShape === 'Box') {
+                        const hx = parseDim(gpsCmds['pos/halfx'], 10);
+                        const hy = parseDim(gpsCmds['pos/halfy'], 10);
+                        const hz = parseDim(gpsCmds['pos/halfz'], 10);
+                        markerGeometry = new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2);
+                    } else {
+                        // Fallback
+                        markerGeometry = new THREE.SphereGeometry(10, 16, 8);
+                    }
+                } else {
+                    // Point source or other
+                    markerGeometry = new THREE.SphereGeometry(5, 16, 8); // Smaller for point
+                }
+
+                // Create wireframe for the shape so we can see inside/through it
+                const wireframe = new THREE.WireframeGeometry(markerGeometry);
+                const line = new THREE.LineSegments(wireframe);
+                line.material.depthTest = false;
+                line.material.opacity = 0.5;
+                line.material.transparent = true;
+                line.material.color = new THREE.Color(0xffff00); // Yellow
+
+                // Also add a small solid center to be clickable
+                const centerGeo = new THREE.SphereGeometry(2, 8, 8);
+                const centerMesh = new THREE.Mesh(centerGeo, _sourceMaterial);
+                centerMesh.name = "SourceCenter";
+
+                sourceGroup.add(line);
+                sourceGroup.add(centerMesh);
+
+                // Add axes to show orientation (useful for directional sources later)
+                const axes = new THREE.AxesHelper(30); // 30mm long axes
+                axes.name = "SourceAxesHelper";
+                sourceGroup.add(axes);
+
+                // --- ARROW HELPER ---
+                // Only add the direction arrow if the source is a beam
+                const angType = pvData.gps_commands?.['ang/type'];
+                if (angType === 'beam1d') {
+                    const dir = new THREE.Vector3(0, 0, -1);
+                    const origin = new THREE.Vector3(0, 0, 0);
+                    const length = 25; // 25mm long arrow
+                    const hexColor = 0xff0000; // Red
+                    const arrowHelper = new THREE.ArrowHelper(dir, origin, length, hexColor, 8, 4); // Last two params are head length and width
+                    arrowHelper.line.name = "SourceArrowLine";
+                    arrowHelper.cone.name = "SourceArrowCone";
+                    sourceGroup.add(arrowHelper);
+                }
             }
 
             objectMap.set(pvData.id, sourceGroup);
-        } 
+        }
         // --- LOGIC FOR GEOMETRY ---
         else {
 
@@ -1983,15 +2051,15 @@ export function renderObjects(pvDescriptions, projectState) {
             objectMap.set(pvData.id, group);
 
             // Only create meshes for actual, renderable volumes
-            const isRenderable = !pvData.is_world_volume_placement 
-                                && !pvData.is_assembly_container 
-                                && !pvData.is_procedural_container;
+            const isRenderable = !pvData.is_world_volume_placement
+                && !pvData.is_assembly_container
+                && !pvData.is_procedural_container;
 
             if (isRenderable) {
                 const solidRef = pvData.solid_ref_for_threejs;
                 const geometry = _getOrBuildGeometry(solidRef, projectState.solids, projectState, geometryCache, csgEvaluator);
                 if (geometry) {
-                    const vis = pvData.vis_attributes || {color: {r:0.8,g:0.8,b:0.8,a:1.0}};
+                    const vis = pvData.vis_attributes || { color: { r: 0.8, g: 0.8, b: 0.8, a: 1.0 } };
                     const color = vis.color;
                     const meshMaterial = new THREE.MeshPhongMaterial({
                         color: new THREE.Color(color.r, color.g, color.b),
@@ -2031,16 +2099,16 @@ export function renderObjects(pvDescriptions, projectState) {
         // Make all scale values +/- 1
         // Sources should not be scaled by geometry scale values
         if (!pvData.is_source) {
-        const scale = pvData.scale 
-            ? {
-                x: pvData.scale.x ? Math.sign(pvData.scale.x) : 1,
-                y: pvData.scale.y ? Math.sign(pvData.scale.y) : 1,
-                z: pvData.scale.z ? Math.sign(pvData.scale.z) : 1
+            const scale = pvData.scale
+                ? {
+                    x: pvData.scale.x ? Math.sign(pvData.scale.x) : 1,
+                    y: pvData.scale.y ? Math.sign(pvData.scale.y) : 1,
+                    z: pvData.scale.z ? Math.sign(pvData.scale.z) : 1
                 }
-            : { x: 1, y: 1, z: 1 };
+                : { x: 1, y: 1, z: 1 };
             obj.scale.set(scale.x, scale.y, scale.z);
         }
-        
+
         // Find the parent and attach
         const parentObj = objectMap.get(pvData.parent_id);
         if (parentObj) {
@@ -2053,6 +2121,36 @@ export function renderObjects(pvDescriptions, projectState) {
 
     // Update world matrices for the entire hierarchy
     geometryGroup.updateMatrixWorld(true);
+
+    // Post-pass: Apply highlighting to bound sources
+    // Post-pass: Apply highlighting to bound sources
+    boundSources.forEach(srcData => {
+        const confineName = srcData.confine_to_pv;
+        if (!confineName) return;
+
+        console.log(`[SceneManager] Attempting to highlight volume for source '${srcData.name}', confined to: '${confineName}'`);
+        let found = false;
+
+        // Search for the object by Name in the objectMap
+        // Note: There might be multiple placements with the same Name if they are copies.
+        // We highlight all of them to indicate they are valid confinement regions.
+        for (const obj of objectMap.values()) {
+            if (obj.userData && obj.userData.name === confineName) {
+                console.log(`[SceneManager] Found match! Highlighting object ID: ${obj.userData.id}`);
+                found = true;
+                obj.userData.is_active_bound_source = true;
+                // Apply the bound source material to meshes
+                obj.traverse(child => {
+                    if (child.isMesh) {
+                        child.material = _activeSourceBoundMaterial;
+                    }
+                });
+            }
+        }
+        if (!found) {
+            console.warn(`[SceneManager] No object found with name '${confineName}'`);
+        }
+    });
 
     console.log("[SceneManager] Rendered objects with nested hierarchy. Total top-level:", geometryGroup.children.length);
 }
@@ -2097,7 +2195,7 @@ let _selectedThreeObjects = []; // Internal list of THREE.Mesh objects
 let _originalMaterialsMap = new Map(); // UUID -> { material, wasWireframe }
 
 export function updateSelectionState(groupsToSelect = []) {
-    
+
     // 1. Unhighlight all previously selected objects
     _selectedThreeObjects.forEach(group => {
         // This is a robust way to find all meshes, wherever they are nested
@@ -2155,7 +2253,7 @@ export function updateSelectionState(groupsToSelect = []) {
                 // Tell three.js to apply the material change for the next frame.
                 child.material.needsUpdate = true;
             }
-            
+
         });
     });
 }
@@ -2183,20 +2281,26 @@ export function unselectAllInScene() {
 }
 
 // --- Transform Controls Management ---
-export function attachTransformControls(groups) { 
+export function attachTransformControls(groups) {
     transformControls.detach();
-    
+
     // The check must be on the function's parameter `objects`.
     if (!transformControls.enabled || !groups || groups.length === 0) {
         return;
     }
 
     if (groups.length === 1) {
+        const group = groups[0];
+        // If it's a bound source (highlighted volume), do not attach gizmo.
+        if (group.userData && group.userData.confine_to_pv) {
+            console.log("[SceneManager] Group is a bound source. Transform controls disabled.");
+            return; // Skip attachment
+        }
         // Simple case: attach directly to the single group
-        transformControls.attach(groups[0]);
+        transformControls.attach(group);
     } else {
         // Multi-object case: either a user multi-select or a procedural volume.
-        
+
         // --- Check if this is a procedural volume ---
         // All groups in a procedural set will have the same owner_pv_id.
         const firstGroup = groups[0];
@@ -2228,7 +2332,7 @@ export function attachTransformControls(groups) {
             });
             const center = new THREE.Vector3();
             box.getCenter(center);
-            
+
             gizmoAttachmentHelper.position.copy(center);
             // For rotation, using the first object's orientation is a reasonable default.
             if (groups[0]) {
@@ -2243,7 +2347,7 @@ export function attachTransformControls(groups) {
         gizmoAttachmentHelper.userData.controlledObjectId = isProcedural
             ? firstGroup.userData.owner_pv_id
             : 'multi-select'; // A special key for multi-select
-        
+
         transformControls.attach(gizmoAttachmentHelper);
     }
 }
@@ -2265,7 +2369,7 @@ export function toggleGlobalWireframe() {
                     object.material.wireframe = isWireframeMode;
                 }
             } else if (isSelected) { // If selected, its material is _highlightMaterial
-                 // Already handled by _highlightMaterial.wireframe update
+                // Already handled by _highlightMaterial.wireframe update
             }
         }
     });
@@ -2370,16 +2474,16 @@ export function centerCameraOn(target = null) {
     // Instead of snapping, we can animate the camera and target moving.
     // This requires a tweening library like TWEEN.js, or a manual animation loop.
     // For simplicity, we will do an instant snap for now.
-    
+
     // Get the current camera offset from the old target
     const offset = new THREE.Vector3().subVectors(camera.position, orbitControls.target);
-    
+
     // Set the new target for the controls
     orbitControls.target.copy(newTargetPosition);
-    
+
     // Apply the same offset to the camera's position relative to the new target
     camera.position.copy(newTargetPosition).add(offset);
-    
+
     // You must call update for the changes to take effect immediately
     orbitControls.update();
 }
@@ -2402,7 +2506,7 @@ export function updateObjectTransformFromData(pvId, position, rotation, scale) {
     const group = findObjectByPvId(pvId);
     if (group) {
         group.position.set(position.x, position.y, position.z);
-        
+
         const euler = new THREE.Euler(rotation.x, rotation.y, rotation.z, 'XYZ');
         group.quaternion.setFromEuler(euler);
 
@@ -2438,12 +2542,12 @@ export function drawTracks(trackData) {
                 const trackLine = new THREE.Line(geometry, material);
                 tracksGroup.add(trackLine);
             }
-            
+
             // Start a new track
             currentPoints = [];
             const parts = line.split(' ');
             const pdgCode = parseInt(parts[5], 10);
-            
+
             // Simple color coding based on PDG code
             if (pdgCode === 22) currentParticleColor = new THREE.Color(0x00ff00); // gamma (green)
             else if (pdgCode === 11) currentParticleColor = new THREE.Color(0x0000ff); // electron (blue)

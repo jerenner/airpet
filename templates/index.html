@@ -2480,6 +2480,24 @@
                 </div>
 
                 <hr>
+                <!-- Bind to PV -->
+                <!-- Auto-fill Source from Volume -->
+                <!-- Bind to Physical Volume -->
+                <div class="property_item">
+                    <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                        <input type="checkbox" id="gpsLinkedVolumeEnabled" style="margin-right: 8px;">
+                        <label for="gpsLinkedVolumeEnabled" style="margin: 0; font-weight: bold; color: #000000;">Bind
+                            to Physical Volume</label>
+                    </div>
+                    <select id="gpsLinkedVolumeSelect" style="width: 100%; display: none; margin-top: 5px;">
+                        <option value="">-- Select Volume --</option>
+                    </select>
+                    <div style="color: #666; font-size: 0.8em; margin-top: 3px;">
+                        When bound, the source will always emit from within the selected volume. Manual position and
+                        shape controls will be disabled.
+                    </div>
+                </div>
+
                 <!-- Position/Shape Distribution -->
                 <div class="property_item">
                     <label for="gpsEditorShape">Source Shape:</label>

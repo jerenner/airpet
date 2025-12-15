@@ -755,20 +755,11 @@ export async function createDetectorRing(params) {
     return handleResponse(response);
 }
 
-export async function addParticleSource(name, gps_commands, position, rotation, activity, confine_to_pv) {
+export async function addParticleSource(name, gps_commands, position, rotation, activity, confine_to_pv, volume_link_id) {
     const response = await fetch(`${API_BASE_URL}/api/add_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, gps_commands, position, rotation, activity, confine_to_pv })
-    });
-    return handleResponse(response);
-}
-
-export async function createSourceFromVolume(pvId, activity, isotope) {
-    const response = await fetch(`${API_BASE_URL}/api/create_source_from_volume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pv_id: pvId, activity, isotope })
+        body: JSON.stringify({ name, gps_commands, position, rotation, activity, confine_to_pv, volume_link_id })
     });
     return handleResponse(response);
 }
@@ -782,7 +773,16 @@ export async function updateSourceTransform(sourceId, position, rotation) {
     return handleResponse(response);
 }
 
-export async function updateParticleSource(sourceId, name, gps_commands, position, rotation, activity, confine_to_pv) {
+export async function getSourceParamsFromVolume(volumeId) {
+    const response = await fetch(`${API_BASE_URL}/api/get_source_params_from_volume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ volume_id: volumeId })
+    });
+    return handleResponse(response);
+}
+
+export async function updateParticleSource(sourceId, name, gps_commands, position, rotation, activity, confine_to_pv, volume_link_id) {
     const response = await fetch(`${API_BASE_URL}/api/update_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -793,7 +793,8 @@ export async function updateParticleSource(sourceId, name, gps_commands, positio
             position: position,
             rotation: rotation,
             activity: activity,
-            confine_to_pv: confine_to_pv
+            confine_to_pv: confine_to_pv,
+            volume_link_id: volume_link_id
         })
     });
     return handleResponse(response);

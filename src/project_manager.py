@@ -828,6 +828,13 @@ class ProjectManager:
                     if obj:
                         break
         
+        elif object_type == "particle_source":
+            # Search in sources dict. 
+            for s in state.sources.values():
+                if s.id == object_name_or_id or s.name == object_name_or_id:
+                    obj = s
+                    break
+
         return obj.to_dict() if obj else None
 
     def update_object_property(self, object_type, object_id, property_path, new_value):
@@ -1376,6 +1383,52 @@ class ProjectManager:
             if not success:
                 return False, error_msg
 
+            # --- Sync Bound Sources ---
+            # If any of the updated PVs are bound to a source, we must update the source's cached position.
+            sources_updated = []
+            for pv in updated_pv_objects:
+                # Find sources bound to this pv.id
+                for source in self.current_geometry_state.sources.values():
+                    if source.volume_link_id == pv.id:
+                        # Re-run the logic to fetch params from volume
+                        
+                        # 1. Update Transform
+                        global_pos, global_rot_rad = self._calculate_global_transform(pv)
+                        source.position = {
+                            'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
+                        }
+                        source.rotation = {
+                            'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
+                        }
+                        # 2. Update Shape Parameters (Copy-paste logic from update_particle_source)
+                        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+                        if lv:
+                            solid = self.current_geometry_state.solids.get(lv.solid_ref)
+                            if solid:
+                                p = solid._evaluated_parameters
+                                cmds = source.gps_commands
+                                cmds['pos/type'] = 'Volume'
+                                if solid.type in ['box']:
+                                    cmds['pos/shape'] = 'Box'
+                                    cmds['pos/halfx'] = f"{p.get('x', 0)/2} mm"
+                                    cmds['pos/halfy'] = f"{p.get('y', 0)/2} mm"
+                                    cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                                elif solid.type in ['tube', 'cylinder', 'tubs']:
+                                    cmds['pos/shape'] = 'Cylinder'
+                                    cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
+                                    cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                                elif solid.type in ['sphere', 'orb']:
+                                    cmds['pos/shape'] = 'Sphere'
+                                    cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
+                                else:
+                                    cmds['pos/shape'] = 'Sphere'
+                                    cmds['pos/radius'] = '50 mm'
+                        
+                        source._evaluated_position = global_pos
+                        source._evaluated_rotation = global_rot_rad
+                        
+                        sources_updated.append(source)
+
         except Exception as e:
             return False, None
         
@@ -1397,7 +1450,9 @@ class ProjectManager:
         project_state_patch = {
             "updated": {
                 # We need to send the full PV object so the frontend can replace it
-                "physical_volumes": {pv.id: pv.to_dict() for pv in updated_pv_objects}
+                "physical_volumes": {pv.id: pv.to_dict() for pv in updated_pv_objects},
+                # Also send updated sources
+                "sources": {s.id: s.to_dict() for s in sources_updated}
             }
         }
         
@@ -1453,18 +1508,6 @@ class ProjectManager:
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
         new_source = ParticleSource(name, gps_commands, position, rotation, activity=activity, confine_to_pv=confine_to_pv)
         self.current_geometry_state.add_source(new_source)
-        # Automatically add to active source list if it's the first one or just generally active by default?
-        # Current behavior requires manual activation? Let's check.
-        # usually user adds and it's active.
-        # But let's stick to existing behavior for now, just adding the object. 
-        # Wait, if I add it I want to see it.
-        # Existing code didn't add to active list automatically here, but maybe UI does it?
-        # Let's check usage. 
-        # Oh, the UI calls 'setActiveSource' likely separately? 
-        # Actually in main.js handleAddSource calls add_source API then syncs.
-        # I should probably add it to active list if it's new.
-        # But let's just stick to the signature change for now.
-        
         self.recalculate_geometry_state()
         self._capture_history_state(f"Added particle source {name}")
         return new_source.to_dict(), None
@@ -2661,7 +2704,51 @@ class ProjectManager:
 
         return True, None
 
-    def update_particle_source(self, source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity=None, new_confine_to_pv=None):
+    def add_source(self, name_suggestion, gps_commands, position, rotation, activity=1.0, confine_to_pv=None, volume_link_id=None):
+        """Adds a new particle source to the project, optionally linked to a volume."""
+        if not self.current_geometry_state:
+            return None, "No project loaded"
+
+        name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
+        
+        # If Linked, calculate global transform
+        if volume_link_id:
+             pv = self._find_pv_by_id(volume_link_id)
+             if pv:
+                # Override position/rotation with GLOBAL transform of the PV
+                global_pos, global_rot_rad = self._calculate_global_transform(pv)
+                position = {
+                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
+                }
+                rotation = {
+                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
+                }
+                # Also ensure confine_to_pv is set to the name (required for Geant4) if it wasn't passed or is empty
+                if not confine_to_pv:
+                    confine_to_pv = pv.name
+
+        new_source = ParticleSource(
+            name=name,
+            gps_commands=gps_commands,
+            position=position,
+            rotation=rotation,
+            activity=activity,
+            confine_to_pv=confine_to_pv,
+            volume_link_id=volume_link_id
+        )
+
+        self.current_geometry_state.add_source(new_source)
+        
+        # Auto-activate new manually created sources
+        if new_source.id not in self.current_geometry_state.active_source_ids:
+            self.current_geometry_state.active_source_ids.append(new_source.id)
+            
+        self.recalculate_geometry_state()
+        self._capture_history_state(f"Added particle source {name}")
+        
+        return new_source.to_dict(), None
+
+    def update_particle_source(self, source_id, new_name, new_gps_commands, new_position, new_rotation, new_activity=None, new_confine_to_pv=None, new_volume_link_id=None):
         """Updates the properties of an existing particle source."""
         if not self.current_geometry_state:
             return False, "No project loaded"
@@ -2706,6 +2793,61 @@ class ProjectManager:
                 source_to_update.confine_to_pv = None
             else:
                 source_to_update.confine_to_pv = new_confine_to_pv
+        
+        # Handle Linked Volume Updates
+        source_to_update.volume_link_id = new_volume_link_id
+
+        # RE-CALCULATE GLOBAL POSITION AND SHAPE IF LINKED
+        if source_to_update.volume_link_id:
+             pv = self._find_pv_by_id(source_to_update.volume_link_id)
+             if pv:
+                # 1. Update Transform
+                global_pos, global_rot_rad = self._calculate_global_transform(pv)
+                source_to_update.position = {
+                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
+                }
+                source_to_update.rotation = {
+                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
+                }
+                # Ensure confine name matches
+                source_to_update.confine_to_pv = pv.name
+
+                # 2. Update Shape Parameters to match the Volume dimensions
+                # Fetch shape info from the linked Logical Volume -> Solid
+                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+                if lv:
+                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
+                    if solid:
+                        p = solid._evaluated_parameters
+                        cmds = source_to_update.gps_commands
+                        
+                        # Set default type to Volume
+                        cmds['pos/type'] = 'Volume'
+
+                        # Determine Shape and Dimensions
+                        if solid.type in ['box']:
+                            cmds['pos/shape'] = 'Box'
+                            cmds['pos/halfx'] = f"{p.get('x', 0)/2} mm"
+                            cmds['pos/halfy'] = f"{p.get('y', 0)/2} mm"
+                            cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                        elif solid.type in ['tube', 'cylinder', 'tubs']:
+                            cmds['pos/shape'] = 'Cylinder'
+                            cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
+                            cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                        elif solid.type in ['sphere', 'orb']:
+                            cmds['pos/shape'] = 'Sphere'
+                            cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
+                        else:
+                            # Fallback size
+                            cmds['pos/shape'] = 'Sphere'
+                            cmds['pos/radius'] = '50 mm'
+
+             else:
+                # Linked ID not found? Maybe deleted. Clear link.
+                source_to_update.volume_link_id = None
+        else:
+             # Standard update of position/rotation if NOT linked (already handled above by basic property updates)
+             pass
 
         self._capture_history_state(f"Updated particle source {source_to_update.name}")
         # Recalculation is not strictly necessary unless commands affect evaluation,
@@ -2739,6 +2881,234 @@ class ProjectManager:
 
         self.is_changed = True
         return True, msg
+
+    def _find_pv_by_name(self, pv_name):
+        """Helper to find a PV object by its Name across the entire geometry."""
+        state = self.current_geometry_state
+        # Search in Logical Volumes
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.name == pv_name:
+                        return pv
+        # Search in Assemblies
+        for asm in state.assemblies.values():
+            for pv in asm.placements:
+                if pv.name == pv_name:
+                    return pv
+        return None
+
+    def _calculate_global_transform(self, start_pv):
+        """
+        Calculates the global position and rotation of a PhysicalVolumePlacement
+        by traversing up the hierarchy (finding parents recursively).
+        
+        Returns:
+            global_pos (dict): {'x': float, 'y': float, 'z': float}
+            global_rot (dict): {'x': float, 'y': float, 'z': float} (Euler angles in radians)
+        """
+        state = self.current_geometry_state
+        if not state:
+            return {'x':0,'y':0,'z':0}, {'x':0,'y':0,'z':0}
+
+        # Start with the local transform of the PV
+        # Note: get_transform_matrix() uses _evaluated_position/_evaluated_rotation
+        current_transform = start_pv.get_transform_matrix()
+        
+        # Traverse up
+        # Assumption: The 'parent_lv_name' is the container.
+        # We need to find the PV that PLACES this container.
+        # Limitation: If the container LV is placed multiple times, this simple lookup 
+        # is ambiguous. We will just find the *first* placement we encounter.
+        
+        current_parent_lv_name = start_pv.parent_lv_name
+        
+        # Safety depth counter
+        depth = 0
+        max_depth = 20
+
+        while current_parent_lv_name and current_parent_lv_name != state.world_volume_ref and depth < max_depth:
+            depth += 1
+            parent_placement = None
+            
+            # Find a placement of 'current_parent_lv_name'
+            # 1. Search in LVs
+            found = False
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.volume_ref == current_parent_lv_name:
+                            parent_placement = pv
+                            found = True
+                            break
+                if found: break
+            
+            # 2. Search in Assemblies if not found
+            if not found:
+                for asm in state.assemblies.values():
+                    for pv in asm.placements:
+                        if pv.volume_ref == current_parent_lv_name:
+                            parent_placement = pv
+                            found = True
+                            break
+                    if found: break
+            
+            if parent_placement:
+                # Apply parent transform: Global = Parent * Child
+                parent_matrix = parent_placement.get_transform_matrix()
+                current_transform = parent_matrix @ current_transform
+                
+                # Move up one level
+                current_parent_lv_name = parent_placement.parent_lv_name
+            else:
+                # Could be a top-level placement in the World, or orphaned
+                # If it's in the world, parent_lv_name should ideally be the world name, 
+                # but if we passed check '!= state.world_volume_ref', maybe it's implicitly world.
+                # Stop here.
+                break
+                
+        # Now decompose the final global matrix
+        pos_dict, rot_dict, scale_dict = PhysicalVolumePlacement.decompose_matrix(current_transform)
+        
+        return pos_dict, rot_dict
+
+    
+    def get_source_params_from_volume(self, volume_id):
+        """
+        Calculates the appropriate GPS source parameters to emulate a source bound to the specified PhysicalVolume.
+        Returns a dictionary with position, rotation, shape type, and shape dimensions.
+        """
+        pv = self._find_pv_by_id(volume_id)
+        if not pv:
+            return {'success': False, 'error': f"Physical Volume with ID {volume_id} not found."}
+
+        # 1. Calculate Global Transform (Position & Rotation)
+        global_pos, global_rot_rad = self._calculate_global_transform(pv)
+
+        # 2. Determine Shape Parameters from the linked Solid
+        state = self.current_geometry_state
+        lv = state.logical_volumes.get(pv.volume_ref)
+        if not lv:
+            return {'success': False, 'error': f"Logical Volume {pv.volume_ref} not found."}
+        
+        solid = state.solids.get(lv.solid_ref)
+        if not solid:
+            return {'success': False, 'error': f"Solid {lv.solid_ref} not found."}
+        
+        # Helper to format float to string
+        fstr = lambda x: str(x)
+        
+        # Default shape commands
+        shape_type = 'Volume'
+        gps_shape_type = 'Sphere' # Default sub-shape
+        shape_params = {}
+
+        p = solid._evaluated_parameters
+        
+        if solid.type in ['box']:
+            gps_shape_type = 'Box'
+            # GPS Box uses half-lengths
+            shape_params['gps_halfx'] = fstr(p.get('x', 0)/2)
+            shape_params['gps_halfy'] = fstr(p.get('y', 0)/2)
+            shape_params['gps_halfz'] = fstr(p.get('z', 0)/2)
+
+        elif solid.type in ['tube', 'cylinder', 'tubs']:
+            gps_shape_type = 'Cylinder'
+            shape_params['gps_radius'] = fstr(p.get('rmax', 0))
+            shape_params['gps_halfz'] = fstr(p.get('z', 0)/2)
+            
+        elif solid.type in ['sphere', 'orb']:
+            gps_shape_type = 'Sphere'
+            shape_params['gps_radius'] = fstr(p.get('rmax', 0))
+        
+        else:
+            # Fallback for complex shapes: use bounding box approximation?
+            # For now, default to a generic Sphere with radius 10
+            gps_shape_type = 'Sphere'
+            shape_params['gps_radius'] = '10'
+
+        return {
+            'success': True,
+            'position': {
+                'x': fstr(global_pos['x']),
+                'y': fstr(global_pos['y']),
+                'z': fstr(global_pos['z'])
+            },
+            'rotation': {
+                'x': fstr(global_rot_rad['x']),
+                'y': fstr(global_rot_rad['y']),
+                'z': fstr(global_rot_rad['z'])
+            },
+            'shape_type': shape_type,
+            'gps_shape_type': gps_shape_type,
+            'shape_params': shape_params,
+            'confine_pv_name': pv.name
+        }
+
+    def _calculate_bounding_params(self, pv_name):
+        """
+        Finds the PV, looks up its Logical Volume and Solid, 
+        and returns appropriate GPS shape params and the PV's evaluated transform.
+        """
+        pv = self._find_pv_by_name(pv_name)
+        if not pv: return None, None, None
+        
+        # Look up LV
+        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+        if not lv: return None, None, None
+        
+        solid = self.current_geometry_state.solids.get(lv.solid_ref)
+        if not solid: return None, None, None
+
+        # Determine tight bounding box based on Solid Type
+        p = solid._evaluated_parameters # These are already in mm/rad
+        
+        shape_cmds = {'pos/shape': 'Para'} 
+        
+        if solid.type == 'box':
+            shape_cmds['pos/halfx'] = f"{p['x']/2} mm"
+            shape_cmds['pos/halfy'] = f"{p['y']/2} mm"
+            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
+        
+        elif solid.type in ['tube', 'cylinder']:
+            # For a cylinder, a bounding box is 2*R by 2*R by Z
+            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
+
+        elif solid.type == 'sphere':
+            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
+            shape_cmds['pos/halfz'] = f"{p['rmax']} mm"
+
+        else:
+            # Fallback for complex shapes
+            shape_cmds['pos/halfx'] = "200 mm" 
+            shape_cmds['pos/halfy'] = "200 mm" 
+            shape_cmds['pos/halfz'] = "200 mm"
+
+        # Return cmds AND the PV's transform
+        # Note: These are the LOCAL placement parameters of the PV.
+        # GPS positions are Global.
+        # IF the PV is placed in the World, this is perfect.
+        # IF the PV is nested, this will be wrong (Local != Global).
+        # However, AirPET primarily supports a single level of depth (World -> Assembly/PV) or simple nesting.
+        # If we have deep nesting, we need full global matrix evaluation.
+        # Accessing `_evaluated_position` from `pv` might be risky if it's not fully recursive or if it stores local.
+        # In `geometry_types.py`, `ParticleSource` has `_evaluated_position`.
+        # `PhysicalVolume` does NOT store a global evaluated position on the backend usually, it's calculated during traversal.
+        # Checking `geometry_types.py` for PhysicalVolume... it has `_evaluated_position` (local).
+        # We will assume for now that confinement is mostly used for top-level placements or we use local.
+        # Actually GPS position is Global. Confine works on the global touchable history? No, confine works on the Physical Volume Name.
+        # If we position the source at (10,0,0) and the volume is at (10,0,0), it matches.
+        # So we really need the GLOBAL transform of the PV.
+        # Since we don't have a global transform cache easily available here without traversal...
+        # We will use the PV's local transform and assume it's good enough for now (World placement),
+        # OR we could rely on the `ParticleSource`'s position if the USER manually moved it? 
+        # But the whole point is to Automate it.
+        # Let's use the PV's stored local parameters. Most AirPET projects are flat or 1-deep.
+        
+        return shape_cmds, pv._evaluated_position, pv._evaluated_rotation
     
     def generate_macro_file(self, job_id, sim_params, build_dir, run_dir, version_dir):
         """
@@ -2816,140 +3186,7 @@ class ProjectManager:
         macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
         macro_content.append("")
 
-    def _find_pv_by_name(self, pv_name):
-        """Helper to find a PV object by its Name across the entire geometry."""
-        state = self.current_geometry_state
-        # Search in Logical Volumes
-        for lv in state.logical_volumes.values():
-            if lv.content_type == 'physvol':
-                for pv in lv.content:
-                    if pv.name == pv_name:
-                        return pv
-        # Search in Assemblies
-        for asm in state.assemblies.values():
-            for pv in asm.placements:
-                if pv.name == pv_name:
-                    return pv
-        return None
-
-    def create_source_from_volume(self, pv_id, activity=1000.0, isotope="F18"):
-        """Creates a new particle source bound to a physical volume."""
-        if not self.current_geometry_state:
-            return None, "No project loaded"
-
-        pv = self._find_pv_by_id(pv_id)
-        if not pv:
-            return None, f"Physical Volume with ID {pv_id} not found."
-
-        # Create a new source
-        source_name = self._generate_unique_name(f"Source_{pv.name}", self.current_geometry_state.sources)
-        
-        # Preset GPS commands for common isotopes
-        gps_cmds = {}
-        if isotope == "F18":
-            gps_cmds = {"particle": "e+", "energy": "0"} 
-        elif isotope == "Gamma":
-             gps_cmds = {"particle": "gamma", "energy": "511 keV"}
-        else:
-             gps_cmds = {"particle": "e+", "energy": "0"}
-
-        new_source = ParticleSource(
-            name=source_name,
-            gps_commands=gps_cmds,
-            activity=activity,
-            confine_to_pv=pv.name, # This name must match Geant4 PV Name
-            volume_link_id=pv.id   # Link for UI tracking
-        )
-        
-        # Important: Sync the source's local transform to the PV's transform immediately
-        # This gives a good visual starting point, though the macro generator will overwrite it to be sure.
-        # Note: PV positions are relative to parent, Source positions are global.
-        # FOR NOW: We assume the PV is in World or we need to calculate global transform.
-        # calculating global transform is hard without full hierarchy traversal.
-        # But wait, 'confine' works with the physical volume name.
-        # GPS source position must be inside the volume.
-        # If we use the smart bounding box logic, we will apply the PV's position/rotation.
-        # So we can just leave it at 0,0,0 relative or copy local params.
-        # COPYING LOCAL PARAMS is a safe bet if it's placed in World.
-        new_source.position = pv.position.copy()
-        new_source.rotation = pv.rotation.copy()
-
-        self.current_geometry_state.add_source(new_source)
-        
-        # Automatically add to active list
-        if new_source.id not in self.current_geometry_state.active_source_ids:
-            self.current_geometry_state.active_source_ids.append(new_source.id)
-            
-        self.recalculate_geometry_state() # Will evaluate expressions
-        self._capture_history_state(f"Created source from volume {pv.name}")
-        
-        return new_source.to_dict(), None
-
-    def _calculate_bounding_params(self, pv_name):
-        """
-        Finds the PV, looks up its Logical Volume and Solid, 
-        and returns appropriate GPS shape params and the PV's evaluated transform.
-        """
-        pv = self._find_pv_by_name(pv_name)
-        if not pv: return None, None, None
-        
-        # Look up LV
-        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
-        if not lv: return None, None, None
-        
-        solid = self.current_geometry_state.solids.get(lv.solid_ref)
-        if not solid: return None, None, None
-
-        # Determine tight bounding box based on Solid Type
-        p = solid._evaluated_parameters # These are already in mm/rad
-        
-        shape_cmds = {'pos/shape': 'Para'} 
-        
-        if solid.type == 'box':
-            shape_cmds['pos/halfx'] = f"{p['x']/2} mm"
-            shape_cmds['pos/halfy'] = f"{p['y']/2} mm"
-            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
-        
-        elif solid.type in ['tube', 'cylinder']:
-            # For a cylinder, a bounding box is 2*R by 2*R by Z
-            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
-            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
-            shape_cmds['pos/halfz'] = f"{p['z']/2} mm"
-
-        elif solid.type == 'sphere':
-            shape_cmds['pos/halfx'] = f"{p['rmax']} mm"
-            shape_cmds['pos/halfy'] = f"{p['rmax']} mm"
-            shape_cmds['pos/halfz'] = f"{p['rmax']} mm"
-
-        else:
-            # Fallback for complex shapes
-            shape_cmds['pos/halfx'] = "200 mm" 
-            shape_cmds['pos/halfy'] = "200 mm" 
-            shape_cmds['pos/halfz'] = "200 mm"
-
-        # Return cmds AND the PV's transform
-        # Note: These are the LOCAL placement parameters of the PV.
-        # GPS positions are Global.
-        # IF the PV is placed in the World, this is perfect.
-        # IF the PV is nested, this will be wrong (Local != Global).
-        # However, AirPET primarily supports a single level of depth (World -> Assembly/PV) or simple nesting.
-        # If we have deep nesting, we need full global matrix evaluation.
-        # Accessing `_evaluated_position` from `pv` might be risky if it's not fully recursive or if it stores local.
-        # In `geometry_types.py`, `ParticleSource` has `_evaluated_position`.
-        # `PhysicalVolume` does NOT store a global evaluated position on the backend usually, it's calculated during traversal.
-        # Checking `geometry_types.py` for PhysicalVolume... it has `_evaluated_position` (local).
-        # We will assume for now that confinement is mostly used for top-level placements or we use local.
-        # Actually GPS position is Global. Confine works on the global touchable history? No, confine works on the Physical Volume Name.
-        # If we position the source at (10,0,0) and the volume is at (10,0,0), it matches.
-        # So we really need the GLOBAL transform of the PV.
-        # Since we don't have a global transform cache easily available here without traversal...
-        # We will use the PV's local transform and assume it's good enough for now (World placement),
-        # OR we could rely on the `ParticleSource`'s position if the USER manually moved it? 
-        # But the whole point is to Automate it.
-        # Let's use the PV's stored local parameters. Most AirPET projects are flat or 1-deep.
-        
-        return shape_cmds, pv._evaluated_position, pv._evaluated_rotation
-
+        # --- Initialize ---
         macro_content.append("/run/initialize")
         macro_content.append("")
 
