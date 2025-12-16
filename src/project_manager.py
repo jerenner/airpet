@@ -1384,23 +1384,28 @@ class ProjectManager:
                 return False, error_msg
 
             # --- Sync Bound Sources ---
-            # If any of the updated PVs are bound to a source, we must update the source's cached position.
+            # If any PV is moved, it might be a parent/ancestor of a bound volume (e.g. Assembly placement).
+            # To ensure consistency, we update ALL bound sources.
+            # This is computationally cheap enough (usually < 100 sources) and guarantees correctness without complex tree traversal checks.
             sources_updated = []
-            for pv in updated_pv_objects:
-                # Find sources bound to this pv.id
-                for source in self.current_geometry_state.sources.values():
-                    if source.volume_link_id == pv.id:
-                        # Re-run the logic to fetch params from volume
-                        
-                        # 1. Update Transform
+            for source in self.current_geometry_state.sources.values():
+                if source.volume_link_id:
+                    pv = self._find_pv_by_id(source.volume_link_id)
+                    if pv:
+                        # 1. Update Transform (Global)
                         global_pos, global_rot_rad = self._calculate_global_transform(pv)
+                        
+                        # Check if it actually changed to avoid unnecessary history spam? 
+                        # (Actually, we are in a batch update, so we just append to the patch).
+                        
                         source.position = {
                             'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
                         }
                         source.rotation = {
                             'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
                         }
-                        # 2. Update Shape Parameters (Copy-paste logic from update_particle_source)
+                        
+                        # 2. Update Shape Parameters
                         lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
                         if lv:
                             solid = self.current_geometry_state.solids.get(lv.solid_ref)
@@ -1423,7 +1428,8 @@ class ProjectManager:
                                 else:
                                     cmds['pos/shape'] = 'Sphere'
                                     cmds['pos/radius'] = '50 mm'
-                        
+
+                        # Update evaluated position for scene
                         source._evaluated_position = global_pos
                         source._evaluated_rotation = global_rot_rad
                         
@@ -1975,9 +1981,21 @@ class ProjectManager:
             self.current_geometry_state.add_solid(solid)
 
         # --- Merge Logical Volumes ---
+        extra_placements = []
         for name, lv in incoming_state.logical_volumes.items():
-            # Ignore the incoming world volume
+            # Ignore the incoming world volume BUT capture its placements
             if name == incoming_state.world_volume_ref:
+                # Map old world to current world so children can find their new parent
+                rename_map[name] = self.current_geometry_state.world_volume_ref
+                
+                # Extract content to be added as placements
+                if lv.content_type == 'physvol' and isinstance(lv.content, list):
+                     for pv in lv.content:
+                         # Clone via serialization to be safe
+                         pv_clone = PhysicalVolumePlacement.from_dict(pv.to_dict())
+                         # Explicitly re-parent them to the current world volume
+                         pv_clone.parent_lv_name = self.current_geometry_state.world_volume_ref
+                         extra_placements.append(pv_clone)
                 continue
 
             # Update references within this LV
@@ -2037,8 +2055,11 @@ class ProjectManager:
                 self.current_geometry_state.active_source_ids.append(new_id)
 
         # --- Process and Add Placements ---
-        if hasattr(incoming_state, 'placements_to_add'):
-            for pv_to_add in incoming_state.placements_to_add:
+        # Combine explicitly requested placements with those extracted from the incoming world
+        all_placements_to_add = (getattr(incoming_state, 'placements_to_add', []) or []) + extra_placements
+        
+        if all_placements_to_add:
+            for pv_to_add in all_placements_to_add:
                 # 1. Update any renamed references within the placement object
                 if pv_to_add.parent_lv_name in rename_map:
                     pv_to_add.parent_lv_name = rename_map[pv_to_add.parent_lv_name]
