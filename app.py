@@ -531,10 +531,11 @@ def process_lors_route(version_id, job_id):
     data = request.get_json()
     coincidence_window_ns = data.get('coincidence_window_ns', 4.0)  # 4 ns window
     energy_cut = data.get('energy_cut', 0.0)
+    energy_resolution = data.get('energy_resolution', 0.05)
     position_resolution = data.get('position_resolution', {'x': 0.0, 'y': 0.0, 'z': 0.0})
 
     # This function will run in the background
-    def process_lors_in_background(app, version_id, job_id, coincidence_window_ns, energy_cut, position_resolution):
+    def process_lors_in_background(app, version_id, job_id, coincidence_window_ns, energy_cut, energy_resolution, position_resolution):
         with app.app_context(): # Needed to work within Flask's context
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
@@ -562,6 +563,12 @@ def process_lors_route(version_id, job_id):
 
                 # Geant4 n-tuple column names can be bytes, so decode if necessary
                 hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
+
+                # --- Apply Energy Smearing ---
+                if energy_resolution > 0:
+                    # Smear energy: E_new = E_old * (1 + Gaussian(0, sigma/mean))
+                    print(f"Applying energy resolution smearing (sigma/mean = {energy_resolution})...")
+                    hits_df['Edep'] *= (1 + np.random.normal(0, energy_resolution, size=len(hits_df)))
 
                 # --- Apply Energy Cut ---
                 if energy_cut > 0:
@@ -596,7 +603,7 @@ def process_lors_route(version_id, job_id):
                 for i, event_id in enumerate(unique_event_ids):
                     event_hits = hits_df[hits_df['EventID'] == event_id]
                     if len(event_hits) >= 2:
-                        # Take the first two hits in time (naive approach, but standard for simple simulations)
+                        # Take the first two hits in time
                         hit1 = event_hits.iloc[0]
                         hit2 = event_hits.iloc[1]
                         if abs(hit1['Time'] - hit2['Time']) < coincidence_window_ns:
@@ -623,6 +630,7 @@ def process_lors_route(version_id, job_id):
                     end_coords=np.array(all_end_coords),
                     tof_bins=np.array(all_tof_bins),
                     energy_cut=energy_cut,
+                    energy_resolution=energy_resolution,
                     position_resolution=position_resolution
                 )
 
@@ -638,7 +646,7 @@ def process_lors_route(version_id, job_id):
                 traceback.print_exc()
 
     # Start the background task
-    thread = threading.Thread(target=process_lors_in_background, args=(app, version_id, job_id, coincidence_window_ns, energy_cut, position_resolution))
+    thread = threading.Thread(target=process_lors_in_background, args=(app, version_id, job_id, coincidence_window_ns, energy_cut, energy_resolution, position_resolution))
     thread.start()
 
     return jsonify({"success": True, "message": "LOR processing started."}), 202
@@ -740,6 +748,8 @@ def run_reconstruction_route(version_id, job_id):
             # Save LOR processing params if available in lors.npz
             if 'energy_cut' in lor_data:
                 dset.attrs['energy_cut'] = lor_data['energy_cut']
+            if 'energy_resolution' in lor_data:
+                dset.attrs['energy_resolution'] = lor_data['energy_resolution']
             if 'position_resolution' in lor_data:
                 # position_resolution is a dictionary, save as string or individual attrs
                 # h5py doesn't support dicts directly as attrs easily without serialization
@@ -829,6 +839,8 @@ def check_lor_file_route(version_id, job_id):
                 info = {"success": True, "exists": True, "num_lors": num_lors}
                 if 'energy_cut' in lor_data:
                     info['energy_cut'] = float(lor_data['energy_cut'])
+                if 'energy_resolution' in lor_data:
+                    info['energy_resolution'] = float(lor_data['energy_resolution'])
                 if 'position_resolution' in lor_data:
                     # It's saved as a 0-d array containing the dict if using save_z with dict
                     try:
@@ -1759,7 +1771,7 @@ def ai_health_check_route():
             for model in gemini_client.models.list():
                 if 'generateContent' in model.supported_actions:
                     # Filter for certain Gemini models only
-                    if(model.name == "models/gemini-3-pro-preview" or model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
+                    if(model.name == "models/gemini-3-flash-preview" or model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
                         gemini_models.append(model.name)
             response_data["models"]["gemini"] = gemini_models
         except Exception as e:

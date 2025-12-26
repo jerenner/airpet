@@ -24,7 +24,7 @@ export function initGpsEditor(callbacks) {
     cancelButton = document.getElementById('gpsEditorCancel');
 
     linkedCheckbox = document.getElementById('gpsLinkedVolumeEnabled');
-    linkedSelect = document.getElementById('gpsLinkedVolumeSelect');
+    linkedSelect = document.getElementById('gpsLinkedVolumeSelect'); // This is now an Input
 
     // Wire up events
     cancelButton.addEventListener('click', hide);
@@ -40,16 +40,20 @@ export function initGpsEditor(callbacks) {
 export function show(sourceData = null, availableVolumes = []) {
     currentAvailableVolumes = availableVolumes || [];
 
-    // Populate Linked Volume Selector
-    linkedSelect.innerHTML = '<option value="">-- Select Target Volume --</option>';
-    if (currentAvailableVolumes.length > 0) {
-        currentAvailableVolumes.forEach(vol => {
-            const option = document.createElement('option');
-            option.value = vol.id;
-            option.textContent = vol.name;
-            linkedSelect.appendChild(option);
-        });
-    }
+    // Populate Linked Volume Datalist
+    const dataList = document.getElementById('gpsLinkedVolumeList');
+    dataList.innerHTML = ''; // Clear previous options
+
+    // With datalist and search, we can probably afford to add all of them,
+    // as browsers optimize datalists better than selects for rendering.
+    // We populate the options with names.
+    currentAvailableVolumes.forEach(vol => {
+        const option = document.createElement('option');
+        option.value = vol.name; // User learns/types by Name
+        // We can't consistently rely on 'label' or innerText being shown across browsers
+        // But we store the ID in a way we can lookup later? No, we have the map.
+        dataList.appendChild(option);
+    });
 
     if (sourceData) { // EDIT MODE
         isEditMode = true;
@@ -65,18 +69,27 @@ export function show(sourceData = null, availableVolumes = []) {
         energyContainer.innerHTML = '';
         energyContainer.appendChild(ExpressionInput.create('gps_energy', 'Energy (keV)', commands['energy'] || '0'));
 
-        const activityVal = sourceData.activity !== undefined ? sourceData.activity : (sourceData.intensity !== undefined ? sourceData.intensity : '1.0');
+        let activityVal = '1.0';
+        if (sourceData.activity !== undefined && sourceData.activity !== null) {
+            activityVal = sourceData.activity;
+        }
         energyContainer.appendChild(ExpressionInput.create('gps_activity', 'Activity (Bq)', activityVal));
 
         const shape = commands['pos/type'] || 'Point';
         shapeSelect.value = shape;
 
         // Restore Linked State
+        linkedCheckbox.checked = !!sourceData.volume_link_id;
         if (sourceData.volume_link_id) {
-            linkedCheckbox.checked = true;
-            linkedSelect.value = sourceData.volume_link_id;
+            // Find the volume helper to get the Name
+            const vol = currentAvailableVolumes.find(v => v.id === sourceData.volume_link_id);
+            if (vol) {
+                linkedSelect.value = vol.name;
+            } else {
+                // Fallback if the volume was deleted?
+                linkedSelect.value = "";
+            }
         } else {
-            linkedCheckbox.checked = false;
             linkedSelect.value = "";
         }
 
@@ -285,11 +298,16 @@ function handleConfirm() {
     let volumeLinkId = null;
 
     if (linkedCheckbox.checked) {
-        // Linked Mode: volumeLinkId is the ID, confineToPv is the name derived from dropdown text
-        volumeLinkId = linkedSelect.value;
-        const selectedOption = linkedSelect.options[linkedSelect.selectedIndex];
-        if (selectedOption) {
-            confineToPv = selectedOption.textContent;
+        // Linked Mode: The input value is the Name. We need to look up the ID.
+        confineToPv = linkedSelect.value; // The backend uses the name for `confine_to_pv`
+
+        // Find the corresponding ID for tracking
+        const vol = currentAvailableVolumes.find(v => v.name === confineToPv);
+        if (vol) {
+            volumeLinkId = vol.id;
+        } else {
+            // Set link to null if not found.
+            volumeLinkId = null;
         }
     } else {
         // Free Mode: No confinement allows

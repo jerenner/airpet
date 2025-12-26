@@ -56,7 +56,7 @@ let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
     reconImageView, reconViewerPanel, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
-    processLorsBtn, reconStatusP, coincidenceWindowInput, energyCutInput, posResXInput, posResYInput, posResZInput,
+    processLorsBtn, reconStatusP, coincidenceWindowInput, energyCutInput, energyResolutionInput, posResXInput, posResYInput, posResZInput,
     reconNormalizationCheckbox;
 
 // Callbacks to main.js (controller logic)
@@ -248,6 +248,7 @@ export function initUI(cb) {
     reconStatusP = document.getElementById('lorStatus');
     coincidenceWindowInput = document.getElementById('coincidenceWindow');
     energyCutInput = document.getElementById('energyCut');
+    energyResolutionInput = document.getElementById('energyResolution');
     posResXInput = document.getElementById('posResX');
     posResYInput = document.getElementById('posResY');
     posResZInput = document.getElementById('posResZ');
@@ -458,6 +459,7 @@ export function initUI(cb) {
         const params = {
             coincidence_window_ns: parseFloat(coincidenceWindowInput.value),
             energy_cut: parseFloat(energyCutInput.value),
+            energy_resolution: parseFloat(energyResolutionInput.value),
             position_resolution: {
                 x: parseFloat(posResXInput.value),
                 y: parseFloat(posResYInput.value),

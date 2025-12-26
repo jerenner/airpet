@@ -2361,10 +2361,16 @@ async function handleAddGps() {
     GpsEditor.show(null, availableVolumes);
 }
 
-
-
 function handleEditGps(sourceData) {
-    GpsEditor.show(sourceData, getAvailableVolumes());
+    // Ensure we send the latest state to the editor, as the UI tree node might be stale
+    let dataToUse = sourceData;
+    if (sourceData && sourceData.name && AppState.currentProjectState && AppState.currentProjectState.sources) {
+        const freshSource = AppState.currentProjectState.sources[sourceData.name];
+        if (freshSource) {
+            dataToUse = freshSource;
+        }
+    }
+    GpsEditor.show(dataToUse, getAvailableVolumes());
 }
 
 async function handleGpsEditorConfirm(data) {
@@ -2602,6 +2608,7 @@ async function handleOpenReconstructionModal() {
             // LORs file was found!
             let details = [];
             if (result.energy_cut > 0) details.push(`E>${result.energy_cut}MeV`);
+            if (result.energy_resolution > 0) details.push(`ERes:${result.energy_resolution}`);
             if (result.position_resolution) {
                 const pr = result.position_resolution;
                 if (pr.x > 0 || pr.y > 0 || pr.z > 0) details.push(`Smear:[${pr.x},${pr.y},${pr.z}]mm`);

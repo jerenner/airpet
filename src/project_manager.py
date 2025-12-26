@@ -1412,20 +1412,23 @@ class ProjectManager:
                             if solid:
                                 p = solid._evaluated_parameters
                                 cmds = source.gps_commands
-                                cmds['pos/type'] = 'Volume'
-                                if solid.type in ['box']:
+                            # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
+                            # We reduce the source dimensions slightly to stand clear of the boundary.
+                            MARGIN = 0.001 # mm
+                            
+                            if solid.type in ['box']:
                                     cmds['pos/shape'] = 'Box'
-                                    cmds['pos/halfx'] = f"{p.get('x', 0)/2} mm"
-                                    cmds['pos/halfy'] = f"{p.get('y', 0)/2} mm"
-                                    cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
-                                elif solid.type in ['tube', 'cylinder', 'tubs']:
+                                    cmds['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
+                                    cmds['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
+                                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                            elif solid.type in ['tube', 'cylinder', 'tubs']:
                                     cmds['pos/shape'] = 'Cylinder'
-                                    cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
-                                    cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
-                                elif solid.type in ['sphere', 'orb']:
+                                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                            elif solid.type in ['sphere', 'orb']:
                                     cmds['pos/shape'] = 'Sphere'
-                                    cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
-                                else:
+                                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                            else:
                                     cmds['pos/shape'] = 'Sphere'
                                     cmds['pos/radius'] = '50 mm'
 
@@ -1981,6 +1984,7 @@ class ProjectManager:
             self.current_geometry_state.add_solid(solid)
 
         # --- Merge Logical Volumes ---
+        processed_lvs = []
         extra_placements = []
         for name, lv in incoming_state.logical_volumes.items():
             # Ignore the incoming world volume BUT capture its placements
@@ -2002,19 +2006,33 @@ class ProjectManager:
             if lv.solid_ref in rename_map: lv.solid_ref = rename_map[lv.solid_ref]
             if lv.material_ref in rename_map: lv.material_ref = rename_map[lv.material_ref]
             
-            # Note: We are NOT merging physical volume placements. The user will
-            # place the newly imported LVs manually. This is the essence of a "part" import.
+            # Note: We are preserving internal placements (sub-assemblies).
+            # We will fix up their references in a second pass.
 
             new_name = self._generate_unique_name(name, self.current_geometry_state.logical_volumes)
             if new_name != name:
                 rename_map[name] = new_name
             lv.name = new_name
             
-            # Clear the new content list and reset the type
-            lv.content_type = 'physvol'
-            lv.content = [] 
-
             self.current_geometry_state.add_logical_volume(lv)
+            processed_lvs.append(lv)
+
+        # --- Post-Process LV Content (Fix references in children) ---
+        for lv in processed_lvs:
+            if lv.content_type == 'physvol' and isinstance(lv.content, list):
+                for pv in lv.content:
+                    # Update reference to the child volume (if it was renamed)
+                    if pv.volume_ref in rename_map:
+                        pv.volume_ref = rename_map[pv.volume_ref]
+                    
+                    # Update reference to the parent volume (this LV, which might have been renamed)
+                    pv.parent_lv_name = lv.name 
+                    
+                    # Update defines in positioning
+                    if isinstance(pv.position, str) and pv.position in rename_map:
+                         pv.position = rename_map[pv.position]
+                    if isinstance(pv.rotation, str) and pv.rotation in rename_map:
+                         pv.rotation = rename_map[pv.rotation]
         
         # --- Merge Assemblies ---
         for name, assembly in incoming_state.assemblies.items():
@@ -2116,6 +2134,54 @@ class ProjectManager:
 
         # Recalculate the state
         success, error_msg = self.recalculate_geometry_state()
+
+        # RE-SYNC ALL BOUND SOURCES (Crucial for imported parts)
+        # Imported bound sources may have outdated shape parameters or positions relative to the new World.
+        for source in self.current_geometry_state.sources.values():
+            if source.volume_link_id:
+                pv = self._find_pv_by_id(source.volume_link_id)
+                if pv:
+                    # 1. Update Transform (Global)
+                    global_pos, global_rot_rad = self._calculate_global_transform(pv)
+                    
+                    source.position = {
+                        'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
+                    }
+                    source.rotation = {
+                        'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
+                    }
+                    
+                    # 2. Update Shape Parameters
+                    lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+                    if lv:
+                        solid = self.current_geometry_state.solids.get(lv.solid_ref)
+                        if solid:
+                            p = solid._evaluated_parameters
+                            cmds = source.gps_commands
+                            cmds['pos/type'] = 'Volume'
+                            
+                            # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
+                            # We reduce the source dimensions slightly to stand clear of the boundary.
+                            MARGIN = 0.001 # mm
+                            
+                            if solid.type in ['box']:
+                                cmds['pos/shape'] = 'Box'
+                                cmds['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
+                                cmds['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
+                                cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                            elif solid.type in ['tube', 'cylinder', 'tubs']:
+                                cmds['pos/shape'] = 'Cylinder'
+                                cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                                cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                            elif solid.type in ['sphere', 'orb']:
+                                cmds['pos/shape'] = 'Sphere'
+                                cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                            else:
+                                cmds['pos/shape'] = 'Sphere'
+                                cmds['pos/radius'] = '50 mm'
+
+                    source._evaluated_position = global_pos
+                    source._evaluated_rotation = global_rot_rad
 
         # Capture the new state
         self._capture_history_state(f"State merge")
@@ -2747,6 +2813,39 @@ class ProjectManager:
                 # Also ensure confine_to_pv is set to the name (required for Geant4) if it wasn't passed or is empty
                 if not confine_to_pv:
                     confine_to_pv = pv.name
+                
+                # Fetch shape info from the linked Logical Volume -> Solid
+                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+                if lv:
+                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
+                    if solid:
+                        p = solid._evaluated_parameters
+                        
+                        # Clear any existing shape parameters to avoid conflicts (e.g. Para vs Cylinder)
+                        keys_to_remove = ['pos/shape', 'pos/radius', 'pos/halfx', 'pos/halfy', 'pos/halfz', 'pos/sigma_x', 'pos/sigma_y', 'pos/sigma_r', 'pos/paralp', 'pos/parthe', 'pos/parphi']
+                        for k in keys_to_remove:
+                            if k in gps_commands:
+                                del gps_commands[k]
+
+                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
+                        MARGIN = 0.001 # mm
+                        
+                        gps_commands['pos/type'] = 'Volume'
+                        if solid.type in ['box']:
+                            gps_commands['pos/shape'] = 'Box'
+                            gps_commands['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
+                            gps_commands['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
+                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                        elif solid.type in ['tube', 'cylinder', 'tubs']:
+                            gps_commands['pos/shape'] = 'Cylinder'
+                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
+                        elif solid.type in ['sphere', 'orb']:
+                            gps_commands['pos/shape'] = 'Sphere'
+                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                        else:
+                            gps_commands['pos/shape'] = 'Sphere'
+                            gps_commands['pos/radius'] = '50 mm'
 
         new_source = ParticleSource(
             name=name,
@@ -2845,21 +2944,23 @@ class ProjectManager:
                         # Set default type to Volume
                         cmds['pos/type'] = 'Volume'
 
-                        # Determine Shape and Dimensions
+                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
+                        MARGIN = 0.001 # mm
+                        
+                        cmds['pos/type'] = 'Volume'
                         if solid.type in ['box']:
                             cmds['pos/shape'] = 'Box'
-                            cmds['pos/halfx'] = f"{p.get('x', 0)/2} mm"
-                            cmds['pos/halfy'] = f"{p.get('y', 0)/2} mm"
-                            cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                            cmds['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
+                            cmds['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
+                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
                         elif solid.type in ['tube', 'cylinder', 'tubs']:
                             cmds['pos/shape'] = 'Cylinder'
-                            cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
-                            cmds['pos/halfz'] = f"{p.get('z', 0)/2} mm"
+                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
                         elif solid.type in ['sphere', 'orb']:
                             cmds['pos/shape'] = 'Sphere'
-                            cmds['pos/radius'] = f"{p.get('rmax', 0)} mm"
+                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
                         else:
-                            # Fallback size
                             cmds['pos/shape'] = 'Sphere'
                             cmds['pos/radius'] = '50 mm'
 
@@ -3107,27 +3208,6 @@ class ProjectManager:
             shape_cmds['pos/halfx'] = "200 mm" 
             shape_cmds['pos/halfy'] = "200 mm" 
             shape_cmds['pos/halfz'] = "200 mm"
-
-        # Return cmds AND the PV's transform
-        # Note: These are the LOCAL placement parameters of the PV.
-        # GPS positions are Global.
-        # IF the PV is placed in the World, this is perfect.
-        # IF the PV is nested, this will be wrong (Local != Global).
-        # However, AirPET primarily supports a single level of depth (World -> Assembly/PV) or simple nesting.
-        # If we have deep nesting, we need full global matrix evaluation.
-        # Accessing `_evaluated_position` from `pv` might be risky if it's not fully recursive or if it stores local.
-        # In `geometry_types.py`, `ParticleSource` has `_evaluated_position`.
-        # `PhysicalVolume` does NOT store a global evaluated position on the backend usually, it's calculated during traversal.
-        # Checking `geometry_types.py` for PhysicalVolume... it has `_evaluated_position` (local).
-        # We will assume for now that confinement is mostly used for top-level placements or we use local.
-        # Actually GPS position is Global. Confine works on the global touchable history? No, confine works on the Physical Volume Name.
-        # If we position the source at (10,0,0) and the volume is at (10,0,0), it matches.
-        # So we really need the GLOBAL transform of the PV.
-        # Since we don't have a global transform cache easily available here without traversal...
-        # We will use the PV's local transform and assume it's good enough for now (World placement),
-        # OR we could rely on the `ParticleSource`'s position if the USER manually moved it? 
-        # But the whole point is to Automate it.
-        # Let's use the PV's stored local parameters. Most AirPET projects are flat or 1-deep.
         
         return shape_cmds, pv._evaluated_position, pv._evaluated_rotation
     
@@ -3179,7 +3259,12 @@ class ProjectManager:
         macro_content.append("# AirPet Auto-Generated Macro")
         macro_content.append(f"# Job ID: {job_id}")
         macro_content.append("")
-
+        
+        # Force single-threaded mode to avoid G4Cache cleanup issues with many sources
+        macro_content.append("/run/numberOfThreads 1")
+        # Disable trajectory storage to prevent Visualization cleanup crashes
+        macro_content.append("/tracking/storeTrajectory 0")
+        
         # --- Set random seed ---
         seed1 = sim_params.get('seed1', 0)
         seed2 = sim_params.get('seed2', 0)
@@ -3270,27 +3355,11 @@ class ProjectManager:
                 evaluated_rot = source._evaluated_rotation
                 
                 if source.confine_to_pv:
-                    # Use smart calculator to get tight bounds and correct transform
-                    bounds, pv_pos, pv_rot = self._calculate_bounding_params(source.confine_to_pv)
-                    
-                    if bounds:
-                        cmds['pos/type'] = 'Volume'
-                        cmds.update(bounds)
-                        
-                        # Override source transform with PV transform to ensure overlap
-                        evaluated_pos = pv_pos
-                        evaluated_rot = pv_rot
-                        
-                        macro_content.append(f"/gps/pos/confine {source.confine_to_pv}")
-                    else:
-                        macro_content.append(f"# WARNING: Confinement PV '{source.confine_to_pv}' not found. Using source transform.")
-                        if 'pos/type' not in cmds: cmds['pos/type'] = 'Volume'
-                        # Fallback to broad box if not set?
-                        if 'pos/shape' not in cmds:
-                             cmds['pos/shape'] = 'Para'
-                             cmds['pos/halfx'] = '50 mm'; cmds['pos/halfy'] = '50 mm'; cmds['pos/halfz'] = '50 mm'
+                    macro_content.append(f"/gps/pos/confine {source.confine_to_pv}")
                 
                 # Map Box to Para if needed (for Volume sources)
+                # Note: The source shape parameters (halfx, radius, etc.) are already set correctly 
+                # (with margins) by add_source/update_particle_source, so we trust them.
                 if cmds.get('pos/type') == 'Volume' and cmds.get('pos/shape') == 'Box':
                      cmds['pos/shape'] = 'Para'
 
