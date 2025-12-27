@@ -589,39 +589,45 @@ def process_lors_route(version_id, job_id):
                     hits_df['PosZ'] += np.random.normal(0, sigma_z, size=len(hits_df))
 
                 # Use the correct column names from the HDF5 file (case-sensitive)
-                hits_df.sort_values(by='Time', inplace=True)
+                # OPTIMIZATION: Sort by EventID and Time to facilitate vectorized grouping
+                hits_df.sort_values(by=['EventID', 'Time'], inplace=True)
                 
-                unique_event_ids = hits_df['EventID'].unique()
-                total_events = len(unique_event_ids)
+                total_events = hits_df['EventID'].nunique()
 
                 with LOR_PROCESSING_LOCK:
-                    LOR_PROCESSING_STATUS[job_id] = {"status": "Processing coincidences...", "progress": 0, "total": total_events}
+                    LOR_PROCESSING_STATUS[job_id] = {"status": "Processing coincidences (vectorized)...", "progress": 0, "total": total_events}
 
-                all_start_coords, all_end_coords, all_tof_bins = [], [], []
+                # Vectorized Coincidence Finding
+                # ------------------------------
+                # Assign a rank to each hit within its event (0=first, 1=second, ...)
+                # This is much faster than iterating over groups
+                hits_df['hit_rank'] = hits_df.groupby('EventID').cumcount()
                 
-                # Process events and update progress
-                for i, event_id in enumerate(unique_event_ids):
-                    event_hits = hits_df[hits_df['EventID'] == event_id]
-                    if len(event_hits) >= 2:
-                        # Take the first two hits in time
-                        hit1 = event_hits.iloc[0]
-                        hit2 = event_hits.iloc[1]
-                        if abs(hit1['Time'] - hit2['Time']) < coincidence_window_ns:
-                            pos1 = np.array([hit1['PosX'], hit1['PosY'], hit1['PosZ']])
-                            pos2 = np.array([hit2['PosX'], hit2['PosY'], hit2['PosZ']])
-                            if hit1['Time'] < hit2['Time']:
-                                all_start_coords.append(pos1)
-                                all_end_coords.append(pos2)
-                            else:
-                                all_start_coords.append(pos2)
-                                all_end_coords.append(pos1)
-                            all_tof_bins.append(0)
+                # Filter for the first and second hits
+                hits1 = hits_df[hits_df['hit_rank'] == 0]
+                hits2 = hits_df[hits_df['hit_rank'] == 1]
+                
+                # Merge to align pairs by EventID
+                # Inner merge ensures we only keep events that have at least 2 hits
+                pairs = pd.merge(hits1, hits2, on='EventID', suffixes=('_1', '_2'))
+                
+                # Apply Coincidence Window
+                # Since we sorted by time, Time_1 <= Time_2 for the same event
+                dt = (pairs['Time_2'] - pairs['Time_1']).abs()
+                valid_mask = dt < coincidence_window_ns
+                valid_pairs = pairs[valid_mask]
+                
+                num_pairs = len(valid_pairs)
+                
+                # Extract coordinates as numpy arrays
+                all_start_coords = valid_pairs[['PosX_1', 'PosY_1', 'PosZ_1']].values
+                all_end_coords = valid_pairs[['PosX_2', 'PosY_2', 'PosZ_2']].values
+                all_tof_bins = np.zeros(num_pairs, dtype=int)
 
-                    if (i + 1) % 1000 == 0: # Update status every 1000 events
-                        with LOR_PROCESSING_LOCK:
-                            LOR_PROCESSING_STATUS[job_id]["progress"] = i + 1
+                with LOR_PROCESSING_LOCK:
+                    LOR_PROCESSING_STATUS[job_id]["progress"] = total_events
                 
-                if not all_start_coords:
+                if num_pairs == 0:
                     raise ValueError("No valid coincidences found.")
                     
                 np.savez_compressed(
@@ -704,14 +710,19 @@ def run_reconstruction_route(version_id, job_id):
         
         # We need an "adjoint_ones" image for sensitivity correction in MLEM.
         # This is the backprojection of a list of ones.
-        #sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
-        sensitivity_image = xp.ones(img_shape, dtype=xp.float32, device=dev)
+        sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
+        #sensitivity_image = xp.ones(img_shape, dtype=xp.float32, device=dev)
 
         # --- MLEM Reconstruction Loop ---
         x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
 
         # --- Create a safe version of the sensitivity image for division ---
-        sensitivity_image_safe_for_division = xp.where(sensitivity_image <= 0, 1.0, sensitivity_image)
+        max_sens = float(xp.max(sensitivity_image))
+        # Use a relative threshold (e.g., 0.1% or smaller) to avoid exploding values at edges
+        sens_threshold = max_sens * 1e-4 
+        print(f"Sensitivity Max: {max_sens:.2e}, Threshold: {sens_threshold:.2e}")
+        
+        sensitivity_image_safe_for_division = xp.where(sensitivity_image < sens_threshold, 1.0, sensitivity_image)
 
         for i in range(iterations):
             print(f"Running MLEM iteration {i+1}/{iterations}...")
@@ -725,8 +736,8 @@ def run_reconstruction_route(version_id, job_id):
             if normalization:
                 # Perform the division using the safe denominator (Sensitivity Correction)
                 update_term = (x / sensitivity_image_safe_for_division) * back_projection
-                # Now, apply the update only where sensitivity is valid, otherwise set to 0.
-                x = xp.where(sensitivity_image > 0, update_term, 0.0)
+                # Now, apply the update only where sensitivity is valid (above threshold), otherwise set to 0.
+                x = xp.where(sensitivity_image >= sens_threshold, update_term, 0.0)
             else:
                 # No normalization (just simple backprojection update - not standard MLEM but requested option)
                 # Standard MLEM without sensitivity is: x_new = x_old * back_projection
@@ -805,6 +816,70 @@ def get_recon_slice_route(version_id, job_id, axis, slice_num):
         img_pil = Image.fromarray(slice_2d.astype(np.uint8), mode='L') # Grayscale
 
         # Save image to a memory buffer
+        img_io = io.BytesIO()
+        img_pil.save(img_io, 'PNG')
+        img_io.seek(0)
+
+        return Response(img_io.getvalue(), mimetype='image/png')
+
+    except Exception as e:
+        traceback.print_exc()
+        return str(e), 500
+
+@app.route('/api/reconstruction/projection/<version_id>/<job_id>/<axis>')
+def get_recon_projection_route(version_id, job_id, axis):
+    """
+    Returns a MIP or Sum projection along the specified axis, optionally within a slice range.
+    """
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    recon_h5_path = os.path.join(run_dir, "reconstruction.h5")
+    
+    start = request.args.get('start', type=int)
+    end = request.args.get('end', type=int)
+    mode = request.args.get('mode', 'sum') # 'sum' or 'mip'
+
+    try:
+        if os.path.exists(recon_h5_path):
+            with h5py.File(recon_h5_path, 'r') as f:
+                recon_img = f['image'][:]
+        else:
+            return "Reconstruction file not found", 404
+
+        # Determine slicing based on axis and optional range
+        # Note: image is [x, y, z]
+        
+        sl = slice(None) # Default to full range
+        if start is not None and end is not None:
+            sl = slice(start, end)
+        
+        if axis == 'x':
+            # Sum/Max along axis 0
+            # Slicing affects the accumulation axis
+            sub_vol = recon_img[sl, :, :]
+            proj_axis = 0
+        elif axis == 'y':
+            # Sum/Max along axis 1
+            sub_vol = recon_img[:, sl, :]
+            proj_axis = 1
+        else: # 'z'
+            # Sum/Max along axis 2
+            sub_vol = recon_img[:, :, sl]
+            proj_axis = 2
+            
+        if mode == 'mip':
+            projection = np.max(sub_vol, axis=proj_axis)
+        else:
+            projection = np.sum(sub_vol, axis=proj_axis)
+
+        # Normalize and convert
+        projection = np.rot90(projection)
+        max_val = projection.max()
+        if max_val > 0:
+            projection = (projection / max_val) * 255.0
+            
+        img_pil = Image.fromarray(projection.astype(np.uint8), mode='L')
         img_io = io.BytesIO()
         img_pil.save(img_io, 'PNG')
         img_io.seek(0)

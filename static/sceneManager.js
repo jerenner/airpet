@@ -2128,7 +2128,7 @@ export function renderObjects(pvDescriptions, projectState) {
         const confineName = srcData.confine_to_pv;
         if (!confineName) return;
 
-        console.log(`[SceneManager] Attempting to highlight volume for source '${srcData.name}', confined to: '${confineName}'`);
+        // console.log(`[SceneManager] Attempting to highlight volume for source '${srcData.name}', confined to: '${confineName}'`);
         let found = false;
 
         // Search for the object by Name in the objectMap
@@ -2136,7 +2136,7 @@ export function renderObjects(pvDescriptions, projectState) {
         // We highlight all of them to indicate they are valid confinement regions.
         for (const obj of objectMap.values()) {
             if (obj.userData && obj.userData.name === confineName) {
-                console.log(`[SceneManager] Found match! Highlighting object ID: ${obj.userData.id}`);
+                // console.log(`[SceneManager] Found match! Highlighting object ID: ${obj.userData.id}`);
                 found = true;
                 obj.userData.is_active_bound_source = true;
                 // Apply the bound source material to meshes

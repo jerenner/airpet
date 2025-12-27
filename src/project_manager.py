@@ -3260,8 +3260,10 @@ class ProjectManager:
         macro_content.append(f"# Job ID: {job_id}")
         macro_content.append("")
         
-        # Force single-threaded mode to avoid G4Cache cleanup issues with many sources
-        macro_content.append("/run/numberOfThreads 1")
+        # Configure number of threads (Default to multi-threading if requested)
+        num_threads = sim_params.get('threads', 12) # Default to 12 threads if not specified, for better performance
+        macro_content.append(f"/run/numberOfThreads {num_threads}")
+        
         # Disable trajectory storage to prevent Visualization cleanup crashes
         macro_content.append("/tracking/storeTrajectory 0")
         
@@ -3307,6 +3309,10 @@ class ProjectManager:
         save_hits = sim_params.get('save_hits', True)
         macro_content.append(f"/g4pet/run/saveParticles {str(save_particles).lower()}")
         macro_content.append(f"/g4pet/run/saveHits {str(save_hits).lower()}")
+        
+        # Default Hit Energy Threshold to reduce file size
+        hit_threshold = sim_params.get('hit_energy_threshold', '100 keV')
+        macro_content.append(f"/g4pet/run/hitEnergyThreshold {hit_threshold}")
         macro_content.append("")
 
         # --- ADD VERBOSITY FOR DEBUGGING ---
