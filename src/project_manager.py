@@ -3260,14 +3260,11 @@ class ProjectManager:
         macro_content.append(f"# Job ID: {job_id}")
         macro_content.append("")
         
-        # Configure number of threads (Default to multi-threading if requested)
-        num_threads = sim_params.get('threads', 12) # Default to 12 threads if not specified, for better performance
-        macro_content.append(f"/run/numberOfThreads {num_threads}")
-        
         # Disable trajectory storage to prevent Visualization cleanup crashes
         macro_content.append("/tracking/storeTrajectory 0")
         
         # --- Set random seed ---
+        macro_content.append("\n# --- Random Seed ---")
         seed1 = sim_params.get('seed1', 0)
         seed2 = sim_params.get('seed2', 0)
         macro_content.append("\n# --- Random Seed ---")

@@ -264,66 +264,309 @@ def run_simulation():
         )
 
         # This will be the function run in a separate thread
-        def run_g4_process(job_id, command):
+        def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
+            num_threads = int(sim_params.get('threads', 1))
+            total_events = int(sim_params.get('events', 1))
+            
             with SIMULATION_LOCK:
-                # The process will run in the 'geant4_app/build' directory
-                process = subprocess.Popen(
-                    command,
-                    cwd=run_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    bufsize=1 # Line-buffered
-                )
-                SIMULATION_PROCESSES[job_id] = process
                 SIMULATION_STATUS[job_id] = {
                     "status": "Running",
                     "progress": 0,
-                    "total_events": sim_params.get('events', 1),
+                    "total_events": total_events,
                     "stdout": [],
                     "stderr": []
                 }
 
-            # Monitor stdout
-            if process.stdout:
-                for line in iter(process.stdout.readline, ''):
-                    line = line.strip()
-                    if line:
-                        with SIMULATION_LOCK:
-                           SIMULATION_STATUS[job_id]['stdout'].append(line)
-                           # Example of parsing progress:
-                           if ">>> Event" in line and "starts" in line:
-                               try:
-                                   event_num = int(line.split()[2])
-                                   SIMULATION_STATUS[job_id]['progress'] = event_num + 1
-                               except (ValueError, IndexError):
-                                   pass
-                process.stdout.close()
+            try:
+                # --- SINGLE PROCESS MODE ---
+                if num_threads <= 1:
+                    command = [executable_path, "run.mac"]
+                    process = subprocess.Popen(
+                        command, cwd=run_dir,
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, bufsize=1
+                    )
+                    with SIMULATION_LOCK:
+                         SIMULATION_PROCESSES[job_id] = process
+                    
+                    # Monitor
+                    if process.stdout:
+                        for line in iter(process.stdout.readline, ''):
+                            line = line.strip()
+                            if line:
+                                with SIMULATION_LOCK:
+                                    SIMULATION_STATUS[job_id]['stdout'].append(line)
+                                    if ">>> Event" in line and "starts" in line:
+                                        try:
+                                            # Using regex might be safer but split is okay
+                                            parts = line.split()
+                                            # format: ">>> Event N starts..."
+                                            if len(parts) > 2 and parts[2].isdigit():
+                                                SIMULATION_STATUS[job_id]['progress'] = int(parts[2]) + 1
+                                        except: pass
+                    
+                    stdout_remainder, stderr_output = process.communicate()
+                    if stderr_output:
+                         with SIMULATION_LOCK:
+                             SIMULATION_STATUS[job_id]['stderr'].append(stderr_output)
+                             
+                    final_return_code = process.returncode
 
-            # Monitor stderr
-            if process.stderr:
-                for line in iter(process.stderr.readline, ''):
-                    line = line.strip()
-                    if line:
-                        with SIMULATION_LOCK:
-                            SIMULATION_STATUS[job_id]['stderr'].append(line)
-                process.stderr.close()
-
-            process.wait()
-            
-            with SIMULATION_LOCK:
-                if process.returncode == 0:
-                    SIMULATION_STATUS[job_id]['status'] = 'Completed'
-                    LATEST_COMPLETED_JOB_ID = job_id
+                # --- MULTI-PROCESS MODE ---
                 else:
+                    msg = f"Starting {num_threads} parallel processes for {total_events} events..."
+                    with SIMULATION_LOCK:
+                        SIMULATION_STATUS[job_id]['stdout'].append(msg)
+                    
+                    # 1. Prepare Macros
+                    base_macro_path = os.path.join(run_dir, "run.mac")
+                    with open(base_macro_path, 'r') as f:
+                        base_lines = f.readlines()
+                    
+                    # Filter out commands we will override
+                    filtered_lines = []
+                    for line in base_lines:
+                        s = line.strip()
+                        if s.startswith("/run/beamOn"): continue
+                        if s.startswith("/random/setSeeds"): continue
+                        if s.startswith("/analysis/setFileName"): continue
+                        if s.startswith("/run/numberOfThreads"): continue 
+                        if s.startswith("/g4pet/run/saveHits"): continue # We force true usually, but read params
+                        filtered_lines.append(line)
+                    
+                    # Base seeds
+                    seed1 = int(sim_params.get('seed1', 12345))
+                    seed2 = int(sim_params.get('seed2', 67890))
+                    
+                    events_per_thread = total_events // num_threads
+                    remainder = total_events % num_threads
+                    
+                    procs = []
+                    
+                    for i in range(num_threads):
+                        n_events = events_per_thread + (1 if i < remainder else 0)
+                        if n_events <= 0: continue
+                        
+                        macro_name = f"run_t{i}.mac"
+                        out_name = f"output_t{i}.hdf5"
+                        
+                        # Unique seeds
+                        s1 = seed1 + i*1000
+                        s2 = seed2 + i*1000
+                        
+                        # Write specific macro
+                        with open(os.path.join(run_dir, macro_name), 'w') as f:
+                            f.writelines(filtered_lines)
+                            f.write(f"\n/random/setSeeds {s1} {s2}")
+                            f.write(f"\n/analysis/setFileName {out_name}")
+                            f.write(f"\n/run/beamOn {n_events}\n")
+                        
+                        cmd = [executable_path, macro_name]
+                        p = subprocess.Popen(
+                            cmd, cwd=run_dir,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, bufsize=1
+                        )
+                        procs.append(p)
+                    
+                    with SIMULATION_LOCK:
+                        SIMULATION_PROCESSES[job_id] = procs # Store list for parallel stop handling
+
+                    # 2. Monitor Loop
+                    # We launch threads to continuously drain stdout/stderr of all processes
+                    # to prevent deadlocks and update progress.
+                    monitor_threads = []
+                    
+                    def stdout_reader(proc, idx):
+                        for line in iter(proc.stdout.readline, ''):
+                            line = line.strip()
+                            if not line: continue
+                            
+                            # Filter spammy lines
+                            if "Checking overlaps for volume" in line: continue
+                            
+                            # Log T0 fully, others only on error/warning
+                            is_interesting = (idx == 0) or ("error" in line.lower()) or ("warning" in line.lower()) or ("exception" in line.lower())
+                            
+                            if is_interesting:
+                                prefix = f"[T{idx}] "
+                                with SIMULATION_LOCK:
+                                    SIMULATION_STATUS[job_id]['stdout'].append(prefix + line)
+                                    
+                                    # Parse progress (T0 only) to avoid jitter
+                                    if idx == 0 and ">>> Event" in line and "starts" in line:
+                                        try:
+                                            # Example: ">>> Event 123 starts..."
+                                            parts = line.split()
+                                            if len(parts) > 2 and parts[2].isdigit():
+                                                local_ev = int(parts[2])
+                                                SIMULATION_STATUS[job_id]['progress'] = (local_ev + 1) * num_threads
+                                        except: pass
+                        proc.stdout.close()
+
+                    def stderr_reader(proc, idx):
+                        for line in iter(proc.stderr.readline, ''):
+                            line = line.strip()
+                            if line:
+                                with SIMULATION_LOCK:
+                                    SIMULATION_STATUS[job_id]['stderr'].append(f"[T{idx}] {line}")
+                        proc.stderr.close()
+
+                    for i, p in enumerate(procs):
+                        # Start stdout reader
+                        t_out = threading.Thread(target=stdout_reader, args=(p, i))
+                        t_out.start()
+                        monitor_threads.append(t_out)
+                        
+                        # Start stderr reader
+                        t_err = threading.Thread(target=stderr_reader, args=(p, i))
+                        t_err.start()
+                        monitor_threads.append(t_err)
+                    
+                    # Wait for all streaming to finish
+                    for t in monitor_threads:
+                        t.join()
+                    
+                    # Ensure all processes have exited and set return code
+                    final_return_code = 0
+                    for p in procs:
+                        p.wait()
+                        if p.returncode != 0:
+                            final_return_code = p.returncode
+                    
+                    # (The following code expects final_return_code and cleanup)
+
+                    if final_return_code == 0:
+                         with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stdout'].append("Parallel tasks completed. Merging...")
+
+                # --- MERGE LOGIC ---
+                if final_return_code == 0:
+                    import glob
+                    import shutil
+                    # Look for separate files
+                    t_files = sorted(glob.glob(os.path.join(run_dir, "output_t*.hdf5")))
+                    
+                    if t_files:
+                        target_path = os.path.join(run_dir, "output.hdf5")
+                        # Copy first
+                        shutil.copyfile(t_files[0], target_path)
+                        
+                        with h5py.File(target_path, 'r+') as f_tgt:
+                            if 'default_ntuples' in f_tgt:
+                                grp_tgt = f_tgt['default_ntuples']
+                                
+                                for src_file in t_files[1:]:
+                                    with h5py.File(src_file, 'r') as f_src:
+                                        if 'default_ntuples' not in f_src: continue
+                                        grp_src = f_src['default_ntuples']
+                                        
+                                        # Recursive object merge function
+                                        def merge_objects(name, dst, src):
+                                            # If Group, recurse
+                                            if hasattr(dst, 'keys'): 
+                                                for k in dst:
+                                                    if k not in src: continue
+                                                    merge_objects(k, dst[k], src[k])
+                                                return
+                                            
+                                            # If Dataset
+                                            if hasattr(dst, 'shape'):
+                                                # Scalar check
+                                                if len(dst.shape) == 0:
+                                                    if name == 'entries':
+                                                        dst[...] += src[...]
+                                                    return
+                                                
+                                                CHUNK_SIZE = 1_000_000
+                                                
+                                                # Calculate offset for EventID
+                                                offset_val = 0
+                                                if name == "EventID" or "EventID" in dst.name:
+                                                    try:
+                                                        offset_val = dst.shape[0]
+                                                    except: pass
+
+                                                # Convert contiguous to chunked if needed (Streaming)
+                                                if dst.chunks is None:
+                                                    parent = dst.parent
+                                                    temp_name = name + "_temp_renamed"
+                                                    
+                                                    # Rename contiguous dataset to temp
+                                                    parent.move(name, temp_name)
+                                                    d_temp = parent[temp_name]
+                                                    
+                                                    shape_t = d_temp.shape
+                                                    shape_s = src.shape
+                                                    dtype = d_temp.dtype
+                                                    saved_attrs = dict(d_temp.attrs)
+                                                    
+                                                    total_shape = (shape_t[0] + shape_s[0],) + shape_t[1:]
+                                                    maxshape = (None,) + shape_t[1:]
+                                                    
+                                                    # Create new chunked dataset
+                                                    d_new = parent.create_dataset(name, shape=total_shape, maxshape=maxshape, dtype=dtype, chunks=True)
+                                                    for ak, av in saved_attrs.items():
+                                                        d_new.attrs[ak] = av
+                                                    
+                                                    # Copy temp -> new in chunks
+                                                    for i in range(0, shape_t[0], CHUNK_SIZE):
+                                                        end = min(i + CHUNK_SIZE, shape_t[0])
+                                                        d_new[i:end] = d_temp[i:end]
+                                                        
+                                                    # Copy src -> new in chunks
+                                                    start_write = shape_t[0]
+                                                    for i in range(0, shape_s[0], CHUNK_SIZE):
+                                                        end = min(i + CHUNK_SIZE, shape_s[0])
+                                                        block = src[i:end]
+                                                        if offset_val > 0:
+                                                            block += offset_val
+                                                        d_new[start_write+i : start_write+(end-i)] = block
+                                                    
+                                                    del parent[temp_name]
+                                                    return
+
+                                                # Standard Resize & Append (Streaming)
+                                                old_len = dst.shape[0]
+                                                add_len = src.shape[0]
+                                                dst.resize((old_len+add_len,) + dst.shape[1:])
+                                                
+                                                for i in range(0, add_len, CHUNK_SIZE):
+                                                    end = min(i + CHUNK_SIZE, add_len)
+                                                    block = src[i:end]
+                                                    if offset_val > 0:
+                                                        block += offset_val
+                                                    dst[old_len+i : old_len+(end-i)] = block
+
+                                        # Trigger recursive merge
+                                        for nt_name in grp_tgt:
+                                            if nt_name not in grp_src: continue
+                                            merge_objects(nt_name, grp_tgt[nt_name], grp_src[nt_name])
+                                                
+                        with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
+                            # Cleanup
+                            for f in t_files: os.remove(f)
+
+                with SIMULATION_LOCK:
+                    if final_return_code == 0:
+                        SIMULATION_STATUS[job_id]['progress'] = total_events
+                        SIMULATION_STATUS[job_id]['status'] = 'Completed'
+                        LATEST_COMPLETED_JOB_ID = job_id
+                    else:
+                        SIMULATION_STATUS[job_id]['status'] = 'Error'
+                    SIMULATION_PROCESSES.pop(job_id, None)
+
+            except Exception as e:
+                traceback.print_exc()
+                with SIMULATION_LOCK:
                     SIMULATION_STATUS[job_id]['status'] = 'Error'
+                    SIMULATION_STATUS[job_id]['stderr'].append(str(e))
                 SIMULATION_PROCESSES.pop(job_id, None)
 
-        # Start the simulation in a background thread so the API call can return immediately
-        # The executable path must be absolute or relative to the run_dir
+        # Start the thread
         executable_path = os.path.relpath(GEANT4_EXECUTABLE, run_dir)
-        command_to_run = [executable_path, "run.mac"]
-        thread = threading.Thread(target=run_g4_process, args=(job_id, command_to_run))
+        thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, executable_path, sim_params))
         thread.start()
 
         return jsonify({
@@ -432,15 +675,27 @@ def get_simulation_tracks(version_id, job_id, event_spec):
 @app.route('/api/simulation/stop/<job_id>', methods=['POST'])
 def stop_simulation(job_id):
     with SIMULATION_LOCK:
-        process = SIMULATION_PROCESSES.get(job_id)
-        if process:
-            if process.poll() is None: # Check if the process is still running
-                print(f"Terminating simulation job {job_id}...")
-                process.terminate()
-                # We don't need to wait here, the monitoring thread will handle the status update
-                return jsonify({"success": True, "message": f"Stop signal sent to job {job_id}."})
+        process_or_list = SIMULATION_PROCESSES.get(job_id)
+        if process_or_list:
+            # Handle List (Parallel execution)
+            if isinstance(process_or_list, list):
+                count = 0
+                for p in process_or_list:
+                    if p.poll() is None:
+                        p.terminate()
+                        count += 1
+                return jsonify({"success": True, "message": f"Stop signal sent to {count} processes for job {job_id}."})
+            
+            # Handle Single (Serial execution)
             else:
-                return jsonify({"success": False, "error": "Job has already finished."}), 404
+                proc = process_or_list
+                if proc.poll() is None:
+                    print(f"Terminating simulation job {job_id}...")
+                    proc.terminate()
+                    # We don't need to wait here, the monitoring thread will handle the status update
+                    return jsonify({"success": True, "message": f"Stop signal sent to job {job_id}."})
+                else:
+                    return jsonify({"success": False, "error": "Job has already finished."}), 404
         else:
             return jsonify({"success": False, "error": "Job ID not found or already completed."}), 404
     

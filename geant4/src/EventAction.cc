@@ -152,29 +152,28 @@ void EventAction::EndOfEventAction(const G4Event *event) {
           // Fill the "Hits" n-tuple
           analysisManager->FillNtupleIColumn(hits_ntuple_ID, 0,
                                              event->GetEventID());
-          analysisManager->FillNtupleSColumn(hits_ntuple_ID, 1,
-                                             hitsCollection->GetSDname());
-          analysisManager->FillNtupleSColumn(hits_ntuple_ID, 2,
-                                             hit->GetPhysicalVolumeName());
-          analysisManager->FillNtupleSColumn(hits_ntuple_ID, 3,
-                                             hit->GetVolumeName());
-          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 4,
+          // analysisManager->FillNtupleSColumn(hits_ntuple_ID, 1,
+          //                                    hitsCollection->GetSDname());
+          // analysisManager->FillNtupleSColumn(hits_ntuple_ID, 2,
+          //                                    hit->GetPhysicalVolumeName());
+          // analysisManager->FillNtupleSColumn(hits_ntuple_ID, 3,
+          //                                    hit->GetVolumeName());
+          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 1,
                                              hit->GetCopyNo());
-          analysisManager->FillNtupleSColumn(hits_ntuple_ID, 5,
+          analysisManager->FillNtupleSColumn(hits_ntuple_ID, 2,
                                              hit->GetParticleName());
-          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 6,
+          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 3,
                                              hit->GetTrackID());
-          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 7,
+          analysisManager->FillNtupleIColumn(hits_ntuple_ID, 4,
                                              hit->GetParentID());
-          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 8, hit->GetEdep());
-          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 9,
+          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 5, hit->GetEdep());
+          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 6,
                                              hit->GetPosition().x());
-          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 10,
+          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 7,
                                              hit->GetPosition().y());
-          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 11,
+          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 8,
                                              hit->GetPosition().z());
-          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 12,
-                                             hit->GetTime());
+          analysisManager->FillNtupleDColumn(hits_ntuple_ID, 9, hit->GetTime());
           analysisManager->AddNtupleRow(hits_ntuple_ID);
         }
       }

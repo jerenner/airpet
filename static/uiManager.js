@@ -49,7 +49,7 @@ const ITEMS_PER_GROUP = 100;
 
 // Simulation control variables
 let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
-    simStatusDisplay, simOptionsModal, saveSimOptionsButton, simSeed1Input, simSeed2Input,
+    simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput;
 
@@ -215,6 +215,7 @@ export function initUI(cb) {
     callbacks.onSnapSettingsChanged(initialTransSnap, initialAngleSnap);
 
     // Simulation control elements
+    simThreadsInput = document.getElementById('simThreads');
     simEventsInput = document.getElementById('simEventsInput');
     runSimButton = document.getElementById('runSimButton');
     stopSimButton = document.getElementById('stopSimButton');
@@ -2058,6 +2059,7 @@ export function hideSimOptionsModal() {
 
 export function setSimOptions(options) {
     if (!options) return;
+    simThreadsInput.value = options.threads || 4;
     simSeed1Input.value = options.seed1 || 0;
     simSeed2Input.value = options.seed2 || 0;
     simSaveHitsCheckbox.checked = options.save_hits || false;
@@ -2068,6 +2070,7 @@ export function setSimOptions(options) {
 
 export function getSimOptions() {
     return {
+        threads: parseInt(simThreadsInput.value || 1, 10),
         seed1: parseInt(simSeed1Input.value, 10),
         seed2: parseInt(simSeed2Input.value, 10),
         print_progress: parseInt(simPrintProgressInput.value, 10),

@@ -17,6 +17,7 @@ RunAction::RunAction()
 
   // Set up the G4AnalysisManager singleton
   auto analysisManager = G4AnalysisManager::Instance();
+  analysisManager->SetCompressionLevel(1);
 
   // --- Define the UI commands ---
   fG4petDir = new G4UIdirectory("/g4pet/");
@@ -123,20 +124,19 @@ void RunAction::BeginOfRunAction(const G4Run * /*aRun*/) {
     // --- Create N-tuple for Sensitive Detector Hits (ID 1) ---
     // This n-tuple stores information from every hit in any sensitive detector.
     analysisManager->CreateNtuple("Hits", "Sensitive Detector Hits");
-    analysisManager->CreateNtupleIColumn("EventID");      // 0
-    analysisManager->CreateNtupleSColumn("DetectorName"); // 1 (Name of the SD)
-    analysisManager->CreateNtupleSColumn(
-        "PhysicalVolumeName");                            // 2 (Name of the LV)
-    analysisManager->CreateNtupleSColumn("VolumeName");   // 3 (Name of the LV)
-    analysisManager->CreateNtupleIColumn("CopyNo");       // 4
-    analysisManager->CreateNtupleSColumn("ParticleName"); // 5
-    analysisManager->CreateNtupleIColumn("TrackID");      // 6
-    analysisManager->CreateNtupleIColumn("ParentID");     // 7
-    analysisManager->CreateNtupleDColumn("Edep");         // 8 (in MeV)
-    analysisManager->CreateNtupleDColumn("PosX");         // 9 (in mm)
-    analysisManager->CreateNtupleDColumn("PosY");         // 10 (in mm)
-    analysisManager->CreateNtupleDColumn("PosZ");         // 11 (in mm)
-    analysisManager->CreateNtupleDColumn("Time");         // 12 (in ns)
+    analysisManager->CreateNtupleIColumn("EventID"); // 0
+    // analysisManager->CreateNtupleSColumn("DetectorName"); // Removed for disk
+    // space analysisManager->CreateNtupleSColumn("PhysicalVolumeName"); //
+    // Removed analysisManager->CreateNtupleSColumn("VolumeName");   // Removed
+    analysisManager->CreateNtupleIColumn("CopyNo");       // 1 (was 4)
+    analysisManager->CreateNtupleSColumn("ParticleName"); // 2 (was 5)
+    analysisManager->CreateNtupleIColumn("TrackID");      // 3 (was 6)
+    analysisManager->CreateNtupleIColumn("ParentID");     // 4 (was 7)
+    analysisManager->CreateNtupleDColumn("Edep");         // 5 (was 8) (in MeV)
+    analysisManager->CreateNtupleDColumn("PosX");         // 6 (was 9) (in mm)
+    analysisManager->CreateNtupleDColumn("PosY");         // 7 (was 10) (in mm)
+    analysisManager->CreateNtupleDColumn("PosZ");         // 8 (was 11) (in mm)
+    analysisManager->CreateNtupleDColumn("Time");         // 9 (was 12) (in ns)
     analysisManager->FinishNtuple(
         fSaveParticles); // Finalize the second n-tuple
   }

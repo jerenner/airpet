@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
   // Construct the default run manager
   // Using G4RunManagerFactory allows for easy switching to multi-threading
   auto *runManager =
-      G4RunManagerFactory::CreateRunManager(G4RunManagerType::Default);
+      G4RunManagerFactory::CreateRunManager(G4RunManagerType::Serial);
   // Example of setting a default number of threads, can be overridden by macro
   // runManager->SetNumberOfThreads(4);
 
