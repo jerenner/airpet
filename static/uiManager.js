@@ -254,6 +254,21 @@ export function initUI(cb) {
     posResYInput = document.getElementById('posResY');
     posResZInput = document.getElementById('posResZ');
     reconNormalizationCheckbox = document.getElementById('reconNormalization');
+    // AC controls
+    const acEnabledCheckbox = document.getElementById('acEnabled');
+    const acParamsDiv = document.getElementById('acParams');
+    const acRadiusInput = document.getElementById('acRadius');
+    const acLengthInput = document.getElementById('acLength');
+    const acMuInput = document.getElementById('acMu');
+
+    // AC Toggle logic
+    if (acEnabledCheckbox && acParamsDiv) {
+        acEnabledCheckbox.addEventListener('change', () => {
+            acParamsDiv.style.display = acEnabledCheckbox.checked ? 'block' : 'none';
+        });
+        // Init state
+        acParamsDiv.style.display = acEnabledCheckbox.checked ? 'block' : 'none';
+    }
 
     // Attach Event Listeners
     openGdmlButton.addEventListener('click', () => triggerFileInput('gdmlFile'));
@@ -452,7 +467,13 @@ export function initUI(cb) {
             iterations: parseInt(document.getElementById('reconIterations').value, 10),
             image_size: document.getElementById('reconImageSize').value.split(',').map(Number),
             voxel_size: document.getElementById('reconVoxelSize').value.split(',').map(Number),
-            normalization: document.getElementById('reconNormalization').checked
+            normalization: document.getElementById('reconNormalization').checked,
+            // Add AC params
+            ac_enabled: document.getElementById('acEnabled').checked,
+            ac_shape: 'cylinder',
+            ac_radius: parseFloat(document.getElementById('acRadius').value),
+            ac_length: parseFloat(document.getElementById('acLength').value),
+            ac_mu: parseFloat(document.getElementById('acMu').value)
         };
         callbacks.onRunReconstruction(params);
     });

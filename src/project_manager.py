@@ -3308,7 +3308,7 @@ class ProjectManager:
         macro_content.append(f"/g4pet/run/saveHits {str(save_hits).lower()}")
         
         # Default Hit Energy Threshold to reduce file size
-        hit_threshold = sim_params.get('hit_energy_threshold', '100 keV')
+        hit_threshold = sim_params.get('hit_energy_threshold', '400 keV')
         macro_content.append(f"/g4pet/run/hitEnergyThreshold {hit_threshold}")
         macro_content.append("")
 

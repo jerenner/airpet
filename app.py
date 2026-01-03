@@ -444,108 +444,112 @@ def run_simulation():
                 if final_return_code == 0:
                     import glob
                     import shutil
-                    # Look for separate files
-                    t_files = sorted(glob.glob(os.path.join(run_dir, "output_t*.hdf5")))
-                    
+                    # Look for separate files and sort humerically to ensure correct EventID order
+                    t_files = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
+                    if not t_files or len(t_files) == 0:
+                         t_files = glob.glob(os.path.join(run_dir, "run_t*.hdf5"))
+
                     if t_files:
-                        target_path = os.path.join(run_dir, "output.hdf5")
-                        # Copy first
-                        shutil.copyfile(t_files[0], target_path)
+                        try:
+                            t_files.sort(key=lambda x: int(os.path.basename(x).split('_t')[1].split('.')[0]))
+                        except:
+                            t_files.sort()
                         
-                        with h5py.File(target_path, 'r+') as f_tgt:
-                            if 'default_ntuples' in f_tgt:
-                                grp_tgt = f_tgt['default_ntuples']
-                                
-                                for src_file in t_files[1:]:
-                                    with h5py.File(src_file, 'r') as f_src:
-                                        if 'default_ntuples' not in f_src: continue
-                                        grp_src = f_src['default_ntuples']
+                        target_path = os.path.join(run_dir, "output.hdf5")
+                        shutil.copyfile(t_files[0], target_path)
+
+                        # Robust Iterative Merge Logic (Matches repair_full_merge.py)
+                        # 1. Clean T0 (Base)
+                        try:
+                            with h5py.File(target_path, 'r+') as f:
+                                if 'default_ntuples/Hits' in f:
+                                    hits = f['default_ntuples/Hits']
+                                    
+                                    # Detect limit
+                                    lim_t0 = 0
+                                    if 'EventID' in hits and 'pages' in hits['EventID']:
+                                        ev = hits['EventID']['pages'][:]
+                                        nz = np.nonzero(ev)[0]
+                                        lim_t0 = nz[-1] + 1 if len(nz) > 0 else 0
+                                    
+                                    # Clean T0 Columns
+                                    for c in hits:
+                                        if isinstance(hits[c], h5py.Group) and 'pages' in hits[c]:
+                                            dset = hits[c]['pages']
+                                            data = dset[:lim_t0]
+                                            attrs = dict(dset.attrs)
+                                            del hits[c]['pages']
+                                            # Create Chunked + Compressed
+                                            dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
+                                            for k,v in attrs.items(): dn.attrs[k] = v
+                                    print(f"T0 Initialized: {lim_t0} rows (Compressed)")
+                        except Exception as e:
+                            print(f"T0 Clean Error: {e}")
+
+                        # 2. Append T1..TN
+                        evt_per_thread = total_events // num_threads
+                        
+                        try:
+                            with h5py.File(target_path, 'r+') as f_dst:
+                                if 'default_ntuples/Hits' in f_dst:
+                                    grp_dst_hits = f_dst['default_ntuples/Hits']
+                                    
+                                    for src_path in t_files[1:]:
+                                        fname = os.path.basename(src_path)
+                                        current_offset = 0
+                                        try:
+                                            t_idx = int(fname.split('_t')[1].split('.')[0])
+                                            current_offset = t_idx * evt_per_thread
+                                        except: pass
                                         
-                                        # Recursive object merge function
-                                        def merge_objects(name, dst, src):
-                                            # If Group, recurse
-                                            if hasattr(dst, 'keys'): 
-                                                for k in dst:
-                                                    if k not in src: continue
-                                                    merge_objects(k, dst[k], src[k])
-                                                return
+                                        with h5py.File(src_path, 'r') as f_src:
+                                            if 'default_ntuples/Hits' not in f_src: continue
+                                            grp_src_hits = f_src['default_ntuples/Hits']
                                             
-                                            # If Dataset
-                                            if hasattr(dst, 'shape'):
-                                                # Scalar check
-                                                if len(dst.shape) == 0:
-                                                    if name == 'entries':
-                                                        dst[...] += src[...]
-                                                    return
-                                                
-                                                CHUNK_SIZE = 1_000_000
-                                                
-                                                # Calculate offset for EventID
-                                                offset_val = 0
-                                                if name == "EventID" or "EventID" in dst.name:
-                                                    try:
-                                                        offset_val = dst.shape[0]
-                                                    except: pass
+                                            # Detect Source Limit
+                                            lim_src = 0
+                                            if 'EventID' in grp_src_hits:
+                                                 ev = grp_src_hits['EventID']['pages'][:]
+                                                 nz = np.nonzero(ev)[0]
+                                                 if len(nz)>0: lim_src = nz[-1]+1
+                                            
+                                            print(f"Merging {fname}: Limit={lim_src} Offset={current_offset}")
 
-                                                # Convert contiguous to chunked if needed (Streaming)
-                                                if dst.chunks is None:
-                                                    parent = dst.parent
-                                                    temp_name = name + "_temp_renamed"
-                                                    
-                                                    # Rename contiguous dataset to temp
-                                                    parent.move(name, temp_name)
-                                                    d_temp = parent[temp_name]
-                                                    
-                                                    shape_t = d_temp.shape
-                                                    shape_s = src.shape
-                                                    dtype = d_temp.dtype
-                                                    saved_attrs = dict(d_temp.attrs)
-                                                    
-                                                    total_shape = (shape_t[0] + shape_s[0],) + shape_t[1:]
-                                                    maxshape = (None,) + shape_t[1:]
-                                                    
-                                                    # Create new chunked dataset
-                                                    d_new = parent.create_dataset(name, shape=total_shape, maxshape=maxshape, dtype=dtype, chunks=True)
-                                                    for ak, av in saved_attrs.items():
-                                                        d_new.attrs[ak] = av
-                                                    
-                                                    # Copy temp -> new in chunks
-                                                    for i in range(0, shape_t[0], CHUNK_SIZE):
-                                                        end = min(i + CHUNK_SIZE, shape_t[0])
-                                                        d_new[i:end] = d_temp[i:end]
-                                                        
-                                                    # Copy src -> new in chunks
-                                                    start_write = shape_t[0]
-                                                    for i in range(0, shape_s[0], CHUNK_SIZE):
-                                                        end = min(i + CHUNK_SIZE, shape_s[0])
-                                                        block = src[i:end]
-                                                        if offset_val > 0:
-                                                            block += offset_val
-                                                        d_new[start_write+i : start_write+(end-i)] = block
-                                                    
-                                                    del parent[temp_name]
-                                                    return
-
-                                                # Standard Resize & Append (Streaming)
-                                                old_len = dst.shape[0]
-                                                add_len = src.shape[0]
-                                                dst.resize((old_len+add_len,) + dst.shape[1:])
+                                            # Merge Columns Iteratively
+                                            for col in grp_dst_hits:
+                                                if col not in grp_src_hits: continue
                                                 
-                                                for i in range(0, add_len, CHUNK_SIZE):
-                                                    end = min(i + CHUNK_SIZE, add_len)
-                                                    block = src[i:end]
-                                                    if offset_val > 0:
-                                                        block += offset_val
-                                                    dst[old_len+i : old_len+(end-i)] = block
-
-                                        # Trigger recursive merge
-                                        for nt_name in grp_tgt:
-                                            if nt_name not in grp_src: continue
-                                            merge_objects(nt_name, grp_tgt[nt_name], grp_src[nt_name])
+                                                dst_node = grp_dst_hits[col]
+                                                src_node = grp_src_hits[col]
+                                                
+                                                # Handle Pages (Data)
+                                                if isinstance(dst_node, h5py.Group) and 'pages' in dst_node:
+                                                    dst_d = dst_node['pages']
+                                                    src_d = src_node['pages']
+                                                    
+                                                    # Read valid data
+                                                    data = src_d[:lim_src]
+                                                    
+                                                    # Apply Offset to EventID
+                                                    if col == "EventID":
+                                                        data = data.astype(np.int64)
+                                                        if current_offset > 0: data += current_offset
+                                                    
+                                                    # Write
+                                                    old_len = dst_d.shape[0]
+                                                    add_len = len(data)
+                                                    dst_d.resize((old_len+add_len,) + dst_d.shape[1:])
+                                                    dst_d[old_len:old_len+add_len] = data
+                                                
+                                                # Handle Metadata (entries)
+                                                elif isinstance(dst_node, h5py.Dataset) and col=='entries':
+                                                    dst_node[...] += src_node[...]
+                        except Exception as e:
+                             print(f"Merge Loop Error: {e}")
                                                 
                         with SIMULATION_LOCK:
                             SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
-                            # Cleanup
+                            # Cleanup (DISABLE FOR DEBUGGING)
                             for f in t_files: os.remove(f)
 
                 with SIMULATION_LOCK:
@@ -804,104 +808,142 @@ def process_lors_route(version_id, job_id):
                 with LOR_PROCESSING_LOCK:
                     LOR_PROCESSING_STATUS[job_id] = {"status": "Reading HDF5...", "progress": 0, "total": 0}
 
-                data = {}
+                # CHUNKED PROCESSING
+                # Process in chunks to handle large files (e.g. 70GB+) within RAM limits
+                CHUNK_SIZE = 5_000_000 
+                
+                all_start_coords = []
+                all_end_coords = []
+                total_unique_events = 0
+                
                 with h5py.File(hdf5_path, 'r') as f:
                     group = f['/default_ntuples/Hits']
+                    cols_to_load = [k for k in group.keys() if k not in ['columns', 'entries', 'forms', 'names']]
                     
-                    # Load data from the non-metadata keys
-                    for key in group.keys():
-                        if key not in ['columns', 'entries', 'forms', 'names']:
-                            data[key] = group[key]['pages'][:]
+                    # Determine total size from EventID
+                    ev_dset = group['EventID']['pages']
+                    total_hits = ev_dset.shape[0]
+                    
+                    with LOR_PROCESSING_LOCK:
+                        LOR_PROCESSING_STATUS[job_id]["total"] = int(total_hits)
+                    
+                    current_idx = 0
+                    
+                    while current_idx < total_hits:
+                        # 1. Determine Chunk Boundary (Ensure no broken EventIDs)
+                        end_idx = min(current_idx + CHUNK_SIZE, total_hits)
+                        
+                        if end_idx < total_hits:
+                            last_id = ev_dset[end_idx-1]
+                            next_id = ev_dset[end_idx]
+                            
+                            if last_id == next_id:
+                                # Scan forward to find boundary to avoid splitting an event
+                                buffer_size = 5000
+                                search_cursor = end_idx
+                                found_boundary = False
+                                
+                                while search_cursor < total_hits:
+                                    buff = ev_dset[search_cursor : min(search_cursor+buffer_size, total_hits)]
+                                    diffs = np.where(buff != last_id)[0]
+                                    
+                                    if len(diffs) > 0:
+                                        end_idx = search_cursor + diffs[0]
+                                        found_boundary = True
+                                        break
+                                    else:
+                                        search_cursor += len(buff)
+                                
+                                if not found_boundary:
+                                    end_idx = total_hits 
+                        
+                        # 2. Read Chunk
+                        data_chunk = {}
+                        for k in cols_to_load:
+                            data_chunk[k] = group[k]['pages'][current_idx : end_idx]
+                            
+                        # 3. Process Chunk
+                        hits_df = pd.DataFrame(data_chunk)
+                        del data_chunk 
+                        
+                        hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
+                        
+                        # Energy smearing
+                        if energy_resolution > 0:
+                            hits_df['Edep'] *= (1 + np.random.normal(0, energy_resolution, size=len(hits_df)))
 
-                # Use pandas for efficient sorting and searching
-                hits_df = pd.DataFrame(data)
+                        # Energy cut
+                        if energy_cut > 0:
+                            hits_df = hits_df[hits_df['Edep'] >= energy_cut]
+                        
+                        # Position smearing
+                        sigma_x = position_resolution.get('x', 0.0)
+                        sigma_y = position_resolution.get('y', 0.0)
+                        sigma_z = position_resolution.get('z', 0.0)
 
-                # Geant4 n-tuple column names can be bytes, so decode if necessary
-                hits_df.columns = [x.decode('utf-8') if isinstance(x, bytes) else x for x in hits_df.columns]
-
-                # --- Apply Energy Smearing ---
-                if energy_resolution > 0:
-                    # Smear energy: E_new = E_old * (1 + Gaussian(0, sigma/mean))
-                    print(f"Applying energy resolution smearing (sigma/mean = {energy_resolution})...")
-                    hits_df['Edep'] *= (1 + np.random.normal(0, energy_resolution, size=len(hits_df)))
-
-                # --- Apply Energy Cut ---
-                if energy_cut > 0:
-                    initial_count = len(hits_df)
-                    hits_df = hits_df[hits_df['Edep'] >= energy_cut]
-                    print(f"Applied energy cut > {energy_cut} MeV. Hits reduced from {initial_count} to {len(hits_df)}.")
-
-                # --- Apply Position Smearing ---
-                sigma_x = position_resolution.get('x', 0.0)
-                sigma_y = position_resolution.get('y', 0.0)
-                sigma_z = position_resolution.get('z', 0.0)
-
-                if sigma_x > 0:
-                    hits_df['PosX'] += np.random.normal(0, sigma_x, size=len(hits_df))
-                if sigma_y > 0:
-                    hits_df['PosY'] += np.random.normal(0, sigma_y, size=len(hits_df))
-                if sigma_z > 0:
-                    hits_df['PosZ'] += np.random.normal(0, sigma_z, size=len(hits_df))
-
-                # Use the correct column names from the HDF5 file (case-sensitive)
-                # OPTIMIZATION: Sort by EventID and Time to facilitate vectorized grouping
-                hits_df.sort_values(by=['EventID', 'Time'], inplace=True)
+                        if sigma_x > 0: hits_df['PosX'] += np.random.normal(0, sigma_x, size=len(hits_df))
+                        if sigma_y > 0: hits_df['PosY'] += np.random.normal(0, sigma_y, size=len(hits_df))
+                        if sigma_z > 0: hits_df['PosZ'] += np.random.normal(0, sigma_z, size=len(hits_df))
+                        
+                        hits_df.sort_values(by=['EventID', 'Time'], inplace=True)
+                        
+                        total_unique_events += hits_df['EventID'].nunique()
+                        
+                        hits_df['hit_rank'] = hits_df.groupby('EventID').cumcount()
                 
-                total_events = hits_df['EventID'].nunique()
+                        # Filter for the first and second hits
+                        hits1 = hits_df[hits_df['hit_rank'] == 0]
+                        hits2 = hits_df[hits_df['hit_rank'] == 1]
+                        
+                        # Merge to align pairs by EventID
+                        # Inner merge ensures we only keep events that have at least 2 hits
+                        pairs = pd.merge(hits1, hits2, on='EventID', suffixes=('_1', '_2'))
+                
+                        # Apply Coincidence Window
+                        # Since we sorted by time, Time_1 <= Time_2 for the same event
+                        dt = (pairs['Time_2'] - pairs['Time_1']).abs()
+                        valid_pairs = pairs[dt < coincidence_window_ns]
+                        
+                        all_start_coords.append(valid_pairs[['PosX_1', 'PosY_1', 'PosZ_1']].values)
+                        all_end_coords.append(valid_pairs[['PosX_2', 'PosY_2', 'PosZ_2']].values)
+                        
+                        with LOR_PROCESSING_LOCK:
+                             LOR_PROCESSING_STATUS[job_id]["progress"] = int(end_idx)
+                             status_msg = f"Processing LORs... ({end_idx*100//total_hits}%)"
+                             LOR_PROCESSING_STATUS[job_id]["status"] = status_msg
+                        
+                        current_idx = end_idx
+                        del hits_df, hits1, hits2, pairs, valid_pairs
+                        import gc; gc.collect()
 
-                with LOR_PROCESSING_LOCK:
-                    LOR_PROCESSING_STATUS[job_id] = {"status": "Processing coincidences (vectorized)...", "progress": 0, "total": total_events}
-
-                # Vectorized Coincidence Finding
-                # ------------------------------
-                # Assign a rank to each hit within its event (0=first, 1=second, ...)
-                # This is much faster than iterating over groups
-                hits_df['hit_rank'] = hits_df.groupby('EventID').cumcount()
-                
-                # Filter for the first and second hits
-                hits1 = hits_df[hits_df['hit_rank'] == 0]
-                hits2 = hits_df[hits_df['hit_rank'] == 1]
-                
-                # Merge to align pairs by EventID
-                # Inner merge ensures we only keep events that have at least 2 hits
-                pairs = pd.merge(hits1, hits2, on='EventID', suffixes=('_1', '_2'))
-                
-                # Apply Coincidence Window
-                # Since we sorted by time, Time_1 <= Time_2 for the same event
-                dt = (pairs['Time_2'] - pairs['Time_1']).abs()
-                valid_mask = dt < coincidence_window_ns
-                valid_pairs = pairs[valid_mask]
-                
-                num_pairs = len(valid_pairs)
-                
-                # Extract coordinates as numpy arrays
-                all_start_coords = valid_pairs[['PosX_1', 'PosY_1', 'PosZ_1']].values
-                all_end_coords = valid_pairs[['PosX_2', 'PosY_2', 'PosZ_2']].values
-                all_tof_bins = np.zeros(num_pairs, dtype=int)
-
-                with LOR_PROCESSING_LOCK:
-                    LOR_PROCESSING_STATUS[job_id]["progress"] = total_events
-                
-                if num_pairs == 0:
+                if all_start_coords:
+                    final_starts = np.vstack(all_start_coords)
+                    final_ends = np.vstack(all_end_coords)
+                    all_tof_bins = np.zeros(len(final_starts), dtype=int)
+                    
+                    np.savez_compressed(
+                        lors_output_path,
+                        start_coords=final_starts,
+                        end_coords=final_ends,
+                        tof_bins=all_tof_bins,
+                        energy_cut=energy_cut,
+                        energy_resolution=energy_resolution,
+                        position_resolution=position_resolution
+                    )
+                    
+                    msg = f"Processed {len(final_starts)} LORs from {total_unique_events} events."
+                else:
                     raise ValueError("No valid coincidences found.")
-                    
-                np.savez_compressed(
-                    lors_output_path,
-                    start_coords=np.array(all_start_coords),
-                    end_coords=np.array(all_end_coords),
-                    tof_bins=np.array(all_tof_bins),
-                    energy_cut=energy_cut,
-                    energy_resolution=energy_resolution,
-                    position_resolution=position_resolution
-                )
 
                 with LOR_PROCESSING_LOCK:
                     LOR_PROCESSING_STATUS[job_id] = {
                         "status": "Completed", 
-                        "message": f"Processed {len(all_start_coords)} LORs from {total_events} events."
+                        "message": msg
                     }
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 with LOR_PROCESSING_LOCK:
                     LOR_PROCESSING_STATUS[job_id] = {"status": "Error", "message": str(e)}
                 traceback.print_exc()
@@ -925,6 +967,13 @@ def run_reconstruction_route(version_id, job_id):
     img_shape = tuple(data.get('image_size', [128, 128, 128]))
     voxel_size = tuple(data.get('voxel_size', [2.0, 2.0, 2.0]))
     normalization = data.get('normalization', True)
+    
+    # Attenuation Correction Parameters
+    ac_enabled = data.get('ac_enabled', False)
+    ac_shape = data.get('ac_shape', 'cylinder')
+    ac_radius = float(data.get('ac_radius', 108.0)) # Default Jaszczak inner radius
+    ac_length = float(data.get('ac_length', 186.0)) # Default Jaszczak height
+    ac_mu = float(data.get('ac_mu', 0.096)) # Water attenuation coefficient (cm^-1)
 
     # This ensures the reconstruction grid is centered at (0,0,0) in world coordinates.
     # We calculate the position of the corner of the first voxel.
@@ -963,30 +1012,155 @@ def run_reconstruction_route(version_id, job_id):
             img_origin=xp.asarray(image_origin, device=dev)
         )
         
-        # We need an "adjoint_ones" image for sensitivity correction in MLEM.
-        # This is the backprojection of a list of ones.
-        sensitivity_image = lm_proj.adjoint(xp.ones(lm_proj.out_shape, dtype=xp.float32, device=dev))
-        #sensitivity_image = xp.ones(img_shape, dtype=xp.float32, device=dev)
+        # --- Attenuation Correction ---
+        ac_factors = None
+        if ac_enabled:
+            print("Generating Mu-Map for Attenuation Correction...")
+            # Create a mu-map image (3D array)
+            # We assume the phantom defines the attenuation volume.
+            
+            # Coordinate grid for the image
+            zz, yy, xx = xp.meshgrid(
+                (xp.arange(img_shape[0], dtype=xp.float32, device=dev) * voxel_size[0]) + image_origin[0] + voxel_size[0]/2,
+                (xp.arange(img_shape[1], dtype=xp.float32, device=dev) * voxel_size[1]) + image_origin[1] + voxel_size[1]/2,
+                (xp.arange(img_shape[2], dtype=xp.float32, device=dev) * voxel_size[2]) + image_origin[2] + voxel_size[2]/2,
+                indexing='ij'
+            )
+            
+            mu_map = xp.zeros(img_shape, dtype=xp.float32, device=dev)
+            
+            if ac_shape == 'cylinder':
+                # Jaszczak phantom definition in phantom.json:
+                # Assuming phantom is centered at (0,0,0).
+                
+                # Equation: x^2 + y^2 < R^2 AND |z| < L/2
+                # Note: xx, yy, zz are 3D arrays.
+                mask = (xx**2 + yy**2 <= ac_radius**2) & (xp.abs(zz) <= ac_length/2)
+                mu_map = xp.where(mask, ac_mu, 0.0)
+                
+            print(f"Projecting Attenuation Map along {lm_proj.num_events} LORs...")
+            # Forward project the mu-map to get line integrals
+            attenuation_integrals = lm_proj(mu_map)
+
+            # Calculate attenuation factors: exp(-integral)
+            # Factor A_i is the survival probability.
+            ac_factors = xp.exp(-attenuation_integrals * 0.1) 
+            # Note: voxel_size, ac_radius are in mm. ac_mu is in cm^-1.
+            # Integral will be in [mm * cm^-1]. 
+            # We need scaling: 1mm = 0.1cm. So multiply integral by 0.1.
+            
+            print(f"Attenuation Correction factors calculated. Range: [{xp.min(ac_factors):.4f}, {xp.max(ac_factors):.4f}], Mean: {xp.mean(ac_factors):.4f}")
+
+        # --- Monte Carlo Sensitivity Map Generation ---
+        # Instead of using measured LORs (which are biased by activity), we generate
+        # Random LORs to estimate the true scanner sensitivity (Geometry + Attenuation).
+        print("Estimating Scanner Geometry from data...")
+        # Calculate R for start/end points
+        r_start = xp.sqrt(event_start_coords_xp[:,0]**2 + event_start_coords_xp[:,1]**2)
+        r_end = xp.sqrt(event_end_coords_xp[:,0]**2 + event_end_coords_xp[:,1]**2)
+        scanner_radius = float(xp.mean(xp.concat((r_start, r_end))))
+        
+        z_start = event_start_coords_xp[:,2]
+        z_end = event_end_coords_xp[:,2]
+        z_min = float(xp.min(xp.concat((z_start, z_end))))
+        z_max = float(xp.max(xp.concat((z_start, z_end))))
+        scanner_length = z_max - z_min
+        
+        print(f"Scanner Geometry: Radius={scanner_radius:.1f}mm, Length={scanner_length:.1f}mm, Z_range=[{z_min:.1f}, {z_max:.1f}]")
+
+        num_random_lors = 50000000
+        print(f"Generating {num_random_lors} random LORs for Unbiased Sensitivity Map...")
+        
+        # Generate random angles and Z positions
+        # Note: We use numpy for generation then move to xp (Device)
+        phi1 = np.random.uniform(0, 2*np.pi, num_random_lors)
+        z1 = np.random.uniform(z_min, z_max, num_random_lors)
+        
+        phi2 = np.random.uniform(0, 2*np.pi, num_random_lors)
+        z2 = np.random.uniform(z_min, z_max, num_random_lors)
+        
+        # Convert to Cartesian
+        rand_start = np.zeros((num_random_lors, 3), dtype=np.float32)
+        rand_start[:,0] = scanner_radius * np.cos(phi1)
+        rand_start[:,1] = scanner_radius * np.sin(phi1)
+        rand_start[:,2] = z1
+        
+        rand_end = np.zeros((num_random_lors, 3), dtype=np.float32)
+        rand_end[:,0] = scanner_radius * np.cos(phi2)
+        rand_end[:,1] = scanner_radius * np.sin(phi2)
+        rand_end[:,2] = z2
+        
+        rand_start_xp = xp.asarray(rand_start, device=dev)
+        rand_end_xp = xp.asarray(rand_end, device=dev)
+        
+        # Create a Projector for the Random LORs
+        sens_proj = parallelproj.ListmodePETProjector(
+            rand_start_xp, rand_end_xp, img_shape, voxel_size, 
+            img_origin=xp.asarray(image_origin, device=dev)
+        )
+        
+        # Calculate Attenuation for Random LORs (if AC enabled)
+        sens_weights = xp.ones(num_random_lors, dtype=xp.float32, device=dev)
+        
+        if ac_enabled and ac_shape == 'cylinder':
+            print("Calculating Attenuation for Sensitivity LORs...")
+            # We must project the mu-map along these random LORs
+            # Note: mu_map is already defined/calculated above
+            attenuation_integrals_rand = sens_proj(mu_map)
+            ac_factors_rand = xp.exp(-attenuation_integrals_rand * 0.1)
+            sens_weights *= ac_factors_rand
+
+        # Backproject to get Sensitivity Map
+        # We scale by (Total Possible LORs / Simulated LORs) factor? 
+        # Actually, scaling constant cancels out in MLEM ratio update x_new = x_old * (Backproj / Sensitivity).
+        # As long as relative profile is correct.
+        sensitivity_image = sens_proj.adjoint(sens_weights)
+
+        # --- Smoothing Sensitivity Map ---
+        # Even with 5M events, the random map will be noisy. We smooth it to get a clean geometric profile.
+        print("Smoothing Sensitivity Map (sigma=4mm) to remove Monte Carlo noise...")
+        from scipy.ndimage import gaussian_filter
+        
+        sens_cpu = parallelproj.to_numpy_array(sensitivity_image)
+        sigma_mm = 4.0 
+        sigma_vox = [sigma_mm / float(v) for v in voxel_size]
+        sens_smoothed_cpu = gaussian_filter(sens_cpu, sigma=sigma_vox)
+        
+        sensitivity_image = xp.asarray(sens_smoothed_cpu, device=dev)
 
         # --- MLEM Reconstruction Loop ---
         x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
 
         # --- Create a safe version of the sensitivity image for division ---
         max_sens = float(xp.max(sensitivity_image))
+        min_sens = float(xp.min(sensitivity_image))
+        print(f"Sensitivity Image - Max: {max_sens:.2e}, Min: {min_sens:.2e}")
+        
         # Use a relative threshold (e.g., 0.1% or smaller) to avoid exploding values at edges
-        sens_threshold = max_sens * 1e-4 
-        print(f"Sensitivity Max: {max_sens:.2e}, Threshold: {sens_threshold:.2e}")
+        # sens_threshold = max_sens * 1e-4 
+        # Increase threshold slightly to be safer against edge artifacts?
+        sens_threshold = max_sens * 1e-3
+        print(f"Sensitivity Threshold used: {sens_threshold:.2e}")
         
         sensitivity_image_safe_for_division = xp.where(sensitivity_image < sens_threshold, 1.0, sensitivity_image)
 
         for i in range(iterations):
             print(f"Running MLEM iteration {i+1}/{iterations}...")
+            
+            # Forward projection of current estimate
             ybar = lm_proj(x)
+    
+            # Ratio = y_measured / Expected = 1 / (Forward(x))        
+            ratio_denominator = ybar
+            # if ac_enabled and ac_factors is not None:
+            #     ratio_denominator *= ac_factors
+            
             # Add a small epsilon to avoid division by zero
-            ybar = xp.where(ybar == 0, 1e-9, ybar)
+            ratio_denominator = xp.where(ratio_denominator == 0, 1e-9, ratio_denominator)
 
             # Backprojection of the ratio
-            back_projection = lm_proj.adjoint(1 / ybar)
+            # Adjoint of 1/Expected
+            back_projection = lm_proj.adjoint(1 / ratio_denominator)
 
             if normalization:
                 # Perform the division using the safe denominator (Sensitivity Correction)
@@ -994,16 +1168,18 @@ def run_reconstruction_route(version_id, job_id):
                 # Now, apply the update only where sensitivity is valid (above threshold), otherwise set to 0.
                 x = xp.where(sensitivity_image >= sens_threshold, update_term, 0.0)
             else:
-                # No normalization (just simple backprojection update - not standard MLEM but requested option)
-                # Standard MLEM without sensitivity is: x_new = x_old * back_projection
-                # But usually sensitivity is required for quantitative accuracy.
-                # If user disables normalization, we just skip the division by sensitivity.
                 x = x * back_projection
 
             print(f"Iteration {i+1} done.")
+            print(f"  [Debug] ybar: min={float(xp.min(ybar)):.4e}, max={float(xp.max(ybar)):.4e}, mean={float(xp.mean(ybar)):.4e}")
+            print(f"  [Debug] ratio_denom: min={float(xp.min(ratio_denominator)):.4e}, max={float(xp.max(ratio_denominator)):.4e}, mean={float(xp.mean(ratio_denominator)):.4e}")
+            print(f"  [Debug] back_proj: min={float(xp.min(back_projection)):.4e}, max={float(xp.max(back_projection)):.4e}, mean={float(xp.mean(back_projection)):.4e}")
+            print(f"  [Debug] x (image): min={float(xp.min(x)):.4e}, max={float(xp.max(x)):.4e}, mean={float(xp.mean(x)):.4e}")
 
         # Save the final numpy array to HDF5
         reconstructed_image_np = parallelproj.to_numpy_array(x)
+        
+        sensitivity_np = parallelproj.to_numpy_array(sensitivity_image)
         
         with h5py.File(recon_output_path, 'w') as f:
             dset = f.create_dataset("image", data=reconstructed_image_np)
@@ -1011,6 +1187,10 @@ def run_reconstruction_route(version_id, job_id):
             dset.attrs['origin'] = image_origin
             dset.attrs['iterations'] = iterations
             dset.attrs['normalization'] = normalization
+            
+            # Save Sensitivity Map
+            dset_sens = f.create_dataset("sensitivity", data=sensitivity_np)
+            dset_sens.attrs['threshold'] = sens_threshold
             # Save LOR processing params if available in lors.npz
             if 'energy_cut' in lor_data:
                 dset.attrs['energy_cut'] = lor_data['energy_cut']
