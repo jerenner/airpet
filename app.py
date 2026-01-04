@@ -808,15 +808,25 @@ def process_lors_route(version_id, job_id):
                 with LOR_PROCESSING_LOCK:
                     LOR_PROCESSING_STATUS[job_id] = {"status": "Reading HDF5...", "progress": 0, "total": 0}
 
-                # CHUNKED PROCESSING
-                # Process in chunks to handle large files (e.g. 70GB+) within RAM limits
-                CHUNK_SIZE = 5_000_000 
+                # CHUNKED PROCESSING WITH INCREMENTAL WRITE TO PREVENT OOM
+                # Process in chunks and write valid LORs immediately to a temp HDF5
+                CHUNK_SIZE = 50000000 
+                temp_h5_path = os.path.join(run_dir, "temp_lors.h5")
                 
-                all_start_coords = []
-                all_end_coords = []
                 total_unique_events = 0
+                total_lors_found = 0
                 
-                with h5py.File(hdf5_path, 'r') as f:
+                # Check for existing temp file and remove it
+                if os.path.exists(temp_h5_path):
+                    os.remove(temp_h5_path)
+                
+                # Open temp HDF5 for incremental writing
+                # Open temp HDF5 for incremental writing AND input HDF5 for reading
+                with h5py.File(temp_h5_path, 'w') as f_out, h5py.File(hdf5_path, 'r') as f:
+                    # Create resizable datasets for LOR coordinates
+                    # Shape (N, 3), float32 to save space
+                    dset_start = f_out.create_dataset('start_coords', shape=(0, 3), maxshape=(None, 3), dtype='float32', chunks=(10000, 3))
+                    dset_end   = f_out.create_dataset('end_coords',   shape=(0, 3), maxshape=(None, 3), dtype='float32', chunks=(10000, 3))
                     group = f['/default_ntuples/Hits']
                     cols_to_load = [k for k in group.keys() if k not in ['columns', 'entries', 'forms', 'names']]
                     
@@ -853,6 +863,17 @@ def process_lors_route(version_id, job_id):
                                         break
                                     else:
                                         search_cursor += len(buff)
+                                        
+                                    # Safety Break: If we scan too far (e.g. > 500k hits) without finding a boundary,
+                                    # something is wrong or the event is absurdly large. 
+                                    # Just cut here to prevent OOM. We might lose 1 event, which is acceptable.
+                                    if (search_cursor - end_idx) > 500000:
+                                        print(f"Warning: Could not find EventID boundary after scanning 500k hits. Force splitting at {end_idx}.")
+                                        found_boundary = True # Treat as found to stop using total_hits
+                                        # end_idx remains as originally set (current + CHUNK values)
+                                        # But wait, original 'end_idx' was the start of the scan.
+                                        # We should probably just stick with original end_idx.
+                                        break
                                 
                                 if not found_boundary:
                                     end_idx = total_hits 
@@ -900,12 +921,26 @@ def process_lors_route(version_id, job_id):
                         pairs = pd.merge(hits1, hits2, on='EventID', suffixes=('_1', '_2'))
                 
                         # Apply Coincidence Window
-                        # Since we sorted by time, Time_1 <= Time_2 for the same event
                         dt = (pairs['Time_2'] - pairs['Time_1']).abs()
                         valid_pairs = pairs[dt < coincidence_window_ns]
                         
-                        all_start_coords.append(valid_pairs[['PosX_1', 'PosY_1', 'PosZ_1']].values)
-                        all_end_coords.append(valid_pairs[['PosX_2', 'PosY_2', 'PosZ_2']].values)
+                        if not valid_pairs.empty:
+                            starts = valid_pairs[['PosX_1', 'PosY_1', 'PosZ_1']].values.astype(np.float32)
+                            ends = valid_pairs[['PosX_2', 'PosY_2', 'PosZ_2']].values.astype(np.float32)
+                            
+                            n_new = len(starts)
+                            
+                            # Incremental Write to Temp HDF5
+                            current_size = dset_start.shape[0]
+                            new_size = current_size + n_new
+                            
+                            dset_start.resize((new_size, 3))
+                            dset_end.resize((new_size, 3))
+                            
+                            dset_start[current_size:new_size] = starts
+                            dset_end[current_size:new_size] = ends
+                            
+                            total_lors_found += n_new
                         
                         with LOR_PROCESSING_LOCK:
                              LOR_PROCESSING_STATUS[job_id]["progress"] = int(end_idx)
@@ -916,9 +951,15 @@ def process_lors_route(version_id, job_id):
                         del hits_df, hits1, hits2, pairs, valid_pairs
                         import gc; gc.collect()
 
-                if all_start_coords:
-                    final_starts = np.vstack(all_start_coords)
-                    final_ends = np.vstack(all_end_coords)
+                if total_lors_found > 0:
+                    print(f"Converting {temp_h5_path} to {lors_output_path}...")
+                    # Read from temp HDF5 and save as NPZ
+                    # Note: This assumes the compressed LORs fit in RAM. If not, we should keep HDF5.
+                    # 100M LORs ~ 2.4GB RAM. Should be OK.
+                    with h5py.File(temp_h5_path, 'r') as f_in:
+                        final_starts = f_in['start_coords'][:]
+                        final_ends = f_in['end_coords'][:]
+                        
                     all_tof_bins = np.zeros(len(final_starts), dtype=int)
                     
                     np.savez_compressed(
@@ -931,8 +972,14 @@ def process_lors_route(version_id, job_id):
                         position_resolution=position_resolution
                     )
                     
-                    msg = f"Processed {len(final_starts)} LORs from {total_unique_events} events."
+                    # Clean up temp file
+                    if os.path.exists(temp_h5_path):
+                        os.remove(temp_h5_path)
+                    
+                    msg = f"Processed {total_lors_found} LORs from {total_unique_events} events."
                 else:
+                    if os.path.exists(temp_h5_path):
+                        os.remove(temp_h5_path)
                     raise ValueError("No valid coincidences found.")
 
                 with LOR_PROCESSING_LOCK:
