@@ -1040,6 +1040,15 @@ def run_reconstruction_route(version_id, job_id):
         lor_data = np.load(lors_path, allow_pickle=True)
         event_start_coords = lor_data['start_coords']
         event_end_coords = lor_data['end_coords']
+        
+        # Load Position Resolution from LOR file to match Geometry
+        position_resolution = {}
+        if 'position_resolution' in lor_data:
+            pr = lor_data['position_resolution']
+            if pr.shape == ():
+                position_resolution = pr.item()
+            else:
+                position_resolution = pr.tolist()
 
         # Use parallelproj with numpy backend for this example
         import array_api_compat.numpy as xp
@@ -1067,7 +1076,7 @@ def run_reconstruction_route(version_id, job_id):
             # We assume the phantom defines the attenuation volume.
             
             # Coordinate grid for the image
-            zz, yy, xx = xp.meshgrid(
+            xx, yy, zz = xp.meshgrid(
                 (xp.arange(img_shape[0], dtype=xp.float32, device=dev) * voxel_size[0]) + image_origin[0] + voxel_size[0]/2,
                 (xp.arange(img_shape[1], dtype=xp.float32, device=dev) * voxel_size[1]) + image_origin[1] + voxel_size[1]/2,
                 (xp.arange(img_shape[2], dtype=xp.float32, device=dev) * voxel_size[2]) + image_origin[2] + voxel_size[2]/2,
@@ -1113,9 +1122,24 @@ def run_reconstruction_route(version_id, job_id):
         z_max = float(xp.max(xp.concat((z_start, z_end))))
         scanner_length = z_max - z_min
         
-        print(f"Scanner Geometry: Radius={scanner_radius:.1f}mm, Length={scanner_length:.1f}mm, Z_range=[{z_min:.1f}, {z_max:.1f}]")
+        print(f"Scanner Geometry (Full Data): Radius={scanner_radius:.1f}mm, Length={scanner_length:.1f}mm, Z_range=[{z_min:.1f}, {z_max:.1f}]")
 
-        num_random_lors = 50000000
+        # Optimization: Restrict random LOR Z-range to the Reconstruction FOV (+ margin)
+        # This prevents wasting 90% of randoms on empty space if the scanner is long but the image is short.
+        fov_z_start = image_origin[2]
+        fov_z_end = image_origin[2] + (img_shape[2] * voxel_size[2])
+        margin = scanner_radius * 0.5 # Allow oblique rays from reasonably far out
+        
+        # Clamp, but don't exceed scanner physical limits (if we trust z_min/max from data)
+        z_min_opt = max(z_min, fov_z_start - margin)
+        z_max_opt = min(z_max, fov_z_end + margin)
+        
+        print(f"Optimizing Sensitivity Generation Z-Range: [{z_min_opt:.1f}, {z_max_opt:.1f}] (concentrating LORs on FOV)")
+        
+        # Use optimized Z range for random generation
+        z_min, z_max = z_min_opt, z_max_opt
+
+        num_random_lors = 20000000
         print(f"Generating {num_random_lors} random LORs for Unbiased Sensitivity Map...")
         
         # Generate random angles and Z positions
@@ -1139,6 +1163,23 @@ def run_reconstruction_route(version_id, job_id):
         
         rand_start_xp = xp.asarray(rand_start, device=dev)
         rand_end_xp = xp.asarray(rand_end, device=dev)
+
+        # Apply Position Resolution Smearing to Sensitivity LORs (Match Data)
+        # If we don't do this, the sensitivity map is "sharp" while data is "blurred", causing edge artifacts.
+        if position_resolution:
+            sigma_x = position_resolution.get('x', 0.0)
+            sigma_y = position_resolution.get('y', 0.0)
+            sigma_z = position_resolution.get('z', 0.0)
+            
+            if sigma_x > 0:
+                rand_start_xp[:, 0] += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
+                rand_end_xp[:, 0]   += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
+            if sigma_y > 0:
+                rand_start_xp[:, 1] += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
+                rand_end_xp[:, 1]   += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
+            if sigma_z > 0:
+                rand_start_xp[:, 2] += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
+                rand_end_xp[:, 2]   += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
         
         # Create a Projector for the Random LORs
         sens_proj = parallelproj.ListmodePETProjector(
@@ -1225,7 +1266,6 @@ def run_reconstruction_route(version_id, job_id):
 
         # Save the final numpy array to HDF5
         reconstructed_image_np = parallelproj.to_numpy_array(x)
-        
         sensitivity_np = parallelproj.to_numpy_array(sensitivity_image)
         
         with h5py.File(recon_output_path, 'w') as f:
