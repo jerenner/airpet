@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Project Name
-project(AirPetSim CXX)
+project(AirPetSim LANGUAGES C CXX)
 
 # Find the Geant4 package and its components.
 # This command will locate your Geant4 installation. For this to work,
