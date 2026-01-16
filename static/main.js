@@ -44,7 +44,7 @@ const AppState = {
     },
 
     simOptions: {
-        threads: 4,
+        threads: 1,
         events: 1000,
         seed1: 0,
         seed2: 0,

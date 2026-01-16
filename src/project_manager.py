@@ -1751,6 +1751,13 @@ class ProjectManager:
             
             if found_and_deleted:
                 deleted = True
+                # Clean up any sources that were linked to this PV
+                for source in state.sources.values():
+                    if source.volume_link_id == object_id:
+                        source.volume_link_id = None
+                        # We also clear the confinement name to prevent confusion, 
+                        # as the specific instance binding is gone.
+                        source.confine_to_pv = None
             else:
                 error_msg = "Physical Volume not found."
 
@@ -3369,7 +3376,46 @@ class ProjectManager:
                 # Write GPS commands
                 for cmd, value in cmds.items():
                     if cmd == 'pos/confine': continue # Already handled or skipped if logic dictates
-                    macro_content.append(f"/gps/{cmd} {value}")
+                    
+                    # Evaluate the expression to resolve defines/math
+                    success, val = self.expression_evaluator.evaluate(str(value))
+                    final_val_str = str(value)
+
+                    if success and isinstance(val, (int, float)):
+                        # Append Unit based on command type (Heuristics)
+                        # Energy -> keV
+                        if 'ene/' in cmd or 'energy' in cmd:
+                            final_val_str = f"{val} keV"
+                        
+                        # Time -> s (internal time unit)
+                        elif 'time/' in cmd:
+                            final_val_str = f"{val} s"
+                            
+                        # Length -> mm (internal length unit)
+                        # Check for length-like keywords in pos/
+                        elif 'radius' in cmd or 'half' in cmd or 'centre' in cmd:
+                            final_val_str = f"{val} mm"
+                        elif 'pos/' in cmd and ('sigma_r' in cmd or 'sigma_x' in cmd or 'sigma_y' in cmd):
+                            # pos/sigma is length
+                            final_val_str = f"{val} mm"
+
+                        # Angle -> rad
+                        elif 'ang/' in cmd:
+                            # exclusion: rot1/rot2 are unitless vectors
+                            if 'rot' not in cmd:
+                                final_val_str = f"{val} rad"
+                            else:
+                                final_val_str = f"{val}"
+                                
+                        elif 'pos/' in cmd and ('alpha' in cmd or 'theta' in cmd or 'phi' in cmd):
+                             # para parameters are angles
+                            final_val_str = f"{val} rad"
+                            
+                        else:
+                            # Default: just the number
+                            final_val_str = f"{val}"
+
+                    macro_content.append(f"/gps/{cmd} {final_val_str}")
                 
                 # Write Position (Centre)
                 # Use evaluated_pos (either Source origin or PV origin)
