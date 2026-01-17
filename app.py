@@ -44,6 +44,11 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "a-default-secret-key-for-development") 
 CORS(app)
 
+# Configure session cookies for production (HF Spaces iframe support)
+if os.getenv("APP_MODE") == 'production':
+    app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+    app.config['SESSION_COOKIE_SECURE'] = True
+
 # --- Read server-wide config on startup ---
 APP_MODE = os.getenv("APP_MODE", "local")  # Default to 'local' if not set
 SERVER_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
