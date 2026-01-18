@@ -1994,6 +1994,22 @@ export function populateAiModelSelector(models) {
         option.disabled = true;
         option.classList.add('no-models-option'); // <-- Add class for removal
         aiModelSelect.appendChild(option);
+    } else {
+        // --- Set Default Model Preference ---
+        // Prioritize user request, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
+        const preferredModels = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+        let matched = false;
+
+        for (const pref of preferredModels) {
+            // Check if any option value contains the preferred model name
+            const options = Array.from(aiModelSelect.options);
+            const found = options.find(opt => opt.value.includes(pref));
+            if (found) {
+                aiModelSelect.value = found.value;
+                matched = true;
+                break;
+            }
+        }
     }
 }
 
