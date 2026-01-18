@@ -2016,6 +2016,10 @@ export function setApiKeyInputValue(key) {
     if (apiKeyInput) apiKeyInput.value = key;
 }
 
+export function setApiKeyInputPlaceholder(text) {
+    if (apiKeyInput) apiKeyInput.placeholder = text;
+}
+
 // --- Functions for simulation ---
 export function setSimulationState(state) {
     // state can be 'idle', 'running'

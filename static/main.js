@@ -736,10 +736,16 @@ async function handleSetApiKey() {
     // Fetch the current key to pre-fill the input
     try {
         const response = await APIService.getGeminiApiKey();
-        if (response.api_key) {
+
+        if (response.is_server_managed) {
+            UIManager.setApiKeyInputValue("");
+            UIManager.setApiKeyInputPlaceholder("Using Server Key");
+        } else if (response.api_key) {
             UIManager.setApiKeyInputValue(response.api_key);
+            UIManager.setApiKeyInputPlaceholder("Enter your Gemini API Key");
         } else {
             UIManager.setApiKeyInputValue("");
+            UIManager.setApiKeyInputPlaceholder("Enter your Gemini API Key");
         }
         UIManager.showApiKeyModal();
     } catch (error) {

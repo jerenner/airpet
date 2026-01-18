@@ -2514,29 +2514,48 @@ def import_ai_json_route():
 # --- Route to get the current API key ---
 @app.route('/api/get_gemini_key', methods=['GET'])
 def get_gemini_key():
-    # Read the key directly from the user's session
+    # Read the key from the user's session
     api_key = session.get("gemini_api_key", "")
-    return jsonify({"api_key": api_key})
+    
+    # SECURITY: Do not send the actual server key back to the client.
+    is_server_managed = False
+    if SERVER_GEMINI_API_KEY and api_key == SERVER_GEMINI_API_KEY:
+        api_key = "" # Mask the key
+        is_server_managed = True
+        
+    return jsonify({
+        "api_key": api_key,
+        "is_server_managed": is_server_managed
+    })
 
 # --- Route to set a new API key ---
 @app.route('/api/set_gemini_key', methods=['POST'])
 def set_gemini_key():
     data = request.get_json()
-    new_key = data.get('api_key', '')
+    new_key = data.get('api_key', '').strip()
 
-    # Store the new key in the user's session. Flask handles the secure cookie.
-    session['gemini_api_key'] = new_key
+    if not new_key:
+        # If the user clears the key, revert to the server key if available
+        if SERVER_GEMINI_API_KEY:
+            session['gemini_api_key'] = SERVER_GEMINI_API_KEY
+            msg = "API Key reset to server default."
+        else:
+            session['gemini_api_key'] = ""
+            msg = "API Key cleared."
+    else:
+        # Store the user's custom key
+        session['gemini_api_key'] = new_key
+        msg = "Custom API Key updated."
     
-    # Attempt to configure the client for this session to validate the key.
+    # Attempt to configure the client to validate the key
     client_instance = get_gemini_client_for_session()
 
     if client_instance:
-        return jsonify({"success": True, "message": "API Key updated and client configured."})
-    elif not new_key:
-        # This handles the case where the user intentionally clears the key.
-        return jsonify({"success": True, "message": "API Key cleared."})
+        return jsonify({"success": True, "message": f"{msg} Client configured successfully."})
+    elif not session.get('gemini_api_key'):
+         return jsonify({"success": True, "message": msg})
     else:
-        # The key was set, but the client failed to initialize (likely an invalid key).
+        # The key was set, but validation failed
         return jsonify({
             "success": False,
             "error": "API Key was saved to your session, but the Gemini client failed to initialize. The key might be invalid."
