@@ -3378,7 +3378,7 @@ class ProjectManager:
                     if cmd == 'pos/confine': continue # Already handled or skipped if logic dictates
                     
                     # Evaluate the expression to resolve defines/math
-                    success, val = self.expression_evaluator.evaluate(str(value))
+                    success, val = self.expression_evaluator.evaluate(str(value), verbose=False)
                     final_val_str = str(value)
 
                     if success and isinstance(val, (int, float)):

@@ -84,7 +84,7 @@ class ExpressionEvaluator:
 
         return processed_expression
 
-    def evaluate(self, expression):
+    def evaluate(self, expression, verbose=True):
         """
         Safely evaluates an expression string using the current symbol table.
         The symbol table should be prepared beforehand by ProjectManager.
@@ -100,5 +100,6 @@ class ExpressionEvaluator:
             result = self.interpreter.eval(processed_expression, show_errors=False, raise_errors=True)
             return True, result
         except Exception as e:
-            print(f"ERROR: {str(e)}")
+            if verbose:
+                print(f"ERROR: {str(e)}")
             return False, 0

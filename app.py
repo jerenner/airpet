@@ -16,6 +16,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import io
+import sys
 import shutil
 import sched
 import time
@@ -27,6 +28,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
+from PIL import Image
 from google.genai import client # For type hinting
 
 from src.expression_evaluator import ExpressionEvaluator 
@@ -1112,130 +1114,43 @@ def run_reconstruction_route(version_id, job_id):
             
             print(f"Attenuation Correction factors calculated. Range: [{xp.min(ac_factors):.4f}, {xp.max(ac_factors):.4f}], Mean: {xp.mean(ac_factors):.4f}")
 
-        # --- Monte Carlo Sensitivity Map Generation ---
-        # Instead of using measured LORs (which are biased by activity), we generate
-        # Random LORs to estimate the true scanner sensitivity (Geometry + Attenuation).
-        print("Estimating Scanner Geometry from data...")
-        # Calculate R for start/end points
-        r_start = xp.sqrt(event_start_coords_xp[:,0]**2 + event_start_coords_xp[:,1]**2)
-        r_end = xp.sqrt(event_end_coords_xp[:,0]**2 + event_end_coords_xp[:,1]**2)
-        scanner_radius = float(xp.mean(xp.concat((r_start, r_end))))
+        # --- Monte Carlo Sensitivity Matrix (Pre-loaded or Computed) ---
+        sensitivity_image = None
+        sens_file = os.path.join(run_dir, "sensitivity.h5")
         
-        z_start = event_start_coords_xp[:,2]
-        z_end = event_end_coords_xp[:,2]
-        z_min = float(xp.min(xp.concat((z_start, z_end))))
-        z_max = float(xp.max(xp.concat((z_start, z_end))))
-        scanner_length = z_max - z_min
-        
-        print(f"Scanner Geometry (Full Data): Radius={scanner_radius:.1f}mm, Length={scanner_length:.1f}mm, Z_range=[{z_min:.1f}, {z_max:.1f}]")
-
-        # Optimization: Restrict random LOR Z-range to the Reconstruction FOV (+ margin)
-        # This prevents wasting 90% of randoms on empty space if the scanner is long but the image is short.
-        fov_z_start = image_origin[2]
-        fov_z_end = image_origin[2] + (img_shape[2] * voxel_size[2])
-        margin = scanner_radius * 0.5 # Allow oblique rays from reasonably far out
-        
-        # Clamp, but don't exceed scanner physical limits (if we trust z_min/max from data)
-        z_min_opt = max(z_min, fov_z_start - margin)
-        z_max_opt = min(z_max, fov_z_end + margin)
-        
-        print(f"Optimizing Sensitivity Generation Z-Range: [{z_min_opt:.1f}, {z_max_opt:.1f}] (concentrating LORs on FOV)")
-        
-        # Use optimized Z range for random generation
-        z_min, z_max = z_min_opt, z_max_opt
-
-        num_random_lors = 20000000
-        print(f"Generating {num_random_lors} random LORs for Unbiased Sensitivity Map...")
-        
-        # Generate random angles and Z positions
-        # Note: We use numpy for generation then move to xp (Device)
-        phi1 = np.random.uniform(0, 2*np.pi, num_random_lors)
-        z1 = np.random.uniform(z_min, z_max, num_random_lors)
-        
-        phi2 = np.random.uniform(0, 2*np.pi, num_random_lors)
-        z2 = np.random.uniform(z_min, z_max, num_random_lors)
-        
-        # Convert to Cartesian
-        rand_start = np.zeros((num_random_lors, 3), dtype=np.float32)
-        rand_start[:,0] = scanner_radius * np.cos(phi1)
-        rand_start[:,1] = scanner_radius * np.sin(phi1)
-        rand_start[:,2] = z1
-        
-        rand_end = np.zeros((num_random_lors, 3), dtype=np.float32)
-        rand_end[:,0] = scanner_radius * np.cos(phi2)
-        rand_end[:,1] = scanner_radius * np.sin(phi2)
-        rand_end[:,2] = z2
-        
-        rand_start_xp = xp.asarray(rand_start, device=dev)
-        rand_end_xp = xp.asarray(rand_end, device=dev)
-
-        # Apply Position Resolution Smearing to Sensitivity LORs (Match Data)
-        # If we don't do this, the sensitivity map is "sharp" while data is "blurred", causing edge artifacts.
-        if position_resolution:
-            sigma_x = position_resolution.get('x', 0.0)
-            sigma_y = position_resolution.get('y', 0.0)
-            sigma_z = position_resolution.get('z', 0.0)
+        if normalization:
+            # TRY TO LOAD
+            if os.path.exists(sens_file):
+                print(f"Loading pre-computed Sensitivity Matrix from {sens_file}...")
+                with h5py.File(sens_file, 'r') as f:
+                    sens_data = f['sensitivity'][()]
+                    # Check consistency? (Size match)
+                    if sens_data.shape == img_shape:
+                        sensitivity_image = xp.asarray(sens_data, device=dev)
+                    else:
+                        print(f"WARNING: Sensitivity matrix shape {sens_data.shape} mismatch with image {img_shape}. Recomputing.")
+                        sensitivity_image = None
             
-            if sigma_x > 0:
-                rand_start_xp[:, 0] += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
-                rand_end_xp[:, 0]   += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
-            if sigma_y > 0:
-                rand_start_xp[:, 1] += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
-                rand_end_xp[:, 1]   += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
-            if sigma_z > 0:
-                rand_start_xp[:, 2] += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
-                rand_end_xp[:, 2]   += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
+            # IF NOT FOUND or MISMATCH, COMPUTE NOW
+            if sensitivity_image is None:
+                print("Sensitivity Matrix not found or invalid. Computing now...")
+                ac_input = mu_map if (ac_enabled and 'mu_map' in locals()) else ac_mu
+                
+                # Call helper
+                path, sens_cpu = compute_and_save_sensitivity(pm, run_dir, lor_data, img_shape, voxel_size, image_origin,
+                                             ac_enabled, ac_shape, ac_input)
+                sensitivity_image = xp.asarray(sens_cpu, device=dev)
         
-        # Create a Projector for the Random LORs
-        sens_proj = parallelproj.ListmodePETProjector(
-            rand_start_xp, rand_end_xp, img_shape, voxel_size, 
-            img_origin=xp.asarray(image_origin, device=dev)
-        )
+        if normalization and sensitivity_image is not None:
+             # Prepare for division
+            max_sens = float(xp.max(sensitivity_image))
+            sens_threshold = max_sens * 1e-3
+            print(f"Sensitivity Threshold used: {sens_threshold:.2e}")
+            sensitivity_image_safe_for_division = xp.where(sensitivity_image < sens_threshold, 1.0, sensitivity_image)
+            
         
-        # Calculate Attenuation for Random LORs (if AC enabled)
-        sens_weights = xp.ones(num_random_lors, dtype=xp.float32, device=dev)
-        
-        if ac_enabled and ac_shape == 'cylinder':
-            print("Calculating Attenuation for Sensitivity LORs...")
-            # We must project the mu-map along these random LORs
-            # Note: mu_map is already defined/calculated above
-            attenuation_integrals_rand = sens_proj(mu_map)
-            ac_factors_rand = xp.exp(-attenuation_integrals_rand * 0.1)
-            sens_weights *= ac_factors_rand
-
-        # Backproject to get Sensitivity Map
-        # We scale by (Total Possible LORs / Simulated LORs) factor? 
-        # Actually, scaling constant cancels out in MLEM ratio update x_new = x_old * (Backproj / Sensitivity).
-        # As long as relative profile is correct.
-        sensitivity_image = sens_proj.adjoint(sens_weights)
-
-        # --- Smoothing Sensitivity Map ---
-        # Even with 5M events, the random map will be noisy. We smooth it to get a clean geometric profile.
-        print("Smoothing Sensitivity Map (sigma=4mm) to remove Monte Carlo noise...")
-        from scipy.ndimage import gaussian_filter
-        
-        sens_cpu = parallelproj.to_numpy_array(sensitivity_image)
-        sigma_mm = 4.0 
-        sigma_vox = [sigma_mm / float(v) for v in voxel_size]
-        sens_smoothed_cpu = gaussian_filter(sens_cpu, sigma=sigma_vox)
-        
-        sensitivity_image = xp.asarray(sens_smoothed_cpu, device=dev)
-
         # --- MLEM Reconstruction Loop ---
         x = xp.ones(img_shape, dtype=xp.float32, device=dev) # Initial image is all ones
-
-        # --- Create a safe version of the sensitivity image for division ---
-        max_sens = float(xp.max(sensitivity_image))
-        min_sens = float(xp.min(sensitivity_image))
-        print(f"Sensitivity Image - Max: {max_sens:.2e}, Min: {min_sens:.2e}")
-        
-        # Use a relative threshold (e.g., 0.1% or smaller) to avoid exploding values at edges
-        # sens_threshold = max_sens * 1e-4 
-        # Increase threshold slightly to be safer against edge artifacts?
-        sens_threshold = max_sens * 1e-3
-        print(f"Sensitivity Threshold used: {sens_threshold:.2e}")
-        
-        sensitivity_image_safe_for_division = xp.where(sensitivity_image < sens_threshold, 1.0, sensitivity_image)
 
         for i in range(iterations):
             print(f"Running MLEM iteration {i+1}/{iterations}...")
@@ -1304,7 +1219,271 @@ def run_reconstruction_route(version_id, job_id):
         traceback.print_exc()
         return jsonify({"success": False, "error": f"Reconstruction failed: {str(e)}"}), 500
 
-@app.route('/api/reconstruction/slice/<version_id>/<job_id>/<axis>/<int:slice_num>')
+def compute_and_save_sensitivity(pm, run_dir, lor_data, img_shape, voxel_size, image_origin, 
+                                 ac_enabled, ac_shape, ac_mu, num_random_lors=20000000):
+    """
+    Helper function to compute sensitivity matrix and save to HDF5.
+    Returns path to saved file and metadata.
+    """
+    import numpy as np
+    import h5py
+    try:
+        import parallelproj
+    except ImportError:
+        print("Parallelproj not installed.")
+        raise
+    
+    # Setup GPU device
+    if 'cupy' in sys.modules:
+        import cupy as xp
+        import cupy
+        os.environ["PARALLELPROJ_BACKEND"] = "cupy"
+        dev = cupy.cuda.Device(0)
+    else:
+        import numpy as xp
+        os.environ["PARALLELPROJ_BACKEND"] = "numpy"
+        dev = "cpu"
+        
+    print(f"Computing Sensitivity Matrix on {dev}...")
+
+    # 1. Estimate Scanner Geometry from LOR data
+    # (We need this to generate valid random LORs)
+    
+    # Retrieve coordinates columns
+    start_coords = lor_data['start_coords']
+    end_coords = lor_data['end_coords']
+    
+    # Start/End Coordinates
+    # We take a sample if too large? 100k events is enough for geometry.
+    n_total = start_coords.shape[0]
+    n_sample = min(100000, n_total)
+    sample_indices = np.random.choice(n_total, n_sample, replace=False)
+    
+    start_sample = start_coords[sample_indices]
+    end_sample = end_coords[sample_indices]
+    
+    x1, y1, z1 = start_sample[:, 0], start_sample[:, 1], start_sample[:, 2]
+    x2, y2, z2 = end_sample[:, 0], end_sample[:, 1], end_sample[:, 2]
+    
+    r_start = np.sqrt(x1**2 + y1**2)
+    r_end = np.sqrt(x2**2 + y2**2)
+    scanner_radius = float(np.mean(np.concatenate((r_start, r_end))))
+    
+    z_all = np.concatenate((z1, z2))
+    z_min_data = float(np.min(z_all))
+    z_max_data = float(np.max(z_all))
+    scanner_length = z_max_data - z_min_data
+    
+    print(f"Scanner Geometry (Sampled): Radius={scanner_radius:.1f}mm, Length={scanner_length:.1f}mm, Z_range=[{z_min_data:.1f}, {z_max_data:.1f}]")
+
+    # 2. Optimization: Restrict random LOR Z-range to the Reconstruction FOV (+ margin)
+    fov_z_start = image_origin[2]
+    fov_z_end = image_origin[2] + (img_shape[2] * voxel_size[2])
+    margin = scanner_radius * 0.5 
+    
+    z_min_opt = max(z_min_data, fov_z_start - margin)
+    z_max_opt = min(z_max_data, fov_z_end + margin)
+    z_min, z_max = z_min_opt, z_max_opt
+    
+    # 3. Generate Random LORs
+    print(f"Generating {num_random_lors} random LORs...")
+    
+    phi1 = np.random.uniform(0, 2*np.pi, num_random_lors)
+    z1_rand = np.random.uniform(z_min, z_max, num_random_lors)
+    
+    phi2 = np.random.uniform(0, 2*np.pi, num_random_lors)
+    z2_rand = np.random.uniform(z_min, z_max, num_random_lors)
+    
+    rand_start = np.zeros((num_random_lors, 3), dtype=np.float32)
+    rand_start[:,0] = scanner_radius * np.cos(phi1)
+    rand_start[:,1] = scanner_radius * np.sin(phi1)
+    rand_start[:,2] = z1_rand
+    
+    rand_end = np.zeros((num_random_lors, 3), dtype=np.float32)
+    rand_end[:,0] = scanner_radius * np.cos(phi2)
+    rand_end[:,1] = scanner_radius * np.sin(phi2)
+    rand_end[:,2] = z2_rand
+    
+    rand_start_xp = xp.asarray(rand_start, device=dev)
+    rand_end_xp = xp.asarray(rand_end, device=dev)
+
+    # Apply Position Resolution Smearing (if present in LOR data)
+    position_resolution = None
+    if 'position_resolution' in lor_data:
+         # lor_data is npz, might store dict as 0d array
+         pr = lor_data['position_resolution']
+         if pr.shape == (): position_resolution = pr.item()
+         else: position_resolution = pr
+         
+    if position_resolution:
+        sigma_x = position_resolution.get('x', 0.0)
+        sigma_y = position_resolution.get('y', 0.0)
+        sigma_z = position_resolution.get('z', 0.0)
+        
+        if sigma_x > 0:
+            rand_start_xp[:, 0] += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
+            rand_end_xp[:, 0]   += xp.asarray(np.random.normal(0, sigma_x, num_random_lors), device=dev)
+        if sigma_y > 0:
+            rand_start_xp[:, 1] += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
+            rand_end_xp[:, 1]   += xp.asarray(np.random.normal(0, sigma_y, num_random_lors), device=dev)
+        if sigma_z > 0:
+            rand_start_xp[:, 2] += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
+            rand_end_xp[:, 2]   += xp.asarray(np.random.normal(0, sigma_z, num_random_lors), device=dev)
+            
+    # 4. Create Projector
+    sens_proj = parallelproj.ListmodePETProjector(
+        rand_start_xp, rand_end_xp, img_shape, voxel_size, 
+        img_origin=xp.asarray(image_origin, device=dev)
+    )
+    
+    # 5. Attenuation
+    sens_weights = xp.ones(num_random_lors, dtype=xp.float32, device=dev)
+    
+    if ac_enabled and ac_shape == 'cylinder':
+        print("Calculating Attenuation for Sensitivity LORs...")
+        
+        # Grid Setup
+        nx, ny, nz = img_shape
+        vx, vy, vz = voxel_size
+        ox, oy, oz = image_origin
+        
+        x_grid = xp.arange(nx, dtype=xp.float32) * vx + ox + vx/2
+        y_grid = xp.arange(ny, dtype=xp.float32) * vy + oy + vy/2
+        
+        # Create Meshgrid on device
+        xx, yy = xp.meshgrid(x_grid, y_grid, indexing='ij') 
+
+    if ac_enabled and ac_mu is not None:
+         # We expect `ac_mu` to be the VOLUME (3D array) on device if possible, 
+         # OR we generate it if we only have scalar mu.
+         # Current app approach: Generate volume from scalar mu + radius.
+         
+         # Let's allow passing PRE-COMPUTED mu_map if available (from reconstruction loop)
+         # or params to compute it.
+         if isinstance(ac_mu, (float, int)): # It's a scalar value, we need to build map
+             # ac_radius is needed.
+             # We will fallback to "Generate cylinder mask matching FOV" if no radius given?
+             # Or assume radius = FOV_X / 2?
+             radius = (img_shape[0] * voxel_size[0]) / 2.0 * 0.9 # Slightly smaller?
+             # Looking at reconstruction code: `mask = (xx**2 + yy**2) <= ac_radius**2`
+             
+             dist_sq = xx**2 + yy**2
+             mask = dist_sq <= radius**2
+
+             # Expand to 3D
+             mask_3d = xp.repeat(mask[:, :, xp.newaxis], nz, axis=2)
+             mu_map_vol = xp.where(mask_3d, float(ac_mu), 0.0)
+             
+             # Project
+             attenuation_integrals_rand = sens_proj(mu_map_vol)
+             ac_factors_rand = xp.exp(-attenuation_integrals_rand * 0.1)
+             sens_weights *= ac_factors_rand
+             
+         elif hasattr(ac_mu, 'shape'): # It's an array (mu_map)
+             attenuation_integrals_rand = sens_proj(ac_mu)
+             ac_factors_rand = xp.exp(-attenuation_integrals_rand * 0.1)
+             sens_weights *= ac_factors_rand
+
+    # 6. Backproject
+    sensitivity_image = sens_proj.adjoint(sens_weights)
+    
+    # 7. Smooth
+    print("Smoothing Sensitivity Map...")
+    from scipy.ndimage import gaussian_filter
+    sens_cpu = parallelproj.to_numpy_array(sensitivity_image)
+    sigma_vox = [1.0 / float(v) for v in voxel_size] # 1mm smoothing
+    sens_smoothed_cpu = gaussian_filter(sens_cpu, sigma=sigma_vox)
+    
+    # 8. Save
+    sens_file = os.path.join(run_dir, "sensitivity.h5")
+    with h5py.File(sens_file, 'w') as f:
+        dset = f.create_dataset("sensitivity", data=sens_smoothed_cpu)
+        dset.attrs['voxel_size'] = voxel_size
+        dset.attrs['origin'] = image_origin
+        dset.attrs['scanner_radius'] = scanner_radius
+        dset.attrs['scanner_length'] = scanner_length
+        dset.attrs['num_random_lors'] = num_random_lors
+        dset.attrs['ac_enabled'] = ac_enabled
+        # Save threshold info
+        max_v = float(np.max(sens_smoothed_cpu))
+        dset.attrs['threshold'] = max_v * 1e-3
+        
+    print(f"Sensitivity matrix saved to {sens_file}")
+    return sens_file, sens_smoothed_cpu
+
+
+@app.route('/api/sensitivity/compute', methods=['POST'])
+def compute_sensitivity_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json()
+    
+    version_id = data.get('version_id')
+    job_id = data.get('job_id')
+    
+    # Reconstruction/Grid Params
+    voxel_size_mm = float(data.get('voxel_size', 2.0))
+    matrix_size = int(data.get('matrix_size', 128))
+    # FOV/Origin
+    # Usually computed from matrix_size * voxel_size centered at 0
+    fov = matrix_size * voxel_size_mm
+    image_origin = [-fov/2, -fov/2, -fov/2] # Centered
+    voxel_size = (voxel_size_mm, voxel_size_mm, voxel_size_mm)
+    img_shape = (matrix_size, matrix_size, matrix_size)
+    
+    # AC Params
+    ac_enabled = data.get('ac_enabled', False)
+    ac_mu = float(data.get('ac_mu', 0.096)) # Default water
+    ac_radius = float(data.get('ac_radius', 0.0)) # If 0, use default heuristics
+    if ac_radius == 0: ac_radius = fov/2 * 0.9
+    
+    ran_lors = int(data.get('num_random_lors', 20000000))
+    
+    try:
+        version_dir = pm._get_version_dir(version_id)
+        run_dir = os.path.join(version_dir, "sim_runs", job_id)
+        
+        # Load LOR data for geometry
+        lor_path = os.path.join(run_dir, "lors.npz")
+        if not os.path.exists(lor_path):
+             return jsonify({"success": False, "error": "LOR data not found."}), 404
+             
+        lor_data = np.load(lor_path, allow_pickle=True)
+        
+        # Call the helper to compute and save sensitivity
+        compute_and_save_sensitivity(pm, run_dir, lor_data, img_shape, voxel_size, image_origin,
+                                     ac_enabled, 'cylinder', ac_mu, num_random_lors=ran_lors)
+                                     
+        return jsonify({"success": True, "message": "Sensitivity Matrix computed."})
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/sensitivity/status/<version_id>/<job_id>', methods=['GET'])
+def get_sensitivity_status_route(version_id, job_id):
+    pm = get_project_manager_for_session()
+    try:
+        version_dir = pm._get_version_dir(version_id)
+        run_dir = os.path.join(version_dir, "sim_runs", job_id)
+        sens_file = os.path.join(run_dir, "sensitivity.h5")
+        
+        if os.path.exists(sens_file):
+            with h5py.File(sens_file, 'r') as f:
+                dset = f['sensitivity']
+                # Read attributes
+                info = {
+                    "exists": True,
+                    "scanner_radius": dset.attrs.get('scanner_radius', 0),
+                    "ac_enabled": dset.attrs.get('ac_enabled', False),
+                    "timestamp": os.path.getmtime(sens_file)
+                }
+                return jsonify(info)
+        else:
+            return jsonify({"exists": False})
+    except Exception as e:
+        return jsonify({"exists": False, "error": str(e)})
+
+@app.route('/api/reconstruction/slice/<version_id>/<job_id>/<axis>/<int:slice_num>', methods=['GET'])
 def get_recon_slice_route(version_id, job_id, axis, slice_num):
     """
     Loads the reconstructed 3D numpy array and returns a single 2D slice as a PNG image.

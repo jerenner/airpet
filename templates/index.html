@@ -2612,19 +2612,23 @@
                         Status: No LORs processed for this run.
                     </p>
                     <hr>
+                    <hr>
                     <h5>2. Image Reconstruction</h5>
+                    <!-- Image Grid Section (Moved to Top) -->
                     <div class="property_item">
-                        <label for="reconAlgorithm">Algorithm:</label>
-                        <select id="reconAlgorithm">
-                            <option value="MLEM">MLEM</option>
-                        </select>
+                        <label for="reconImageSize">Size (voxels):</label>
+                        <input type="text" id="reconImageSize" value="350,350,1000">
                     </div>
                     <div class="property_item">
-                        <label for="reconIterations">Iterations:</label>
-                        <input type="number" id="reconIterations" value="10" min="1" step="1">
+                        <label for="reconVoxelSize">Voxel Size (mm):</label>
+                        <input type="text" id="reconVoxelSize" value="1.0,1.0,1.0">
                     </div>
+
+                    <hr>
+                    <!-- Normalization / Sensitivity Section -->
+                    <h5>Normalization & Sensitivity</h5>
                     <div class="property_item">
-                        <label for="reconNormalization">Normalization:</label>
+                        <label for="reconNormalization">Apply Normalization:</label>
                         <input type="checkbox" id="reconNormalization" checked>
                     </div>
                     <div class="property_item" style="margin-top: 5px;">
@@ -2632,6 +2636,7 @@
                         <label for="acEnabled" style="width: auto; font-weight: bold;">Attenuation Correction</label>
                     </div>
                     <div id="acParams" style="padding-left: 20px; border-left: 2px solid #eee; margin-top: 5px;">
+                        <!-- AC params same as before -->
                         <div class="property_item">
                             <label style="font-size: 0.9em;">Phantom Radius (mm):</label>
                             <input type="number" id="acRadius" value="115" step="1.0" style="width: 60px;">
@@ -2644,17 +2649,34 @@
                             <label style="font-size: 0.9em;">Mu (cm^-1):</label>
                             <input type="number" id="acMu" value="0.096" step="0.001" style="width: 60px;">
                         </div>
+                        <div class="property_item">
+                            <label style="font-size: 0.9em;">Num Random LORs:</label>
+                            <input type="number" id="numRandomLors" value="20000000" step="1000000"
+                                style="width: 90px;">
+                        </div>
                     </div>
+
+                    <div style="margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+                        <button id="generateSensitivityBtn" style="width: 100%; margin-bottom: 5px;">Generate
+                            Sensitivity Matrix</button>
+                        <p id="sensStatus" style="font-size: 11px; color: #dc3545; margin: 0;">
+                            Status: No sensitivity matrix found.
+                        </p>
+                    </div>
+
                     <hr>
-                    <h5>Image Grid</h5>
+                    <!-- Algorithm Section (Moved to Bottom) -->
                     <div class="property_item">
-                        <label for="reconImageSize">Size (voxels):</label>
-                        <input type="text" id="reconImageSize" value="350,350,1000">
+                        <label for="reconAlgorithm">Algorithm:</label>
+                        <select id="reconAlgorithm">
+                            <option value="MLEM">MLEM</option>
+                        </select>
                     </div>
                     <div class="property_item">
-                        <label for="reconVoxelSize">Voxel Size (mm):</label>
-                        <input type="text" id="reconVoxelSize" value="1.0,1.0,1.0">
+                        <label for="reconIterations">Iterations:</label>
+                        <input type="number" id="reconIterations" value="10" min="1" step="1">
                     </div>
+
                     <hr>
                     <div class="property_item">
                         <label for="reconAxis">Slice Axis:</label>

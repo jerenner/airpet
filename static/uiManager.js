@@ -57,7 +57,10 @@ let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
     reconImageView, reconViewerPanel, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
     processLorsBtn, reconStatusP, coincidenceWindowInput, energyCutInput, energyResolutionInput, posResXInput, posResYInput, posResZInput,
-    reconNormalizationCheckbox;
+    reconNormalizationCheckbox,
+    acEnabledCheckbox, acParamsDiv, numRandomLorsInput, generateSensitivityBtn, sensStatusDisplay,
+    acRadiusInput, acLengthInput, acMuInput;
+
 
 // Callbacks to main.js (controller logic)
 let callbacks = {
@@ -255,11 +258,14 @@ export function initUI(cb) {
     posResZInput = document.getElementById('posResZ');
     reconNormalizationCheckbox = document.getElementById('reconNormalization');
     // AC controls
-    const acEnabledCheckbox = document.getElementById('acEnabled');
-    const acParamsDiv = document.getElementById('acParams');
-    const acRadiusInput = document.getElementById('acRadius');
-    const acLengthInput = document.getElementById('acLength');
-    const acMuInput = document.getElementById('acMu');
+    acEnabledCheckbox = document.getElementById('acEnabled');
+    acParamsDiv = document.getElementById('acParams');
+    numRandomLorsInput = document.getElementById('numRandomLors');
+    generateSensitivityBtn = document.getElementById('generateSensitivityBtn');
+    sensStatusDisplay = document.getElementById('sensStatus');
+    acRadiusInput = document.getElementById('acRadius');
+    acLengthInput = document.getElementById('acLength');
+    acMuInput = document.getElementById('acMu');
 
     // AC Toggle logic
     if (acEnabledCheckbox && acParamsDiv) {
@@ -490,6 +496,17 @@ export function initUI(cb) {
         };
         callbacks.onProcessLorsClicked(params);
     });
+
+    // Sensitivity Matrix
+    if (generateSensitivityBtn) {
+        generateSensitivityBtn.addEventListener('click', () => {
+            // Disable button and change text to indicate work
+            generateSensitivityBtn.disabled = true;
+            generateSensitivityBtn.textContent = "Requesting...";
+            const params = getSensitivityParams();
+            callbacks.onGenerateSensitivityClicked(params);
+        });
+    }
 
     // Listener for the slider
     sliceSlider.addEventListener('input', () => {
@@ -2166,4 +2183,60 @@ export function setReconViewerAspectRatio(ratio) {
     if (reconViewerPanel) {
         reconViewerPanel.style.aspectRatio = ratio;
     }
+}
+
+// --- Sensitivity Logic ---
+export function setSensitivityStatus(exists, info, isError = false) {
+    if (!sensStatusDisplay) return;
+
+    if (isError) {
+        sensStatusDisplay.textContent = `Status: Error checking sensitivity matrix.`;
+        sensStatusDisplay.style.color = '#c53030';
+        // Allow retry
+        if (generateSensitivityBtn) generateSensitivityBtn.disabled = false;
+        return;
+    }
+
+    if (exists) {
+        let msg = "Status: Sensitivity Matrix Available";
+        if (info) {
+            msg += ` (R=${Math.round(info.scanner_radius)}mm)`;
+            if (info.ac_enabled) msg += ", AC: Yes";
+            else msg += ", AC: No";
+        }
+        sensStatusDisplay.textContent = msg;
+        sensStatusDisplay.style.color = '#2f855a'; // Green
+        if (generateSensitivityBtn) generateSensitivityBtn.disabled = false;
+        // We could disable it if we don't want re-generation, but user might want to update params.
+        generateSensitivityBtn.textContent = "Re-generate Sensitivity Matrix";
+    } else {
+        sensStatusDisplay.textContent = "Status: No sensitivity matrix generated.";
+        sensStatusDisplay.style.color = '#dc3545'; // Red
+        if (generateSensitivityBtn) generateSensitivityBtn.disabled = false;
+        generateSensitivityBtn.textContent = "Generate Sensitivity Matrix";
+    }
+}
+
+export function setupSensitivityButton(callback) {
+    if (generateSensitivityBtn) {
+        generateSensitivityBtn.addEventListener('click', () => {
+            // Disable button while running
+            generateSensitivityBtn.disabled = true;
+            generateSensitivityBtn.textContent = "Generating... (this may take a minute)";
+            callback();
+        });
+    }
+}
+
+export function getSensitivityParams() {
+    return {
+        num_random_lors: parseInt(numRandomLorsInput ? numRandomLorsInput.value : 20000000),
+        // We also need reuse of AC params, which are already used for recon
+        ac_enabled: document.getElementById('acEnabled').checked,
+        ac_radius: parseFloat(document.getElementById('acRadius').value),
+        ac_mu: parseFloat(document.getElementById('acMu').value),
+        // Grid params
+        voxel_size: parseFloat(document.getElementById('reconVoxelSize').value.split(',')[0]), // assuming isotropic for simplicity in UI, but backend handles tuple
+        matrix_size: parseInt(document.getElementById('reconImageSize').value.split(',')[0]) // assuming isotropic
+    };
 }

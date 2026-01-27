@@ -240,6 +240,33 @@ export async function updateDefine(id, rawExpression, unit, category) {
     return handleResponse(response);
 }
 
+// --- Sensitivity Matrix API ---
+
+/**
+    * Checks if a sensitivity matrix exists for the given run.
+    * @param {string} versionId 
+    * @param {string} jobId 
+    * @returns {Promise<Object>} { exists: bool, scanner_radius: float, timestamp: float ... }
+    */
+export async function checkSensitivityStatus(versionId, jobId) {
+    const response = await fetch(`${API_BASE_URL}/api/sensitivity/status/${versionId}/${jobId}`);
+    return handleResponse(response);
+}
+
+/**
+    * Trigger the generation of the sensitivity matrix.
+    * @param {Object} params - { version_id, job_id, num_random_lors, voxel_size, matrix_size, ... }
+    */
+export async function generateSensitivityMatrix(params) {
+    const response = await fetch(`${API_BASE_URL}/api/sensitivity/compute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+    });
+    return handleResponse(response);
+}
+
+
 export async function addMaterial(name, params) {
     const response = await fetch(`${API_BASE_URL}/add_material`, {
         method: 'POST',

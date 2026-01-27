@@ -172,7 +172,7 @@ async function initializeApp() {
         onSliceAxisChanged: handleSliceAxisChange,
         onProcessLorsClicked: handleProcessLors,
         onProcessLorsClicked: handleProcessLors,
-        onRunReconstruction: handleRunReconstruction
+        onGenerateSensitivityClicked: handleGenerateSensitivity
     });
 
     // Initialize the 3D scene and its controls
@@ -1031,12 +1031,26 @@ async function handleLoadRunResults(versionId, jobId) {
             await fetchAndDrawTracks(versionId, jobId, drawOptions.range);
         }
 
+
+        // Step 6: Check Sensitivity Matrix Status
+        await checkSensitivityStatus(versionId, jobId);
+
         UIManager.hideHistoryPanel();
 
     } catch (error) {
         UIManager.showError(`Failed to load run results: ${error.message}`);
     } finally {
         UIManager.hideLoading();
+    }
+}
+
+async function checkSensitivityStatus(versionId, jobId) {
+    try {
+        const result = await APIService.checkSensitivityStatus(versionId, jobId);
+        UIManager.setSensitivityStatus(result.exists, result, false);
+    } catch (error) {
+        console.error("Sensitivity check failed:", error);
+        UIManager.setSensitivityStatus(false, null, true);
     }
 }
 
@@ -2663,6 +2677,33 @@ async function handleProcessLors(params) {
 
     } catch (error) {
         UIManager.showError("Failed to start LOR processing: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleGenerateSensitivity(params) {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+        UIManager.showError("Cannot generate sensitivity: No simulation context.");
+        return;
+    }
+
+    const fullParams = {
+        ...params,
+        version_id: AppState.lastSimVersionId,
+        job_id: AppState.lastSimJobId
+    };
+
+    UIManager.showLoading("Generating Sensitivity Matrix...");
+    try {
+        const result = await APIService.generateSensitivityMatrix(fullParams);
+        if (result.success) {
+            UIManager.setSensitivityStatus(true, null, false);
+            UIManager.showNotification("Sensitivity Matrix Generated Successfully.");
+        }
+    } catch (error) {
+        UIManager.showError("Failed to generate sensitivity matrix: " + error.message);
+        UIManager.setSensitivityStatus(false, null, true);
     } finally {
         UIManager.hideLoading();
     }
