@@ -1426,9 +1426,12 @@ def compute_sensitivity_route():
     # FOV/Origin
     # Usually computed from matrix_size * voxel_size centered at 0
     fov = matrix_size * voxel_size_mm
-    image_origin = [-fov/2, -fov/2, -fov/2] # Centered
     voxel_size = (voxel_size_mm, voxel_size_mm, voxel_size_mm)
     img_shape = (matrix_size, matrix_size, matrix_size)
+
+    # Use exact same logic as run_reconstruction_route to align grids
+    i_origin_np = - (np.array(img_shape, dtype=np.float32) / 2 - 0.5) * np.array(voxel_size, dtype=np.float32)
+    image_origin = tuple(i_origin_np.tolist())
     
     # AC Params
     ac_enabled = data.get('ac_enabled', False)
