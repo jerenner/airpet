@@ -1476,6 +1476,33 @@
             color: #9ca3af;
             font-style: italic;
         }
+
+        #app-footer {
+            flex-shrink: 0;
+            /* Prevents the footer from shrinking */
+            padding: 5px 15px;
+            background-color: #333;
+            /* Matches your top menu bar for consistency */
+            color: #ccc;
+            /* Light text color */
+            font-size: 12px;
+            text-align: right;
+            /* Aligns the link to the right */
+            border-top: 1px solid #555;
+            /* Subtle top border */
+            z-index: 2500;
+            /* High z-index but below modals */
+        }
+
+        #app-footer a {
+            color: #a0c3ff;
+            /* A pleasant light blue for links on a dark background */
+            text-decoration: none;
+        }
+
+        #app-footer a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 
@@ -2712,7 +2739,21 @@
             }
         }
     </script>
-    <script type="module" src="{{ url_for('static', filename='main.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=4"></script>
+    {% if app_mode != 'local' %}
+    <div id="app-footer"
+        style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">
+        <a href="/legal" target="_blank" style="color: #BBB;">Terms & Privacy</a>
+    </div>
+    <div id="cookie-notice"
+        style="display: none; position: fixed; bottom: 0; left: 0; width: 100%; background-color: rgba(0, 0, 0, 0.8); color: white; padding: 15px; text-align: center; z-index: 3000; font-size: 14px;">
+        <span>This site uses a temporary cookie to manage your session. By continuing to use the site, you agree to our
+            <a href="/legal" target="_blank" style="color: #a0c3ff; text-decoration: underline;">Terms and Privacy
+                Policy</a>.</span>
+        <button id="accept-cookies"
+            style="margin-left: 20px; padding: 5px 15px; border: none; background-color: #3b82f6; color: white; border-radius: 5px; cursor: pointer;">OK</button>
+    </div>
+    {% endif %}
 </body>
 
 </html>

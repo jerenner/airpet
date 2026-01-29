@@ -1914,7 +1914,7 @@ def construct_full_ai_prompt(project_manager, user_prompt):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', app_mode=APP_MODE)
 
 @app.route('/new_project', methods=['POST']) # Use POST for an action that changes state
 def new_project_route():
@@ -3162,6 +3162,11 @@ def run_cleanup_scheduler(sc):
     # Re-schedule the cleanup to run again in 1 hour
     sc.enter(SESSION_TIMEOUT_SECONDS, 1, run_cleanup_scheduler, (sc,))
 
+# Route for terms/privacy policy
+@app.route('/legal')
+def legal_page():
+    return render_template('legal.html')
+    
 # --- Scheduler to run the cleanup task ---
 scheduler = sched.scheduler(time.time, time.sleep)
 

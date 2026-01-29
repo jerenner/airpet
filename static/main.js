@@ -66,6 +66,22 @@ document.addEventListener('DOMContentLoaded', initializeApp);
 async function initializeApp() {
     console.log("Initializing GDML Editor Application...");
 
+    // --- COOKIE BANNER LOGIC ---
+    const cookieNotice = document.getElementById('cookie-notice');
+    const acceptCookiesBtn = document.getElementById('accept-cookies');
+
+    if (cookieNotice && acceptCookiesBtn) {
+        if (localStorage.getItem('cookies_accepted') !== 'true') {
+            cookieNotice.style.display = 'block';
+        }
+
+        acceptCookiesBtn.addEventListener('click', () => {
+            localStorage.setItem('cookies_accepted', 'true');
+            cookieNotice.style.display = 'none';
+        });
+    }
+    // ---------------------------
+
     // Initialize UI elements and pass callback handlers for UI-triggered actions
     UIManager.initUI({
         onNewProjectClicked: handleNewProject,
@@ -269,13 +285,22 @@ async function initializeApp() {
     });
 
     // Add menu listeners
-    document.getElementById('hideSelBtn').addEventListener('click', handleHideSelected);
-    document.getElementById('showSelBtn').addEventListener('click', handleShowSelected);
-    document.getElementById('hideAllBtn').addEventListener('click', handleHideAll);
-    document.getElementById('showAllBtn').addEventListener('click', handleShowAll);
-
     // --- Check AI service status on startup ---
     checkAndSetAiStatus();
+
+    console.log("Main.js loaded - v3");
+
+    // Add menu listeners (safe check)
+    const btnIds = ['hideSelBtn', 'showSelBtn', 'hideAllBtn', 'showAllBtn'];
+    btnIds.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            if (id === 'hideSelBtn') btn.addEventListener('click', handleHideSelected);
+            if (id === 'showSelBtn') btn.addEventListener('click', handleShowSelected);
+            if (id === 'hideAllBtn') btn.addEventListener('click', handleHideAll);
+            if (id === 'showAllBtn') btn.addEventListener('click', handleShowAll);
+        }
+    });
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -1850,6 +1875,7 @@ function handlePVVisibilityToggle(pvId, isVisible, isRecursive = false) {
 }
 
 function handleHideSelected() {
+    if (!document.getElementById('hideSelBtn')) return;
     // This now works for multi-select as well
     const selection = AppState.selectedHierarchyItems;
     if (selection.length > 0) {
@@ -1864,6 +1890,7 @@ function handleHideSelected() {
 }
 
 function handleShowSelected() {
+    if (!document.getElementById('showSelBtn')) return;
     // This now works for multi-select as well
     const selection = AppState.selectedHierarchyItems;
     if (selection.length > 0) {
@@ -1878,6 +1905,7 @@ function handleShowSelected() {
 }
 
 function handleHideAll() {
+    if (!document.getElementById('hideAllBtn')) return;
     // 1. Tell the SceneManager to hide all 3D objects.
     SceneManager.setAllPVVisibility(false, AppState.currentProjectState);
     // 2. Tell the UIManager to update the visual state of all hierarchy items.
@@ -1885,6 +1913,7 @@ function handleHideAll() {
 }
 
 function handleShowAll() {
+    if (!document.getElementById('showAllBtn')) return;
     // 1. Tell the SceneManager to show all 3D objects.
     SceneManager.setAllPVVisibility(true, AppState.currentProjectState);
     // 2. Tell the UIManager to update the visual state of all hierarchy items.
