@@ -3,9 +3,9 @@
 </div>
 
 # airpet
-AIRPET is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) machines in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts.
+AIRPET is a tool intended to assist users in creating and comparing geometries for positron emission tomography (PET) detectors in Geant4. It is currently a web-based, AI-assisted visual editor for Geant4 GDML geometries. It provides an intuitive interface for creating, inspecting, and modifying complex geometries. The integrated AI assistant allows users to generate and place objects using natural language prompts. It is a work in progress, so please feel free to contribute code and ideas!
 
-<a href="https://huggingface.co/spaces/airpet/airpet" target="_blank"><img src="static/airpet_button.svg?sanitize=true"></a>
+<a href="https://huggingface.co/spaces/airpet/airpet" target="_blank" rel="noopener"><img src="static/airpet_button.svg?sanitize=true"></a>
 
 *Click above to try out AIRPET! This initial version is hosted on limited resources, so please do not attempt to use it for production work. For large geometries and simulations, see instructions below for installing locally. Note that extensive testing of this code has not yet been performed, so use with caution. Please report any bugs or inconsistencies as an issue on this repository.*
 
@@ -86,6 +86,43 @@ With your Python environment and at least one AI service (Ollama or Gemini) conf
 
 The web application should now be running. The AI model dropdown at the bottom-right will be populated with any available Ollama and/or Gemini models based on your setup.
 
+## Compiling the Geant4 Application
+
+To run simulations, you must compile the Geant4 application included in this repository.
+
+### Prerequisites
+- A working installation of **Geant4** (known to work with 11.3.2).
+- **CMake** and **Make**.
+
+### Compilation Steps
+
+1.  **Source your Geant4 environment:**
+    Depending on your installation, you need to source the `geant4.sh` script.
+    ```bash
+    source /path/to/geant4/bin/geant4.sh
+    ```
+
+2.  **Create a build directory:**
+    Navigate to the `geant4` folder and create a `build` directory.
+    ```bash
+    cd geant4
+    mkdir build
+    cd build
+    ```
+
+3.  **Run CMake:**
+    ```bash
+    cmake ..
+    ```
+
+4.  **Compile:**
+    ```bash
+    make
+    ```
+
+5.  **Verify:**
+    You should now see an executable named `airpet-sim` in the build directory.
+
 ## Contributions
 
 Contributions are welcome! Please submit a pull request with any code contributions. By contributing, you agree to release your code under the MIT License.
@@ -126,7 +163,7 @@ AIRPET uses the following open-source JavaScript libraries, loaded via CDNs for 
 
 For offline use, consider downloading local copies (e.g., via npm), bundling them in the `static/` folder, and updating paths in `templates/index.html` to reduce external dependencies.
 
-The AIRPET code was written with extensive assistance from Google Gemini LLMs, in particular Gemini Pro 2.5.
+The AIRPET code and this documentation was written with extensive assistance from Google Gemini LLMs, in particular Gemini 2.5 Pro and Gemini 3 Pro.
 
 ## Disclaimers
 
