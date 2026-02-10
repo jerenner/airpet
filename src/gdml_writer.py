@@ -400,41 +400,37 @@ class GDMLWriter:
             # preventing pollution of the main <define> block.
             
             # Find or create a single <define> block at the start of the <solids> block.
-            # This is cleaner than creating one for each tessellated solid.
             define_el_local = solids_el.find('define')
             if define_el_local is None:
                 define_el_local = ET.Element('define')
-                solids_el.insert(0, define_el_local) # Insert at the beginning of <solids>
+                solids_el.insert(0, define_el_local)
 
             # The main <tessellated> element attributes
             solid_el.set("aunit", DEFAULT_OUTPUT_AUNIT)
             solid_el.set("lunit", DEFAULT_OUTPUT_LUNIT)
 
-            # --- Use a dedicated facet counter ---
-            facet_counter = 0
+            # Cache to deduplicate vertex definitions
+            pos_cache = {}
 
             for facet in p.get('facets', []):
                 facet_attrs = {}
                 facet_type = facet.get('type', 'triangular')
 
                 if 'vertex_refs' in facet:
-                    # Logic for define-based vertices (no change needed here)
-                    # NOTE: GDML technically doesn't have a RELATIVE type, it's just implied
-                    # when vertices are defined in the main <define> block. ABSOLUTE is explicit.
-                    # We can omit the 'type' attribute here for standard GDML compliance.
                     for i, ref in enumerate(facet['vertex_refs']):
                         facet_attrs[f'vertex{i+1}'] = ref
                 elif 'vertices' in facet:
-                    # Logic for absolute vertices
+                    # Logic for absolute vertices with deduplication
                     facet_attrs['type'] = "ABSOLUTE"
-                    for i, vertex_dict in enumerate(facet['vertices']):
-                        # Create a unique name for the position define.
-                        pos_name = f"{solid_obj.name}_f{facet_counter}_v{i}"
-                        self._write_define_position(define_el_local, pos_name, vertex_dict)
-                        facet_attrs[f'vertex{i+1}'] = pos_name
+                    for i, v in enumerate(facet['vertices']):
+                        coord = (v['x'], v['y'], v['z'])
+                        if coord not in pos_cache:
+                            pos_name = f"{solid_obj.name}_v{len(pos_cache)}"
+                            self._write_define_position(define_el_local, pos_name, v)
+                            pos_cache[coord] = pos_name
+                        facet_attrs[f'vertex{i+1}'] = pos_cache[coord]
 
                 ET.SubElement(solid_el, facet_type, facet_attrs)
-                facet_counter += 1 # Increment the counter for each facet processed
 
         elif solid_obj.type == 'arb8':
             solid_el.set("dz", str(p['dz']))
