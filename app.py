@@ -515,12 +515,14 @@ def run_simulation():
                 if final_return_code == 0:
                     import glob
                     import shutil
+                    print(f"[Merge] Searching for output files in {run_dir}...")
                     # Look for separate files and sort humerically to ensure correct EventID order
                     t_files = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
                     if not t_files or len(t_files) == 0:
                          t_files = glob.glob(os.path.join(run_dir, "run_t*.hdf5"))
 
                     if t_files:
+                        print(f"[Merge] Found {len(t_files)} fragments. Starting merge...")
                         try:
                             t_files.sort(key=lambda x: int(os.path.basename(x).split('_t')[1].split('.')[0]))
                         except:
@@ -528,6 +530,7 @@ def run_simulation():
                         
                         target_path = os.path.join(run_dir, "output.hdf5")
                         shutil.copyfile(t_files[0], target_path)
+                        print(f"[Merge] Initialized target file from {t_files[0]}")
 
                         # Robust Iterative Merge Logic (Matches repair_full_merge.py)
                         # 1. Clean T0 (Base)
@@ -708,7 +711,11 @@ def get_simulation_analysis(version_id, job_id):
     output_path = os.path.join(run_dir, "output.hdf5")
 
     if not os.path.exists(output_path):
-        return jsonify({"success": False, "error": "Simulation output not found."}), 404
+        import glob
+        fragments = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
+        if fragments:
+             return jsonify({"success": False, "error": f"Found {len(fragments)} output fragments but the final merged file is missing. The simulation might still be merging or the merge failed."}), 404
+        return jsonify({"success": False, "error": "Simulation output not found. This usually means the simulation completed but no hits were recorded. Ensure you have marked a volume as 'Sensitive' and that particles are actually hitting it."}), 404
 
     try:
         # Parse query parameters
@@ -846,13 +853,17 @@ def download_simulation_data(version_id, job_id):
     run_dir = os.path.join(version_dir, "sim_runs", job_id)
     output_path = os.path.join(run_dir, "output.hdf5")
 
-    if not os.path.exists(output_path):
-        return jsonify({"success": False, "error": "Simulation output not found."}), 404
-
     try:
         # Return the file as an attachment
+        if not os.path.exists(output_path):
+             import glob
+             fragments = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
+             if fragments:
+                  return jsonify({"success": False, "error": f"Found {len(fragments)} output fragments but the final merged file is missing."}), 404
+             return jsonify({"success": False, "error": f"Simulation output file not found. Did the simulation produce any hits? (Check the 'Analysis' tab to see if hit count is zero)"}), 404
+        
         filename = f"sim_{job_id[:8]}_output.hdf5"
-        return send_file(output_path, as_attachment=True, download_name=filename)
+        return send_file(output_path, as_attachment=True, download_name=filename, mimetype='application/x-hdf5')
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

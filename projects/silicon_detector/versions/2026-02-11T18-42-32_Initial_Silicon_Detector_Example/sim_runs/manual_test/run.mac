@@ -1,12 +1,12 @@
 # AirPet Auto-Generated Macro
-# Job ID: test_run_1
+# Job ID: manual
 
 /tracking/storeTrajectory 0
 
 # --- Random Seed ---
 
 # --- Random Seed ---
-/random/setSeeds 12345 67890
+/random/setSeeds 1 2
 # --- Sensitive Detectors ---
 /g4pet/detector/addSD detector_plate_LV detector_plate_LV_SD
 
@@ -18,7 +18,7 @@
 /run/setCut 1.0 mm
 
 # --- N-tuple Saving Control ---
-/g4pet/run/saveParticles false
+/g4pet/run/saveParticles true
 /g4pet/run/saveHits true
 /g4pet/run/hitEnergyThreshold 400 keV
 
@@ -28,7 +28,7 @@
 /gps/source/intensity 1.0
 # Source: electron_beam (Activity: 1.0 Bq)
 /gps/particle e-
-/gps/energy 5 MeV
+/gps/energy 10 MeV
 /gps/position 0 0 -100 mm
 /gps/direction 0 0 1
 /gps/pos/centre 0 0 -100 mm
@@ -42,4 +42,4 @@
 /analysis/setFileName output.hdf5
 
 # --- Start Simulation ---
-/run/beamOn 1000
+/run/beamOn 100

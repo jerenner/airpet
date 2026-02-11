@@ -1,12 +1,9 @@
 #include "RunAction.hh"
-#include "EventAction.hh" // We need the full definition here
-
-#include "G4Hdf5AnalysisManager.hh"
-using G4AnalysisManager = G4Hdf5AnalysisManager;
+#include "EventAction.hh"
+#include "G4AnalysisManager.hh"
 #include "G4Run.hh"
 #include "G4RunManager.hh"
 #include "G4SystemOfUnits.hh"
-
 #include "G4UIcmdWithADoubleAndUnit.hh"
 #include "G4UIcommand.hh"
 #include "G4UIdirectory.hh"
@@ -15,54 +12,25 @@ using G4AnalysisManager = G4Hdf5AnalysisManager;
 RunAction::RunAction()
     : G4UserRunAction(), fSaveParticles(false), fSaveHits(true),
       fHitEnergyThreshold(0.0) {
-
-  // Set up the G4Hdf5AnalysisManager singleton
-  auto analysisManager = G4Hdf5AnalysisManager::Instance();
-  analysisManager->SetCompressionLevel(1);
-
-  // --- Define the UI commands ---
+  auto analysisManager = G4AnalysisManager::Instance();
+  analysisManager->SetDefaultFileType("hdf5");
+  analysisManager->SetVerboseLevel(1);
   fG4petDir = new G4UIdirectory("/g4pet/");
-  fG4petDir->SetGuidance("UI commands specific to the virtual-pet application");
-
   fRunDir = new G4UIdirectory("/g4pet/run/");
-  fRunDir->SetGuidance("Run-level control");
-
-  // Command to control saving tracks
   fSaveParticlesCmd = new G4UIcommand("/g4pet/run/saveParticles", this);
-  fSaveParticlesCmd->SetGuidance("Enable/disable saving the Tracks n-tuple.");
-  fSaveParticlesCmd->SetParameter(
-      new G4UIparameter("value", 'b', true)); // 'b' for boolean
+  fSaveParticlesCmd->SetParameter(new G4UIparameter("value", 'b', true));
   fSaveParticlesCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
-
-  // Command to control saving hits
   fSaveHitsCmd = new G4UIcommand("/g4pet/run/saveHits", this);
-  fSaveHitsCmd->SetGuidance("Enable/disable saving the Hits n-tuple.");
   fSaveHitsCmd->SetParameter(new G4UIparameter("value", 'b', true));
   fSaveHitsCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
-
-  // Command to set hit energy threshold
-  fHitEnergyThresholdCmd =
-      new G4UIcmdWithADoubleAndUnit("/g4pet/run/hitEnergyThreshold", this);
-  fHitEnergyThresholdCmd->SetGuidance(
-      "Set the energy threshold for saving hits.");
+  fHitEnergyThresholdCmd = new G4UIcmdWithADoubleAndUnit("/g4pet/run/hitEnergyThreshold", this);
   fHitEnergyThresholdCmd->SetParameterName("energy", true);
   fHitEnergyThresholdCmd->SetDefaultValue(0.0);
   fHitEnergyThresholdCmd->SetUnitCategory("Energy");
   fHitEnergyThresholdCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
 }
 
-RunAction::~RunAction() {
-  // The G4AnalysisManager is a singleton and is deleted by Geant4,
-  // so we don't delete it here.
-
-  // Commenting out all deletions to prevent segfault on exit
-  // delete fSaveParticlesCmd;
-  // delete fSaveHitsCmd;
-  // delete fHitEnergyThresholdCmd;
-  // delete fRunDir;
-  // delete fG4petDir; // Avoid double deletion if shared/conflicting with
-  // EventAction
-}
+RunAction::~RunAction() {}
 
 void RunAction::SetNewValue(G4UIcommand *command, G4String newValue) {
   if (command == fSaveParticlesCmd) {
@@ -75,83 +43,55 @@ void RunAction::SetNewValue(G4UIcommand *command, G4String newValue) {
 }
 
 void RunAction::BeginOfRunAction(const G4Run * /*aRun*/) {
-  // Get the analysis manager
   auto analysisManager = G4AnalysisManager::Instance();
-
-  // Open an output file. The filename can be set with a macro
-  // command `/analysis/setFileName new_name.hdf5`
-  G4cout << "--> RunAction::BeginOfRunAction: Opening Analysis File..." << G4endl;
-  analysisManager->OpenFile();
-
+  G4cout << "--> RunAction::BeginOfRunAction: Opening output.hdf5" << G4endl;
+  analysisManager->OpenFile("output.hdf5");
   if (fSaveParticles) {
-
-    // --- Create N-tuple for Particle Tracks (ID 0) ---
-    // This n-tuple will store detailed information for each particle
-    // trajectory.
     analysisManager->CreateNtuple("Tracks", "Particle Trajectories");
-    analysisManager->CreateNtupleIColumn("EventID");        // 0
-    analysisManager->CreateNtupleSColumn("ParticleName");   // 1
-    analysisManager->CreateNtupleIColumn("TrackID");        // 2
-    analysisManager->CreateNtupleIColumn("ParentID");       // 3
-    analysisManager->CreateNtupleDColumn("Mass");           // 4 (in MeV)
-    analysisManager->CreateNtupleDColumn("InitialPosX");    // 5 (in mm)
-    analysisManager->CreateNtupleDColumn("InitialPosY");    // 6 (in mm)
-    analysisManager->CreateNtupleDColumn("InitialPosZ");    // 7 (in mm)
-    analysisManager->CreateNtupleDColumn("InitialTime");    // 8 (in ns)
-    analysisManager->CreateNtupleDColumn("FinalPosX");      // 9 (in mm)
-    analysisManager->CreateNtupleDColumn("FinalPosY");      // 10 (in mm)
-    analysisManager->CreateNtupleDColumn("FinalPosZ");      // 11 (in mm)
-    analysisManager->CreateNtupleDColumn("FinalTime");      // 12 (in ns)
-    analysisManager->CreateNtupleDColumn("InitialMomX");    // 13 (in MeV/c)
-    analysisManager->CreateNtupleDColumn("InitialMomY");    // 14 (in MeV/c)
-    analysisManager->CreateNtupleDColumn("InitialMomZ");    // 15 (in MeV/c)
-    analysisManager->CreateNtupleDColumn("FinalMomX");      // 16 (in MeV/c)
-    analysisManager->CreateNtupleDColumn("FinalMomY");      // 17 (in MeV/c)
-    analysisManager->CreateNtupleDColumn("FinalMomZ");      // 18 (in MeV/c)
-    analysisManager->CreateNtupleSColumn("InitialVolume");  // 19
-    analysisManager->CreateNtupleSColumn("FinalVolume");    // 20
-    analysisManager->CreateNtupleSColumn("CreatorProcess"); // 21
-    analysisManager->FinishNtuple(0); // Finalize the first n-tuple
+    analysisManager->CreateNtupleIColumn("EventID");
+    analysisManager->CreateNtupleSColumn("ParticleName");
+    analysisManager->CreateNtupleIColumn("TrackID");
+    analysisManager->CreateNtupleIColumn("ParentID");
+    analysisManager->CreateNtupleDColumn("Mass");
+    analysisManager->CreateNtupleDColumn("InitialPosX");
+    analysisManager->CreateNtupleDColumn("InitialPosY");
+    analysisManager->CreateNtupleDColumn("InitialPosZ");
+    analysisManager->CreateNtupleDColumn("InitialTime");
+    analysisManager->CreateNtupleDColumn("FinalPosX");
+    analysisManager->CreateNtupleDColumn("FinalPosY");
+    analysisManager->CreateNtupleDColumn("FinalPosZ");
+    analysisManager->CreateNtupleDColumn("FinalTime");
+    analysisManager->CreateNtupleDColumn("InitialMomX");
+    analysisManager->CreateNtupleDColumn("InitialMomY");
+    analysisManager->CreateNtupleDColumn("InitialMomZ");
+    analysisManager->CreateNtupleDColumn("FinalMomX");
+    analysisManager->CreateNtupleDColumn("FinalMomY");
+    analysisManager->CreateNtupleDColumn("FinalMomZ");
+    analysisManager->CreateNtupleSColumn("InitialVolume");
+    analysisManager->CreateNtupleSColumn("FinalVolume");
+    analysisManager->CreateNtupleSColumn("CreatorProcess");
+    analysisManager->FinishNtuple(0);
   }
-
   if (fSaveHits) {
-
-    // If we're also saving the particles, the ntuple ID will be 1.
-    // Otherwise, it will be 0.
-    G4int hits_ntuple_ID = 0;
-    if (fSaveParticles) {
-      hits_ntuple_ID = 1;
-    }
-
-    // --- Create N-tuple for Sensitive Detector Hits (ID 1) ---
-    // This n-tuple stores information from every hit in any sensitive detector.
+    G4int hits_ntuple_ID = fSaveParticles ? 1 : 0;
     analysisManager->CreateNtuple("Hits", "Sensitive Detector Hits");
-    analysisManager->CreateNtupleIColumn("EventID"); // 0
-    // analysisManager->CreateNtupleSColumn("DetectorName"); // Removed for disk
-    // space analysisManager->CreateNtupleSColumn("PhysicalVolumeName"); //
-    // Removed analysisManager->CreateNtupleSColumn("VolumeName");   // Removed
-    analysisManager->CreateNtupleIColumn("CopyNo");       // 1 (was 4)
-    analysisManager->CreateNtupleSColumn("ParticleName"); // 2 (was 5)
-    analysisManager->CreateNtupleIColumn("TrackID");      // 3 (was 6)
-    analysisManager->CreateNtupleIColumn("ParentID");     // 4 (was 7)
-    analysisManager->CreateNtupleDColumn("Edep");         // 5 (was 8) (in MeV)
-    analysisManager->CreateNtupleDColumn("PosX");         // 6 (was 9) (in mm)
-    analysisManager->CreateNtupleDColumn("PosY");         // 7 (was 10) (in mm)
-    analysisManager->CreateNtupleDColumn("PosZ");         // 8 (was 11) (in mm)
-    analysisManager->CreateNtupleDColumn("Time");         // 9 (was 12) (in ns)
-    analysisManager->FinishNtuple(
-        fSaveParticles); // Finalize the second n-tuple
+    analysisManager->CreateNtupleIColumn("EventID");
+    analysisManager->CreateNtupleIColumn("CopyNo");
+    analysisManager->CreateNtupleSColumn("ParticleName");
+    analysisManager->CreateNtupleIColumn("TrackID");
+    analysisManager->CreateNtupleIColumn("ParentID");
+    analysisManager->CreateNtupleDColumn("Edep");
+    analysisManager->CreateNtupleDColumn("PosX");
+    analysisManager->CreateNtupleDColumn("PosY");
+    analysisManager->CreateNtupleDColumn("PosZ");
+    analysisManager->CreateNtupleDColumn("Time");
+    analysisManager->FinishNtuple(hits_ntuple_ID);
   }
 }
 
 void RunAction::EndOfRunAction(const G4Run * /*aRun*/) {
   auto analysisManager = G4AnalysisManager::Instance();
-
-  // Write the n-tuples to the file.
-  // In a multi-threaded run, this method is called only by the master thread
-  // after all worker threads have finished, and the manager handles merging.
+  G4cout << "--> RunAction::EndOfRunAction: Writing and Closing..." << G4endl;
   analysisManager->Write();
-
-  // Close the file.
   analysisManager->CloseFile();
 }

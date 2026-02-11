@@ -2,7 +2,7 @@
   "defines": {},
   "materials": {
     "G4_Galactic": {
-      "id": "6c0b8663-f579-4fc6-beea-8fce95d49d1a",
+      "id": "6b4a47e9-128a-48e0-8cb3-65946836b1bc",
       "name": "G4_Galactic",
       "mat_type": "standard",
       "Z_expr": "1",
@@ -15,7 +15,7 @@
       "components": []
     },
     "G4_AIR": {
-      "id": "19b03a35-0758-4120-9674-658c77cd3bd4",
+      "id": "9613ba5c-a591-4d6f-be73-679111bf8e97",
       "name": "G4_AIR",
       "mat_type": "nist",
       "Z_expr": null,
@@ -28,7 +28,7 @@
       "components": []
     },
     "G4_Si": {
-      "id": "da7fd6ab-94ea-476c-aa57-a2dcb8d3244c",
+      "id": "4d8950e5-3ea6-4e41-85e8-34f8d547ab76",
       "name": "G4_Si",
       "mat_type": "nist",
       "Z_expr": null,
@@ -45,7 +45,7 @@
   "isotopes": {},
   "solids": {
     "world_solid": {
-      "id": "6ab8a66f-5a2f-4db1-96f3-dcbdad44c0fc",
+      "id": "037f894f-d834-4de3-a9ca-5d8d7d30766a",
       "name": "world_solid",
       "type": "box",
       "raw_parameters": {
@@ -60,7 +60,7 @@
       }
     },
     "box_solid": {
-      "id": "3428efde-d1e2-4a21-9e37-bfea9eb4b44a",
+      "id": "27630a06-cfdd-4c24-ab4c-8b5588f0c02e",
       "name": "box_solid",
       "type": "box",
       "raw_parameters": {
@@ -75,7 +75,7 @@
       }
     },
     "detector_plate_solid": {
-      "id": "c5130166-48aa-465b-80b5-d6d9863ed8b6",
+      "id": "a0fdf870-8da9-4cbc-99d6-2c2da777fba1",
       "name": "detector_plate_solid",
       "type": "box",
       "raw_parameters": {
@@ -92,7 +92,7 @@
   },
   "logical_volumes": {
     "World": {
-      "id": "5af59829-c512-4daa-a4ff-462fde4a807b",
+      "id": "2aa6acc3-dcaf-4a93-92e8-9ea55afb4388",
       "name": "World",
       "solid_ref": "world_solid",
       "material_ref": "G4_AIR",
@@ -108,7 +108,7 @@
       "content_type": "physvol",
       "content": [
         {
-          "id": "63b3deb2-4365-4ef8-b888-7fde86fa22c4",
+          "id": "72cacb86-88e0-49a0-b588-266899211f58",
           "name": "detector_placement",
           "volume_ref": "detector_plate_LV",
           "copy_number_expr": "0",
@@ -148,7 +148,7 @@
       ]
     },
     "box_LV": {
-      "id": "999bf1de-0650-45e1-95ab-4d62f55b13cf",
+      "id": "c5217b60-3063-4002-b89d-fb379c4b1391",
       "name": "box_LV",
       "solid_ref": "box_solid",
       "material_ref": "G4_Galactic",
@@ -165,7 +165,7 @@
       "content": []
     },
     "detector_plate_LV": {
-      "id": "d897a6cb-6a6e-4a9e-a39a-d3f70ec30d03",
+      "id": "b1e160f9-3432-4037-9953-104e371060df",
       "name": "detector_plate_LV",
       "solid_ref": "detector_plate_solid",
       "material_ref": "G4_Si",
@@ -189,12 +189,12 @@
   "border_surfaces": {},
   "sources": {
     "electron_beam": {
-      "id": "fa18fee2-9355-4e84-8869-3db1cde3cc5e",
+      "id": "5a1a26d1-4d6a-4282-9fcc-68b9ad74ff8b",
       "name": "electron_beam",
       "type": "gps",
       "gps_commands": {
         "particle": "e-",
-        "energy": "5 MeV",
+        "energy": "10 MeV",
         "position": "0 0 -100 mm",
         "direction": "0 0 1"
       },
@@ -219,7 +219,7 @@
     }
   },
   "active_source_ids": [
-    "fa18fee2-9355-4e84-8869-3db1cde3cc5e"
+    "5a1a26d1-4d6a-4282-9fcc-68b9ad74ff8b"
   ],
   "ui_groups": {
     "define": [],

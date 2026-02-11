@@ -2875,10 +2875,22 @@ async function handleDownloadSimData() {
     
     // Create a temporary link to trigger the browser download
     const url = `/api/simulation/download/${versionId}/${jobId}`;
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `sim_${jobId.substring(0, 8)}_output.hdf5`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "Download failed");
+        }
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = `sim_${jobId.substring(0, 8)}_output.hdf5`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+        UIManager.showError("Download failed: " + error.message);
+    }
 }

@@ -1717,7 +1717,7 @@
                         <button id="saveProjectButton">Export JSON...</button>
                         <button id="exportGdmlButton">Export GDML...</button>
                         <hr style="margin: 5px 0;">
-                        <button id="downloadSimDataButton" disabled>Download Latest Results (HDF5)</button>
+                        <button id="downloadSimDataButton" disabled>Download Hits/Particles (HDF5)</button>
                         <hr style="margin: 5px 0;">
                         <button id="setApiKeyButton">Set Gemini API Key...</button>
                     </div>
@@ -2783,7 +2783,7 @@
             }
         }
     </script>
-    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=4"></script>
+    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=5"></script>
     {% if app_mode != 'local' %}
     <div id="app-footer"
         style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">
