@@ -68,6 +68,9 @@ project_managers = {}
 PROJECTS_BASE_DIR = os.path.join(os.getcwd(), "projects")
 os.makedirs(PROJECTS_BASE_DIR, exist_ok=True)
 
+# Examples directory
+EXAMPLES_DIR = os.path.join(os.getcwd(), "examples", "projects")
+
 # For timeout
 last_access = {}
 
@@ -114,6 +117,16 @@ def get_project_manager_for_session() -> ProjectManager:
         if 'gemini_api_key' not in session and SERVER_GEMINI_API_KEY:
             print("Using SERVER_GEMINI_API_KEY for this session.")
             session['gemini_api_key'] = SERVER_GEMINI_API_KEY
+
+        # --- Seed Example Projects ---
+        if os.path.isdir(EXAMPLES_DIR):
+            for example_name in os.listdir(EXAMPLES_DIR):
+                example_path = os.path.join(EXAMPLES_DIR, example_name)
+                if os.path.isdir(example_path):
+                    target_path = os.path.join(pm.projects_dir, example_name)
+                    if not os.path.exists(target_path):
+                        print(f"Seeding example project: {example_name}")
+                        shutil.copytree(example_path, target_path)
 
     last_access[user_id] = time.time()
     return project_managers[user_id]

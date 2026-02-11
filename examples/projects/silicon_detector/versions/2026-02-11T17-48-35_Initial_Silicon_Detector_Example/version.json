@@ -1,0 +1,235 @@
+{
+  "defines": {},
+  "materials": {
+    "G4_Galactic": {
+      "id": "6c0b8663-f579-4fc6-beea-8fce95d49d1a",
+      "name": "G4_Galactic",
+      "mat_type": "standard",
+      "Z_expr": "1",
+      "A_expr": "1.01",
+      "density_expr": "1.0e-25",
+      "_evaluated_Z": 1,
+      "_evaluated_A": 1.01,
+      "_evaluated_density": 1e-25,
+      "state": "gas",
+      "components": []
+    },
+    "G4_AIR": {
+      "id": "19b03a35-0758-4120-9674-658c77cd3bd4",
+      "name": "G4_AIR",
+      "mat_type": "nist",
+      "Z_expr": null,
+      "A_expr": null,
+      "density_expr": "0.0",
+      "_evaluated_Z": null,
+      "_evaluated_A": null,
+      "_evaluated_density": 0.0,
+      "state": null,
+      "components": []
+    },
+    "G4_Si": {
+      "id": "da7fd6ab-94ea-476c-aa57-a2dcb8d3244c",
+      "name": "G4_Si",
+      "mat_type": "nist",
+      "Z_expr": null,
+      "A_expr": null,
+      "density_expr": "0.0",
+      "_evaluated_Z": null,
+      "_evaluated_A": null,
+      "_evaluated_density": 0.0,
+      "state": null,
+      "components": []
+    }
+  },
+  "elements": {},
+  "isotopes": {},
+  "solids": {
+    "world_solid": {
+      "id": "6ab8a66f-5a2f-4db1-96f3-dcbdad44c0fc",
+      "name": "world_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "1000",
+        "y": "1000",
+        "z": "1000"
+      },
+      "_evaluated_parameters": {
+        "x": 1000,
+        "y": 1000,
+        "z": 1000
+      }
+    },
+    "box_solid": {
+      "id": "3428efde-d1e2-4a21-9e37-bfea9eb4b44a",
+      "name": "box_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "100",
+        "y": "100",
+        "z": "100"
+      },
+      "_evaluated_parameters": {
+        "x": 100,
+        "y": 100,
+        "z": 100
+      }
+    },
+    "detector_plate_solid": {
+      "id": "c5130166-48aa-465b-80b5-d6d9863ed8b6",
+      "name": "detector_plate_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "50",
+        "y": "50",
+        "z": "1"
+      },
+      "_evaluated_parameters": {
+        "x": 50,
+        "y": 50,
+        "z": 1
+      }
+    }
+  },
+  "logical_volumes": {
+    "World": {
+      "id": "5af59829-c512-4daa-a4ff-462fde4a807b",
+      "name": "World",
+      "solid_ref": "world_solid",
+      "material_ref": "G4_AIR",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": [
+        {
+          "id": "63b3deb2-4365-4ef8-b888-7fde86fa22c4",
+          "name": "detector_placement",
+          "volume_ref": "detector_plate_LV",
+          "copy_number_expr": "0",
+          "copy_number": 0,
+          "position": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World",
+          "_evaluated_position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      ]
+    },
+    "box_LV": {
+      "id": "999bf1de-0650-45e1-95ab-4d62f55b13cf",
+      "name": "box_LV",
+      "solid_ref": "box_solid",
+      "material_ref": "G4_Galactic",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": []
+    },
+    "detector_plate_LV": {
+      "id": "d897a6cb-6a6e-4a9e-a39a-d3f70ec30d03",
+      "name": "detector_plate_LV",
+      "solid_ref": "detector_plate_solid",
+      "material_ref": "G4_Si",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": true,
+      "content_type": "physvol",
+      "content": []
+    }
+  },
+  "assemblies": {},
+  "world_volume_ref": "World",
+  "optical_surfaces": {},
+  "skin_surfaces": {},
+  "border_surfaces": {},
+  "sources": {
+    "electron_beam": {
+      "id": "fa18fee2-9355-4e84-8869-3db1cde3cc5e",
+      "name": "electron_beam",
+      "type": "gps",
+      "gps_commands": {
+        "particle": "e-",
+        "energy": "5 MeV",
+        "position": "0 0 -100 mm",
+        "direction": "0 0 1"
+      },
+      "position": {
+        "x": "0",
+        "y": "0",
+        "z": "-100"
+      },
+      "activity": 1.0,
+      "confine_to_pv": null,
+      "volume_link_id": null,
+      "_evaluated_position": {
+        "x": 0,
+        "y": 0,
+        "z": -100
+      },
+      "_evaluated_rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  },
+  "active_source_ids": [
+    "fa18fee2-9355-4e84-8869-3db1cde3cc5e"
+  ],
+  "ui_groups": {
+    "define": [],
+    "material": [],
+    "element": [],
+    "solid": [],
+    "logical_volume": [],
+    "assembly": [],
+    "optical_surface": [],
+    "skin_surface": [],
+    "border_surface": []
+  }
+}
