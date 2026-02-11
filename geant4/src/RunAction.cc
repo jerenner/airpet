@@ -2,6 +2,7 @@
 #include "EventAction.hh" // We need the full definition here
 
 #include "G4Hdf5AnalysisManager.hh"
+using G4AnalysisManager = G4Hdf5AnalysisManager;
 #include "G4Run.hh"
 #include "G4RunManager.hh"
 #include "G4SystemOfUnits.hh"

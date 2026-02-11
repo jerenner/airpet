@@ -5,6 +5,7 @@
 #include "TrackingAction.hh"
 
 #include "G4Hdf5AnalysisManager.hh"
+using G4AnalysisManager = G4Hdf5AnalysisManager;
 #include "G4Event.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4HCtable.hh"

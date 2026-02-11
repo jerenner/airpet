@@ -22,7 +22,7 @@ import sched
 import time
 
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response, session
+from flask import Flask, request, jsonify, render_template, Response, session, send_file
 from flask_cors import CORS
 
 from dotenv import load_dotenv, set_key, find_dotenv
@@ -196,7 +196,7 @@ def get_gemini_client_for_session() -> client.Client | None:
 # Geant4 integration
 
 # --- Helper to get Geant4 environment variables from Conda ---
-def get_geant4_env():
+def get_geant4_env(sim_params=None):
     """
     Attempts to locate Geant4 data directories within the conda environment
     and returns a dictionary of environment variables.
@@ -230,6 +230,13 @@ def get_geant4_env():
             if matches:
                 env[var] = sorted(matches)[-1]
                 
+    # Add physics configuration from sim_params
+    if sim_params:
+        if 'physics_list' in sim_params:
+            env['G4PHYSICSLIST'] = str(sim_params['physics_list'])
+        if 'optical_physics' in sim_params:
+            env['G4OPTICALPHYSICS'] = 'true' if sim_params['optical_physics'] else 'false'
+
     # Also ensure the binary directory is in PATH
     bin_dir = os.path.join(conda_prefix, "bin")
     if bin_dir not in env["PATH"]:
@@ -334,7 +341,7 @@ def run_simulation():
                         command, cwd=run_dir,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                         text=True, bufsize=1,
-                        env=get_geant4_env()
+                        env=get_geant4_env(sim_params)
                     )
                     with SIMULATION_LOCK:
                          SIMULATION_PROCESSES[job_id] = process
@@ -416,7 +423,7 @@ def run_simulation():
                             cmd, cwd=run_dir,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, bufsize=1,
-                            env=get_geant4_env()
+                            env=get_geant4_env(sim_params)
                         )
                         procs.append(p)
                     
@@ -814,6 +821,26 @@ def get_simulation_analysis(version_id, job_id):
 
     except Exception as e:
         traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/simulation/download/<version_id>/<job_id>', methods=['GET'])
+def download_simulation_data(version_id, job_id):
+    """
+    Returns the raw HDF5 simulation output for download.
+    """
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    output_path = os.path.join(run_dir, "output.hdf5")
+
+    if not os.path.exists(output_path):
+        return jsonify({"success": False, "error": "Simulation output not found."}), 404
+
+    try:
+        # Return the file as an attachment
+        filename = f"sim_{job_id[:8]}_output.hdf5"
+        return send_file(output_path, as_attachment=True, download_name=filename)
+    except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])

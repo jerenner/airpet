@@ -51,7 +51,8 @@ const ITEMS_PER_GROUP = 100;
 let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
-    drawTracksCheckbox, drawTracksRangeInput;
+    drawTracksCheckbox, drawTracksRangeInput,
+    simPhysicsListSelect, simOpticalPhysicsCheckbox;
 
 // Analysis control variables
 let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
@@ -113,7 +114,8 @@ let callbacks = {
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
     onSourceActivationToggled: (sourceId) => { },
-    onRefreshAnalysisClicked: (energyBins, spatialBins) => { }
+    onRefreshAnalysisClicked: (energyBins, spatialBins) => { },
+    onDownloadSimDataClicked: () => { }
 };
 
 // --- Initialization ---
@@ -240,6 +242,8 @@ export function initUI(cb) {
     drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
     drawTracksRangeInput = document.getElementById('drawTracksRange');
     simPrintProgressInput = document.getElementById('simPrintProgress');
+    simPhysicsListSelect = document.getElementById('simPhysicsList');
+    simOpticalPhysicsCheckbox = document.getElementById('simOpticalPhysics');
 
     // Analysis elements
     energyBinsInput = document.getElementById('energyBinsInput');
@@ -304,6 +308,10 @@ export function initUI(cb) {
     newProjectButton.addEventListener('click', callbacks.onNewProjectClicked);
     saveProjectButton.addEventListener('click', callbacks.onSaveProjectClicked);
     exportGdmlButton.addEventListener('click', callbacks.onExportGdmlClicked);
+    const downloadSimDataButton = document.getElementById('downloadSimDataButton');
+    if (downloadSimDataButton) {
+        downloadSimDataButton.addEventListener('click', callbacks.onDownloadSimDataClicked);
+    }
 
     deleteSelectedObjectButton.addEventListener('click', callbacks.onDeleteSelectedClicked);
 
@@ -2153,7 +2161,9 @@ export function getSimOptions() {
         print_progress: parseInt(simPrintProgressInput.value, 10),
         save_hits: simSaveHitsCheckbox.checked,
         save_particles: simSaveParticlesCheckbox.checked,
-        save_tracks_range: simSaveTracksRangeInput.value
+        save_tracks_range: simSaveTracksRangeInput.value,
+        physics_list: simPhysicsListSelect ? simPhysicsListSelect.value : 'FTFP_BERT',
+        optical_physics: simOpticalPhysicsCheckbox ? simOpticalPhysicsCheckbox.checked : false
     };
 }
 
@@ -2343,4 +2353,9 @@ export function clearAnalysisCharts() {
         if (el) el.innerHTML = '';
     });
     setAnalysisStatus('No analysis data loaded.');
+}
+
+export function setDownloadButtonEnabled(isEnabled) {
+    const btn = document.getElementById('downloadSimDataButton');
+    if (btn) btn.disabled = !isEnabled;
 }
