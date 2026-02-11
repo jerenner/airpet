@@ -4,7 +4,7 @@
 #include "RunAction.hh"        // To access RunAction methods if needed
 #include "TrackingAction.hh"
 
-#include "G4AnalysisManager.hh"
+#include "G4Hdf5AnalysisManager.hh"
 #include "G4Event.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4HCtable.hh"
@@ -90,8 +90,8 @@ void EventAction::BeginOfEventAction(const G4Event * /*event*/) {
 }
 
 void EventAction::EndOfEventAction(const G4Event *event) {
-  // Get the G4AnalysisManager instance
-  auto analysisManager = G4AnalysisManager::Instance();
+  // Get the G4Hdf5AnalysisManager instance
+  auto analysisManager = G4Hdf5AnalysisManager::Instance();
 
   // --- Get the RunAction to check flags on ntuples ---
   auto runAction = static_cast<const RunAction *>(

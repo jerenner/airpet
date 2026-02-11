@@ -3,6 +3,7 @@
 
 <head>
     <title>AIrPET</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
     <style>
         body {
             margin: 0;
@@ -1796,6 +1797,7 @@
             <div id="bottom_panel_tabs" class="tab_navigation">
                 <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
                 <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
+                <button class="tab_button" data-tab="tab_analysis_panel">Analysis</button>
                 <button id="toggleBottomPanelBtn" title="Expand/Collapse Panel">↑</button>
             </div>
             <div id="bottom_panel_content" class="tab_content_area">
@@ -1839,6 +1841,30 @@
                     </div>
                     <div id="sim_console_wrapper">
                         <pre id="sim_console"></pre>
+                    </div>
+                </div>
+
+                <!-- Analysis Panel Content -->
+                <div id="tab_analysis_panel" class="tab_pane">
+                    <div id="analysis_controls"
+                        style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-shrink: 0; padding: 5px;">
+                        <label for="energyBinsInput" style="font-size: 12px; font-weight: bold;">Energy Bins:</label>
+                        <input type="number" id="energyBinsInput" value="100" min="1" step="1" style="width: 50px;">
+                        <label for="spatialBinsInput" style="font-size: 12px; font-weight: bold;">Spatial Bins:</label>
+                        <input type="number" id="spatialBinsInput" value="50" min="1" step="1" style="width: 50px;">
+                        <button id="refreshAnalysisButton" style="font-size: 12px; cursor: pointer;">🔄 Refresh Analysis</button>
+                        <div id="analysis_status"
+                            style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
+                            <span>No analysis data loaded.</span>
+                        </div>
+                    </div>
+                    <div id="analysis_charts_container"
+                        style="flex-grow: 1; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #fff; border-radius: 4px;">
+                        <div id="energy_spectrum_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
+                        <div id="particle_breakdown_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
+                        <div id="xy_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
+                        <div id="xz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
+                        <div id="yz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
                     </div>
                 </div>
             </div>

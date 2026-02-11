@@ -230,15 +230,35 @@ def process_solid(solid_shape, state, grouping_name):
                 
             for i in range(1, poly.NbTriangles() + 1):
                 n1, n2, n3 = triangles.Value(i).Get()
+                
+                # --- NEW: Area and Edge Check ---
+                v1_idx = local_to_global_idx[n1-1]
+                v2_idx = local_to_global_idx[n2-1]
+                v3_idx = local_to_global_idx[n3-1]
+                
+                # Check for degenerate triangle (same vertices)
+                if v1_idx == v2_idx or v2_idx == v3_idx or v3_idx == v1_idx:
+                    continue
+                
+                # Calculate sides to check for tiny triangles (Geant4 11.x strictness)
+                # P0->P1, P1->P2, P2->P0
+                p1 = unique_vertices[v1_idx]
+                p2 = unique_vertices[v2_idx]
+                p3 = unique_vertices[v3_idx]
+                
+                def dist_sq(a, b):
+                    return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2
+                
+                # Skip if any side is effectively zero (less than 1e-12 mm^2 distance)
+                EPS = 1e-12
+                if dist_sq(p1, p2) < EPS or dist_sq(p2, p3) < EPS or dist_sq(p3, p1) < EPS:
+                    continue
+
                 # Correct winding order based on face orientation
                 if is_reversed:
-                    all_faces.append((local_to_global_idx[n1-1], 
-                                      local_to_global_idx[n3-1], 
-                                      local_to_global_idx[n2-1]))
+                    all_faces.append((v1_idx, v3_idx, v2_idx))
                 else:
-                    all_faces.append((local_to_global_idx[n1-1], 
-                                      local_to_global_idx[n2-1], 
-                                      local_to_global_idx[n3-1]))
+                    all_faces.append((v1_idx, v2_idx, v3_idx))
         
         breptool_face_explorer.Next()
     
