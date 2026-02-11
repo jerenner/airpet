@@ -188,7 +188,8 @@ async function initializeApp() {
         onSliceAxisChanged: handleSliceAxisChange,
         onProcessLorsClicked: handleProcessLors,
         onProcessLorsClicked: handleProcessLors,
-        onGenerateSensitivityClicked: handleGenerateSensitivity
+        onGenerateSensitivityClicked: handleGenerateSensitivity,
+        onRefreshAnalysisClicked: handleRefreshAnalysis
     });
 
     // Initialize the 3D scene and its controls
@@ -1059,6 +1060,9 @@ async function handleLoadRunResults(versionId, jobId) {
 
         // Step 6: Check Sensitivity Matrix Status
         await checkSensitivityStatus(versionId, jobId);
+
+        // Step 7: Clear old analysis
+        UIManager.clearAnalysisCharts();
 
         UIManager.hideHistoryPanel();
 
@@ -2815,5 +2819,39 @@ async function pollLorStatus() {
         UIManager.setLorStatus(`Polling failed: ${error.message}`, true);
         clearInterval(AppState.lorStatusPoller);
         AppState.lorStatusPoller = null;
+    }
+}
+/**
+ * Fetches and displays the physics analysis for the currently loaded simulation run.
+ * @param {number} energyBins 
+ * @param {number} spatialBins 
+ */
+async function handleRefreshAnalysis(energyBins, spatialBins) {
+    if (!AppState.lastSimJobId || !AppState.lastSimVersionId) {
+        UIManager.showError("No simulation run loaded to analyze.");
+        return;
+    }
+
+    console.log(`Refreshing physics analysis for job ${AppState.lastSimJobId}...`);
+    UIManager.setAnalysisStatus("Loading analysis data...");
+
+    try {
+        const result = await APIService.fetchSimulationAnalysis(
+            AppState.lastSimVersionId,
+            AppState.lastSimJobId,
+            energyBins,
+            spatialBins
+        );
+
+        if (result.success) {
+            UIManager.updateAnalysisCharts(result);
+        } else {
+            UIManager.showError("Failed to fetch analysis: " + result.error);
+            UIManager.setAnalysisStatus("Error loading analysis data.");
+        }
+    } catch (error) {
+        console.error("Analysis refresh failed:", error);
+        UIManager.showError("An error occurred during analysis: " + error.message);
+        UIManager.setAnalysisStatus("Error loading analysis data.");
     }
 }

@@ -53,6 +53,9 @@ let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput;
 
+// Analysis control variables
+let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
+
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
     reconImageView, reconViewerPanel, sliceSlider, sliceIndicator, reconAxisSelect, reconModalButton,
@@ -109,7 +112,8 @@ let callbacks = {
     onAiGenerateClicked: (promptText) => { },
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
-    onSourceActivationToggled: (sourceId) => { }
+    onSourceActivationToggled: (sourceId) => { },
+    onRefreshAnalysisClicked: (energyBins, spatialBins) => { }
 };
 
 // --- Initialization ---
@@ -236,6 +240,12 @@ export function initUI(cb) {
     drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
     drawTracksRangeInput = document.getElementById('drawTracksRange');
     simPrintProgressInput = document.getElementById('simPrintProgress');
+
+    // Analysis elements
+    energyBinsInput = document.getElementById('energyBinsInput');
+    spatialBinsInput = document.getElementById('spatialBinsInput');
+    refreshAnalysisButton = document.getElementById('refreshAnalysisButton');
+    analysisStatusDisplay = document.getElementById('analysis_status');
 
     // Reconstruction elements
     reconModal = document.getElementById('reconModal');
@@ -461,6 +471,15 @@ export function initUI(cb) {
     saveSimOptionsButton.addEventListener('click', callbacks.onSaveSimOptions);
     drawTracksCheckbox.addEventListener('change', callbacks.onDrawTracksToggle);
     drawTracksRangeInput.addEventListener('change', callbacks.onDrawTracksToggle); // Also trigger on range change
+
+    // Analysis listener
+    if (refreshAnalysisButton) {
+        refreshAnalysisButton.addEventListener('click', () => {
+            const energyBins = parseInt(energyBinsInput.value, 10);
+            const spatialBins = parseInt(spatialBinsInput.value, 10);
+            callbacks.onRefreshAnalysisClicked(energyBins, spatialBins);
+        });
+    }
 
     // Reconstruction listeners
     reconModalButton.addEventListener('click', () => callbacks.onReconModalOpen());
@@ -2239,4 +2258,89 @@ export function getSensitivityParams() {
         voxel_size: parseFloat(document.getElementById('reconVoxelSize').value.split(',')[0]), // assuming isotropic for simplicity in UI, but backend handles tuple
         matrix_size: parseInt(document.getElementById('reconImageSize').value.split(',')[0]) // assuming isotropic
     };
+}
+// --- Analysis Visualization ---
+
+/**
+ * Updates the analysis charts with the provided data.
+ * @param {Object} data - The analysis data object from the backend.
+ */
+export function updateAnalysisCharts(data) {
+    if (!data || !data.success) return;
+    const analysis = data.analysis;
+
+    // 1. Energy Spectrum
+    const spectrum = analysis.energy_spectrum;
+    if (spectrum && spectrum.counts.length > 0) {
+        const binCenters = spectrum.bin_edges.slice(0, -1).map((edge, i) => (edge + spectrum.bin_edges[i+1]) / 2);
+        const trace = {
+            x: binCenters,
+            y: spectrum.counts,
+            type: 'bar',
+            marker: { color: 'rgb(55, 83, 109)' }
+        };
+        const layout = {
+            title: 'Energy Deposition Spectrum',
+            xaxis: { title: 'Energy (MeV)' },
+            yaxis: { title: 'Hits' },
+            margin: { t: 40, b: 40, l: 50, r: 10 }
+        };
+        Plotly.newPlot('energy_spectrum_chart', [trace], layout);
+    }
+
+    // 2. Particle Breakdown
+    const breakdown = analysis.particle_breakdown;
+    if (breakdown && breakdown.names.length > 0) {
+        const trace = {
+            labels: breakdown.names,
+            values: breakdown.counts,
+            type: 'pie',
+            textinfo: 'label+percent',
+            hole: 0.4
+        };
+        const layout = {
+            title: 'Particle Species Breakdown',
+            margin: { t: 40, b: 10, l: 10, r: 10 }
+        };
+        Plotly.newPlot('particle_breakdown_chart', [trace], layout);
+    }
+
+    // 3. Heatmaps
+    const renderHeatmap = (divId, title, heatmapData) => {
+        if (!heatmapData || heatmapData.z.length === 0) return;
+        const trace = {
+            z: heatmapData.z,
+            x: heatmapData.x_edges,
+            y: heatmapData.y_edges,
+            type: 'heatmap',
+            colorscale: 'Viridis'
+        };
+        const layout = {
+            title: title,
+            xaxis: { title: 'mm' },
+            yaxis: { title: 'mm' },
+            margin: { t: 40, b: 40, l: 50, r: 10 }
+        };
+        Plotly.newPlot(divId, [trace], layout);
+    };
+
+    renderHeatmap('xy_heatmap_chart', 'Hit Distribution (XY)', analysis.heatmaps.xy);
+    renderHeatmap('xz_heatmap_chart', 'Hit Distribution (XZ)', analysis.heatmaps.xz);
+    renderHeatmap('yz_heatmap_chart', 'Hit Distribution (YZ)', analysis.heatmaps.yz);
+    
+    setAnalysisStatus(`Loaded analysis for ${analysis.total_hits} hits.`);
+}
+
+export function setAnalysisStatus(message) {
+    if (analysisStatusDisplay) {
+        analysisStatusDisplay.textContent = message;
+    }
+}
+
+export function clearAnalysisCharts() {
+    ['energy_spectrum_chart', 'particle_breakdown_chart', 'xy_heatmap_chart', 'xz_heatmap_chart', 'yz_heatmap_chart'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+    setAnalysisStatus('No analysis data loaded.');
 }

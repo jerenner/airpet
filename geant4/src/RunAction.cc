@@ -1,7 +1,7 @@
 #include "RunAction.hh"
 #include "EventAction.hh" // We need the full definition here
 
-#include "G4AnalysisManager.hh"
+#include "G4Hdf5AnalysisManager.hh"
 #include "G4Run.hh"
 #include "G4RunManager.hh"
 #include "G4SystemOfUnits.hh"
@@ -15,8 +15,8 @@ RunAction::RunAction()
     : G4UserRunAction(), fSaveParticles(false), fSaveHits(true),
       fHitEnergyThreshold(0.0) {
 
-  // Set up the G4AnalysisManager singleton
-  auto analysisManager = G4AnalysisManager::Instance();
+  // Set up the G4Hdf5AnalysisManager singleton
+  auto analysisManager = G4Hdf5AnalysisManager::Instance();
   analysisManager->SetCompressionLevel(1);
 
   // --- Define the UI commands ---
@@ -79,6 +79,7 @@ void RunAction::BeginOfRunAction(const G4Run * /*aRun*/) {
 
   // Open an output file. The filename can be set with a macro
   // command `/analysis/setFileName new_name.hdf5`
+  G4cout << "--> RunAction::BeginOfRunAction: Opening Analysis File..." << G4endl;
   analysisManager->OpenFile();
 
   if (fSaveParticles) {

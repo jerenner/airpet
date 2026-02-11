@@ -975,3 +975,17 @@ export async function checkLorFile(versionId, jobId) {
     const response = await fetch(`${API_BASE_URL}/api/lors/check/${versionId}/${jobId}`);
     return handleResponse(response);
 }
+
+/**
+ * Fetches the aggregated physics analysis data for a simulation run.
+ * @param {string} versionId 
+ * @param {string} jobId 
+ * @param {number} energyBins 
+ * @param {number} spatialBins 
+ * @returns {Promise<Object>}
+ */
+export async function fetchSimulationAnalysis(versionId, jobId, energyBins = 100, spatialBins = 50) {
+    const url = `${API_BASE_URL}/api/simulation/analysis/${versionId}/${jobId}?energy_bins=${energyBins}&spatial_bins=${spatialBins}`;
+    const response = await fetch(url);
+    return handleResponse(response);
+}

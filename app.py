@@ -195,6 +195,48 @@ def get_gemini_client_for_session() -> client.Client | None:
 # --------------------------------------------------------------------------
 # Geant4 integration
 
+# --- Helper to get Geant4 environment variables from Conda ---
+def get_geant4_env():
+    """
+    Attempts to locate Geant4 data directories within the conda environment
+    and returns a dictionary of environment variables.
+    """
+    env = os.environ.copy()
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    
+    # If not in environment, try common path
+    if not conda_prefix:
+        conda_prefix = "/Users/marth/miniconda/envs/airpet"
+        
+    g4_data_root = os.path.join(conda_prefix, "share", "Geant4", "data")
+    
+    if os.path.isdir(g4_data_root):
+        # Map of variable names to their directory patterns (Geant4 11.x)
+        data_maps = {
+            "G4NEUTRONHPDATA": "NDL",
+            "G4LEDATA": "EMLOW",
+            "G4LEVELGAMMADATA": "PhotonEvaporation",
+            "G4RADIOACTIVEDATA": "RadioactiveDecay",
+            "G4PARTICLEXSDATA": "PARTICLEXS",
+            "G4SAIDDATA": "SAIDDATA",
+            "G4REALSURFACEDATA": "RealSurface",
+            "G4ENSDFSTATEDATA": "ENSDFSTATE",
+            "G4INCLDATA": "INCL",
+            "G4ABLADATA": "ABLA"
+        }
+        
+        for var, pattern in data_maps.items():
+            matches = glob.glob(os.path.join(g4_data_root, f"{pattern}*"))
+            if matches:
+                env[var] = sorted(matches)[-1]
+                
+    # Also ensure the binary directory is in PATH
+    bin_dir = os.path.join(conda_prefix, "bin")
+    if bin_dir not in env["PATH"]:
+        env["PATH"] = bin_dir + os.pathsep + env["PATH"]
+        
+    return env
+
 # --- New Global Configuration ---
 # Path to the Geant4 application directory and executable
 # We assume the script is run from the `virtual-pet` root directory
@@ -291,7 +333,8 @@ def run_simulation():
                     process = subprocess.Popen(
                         command, cwd=run_dir,
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=True, bufsize=1
+                        text=True, bufsize=1,
+                        env=get_geant4_env()
                     )
                     with SIMULATION_LOCK:
                          SIMULATION_PROCESSES[job_id] = process
@@ -372,7 +415,8 @@ def run_simulation():
                         p = subprocess.Popen(
                             cmd, cwd=run_dir,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, bufsize=1
+                            text=True, bufsize=1,
+                            env=get_geant4_env()
                         )
                         procs.append(p)
                     
@@ -634,6 +678,142 @@ def get_simulation_metadata(version_id, job_id):
             metadata = json.load(f)
         return jsonify({"success": True, "metadata": metadata})
     except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/simulation/analysis/<version_id>/<job_id>', methods=['GET'])
+def get_simulation_analysis(version_id, job_id):
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    output_path = os.path.join(run_dir, "output.hdf5")
+
+    if not os.path.exists(output_path):
+        return jsonify({"success": False, "error": "Simulation output not found."}), 404
+
+    try:
+        # Parse query parameters
+        energy_bins = request.args.get('energy_bins', default=100, type=int)
+        spatial_bins = request.args.get('spatial_bins', default=50, type=int)
+
+        analysis_data = {}
+
+        with h5py.File(output_path, 'r') as f:
+            # Check for Hits ntuple
+            if 'default_ntuples/Hits' not in f:
+                 return jsonify({"success": False, "error": "Hits data not found in output file."}), 404
+            
+            hits_group = f['default_ntuples/Hits']
+            
+            # Determine number of valid entries
+            num_entries = None
+            if 'entries' in hits_group:
+                try:
+                    ent_dset = hits_group['entries']
+                    if ent_dset.shape == ():
+                        num_entries = int(ent_dset[()])
+                    else:
+                        num_entries = int(ent_dset[0])
+                except:
+                    pass
+            
+            # Helper to safely read a column
+            def get_col(name):
+                # Handle HDF5 string types properly
+                if name in hits_group:
+                    dset = hits_group[name]
+                    # Check if paginated (Geant4 default for large files) or flat
+                    if isinstance(dset, h5py.Group) and 'pages' in dset:
+                        data = dset['pages'][:]
+                    elif isinstance(dset, h5py.Dataset):
+                        data = dset[:] 
+                    else:
+                        return np.array([])
+                    
+                    # Slice to valid entries if known
+                    if num_entries is not None and len(data) >= num_entries:
+                        return data[:num_entries]
+                    return data
+                return np.array([])
+
+            edep = get_col('Edep')
+            pos_x = get_col('PosX')
+            pos_y = get_col('PosY')
+            pos_z = get_col('PosZ')
+            copy_no = get_col('CopyNo')
+            particle_name_ds = get_col('ParticleName')
+            
+            # 1. Energy Spectrum
+            if len(edep) > 0:
+                hist, bin_edges = np.histogram(edep, bins=energy_bins)
+                analysis_data['energy_spectrum'] = {
+                    'counts': hist.tolist(),
+                    'bin_edges': bin_edges.tolist()
+                }
+            else:
+                 analysis_data['energy_spectrum'] = {'counts': [], 'bin_edges': []}
+
+            # 2. Spatial Heatmaps (XY, XZ, YZ)
+            def compute_heatmap(x, y, bins):
+                if len(x) == 0 or len(y) == 0:
+                    return {'z': [], 'x_edges': [], 'y_edges': []}
+                # Use np.histogram2d
+                # Note: numpy returns (nx, ny), where x is the first dimension (rows).
+                # Plotly expects z as an array of arrays where z[i] is a row.
+                # So we might need to transpose depending on convention.
+                # Usually: z[y][x].
+                # histogram2d returns H[x, y].
+                # So H.T is H[y, x].
+                h, x_edges, y_edges = np.histogram2d(x, y, bins=bins)
+                return {
+                    'z': h.T.tolist(), 
+                    'x_edges': x_edges.tolist(),
+                    'y_edges': y_edges.tolist()
+                }
+
+            analysis_data['heatmaps'] = {
+                'xy': compute_heatmap(pos_x, pos_y, spatial_bins),
+                'xz': compute_heatmap(pos_x, pos_z, spatial_bins),
+                'yz': compute_heatmap(pos_y, pos_z, spatial_bins)
+            }
+
+            # 3. Volume Summary (Hits per CopyNo)
+            if len(copy_no) > 0:
+                unique, counts = np.unique(copy_no, return_counts=True)
+                # Convert to standard python types
+                analysis_data['volume_summary'] = {
+                    'copy_numbers': unique.astype(int).tolist(),
+                    'counts': counts.tolist()
+                }
+            else:
+                analysis_data['volume_summary'] = {'copy_numbers': [], 'counts': []}
+
+            # 4. Particle Species Breakdown
+            if len(particle_name_ds) > 0:
+                p_names = []
+                for n in particle_name_ds:
+                    if isinstance(n, bytes):
+                        p_names.append(n.decode('utf-8'))
+                    else:
+                        p_names.append(str(n))
+                
+                if p_names:
+                    series = pd.Series(p_names)
+                    counts = series.value_counts()
+                    analysis_data['particle_breakdown'] = {
+                        'names': counts.index.tolist(),
+                        'counts': counts.values.tolist()
+                    }
+                else:
+                    analysis_data['particle_breakdown'] = {'names': [], 'counts': []}
+            else:
+                analysis_data['particle_breakdown'] = {'names': [], 'counts': []}
+            
+            analysis_data['total_hits'] = len(edep)
+
+        return jsonify({"success": True, "analysis": analysis_data})
+
+    except Exception as e:
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/simulation/tracks/<version_id>/<job_id>/<event_spec>', methods=['GET'])
