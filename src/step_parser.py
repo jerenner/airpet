@@ -2,7 +2,7 @@
 import os
 
 from OCC.Core.STEPControl import STEPControl_Reader
-from OCC.Core.TopAbs import TopAbs_SOLID, TopAbs_FACE
+from OCC.Core.TopAbs import TopAbs_SOLID, TopAbs_FACE, TopAbs_REVERSED
 from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
@@ -25,8 +25,6 @@ def _trsf_to_dict(trsf: gp_Trsf):
     
     # We will borrow the robust method from G4GDMLWriteDefine.cc via GDMLWriter
     # This avoids gimbal lock and other issues with direct Euler conversion.
-    # Note: This is a conceptual port; the actual math is in your geometry_types.
-    # We can simplify by just getting the ZYX euler angles directly, but must be careful.
     try:
         # GetEulerAngles returns angles in Z-Y'-X'' sequence (Tait-Bryan)
         alpha, beta, gamma = quat.GetEulerAngles(0) # Using default sequence, often ZYX
@@ -92,7 +90,7 @@ def parse_step_file(file_path, options):
     offset_y_success, offset_y = temp_evaluator.evaluate(options.get('offset', {}).get('y', '0'))
     offset_z_success, offset_z = temp_evaluator.evaluate(options.get('offset', {}).get('z', '0'))
     if(not (offset_x_success and offset_y_success and offset_z_success)):
-        global_offset = {'x': '0', 'y': '0', 'z': '0'}
+        global_offset = {'x': 0, 'y': 0, 'z': 0}
     else:
         global_offset = {'x': offset_x, 'y': offset_y, 'z': offset_z}
 
@@ -115,7 +113,7 @@ def parse_step_file(file_path, options):
             name=f"{assembly_name}_placement",
             volume_ref=assembly_name,
             parent_lv_name=parent_lv_name,
-            position_val_or_ref=global_offset
+            position_val_or_ref={'x': str(global_offset['x']), 'y': str(global_offset['y']), 'z': str(global_offset['z'])}
         )
         # We need a way to add this to the main project state, which will be handled by merge.
         # For now, we can add it to a temporary "placements_to_add" list.
@@ -186,12 +184,16 @@ def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, groupin
 
 
 def process_solid(solid_shape, state, grouping_name):
-    """Tessellates a single solid and adds it to the state and assembly."""
+    """Tessellates a single solid with improved quality and vertex deduplication."""
     solid_index = len(state.solids)
     
-    # This is a meshing parameter. Smaller values = finer mesh but slower processing.
-    meshing_quality = 0.5 
-    mesh = BRepMesh_IncrementalMesh(solid_shape, meshing_quality, True)
+    # Improved meshing quality. 
+    # Linear deflection: max distance between mesh and geometry surface (mm).
+    linear_deflection = 0.05 # 50 micrometers
+    # Angular deflection in radians.
+    angular_deflection = 0.5
+    
+    mesh = BRepMesh_IncrementalMesh(solid_shape, linear_deflection, False, angular_deflection, True)
     mesh.Perform()
     
     if not mesh.IsDone():
@@ -201,41 +203,59 @@ def process_solid(solid_shape, state, grouping_name):
     mesh_location = TopLoc_Location()
     breptool_face_explorer = TopExp_Explorer(solid_shape, TopAbs_FACE)
     
-    all_vertices, all_faces = [], []
+    unique_vertices = []
+    vertex_map = {} # (x, y, z) -> index
+    all_faces = []
+    
     while breptool_face_explorer.More():
         face = breptool_face_explorer.Current()
+        is_reversed = (face.Orientation() == TopAbs_REVERSED)
         poly = BRep_Tool.Triangulation(face, mesh_location)
+        
         if poly:
             nodes = poly.MapNodeArray()
             triangles = poly.MapTriangleArray()
-            offset = len(all_vertices)
             
+            local_to_global_idx = {}
             for i in range(1, poly.NbNodes() + 1):
                 p = nodes.Value(i)
-                all_vertices.append((p.X(), p.Y(), p.Z()))
+                # Round to 8 decimal places for deduplication
+                # Coordinates are in the local system of the part.
+                coord = (round(p.X(), 8), round(p.Y(), 8), round(p.Z(), 8))
+                if coord not in vertex_map:
+                    idx = len(unique_vertices)
+                    vertex_map[coord] = idx
+                    unique_vertices.append(coord)
+                local_to_global_idx[i-1] = vertex_map[coord]
                 
             for i in range(1, poly.NbTriangles() + 1):
                 n1, n2, n3 = triangles.Value(i).Get()
-                all_faces.append((n1 - 1 + offset, n2 - 1 + offset, n3 - 1 + offset))
+                # Correct winding order based on face orientation
+                if is_reversed:
+                    all_faces.append((local_to_global_idx[n1-1], 
+                                      local_to_global_idx[n3-1], 
+                                      local_to_global_idx[n2-1]))
+                else:
+                    all_faces.append((local_to_global_idx[n1-1], 
+                                      local_to_global_idx[n2-1], 
+                                      local_to_global_idx[n3-1]))
         
         breptool_face_explorer.Next()
     
-    if not all_vertices or not all_faces:
+    if not unique_vertices or not all_faces:
         return
 
     # Don't create defines. Store vertices directly.
     solid_base_name = f"{grouping_name}_solid_{solid_index}"
     
-    # The vertices are already in the correct local coordinate system of the part.
-    # The 'location' transform will be applied to the PV placement.
     facets = []
     for face_indices in all_faces:
-        v1 = all_vertices[face_indices[0]]
-        v2 = all_vertices[face_indices[1]]
-        v3 = all_vertices[face_indices[2]]
+        v1 = unique_vertices[face_indices[0]]
+        v2 = unique_vertices[face_indices[1]]
+        v3 = unique_vertices[face_indices[2]]
         facets.append({
             'type': 'triangular',
-            'vertex_type': 'ABSOLUTE', # Add this new key
+            'vertex_type': 'ABSOLUTE',
             'vertices': [
                 {'x': v1[0], 'y': v1[1], 'z': v1[2]},
                 {'x': v2[0], 'y': v2[1], 'z': v2[2]},
