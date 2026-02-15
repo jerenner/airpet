@@ -189,7 +189,8 @@ async function initializeApp() {
         onProcessLorsClicked: handleProcessLors,
         onProcessLorsClicked: handleProcessLors,
         onGenerateSensitivityClicked: handleGenerateSensitivity,
-        onRefreshAnalysisClicked: handleRefreshAnalysis
+        onRefreshAnalysisClicked: handleRefreshAnalysis,
+        onDownloadSimDataClicked: handleDownloadSimData
     });
 
     // Initialize the 3D scene and its controls
@@ -1045,6 +1046,7 @@ async function handleLoadRunResults(versionId, jobId) {
         // Step 4: Update the UI to reflect the loaded run
         UIManager.updateSimStatusDisplay(jobId, totalEvents);
         UIManager.setReconModalButtonEnabled(true); // Enable the Recon button
+        UIManager.setDownloadButtonEnabled(true);   // Enable the Download button
 
         // --- Reset the reconstruction state when a new run is loaded ---
         UIManager.setLorStatus("Ready to process LORs for loaded run.", false);
@@ -2552,8 +2554,9 @@ async function pollSimStatus() {
                 AppState.simStatusPoller = null;
                 if (status.status === 'Completed') {
                     AppState.lastSimJobId = AppState.currentSimJobId;
-                    // Enable the reconstruction button **
+                    // Enable the reconstruction and download buttons **
                     UIManager.setReconModalButtonEnabled(true);
+                    UIManager.setDownloadButtonEnabled(true);
                     // Update status display on completion
                     UIManager.updateSimStatusDisplay(AppState.lastSimJobId, status.total_events);
                 }
@@ -2853,5 +2856,41 @@ async function handleRefreshAnalysis(energyBins, spatialBins) {
         console.error("Analysis refresh failed:", error);
         UIManager.showError("An error occurred during analysis: " + error.message);
         UIManager.setAnalysisStatus("Error loading analysis data.");
+    }
+}
+
+/**
+ * Triggers a download of the raw HDF5 simulation results.
+ */
+async function handleDownloadSimData() {
+    if (!AppState.lastSimJobId || !AppState.lastSimVersionId) {
+        UIManager.showError("No simulation run loaded to download.");
+        return;
+    }
+
+    const versionId = AppState.lastSimVersionId;
+    const jobId = AppState.lastSimJobId;
+    
+    console.log(`Requesting download for run ${jobId}...`);
+    
+    // Create a temporary link to trigger the browser download
+    const url = `/api/simulation/download/${versionId}/${jobId}`;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "Download failed");
+        }
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = `sim_${jobId.substring(0, 8)}_output.hdf5`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+        UIManager.showError("Download failed: " + error.message);
     }
 }

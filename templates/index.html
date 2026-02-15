@@ -1717,6 +1717,8 @@
                         <button id="saveProjectButton">Export JSON...</button>
                         <button id="exportGdmlButton">Export GDML...</button>
                         <hr style="margin: 5px 0;">
+                        <button id="downloadSimDataButton" disabled>Download Hits/Particles (HDF5)</button>
+                        <hr style="margin: 5px 0;">
                         <button id="setApiKeyButton">Set Gemini API Key...</button>
                     </div>
                 </li>
@@ -2582,6 +2584,22 @@
                     <input type="number" id="simThreads" value="1" min="1" max="100" step="1">
                 </div>
                 <hr>
+                <h5>Physics Configuration</h5>
+                <div class="property_item">
+                    <label for="simPhysicsList">Physics List:</label>
+                    <select id="simPhysicsList">
+                        <option value="FTFP_BERT" selected>FTFP_BERT (Standard)</option>
+                        <option value="QGSP_BERT">QGSP_BERT (High Precision)</option>
+                        <option value="FTFP_BERT_HP">FTFP_BERT_HP (Neutron HP)</option>
+                        <option value="QGSP_BIC_HP">QGSP_BIC_HP (Medical/Proton)</option>
+                        <option value="Shielding">Shielding</option>
+                    </select>
+                </div>
+                <div class="property_item">
+                    <input type="checkbox" id="simOpticalPhysics" style="width: auto;">
+                    <label for="simOpticalPhysics" style="width: auto;">Enable Optical Physics (Scintillation/Cerenkov)</label>
+                </div>
+                <hr>
                 <div class="property_item">
                     <label for="simSeed1">Random Seed 1:</label>
                     <input type="number" id="simSeed1" value="0" min="0" step="1">
@@ -2765,7 +2783,7 @@
             }
         }
     </script>
-    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=4"></script>
+    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=5"></script>
     {% if app_mode != 'local' %}
     <div id="app-footer"
         style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">

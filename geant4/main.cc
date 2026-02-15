@@ -6,11 +6,11 @@
 
 #include "ActionInitialization.hh"
 #include "DetectorConstruction.hh"
-#include "FTFP_BERT.hh" // A good, standard physics list
 
-// Custom User Classes
-#include "ActionInitialization.hh"
-#include "DetectorConstruction.hh"
+// Physics Lists
+#include "G4PhysListFactory.hh"
+#include "G4VModularPhysicsList.hh"
+#include "G4OpticalPhysics.hh"
 
 // Main program
 int main(int argc, char **argv) {
@@ -21,33 +21,44 @@ int main(int argc, char **argv) {
   }
 
   // Use recommended G4SteppingVerbose
-  // This can be controlled later via macros if needed
   G4int precision = 4;
   G4SteppingVerbose::UseBestUnit(precision);
 
   // Construct the default run manager
-  // Using G4RunManagerFactory allows for easy switching to multi-threading
   auto *runManager =
       G4RunManagerFactory::CreateRunManager(G4RunManagerType::Serial);
-  // Example of setting a default number of threads, can be overridden by macro
-  // runManager->SetNumberOfThreads(4);
 
   // Set mandatory initialization classes
-  //
   // 1. DetectorConstruction
-  // This class will be responsible for reading the GDML file.
-  // We pass it a default filename which will be overridden by a macro command.
   auto *detConstruction = new DetectorConstruction();
   runManager->SetUserInitialization(detConstruction);
 
   // 2. Physics list
-  // FTFP_BERT is a good general-purpose physics list.
-  // This can also be made configurable later if desired.
-  auto *physicsList = new FTFP_BERT;
+  // We use a factory to allow dynamic selection via environment variables
+  G4PhysListFactory factory;
+  G4String physListName = "FTFP_BERT"; // Default
+  
+  const char* envPhysList = std::getenv("G4PHYSICSLIST");
+  if (envPhysList) {
+    physListName = envPhysList;
+  }
+  
+  G4VModularPhysicsList* physicsList = factory.GetReferencePhysList(physListName);
+  if (!physicsList) {
+    G4cerr << "!!! ERROR: Physics list '" << physListName << "' not found. Falling back to FTFP_BERT." << G4endl;
+    physicsList = factory.GetReferencePhysList("FTFP_BERT");
+  }
+
+  // Check for Optical Physics
+  const char* envOptical = std::getenv("G4OPTICALPHYSICS");
+  if (envOptical && (std::string(envOptical) == "on" || std::string(envOptical) == "true")) {
+    G4cout << "--> Registering G4OpticalPhysics..." << G4endl;
+    physicsList->RegisterPhysics(new G4OpticalPhysics());
+  }
+
   runManager->SetUserInitialization(physicsList);
 
   // 3. User action initialization
-  // This class will set up all the user actions (generator, run, event, etc.)
   runManager->SetUserInitialization(new ActionInitialization());
 
   // Initialize visualization
