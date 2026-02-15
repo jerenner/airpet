@@ -10,3 +10,5 @@ scipy
 h5py
 pandas
 Pillow
+pytest
+pytest-mock
