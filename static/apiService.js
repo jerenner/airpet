@@ -506,7 +506,42 @@ export async function checkAiServiceStatus() {
 }
 
 /**
- * Sends a prompt to the AI assistant for processing.
+ * Sends a message to the stateful AI chat assistant.
+ * @param {string} message - The user's text message.
+ * @param {string} model - The model ID to use.
+ * @returns {Promise<Object>}
+ */
+export async function sendAiChatMessage(message, model) {
+    const response = await fetch(`${API_BASE_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, model })
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Fetches the current AI chat history from the session.
+ * @returns {Promise<Object>}
+ */
+export async function getAiChatHistory() {
+    const response = await fetch(`${API_BASE_URL}/api/ai/history`);
+    return handleResponse(response);
+}
+
+/**
+ * Clears the current AI chat history.
+ * @returns {Promise<Object>}
+ */
+export async function clearAiChatHistory() {
+    const response = await fetch(`${API_BASE_URL}/api/ai/clear`, {
+        method: 'POST'
+    });
+    return handleResponse(response);
+}
+
+/**
+ * Sends a prompt to the AI assistant for processing (one-shot).
  * @param {string} prompt The user's text prompt.
  * @param {string} model The name of the Ollama model to use.
  * @returns {Promise<Object>} A promise that resolves to the backend's response.

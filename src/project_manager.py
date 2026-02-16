@@ -33,6 +33,7 @@ class ProjectManager:
         self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
         self._is_transaction_open = False
         self._pre_transaction_state = None
+        self.chat_history = [] # For AI conversation continuity
 
         # --- Project Management ---
         self.project_name = "untitled"
@@ -265,6 +266,31 @@ class ProjectManager:
             if pv.copy_number > max_copy_no:
                 max_copy_no = pv.copy_number
         return max_copy_no + 1
+
+    def get_summarized_context(self) -> str:
+        """Returns a compact string summary of the geometry for AI context."""
+        state = self.current_geometry_state
+        summary = [f"Project: {self.project_name}", f"World Volume: {state.world_volume_ref}"]
+        
+        if state.defines:
+            summary.append(f"Variables: {', '.join(list(state.defines.keys())[:20])}" + ("..." if len(state.defines) > 20 else ""))
+        
+        if state.materials:
+            summary.append(f"Materials: {', '.join(list(state.materials.keys()))}")
+            
+        if state.logical_volumes:
+            lv_info = []
+            for name, lv in list(state.logical_volumes.items())[:30]:
+                lv_info.append(f"{name}({lv.solid_ref})")
+            summary.append(f"Logical Volumes: {', '.join(lv_info)}" + ("..." if len(state.logical_volumes) > 30 else ""))
+            
+        if state.assemblies:
+            summary.append(f"Assemblies: {', '.join(list(state.assemblies.keys()))}")
+            
+        if state.sources:
+            summary.append(f"Sources: {', '.join(list(state.sources.keys()))}")
+
+        return "\n".join(summary)
 
     def recalculate_geometry_state(self):
         """
