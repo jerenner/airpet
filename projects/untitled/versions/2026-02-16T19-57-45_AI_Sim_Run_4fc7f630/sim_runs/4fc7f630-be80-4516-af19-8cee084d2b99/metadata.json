@@ -1,9 +1,0 @@
-{
-  "job_id": "4fc7f630-be80-4516-af19-8cee084d2b99",
-  "timestamp": "2026-02-16T19:57:45.013847",
-  "total_events": 500,
-  "sim_options": {
-    "events": 500,
-    "threads": 1
-  }
-}
