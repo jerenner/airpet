@@ -33,6 +33,7 @@ class ProjectManager:
         self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
         self._is_transaction_open = False
         self._pre_transaction_state = None
+        self.chat_history = [] # For AI conversation continuity
 
         # --- Project Management ---
         self.project_name = "untitled"

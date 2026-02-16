@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, session
 from flask_cors import CORS
+from typing import Dict, Any, List, Optional
 
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
@@ -36,6 +37,7 @@ from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
+from src.ai_tools import AI_GEOMETRY_TOOLS, get_project_summary, get_component_details
 
 from PIL import Image
 
@@ -131,38 +133,31 @@ gemini_clients = {}
 def get_gemini_client_for_session() -> client.Client | None:
     """
     Retrieves or creates a Gemini client for the current user's session.
-    It uses the API key stored in the session and caches the client.
-    If the key changes, it creates a new client.
+    It uses the API key stored in the session or the server fallback.
     """
     if 'user_id' not in session:
-        # This should ideally not happen if get_project_manager_for_session is called first
         return None
 
     user_id = session['user_id']
-    api_key = session.get('gemini_api_key')
+    # Priority: 1. User Session Key, 2. Server Environment Key
+    api_key = session.get('gemini_api_key') or SERVER_GEMINI_API_KEY
 
-    # If the user has no API key set in their session, ensure no client is cached and return None.
     if not api_key:
         if user_id in gemini_clients:
             del gemini_clients[user_id]
         return None
 
     cached_client_info = gemini_clients.get(user_id)
-
-    # If a client exists and was created with the *same* key, return it.
     if cached_client_info and cached_client_info['key'] == api_key:
         return cached_client_info['client']
 
-    # Otherwise, create a new client instance for this user's key.
-    print(f"Configuring new Gemini client for user session: {user_id}")
+    print(f"Configuring Gemini client for user session: {user_id}")
     try:
         new_client = genai.Client(api_key=api_key)
-        # Cache the new client and the key used to create it
         gemini_clients[user_id] = {'client': new_client, 'key': api_key}
         return new_client
     except Exception as e:
-        print(f"Warning: Failed to configure Gemini client for session {user_id}: {e}")
-        # If configuration fails, remove any old entry from the cache
+        print(f"Warning: Failed to configure Gemini client: {e}")
         if user_id in gemini_clients:
             del gemini_clients[user_id]
         return None
@@ -2832,7 +2827,209 @@ def ai_get_full_prompt_route():
         traceback.print_exc()
         return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
 
-@app.route('/import_ai_json', methods=['POST'])
+# --- AI Tool Dispatcher ---
+def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
+    try:
+        if tool_name == "get_project_summary":
+            return {"success": True, "result": get_project_summary(pm)}
+            
+        elif tool_name == "get_component_details":
+            details = get_component_details(pm, args['component_type'], args['name'])
+            if details:
+                return {"success": True, "result": details}
+            return {"success": False, "error": f"Component '{args['name']}' not found."}
+
+        elif tool_name == "manage_define":
+            name = args.get('name')
+            if name in pm.current_geometry_state.defines:
+                success, error = pm.update_define(name, args['value'], args.get('unit'))
+                if success: return {"success": True, "message": f"Define '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_define(name, args['define_type'], args['value'], args.get('unit'))
+                if res: return {"success": True, "message": f"Define '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "manage_material":
+            name = args.get('name')
+            props = {
+                "density_expr": args.get('density'),
+                "Z_expr": args.get('Z'),
+                "A_expr": args.get('A'),
+                "components": args.get('components')
+            }
+            # Remove None values
+            props = {k: v for k, v in props.items() if v is not None}
+            
+            if name in pm.current_geometry_state.materials:
+                success, error = pm.update_material(name, props)
+                if success: return {"success": True, "message": f"Material '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_material(name, props)
+                if res: return {"success": True, "message": f"Material '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "create_primitive_solid":
+            res, error = pm.add_solid(args['name'], args['solid_type'], args['params'])
+            if res:
+                pm.recalculate_geometry_state() # Ensure evaluated params are populated
+                return {"success": True, "message": f"Solid '{res['name']}' created."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "modify_solid":
+            success, error = pm.update_solid(args['name'], args['params'])
+            if success: return {"success": True, "message": f"Solid '{args['name']}' updated."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "create_boolean_solid":
+            res, error = pm.add_boolean_solid(args['name'], args['recipe'])
+            if res: return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "manage_logical_volume":
+            name = args.get('name')
+            if name in pm.current_geometry_state.logical_volumes:
+                success, error = pm.update_logical_volume(
+                    name, args.get('solid_ref'), args.get('material_ref'), 
+                    new_is_sensitive=args.get('is_sensitive')
+                )
+                if success: return {"success": True, "message": f"Logical volume '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_logical_volume(
+                    name, args['solid_ref'], args['material_ref'], 
+                    is_sensitive=args.get('is_sensitive', False)
+                )
+                if res: return {"success": True, "message": f"Logical volume '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "place_volume":
+            res, error = pm.add_physical_volume(
+                args['parent_lv_name'], args.get('name'), args['placed_lv_ref'],
+                args.get('position', {'x':'0','y':'0','z':'0'}),
+                args.get('rotation', {'x':'0','y':'0','z':'0'}),
+                args.get('scale', {'x':'1','y':'1','z':'1'})
+            )
+            if res: return {"success": True, "message": f"Volume placed as '{res['name']}'."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "modify_physical_volume":
+            success, error = pm.update_physical_volume(
+                args['pv_id'], args.get('name'), args.get('position'), 
+                args.get('rotation'), args.get('scale')
+            )
+            if success: return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "create_detector_ring":
+            res, error = pm.create_detector_ring(
+                parent_lv_name=args['parent_lv_name'],
+                lv_to_place_ref=args['lv_to_place_ref'],
+                ring_name=args['ring_name'],
+                num_detectors=args['num_detectors'],
+                radius=args['radius'],
+                center=args.get('center', {'x':'0','y':'0','z':'0'}),
+                orientation=args.get('orientation', {'x':'0','y':'0','z':'0'}),
+                point_to_center=args.get('point_to_center', True),
+                inward_axis=args.get('inward_axis', '+x'),
+                num_rings=args.get('num_rings', '1'),
+                ring_spacing=args.get('ring_spacing', '0')
+            )
+            if res: return {"success": True, "message": f"Detector ring '{args['ring_name']}' created."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "delete_objects":
+            success, res = pm.delete_objects_batch(args['objects'])
+            if success: return {"success": True, "message": "Objects deleted."}
+            return {"success": False, "error": res}
+
+        return {"success": False, "error": f"Unknown tool: {tool_name}"}
+    except Exception as e:
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+@app.route('/api/ai/chat', methods=['POST'])
+def ai_chat_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json()
+    user_message = data.get('message')
+    model_id = data.get('model', 'models/gemini-2.0-flash-exp') 
+    
+    if not user_message:
+        return jsonify({"success": False, "error": "No message provided."}), 400
+
+    client_instance = get_gemini_client_for_session()
+    if not client_instance:
+        return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
+
+    # Initialize chat history if empty
+    if not pm.chat_history:
+        pm.chat_history = [
+            {"role": "user", "parts": [{"text": "You are AIRPET AI, a specialist in Geant4 detector design. "
+                                        "Use the provided tools to inspect and modify the geometry. "
+                                        "Always explain your changes briefly after making them."}]},
+            {"role": "model", "parts": [{"text": "Understood. I am ready to help you design your detector."}]}
+        ]
+    
+    pm.chat_history.append({"role": "user", "parts": [{"text": user_message}]})
+
+    try:
+        # Loop to handle multiple tool calls (Gemini 3 is good at this)
+        for _ in range(5): # Max 5 tool iterations per turn
+            response = client_instance.models.generate_content(
+                model=model_id,
+                contents=pm.chat_history,
+                config=types.GenerateContentConfig(
+                    tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+                )
+            )
+            
+            # Record the model's turn
+            pm.chat_history.append(response.candidates[0].content)
+            
+            tool_calls = response.candidates[0].content.parts
+            has_tool_call = False
+            tool_results_parts = []
+
+            for part in tool_calls:
+                if part.function_call:
+                    has_tool_call = True
+                    tool_name = part.function_call.name
+                    args = part.function_call.args
+                    
+                    print(f"AI Calling Tool: {tool_name} with {args}")
+                    result = dispatch_ai_tool(pm, tool_name, args)
+                    
+                    tool_results_parts.append(types.Part.from_function_response(
+                        name=tool_name,
+                        response=result
+                    ))
+
+            if not has_tool_call:
+                # No more tools to call, return the final text response
+                return create_success_response(pm, response.text)
+            
+            # Add results to history for next model iteration
+            pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))
+
+        return jsonify({"success": False, "error": "Too many tool iterations."}), 500
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/ai/history', methods=['GET'])
+def get_ai_history():
+    pm = get_project_manager_for_session()
+    return jsonify({"history": pm.chat_history})
+
+@app.route('/api/ai/clear', methods=['POST'])
+def clear_ai_history():
+    pm = get_project_manager_for_session()
+    pm.chat_history = []
+    return jsonify({"success": True})
 def import_ai_json_route():
     pm = get_project_manager_for_session()
 
