@@ -3346,84 +3346,111 @@ def ai_chat_route():
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
 
-    client_instance = get_gemini_client_for_session()
-    if not client_instance:
-        return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
+    # Determine if we are using Gemini or Ollama
+    is_gemini = model_id.startswith("models/")
 
     # Initialize chat history if empty
     if not pm.chat_history:
         system_prompt = load_system_prompt()
-        pm.chat_history = [
-            {"role": "user", "parts": [{"text": system_prompt}]},
-            {"role": "model", "parts": [{"text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."}]}
-        ]
+        if is_gemini:
+            pm.chat_history = [
+                {"role": "user", "parts": [{"text": system_prompt}]},
+                {"role": "model", "parts": [{"text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."}]}
+            ]
+        else: # Ollama format
+            pm.chat_history = [
+                {"role": "system", "content": system_prompt},
+                {"role": "assistant", "content": "Understood. I am AIRPET AI, your detector design assistant."}
+            ]
     
-    # Inject current project context as a "system hint" before the user message
     context_summary = pm.get_summarized_context()
-    pm.chat_history.append({
-        "role": "user", 
-        "parts": [{"text": f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"}]
-    })
+    formatted_user_msg = f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"
 
-    try:
-        # Tracks if any tool returned a job_id or version_id across multi-turn tool use
-        job_id = None
-        version_id = None
+    if is_gemini:
+        client_instance = get_gemini_client_for_session()
+        if not client_instance:
+            return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
 
-        # Loop to handle multiple tool calls (Gemini 3 is good at this)
-        for _ in range(5): # Max 5 tool iterations per turn
-            response = client_instance.models.generate_content(
-                model=model_id,
-                contents=pm.chat_history,
-                config=types.GenerateContentConfig(
-                    tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+        pm.chat_history.append({"role": "user", "parts": [{"text": formatted_user_msg}]})
+
+        try:
+            job_id = None
+            version_id = None
+
+            for _ in range(5):
+                response = client_instance.models.generate_content(
+                    model=model_id,
+                    contents=pm.chat_history,
+                    config=types.GenerateContentConfig(
+                        tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+                    )
                 )
+                
+                pm.chat_history.append(response.candidates[0].content)
+                tool_calls = response.candidates[0].content.parts
+                has_tool_call = False
+                tool_results_parts = []
+                
+                for part in tool_calls:
+                    if part.function_call:
+                        has_tool_call = True
+                        tool_name = part.function_call.name
+                        args = part.function_call.args
+                        result = dispatch_ai_tool(pm, tool_name, args)
+                        if "job_id" in result: job_id = result["job_id"]
+                        if "version_id" in result: version_id = result["version_id"]
+                        
+                        tool_results_parts.append(types.Part.from_function_response(
+                            name=tool_name,
+                            response=result
+                        ))
+
+                if not has_tool_call:
+                    res_obj = create_success_response(pm, response.text)
+                    if job_id:
+                        res_json = res_obj.get_json()
+                        res_json['job_id'] = job_id
+                        res_json['version_id'] = version_id or pm.current_version_id
+                        return jsonify(res_json)
+                    return res_obj
+                
+                pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))
+
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    else: # Ollama Path
+        pm.chat_history.append({"role": "user", "content": formatted_user_msg})
+        try:
+            # Note: 8b models often struggle with complex multi-tool loops.
+            # We will use the simplified chat completion for now.
+            # In the future, we can map AI_GEOMETRY_TOOLS to Ollama's tool format.
+            response = ollama.chat(
+                model=model_id,
+                messages=pm.chat_history
             )
             
-            # Record the model's turn
-            pm.chat_history.append(response.candidates[0].content)
+            assistant_msg = response['message']['content']
+            pm.chat_history.append({"role": "assistant", "content": assistant_msg})
             
-            tool_calls = response.candidates[0].content.parts
-            has_tool_call = False
-            tool_results_parts = []
-            
-            for part in tool_calls:
-                if part.function_call:
-                    has_tool_call = True
-                    tool_name = part.function_call.name
-                    args = part.function_call.args
-                    
-                    print(f"AI Calling Tool: {tool_name} with {args}")
-                    result = dispatch_ai_tool(pm, tool_name, args)
-                    
-                    # Capture simulation metadata for the frontend
-                    if "job_id" in result: job_id = result["job_id"]
-                    if "version_id" in result: version_id = result["version_id"]
-                    
-                    tool_results_parts.append(types.Part.from_function_response(
-                        name=tool_name,
-                        response=result
-                    ))
+            # Simple check for JSON if the model tried to output it manually
+            # (Backwards compatibility for non-tool-aware local models)
+            if "{" in assistant_msg and "}" in assistant_msg:
+                try:
+                    # Attempt to extract and process JSON if it looks like a one-shot response
+                    json_match = re.search(r'\{.*\}', assistant_msg, re.DOTALL)
+                    if json_match:
+                        ai_data = json.loads(json_match.group())
+                        pm.process_ai_response(ai_data)
+                except:
+                    pass
 
-            if not has_tool_call:
-                # No more tools to call, return the final text response
-                res_obj = create_success_response(pm, response.text)
-                # Re-inject captured job metadata into the final response
-                if job_id:
-                    res_json = res_obj.get_json()
-                    res_json['job_id'] = job_id
-                    res_json['version_id'] = version_id or pm.current_version_id
-                    return jsonify(res_json)
-                return res_obj
-            
-            # Add results to history for next model iteration
-            pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))
+            return create_success_response(pm, assistant_msg)
 
-        return jsonify({"success": False, "error": "Too many tool iterations."}), 500
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/ai/history', methods=['GET'])
 def get_ai_history():
