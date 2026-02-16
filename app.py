@@ -3159,13 +3159,19 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
+            stype = args.get('solid_type')
+            if not stype:
+                return {"success": False, "error": "Missing 'solid_type' (e.g., 'box', 'tube')."}
+                
             # Support both 'params' and 'dimensions' key for flexibility with small models
             p = args.get('params') or args.get('dimensions')
+            if not p:
+                return {"success": False, "error": "Missing parameters for the solid."}
+
             if isinstance(p, list) and len(p) == 3:
-                # Convert list [x, y, z] to dict {'x':..., 'y':..., 'z':...}
                 p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
             
-            res, error = pm.add_solid(args['name'], args['solid_type'], p)
+            res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
             if res:
                 pm.recalculate_geometry_state()
                 return {"success": True, "message": f"Solid '{res['name']}' created."}
@@ -3177,7 +3183,11 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": False, "error": error}
 
         elif tool_name == "create_boolean_solid":
-            recipe = args['recipe']
+            name = args.get('name')
+            recipe = args.get('recipe')
+            if not name or not recipe:
+                return {"success": False, "error": "Missing 'name' or 'recipe' for boolean solid."}
+            
             # Fix nested transforms in boolean recipe
             for item in recipe:
                 if 'transform' in item and item['transform']:
@@ -3185,8 +3195,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     if 'position' in t: t['position'] = to_vec_dict(t['position'])
                     if 'rotation' in t: t['rotation'] = to_vec_dict(t['rotation'])
             
-            res, error = pm.add_boolean_solid(args['name'], recipe)
-            if res: return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
+            res, error = pm.add_boolean_solid(name, recipe)
+            if res:
+                return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "manage_logical_volume":
