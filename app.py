@@ -3404,6 +3404,19 @@ def ai_chat_route():
 
         pm.chat_history.append({"role": "user", "parts": [{"text": formatted_user_msg}]})
 
+        # --- DEBUG: Dump payload to file ---
+        try:
+            debug_payload = {
+                "model": model_id,
+                "contents": pm.chat_history,
+                "tools": AI_GEOMETRY_TOOLS
+            }
+            with open("ai_debug_payload.json", "w") as df:
+                json.dump(debug_payload, df, indent=2, default=str)
+        except Exception as e:
+            print(f"Warning: Could not write debug payload: {e}")
+        # -----------------------------------
+
         try:
             job_id = None
             version_id = None
@@ -3465,6 +3478,19 @@ def ai_chat_route():
                         "parameters": tool["parameters"]
                     }
                 })
+
+            # --- DEBUG: Dump payload to file ---
+            try:
+                debug_payload = {
+                    "model": model_id,
+                    "messages": pm.chat_history,
+                    "tools": ollama_tools
+                }
+                with open("ai_debug_payload.json", "w") as df:
+                    json.dump(debug_payload, df, indent=2, default=str)
+            except Exception as e:
+                print(f"Warning: Could not write debug payload: {e}")
+            # -----------------------------------
 
             job_id = None
             version_id = None
