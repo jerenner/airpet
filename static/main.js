@@ -424,6 +424,22 @@ async function initializeApp() {
     AIAssistant.init({
         onGeometryUpdate: (result) => {
             syncUIWithState(result);
+
+            // --- Handle AI-triggered simulation ---
+            if (result.job_id) {
+                console.log("AI started a simulation run:", result.job_id);
+                // Trigger the polling logic as if the user started it
+                AppState.currentSimJobId = result.job_id;
+                AppState.lastSimVersionId = result.version_id;
+
+                UIManager.setSimulationState('running');
+                UIManager.clearSimConsole();
+                AppState.simConsoleLineCount = 0;
+                UIManager.appendToSimConsole(`[AI Assistant] Starting simulation job ${result.job_id.substring(0, 8)}...`);
+
+                if (AppState.simStatusPoller) clearInterval(AppState.simStatusPoller);
+                AppState.simStatusPoller = setInterval(pollSimStatus, 2000);
+            }
         }
     });
 }

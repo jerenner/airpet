@@ -1,0 +1,145 @@
+{
+  "defines": {},
+  "materials": {
+    "G4_Galactic": {
+      "id": "516e05d6-d7df-4ea9-bcfa-4505ca88a2c9",
+      "name": "G4_Galactic",
+      "mat_type": "standard",
+      "Z_expr": "1",
+      "A_expr": "1.01",
+      "density_expr": "1.0e-25",
+      "_evaluated_Z": 1,
+      "_evaluated_A": 1.01,
+      "_evaluated_density": 1e-25,
+      "state": "gas",
+      "components": []
+    }
+  },
+  "elements": {},
+  "isotopes": {},
+  "solids": {
+    "world_solid": {
+      "id": "8947c38c-ae01-4224-96b5-d9645e3fe18a",
+      "name": "world_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "10000",
+        "y": "10000",
+        "z": "10000"
+      },
+      "_evaluated_parameters": {
+        "x": 10000,
+        "y": 10000,
+        "z": 10000
+      }
+    },
+    "box_solid": {
+      "id": "3a5e1c6e-8a86-4bab-95e1-f993edbbc0a7",
+      "name": "box_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "100",
+        "y": "100",
+        "z": "100"
+      },
+      "_evaluated_parameters": {
+        "x": 100,
+        "y": 100,
+        "z": 100
+      }
+    }
+  },
+  "logical_volumes": {
+    "World": {
+      "id": "4216e55c-4bbc-4d52-a669-7195636421be",
+      "name": "World",
+      "solid_ref": "world_solid",
+      "material_ref": "G4_Galactic",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": [
+        {
+          "id": "3bad7dac-72d2-4c87-9c98-e8a54fd02ba9",
+          "name": "box_PV",
+          "volume_ref": "box_LV",
+          "copy_number_expr": "0",
+          "copy_number": 0,
+          "position": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World",
+          "_evaluated_position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      ]
+    },
+    "box_LV": {
+      "id": "c2454a04-4dd8-48cf-9acb-5748de23f9b8",
+      "name": "box_LV",
+      "solid_ref": "box_solid",
+      "material_ref": "G4_Galactic",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": []
+    }
+  },
+  "assemblies": {},
+  "world_volume_ref": "World",
+  "optical_surfaces": {},
+  "skin_surfaces": {},
+  "border_surfaces": {},
+  "sources": {},
+  "active_source_ids": [],
+  "ui_groups": {
+    "define": [],
+    "material": [],
+    "element": [],
+    "solid": [],
+    "logical_volume": [],
+    "assembly": [],
+    "optical_surface": [],
+    "skin_surface": [],
+    "border_surface": []
+  }
+}

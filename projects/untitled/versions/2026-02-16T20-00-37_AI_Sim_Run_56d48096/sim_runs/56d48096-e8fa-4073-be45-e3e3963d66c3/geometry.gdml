@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gdml xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://service-spi.web.cern.ch/service-spi/app/releases/GDML/schema/gdml.xsd">
+  <materials>
+    <material name="G4_Galactic" state="gas" Z="1">
+      <D value="1.0e-25"/>
+      <atom value="1.01"/>
+    </material>
+  </materials>
+  <solids>
+    <box name="world_solid" lunit="mm" x="10000" y="10000" z="10000"/>
+    <box name="box_solid" lunit="mm" x="100" y="100" z="100"/>
+  </solids>
+  <structure>
+    <volume name="box_LV">
+      <materialref ref="G4_Galactic"/>
+      <solidref ref="box_solid"/>
+    </volume>
+    <volume name="World">
+      <materialref ref="G4_Galactic"/>
+      <solidref ref="world_solid"/>
+      <physvol name="box_PV" copynumber="0">
+        <volumeref ref="box_LV"/>
+        <position unit="mm" x="0.0" y="0.0" z="0.0"/>
+        <rotation unit="rad" x="0.0" y="0.0" z="0.0"/>
+        <scale x="1" y="1" z="1"/>
+      </physvol>
+    </volume>
+  </structure>
+  <setup name="Default" version="1.0">
+    <world ref="World"/>
+  </setup>
+</gdml>

@@ -278,6 +278,234 @@ def cleanup_processes():
                 process.terminate()
                 process.wait()
 
+def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
+    num_threads = int(sim_params.get('threads', 1))
+    total_events = int(sim_params.get('events', 1))
+    
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 0,
+            "total_events": total_events,
+            "stdout": [],
+            "stderr": []
+        }
+
+    try:
+        # --- SINGLE PROCESS MODE ---
+        if num_threads <= 1:
+            command = [executable_path, "run.mac"]
+            process = subprocess.Popen(
+                command, cwd=run_dir,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+                env=get_geant4_env()
+            )
+            with SIMULATION_LOCK:
+                    SIMULATION_PROCESSES[job_id] = process
+            
+            # Monitor
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    line = line.strip()
+                    if line:
+                        with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stdout'].append(line)
+                            if ">>> Event" in line and "starts" in line:
+                                try:
+                                    parts = line.split()
+                                    if len(parts) > 2 and parts[2].isdigit():
+                                        SIMULATION_STATUS[job_id]['progress'] = int(parts[2]) + 1
+                                except: pass
+            
+            stdout_remainder, stderr_output = process.communicate()
+            if stderr_output:
+                    with SIMULATION_LOCK:
+                        SIMULATION_STATUS[job_id]['stderr'].append(stderr_output)
+                        
+            final_return_code = process.returncode
+
+        # --- MULTI-PROCESS MODE ---
+        else:
+            msg = f"Starting {num_threads} parallel processes for {total_events} events..."
+            with SIMULATION_LOCK:
+                SIMULATION_STATUS[job_id]['stdout'].append(msg)
+            
+            # 1. Prepare Macros
+            base_macro_path = os.path.join(run_dir, "run.mac")
+            with open(base_macro_path, 'r') as f:
+                base_lines = f.readlines()
+            
+            filtered_lines = []
+            for line in base_lines:
+                s = line.strip()
+                if s.startswith("/run/beamOn"): continue
+                if s.startswith("/random/setSeeds"): continue
+                if s.startswith("/analysis/setFileName"): continue
+                if s.startswith("/run/numberOfThreads"): continue 
+                if s.startswith("/g4pet/run/saveHits"): continue 
+                filtered_lines.append(line)
+            
+            seed1 = int(sim_params.get('seed1', 12345))
+            seed2 = int(sim_params.get('seed2', 67890))
+            events_per_thread = total_events // num_threads
+            remainder = total_events % num_threads
+            procs = []
+            
+            for i in range(num_threads):
+                n_events = events_per_thread + (1 if i < remainder else 0)
+                if n_events <= 0: continue
+                macro_name = f"run_t{i}.mac"
+                out_name = f"output_t{i}.hdf5"
+                s1 = seed1 + i*1000
+                s2 = seed2 + i*1000
+                with open(os.path.join(run_dir, macro_name), 'w') as f:
+                    f.writelines(filtered_lines)
+                    f.write(f"\n/random/setSeeds {s1} {s2}")
+                    f.write(f"\n/analysis/setFileName {out_name}")
+                    f.write(f"\n/run/beamOn {n_events}\n")
+                
+                cmd = [executable_path, macro_name]
+                p = subprocess.Popen(
+                    cmd, cwd=run_dir,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, bufsize=1,
+                    env=get_geant4_env()
+                )
+                procs.append(p)
+            
+            with SIMULATION_LOCK:
+                SIMULATION_PROCESSES[job_id] = procs 
+
+            monitor_threads = []
+            def stdout_reader(proc, idx):
+                for line in iter(proc.stdout.readline, ''):
+                    line = line.strip()
+                    if not line: continue
+                    if "Checking overlaps for volume" in line: continue
+                    is_interesting = (idx == 0) or ("error" in line.lower()) or ("warning" in line.lower()) or ("exception" in line.lower())
+                    if is_interesting:
+                        prefix = f"[T{idx}] "
+                        with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stdout'].append(prefix + line)
+                            if idx == 0 and ">>> Event" in line and "starts" in line:
+                                try:
+                                    parts = line.split()
+                                    if len(parts) > 2 and parts[2].isdigit():
+                                        local_ev = int(parts[2])
+                                        SIMULATION_STATUS[job_id]['progress'] = (local_ev + 1) * num_threads
+                                except: pass
+                proc.stdout.close()
+
+            def stderr_reader(proc, idx):
+                for line in iter(proc.stderr.readline, ''):
+                    line = line.strip()
+                    if line:
+                        with SIMULATION_LOCK:
+                            SIMULATION_STATUS[job_id]['stderr'].append(f"[T{idx}] {line}")
+                proc.stderr.close()
+
+            for i, p in enumerate(procs):
+                t_out = threading.Thread(target=stdout_reader, args=(p, i))
+                t_out.start()
+                monitor_threads.append(t_out)
+                t_err = threading.Thread(target=stderr_reader, args=(p, i))
+                t_err.start()
+                monitor_threads.append(t_err)
+            
+            for t in monitor_threads: t.join()
+            final_return_code = 0
+            for p in procs:
+                p.wait()
+                if p.returncode != 0: final_return_code = p.returncode
+            if final_return_code == 0:
+                with SIMULATION_LOCK: SIMULATION_STATUS[job_id]['stdout'].append("Parallel tasks completed. Merging...")
+
+        if final_return_code == 0:
+            import glob
+            import shutil
+            t_files = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
+            if not t_files: t_files = glob.glob(os.path.join(run_dir, "run_t*.hdf5"))
+            if t_files:
+                try: t_files.sort(key=lambda x: int(os.path.basename(x).split('_t')[1].split('.')[0]))
+                except: t_files.sort()
+                target_path = os.path.join(run_dir, "output.hdf5")
+                shutil.copyfile(t_files[0], target_path)
+                try:
+                    with h5py.File(target_path, 'r+') as f:
+                        if 'default_ntuples/Hits' in f:
+                            hits = f['default_ntuples/Hits']
+                            lim_t0 = 0
+                            if 'EventID' in hits and 'pages' in hits['EventID']:
+                                ev = hits['EventID']['pages'][:]
+                                nz = np.nonzero(ev)[0]
+                                lim_t0 = nz[-1] + 1 if len(nz) > 0 else 0
+                            for c in hits:
+                                if isinstance(hits[c], h5py.Group) and 'pages' in hits[c]:
+                                    dset = hits[c]['pages']
+                                    data = dset[:lim_t0]
+                                    attrs = dict(dset.attrs)
+                                    del hits[c]['pages']
+                                    dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
+                                    for k,v in attrs.items(): dn.attrs[k] = v
+                except Exception as e: print(f"T0 Clean Error: {e}")
+                evt_per_thread = total_events // num_threads
+                try:
+                    with h5py.File(target_path, 'r+') as f_dst:
+                        if 'default_ntuples/Hits' in f_dst:
+                            grp_dst_hits = f_dst['default_ntuples/Hits']
+                            for src_path in t_files[1:]:
+                                fname = os.path.basename(src_path)
+                                current_offset = 0
+                                try:
+                                    t_idx = int(fname.split('_t')[1].split('.')[0])
+                                    current_offset = t_idx * evt_per_thread
+                                except: pass
+                                with h5py.File(src_path, 'r') as f_src:
+                                    if 'default_ntuples/Hits' not in f_src: continue
+                                    grp_src_hits = f_src['default_ntuples/Hits']
+                                    lim_src = 0
+                                    if 'EventID' in grp_src_hits:
+                                            ev = grp_src_hits['EventID']['pages'][:]
+                                            nz = np.nonzero(ev)[0]
+                                            if len(nz)>0: lim_src = nz[-1]+1
+                                    for col in grp_dst_hits:
+                                        if col not in grp_src_hits: continue
+                                        dst_node = grp_dst_hits[col]
+                                        src_node = grp_src_hits[col]
+                                        if isinstance(dst_node, h5py.Group) and 'pages' in dst_node:
+                                            dst_d = dst_node['pages']
+                                            src_d = src_node['pages']
+                                            data = src_d[:lim_src]
+                                            if col == "EventID":
+                                                data = data.astype(np.int64)
+                                                if current_offset > 0: data += current_offset
+                                            old_len = dst_d.shape[0]
+                                            add_len = len(data)
+                                            dst_d.resize((old_len+add_len,) + dst_d.shape[1:])
+                                            dst_d[old_len:old_len+add_len] = data
+                                        elif isinstance(dst_node, h5py.Dataset) and col=='entries':
+                                            dst_node[...] += src_node[...]
+                except Exception as e: print(f"Merge Loop Error: {e}")
+                with SIMULATION_LOCK:
+                    SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
+                    for f in t_files: os.remove(f)
+
+        with SIMULATION_LOCK:
+            if final_return_code == 0:
+                SIMULATION_STATUS[job_id]['progress'] = total_events
+                SIMULATION_STATUS[job_id]['status'] = 'Completed'
+            else:
+                SIMULATION_STATUS[job_id]['status'] = 'Error'
+            SIMULATION_PROCESSES.pop(job_id, None)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        with SIMULATION_LOCK:
+            SIMULATION_STATUS[job_id]['status'] = 'Error'
+            SIMULATION_STATUS[job_id]['stderr'].append(str(e))
+        SIMULATION_PROCESSES.pop(job_id, None)
+
 atexit.register(cleanup_processes)
 
 @app.route('/api/set_active_source', methods=['POST'])
@@ -637,9 +865,8 @@ def run_simulation():
                     SIMULATION_STATUS[job_id]['stderr'].append(str(e))
                 SIMULATION_PROCESSES.pop(job_id, None)
 
-        # Start the thread
-        executable_path = os.path.relpath(GEANT4_EXECUTABLE, run_dir)
-        thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, executable_path, sim_params))
+        # Start the background task
+        thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
         thread.start()
 
         return jsonify({
@@ -3022,6 +3249,88 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     results.append(item)
             return {"success": True, "results": results}
 
+        elif tool_name == "run_simulation":
+            # Call the internal logic of run_simulation route
+            job_id = str(uuid.uuid4())
+            sim_params = {
+                "events": args.get("events", 1000),
+                "threads": args.get("threads", 1)
+            }
+            version_id = pm.current_version_id
+            if pm.is_changed or not version_id:
+                version_id, _ = pm.save_project_version(f"AI_Sim_Run_{job_id[:8]}")
+            
+            version_dir = pm._get_version_dir(version_id)
+            run_dir = os.path.join(version_dir, "sim_runs", job_id)
+            os.makedirs(run_dir, exist_ok=True)
+            
+            macro_path = pm.generate_macro_file(
+                job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
+            )
+            
+            thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
+            thread.start()
+            
+            return {"success": True, "job_id": job_id, "message": f"Simulation started (ID: {job_id})."}
+
+        elif tool_name == "get_simulation_status":
+            job_id = args['job_id']
+            with SIMULATION_LOCK:
+                status = SIMULATION_STATUS.get(job_id)
+                if not status:
+                    return {"success": False, "error": "Job ID not found."}
+                return {
+                    "success": True, 
+                    "status": status["status"], 
+                    "progress": status["progress"], 
+                    "total": status["total_events"]
+                }
+
+        elif tool_name == "get_analysis_summary":
+            job_id = args['job_id']
+            version_id = pm.current_version_id
+            if not version_id: return {"success": False, "error": "No active version."}
+            
+            version_dir = pm._get_version_dir(version_id)
+            run_dir = os.path.join(version_dir, "sim_runs", job_id)
+            output_path = os.path.join(run_dir, "output.hdf5")
+            
+            if not os.path.exists(output_path):
+                return {"success": False, "error": "Simulation output not yet available."}
+            
+            try:
+                with h5py.File(output_path, 'r') as f:
+                    if 'default_ntuples/Hits' not in f:
+                        return {"success": False, "error": "No hits found in output."}
+                    
+                    hits_group = f['default_ntuples/Hits']
+                    def get_hits_len():
+                        if 'entries' in hits_group:
+                            ent = hits_group['entries']
+                            return int(ent[0]) if ent.shape != () else int(ent[()])
+                        return 0
+                    
+                    total_hits = get_hits_len()
+                    
+                    particles = {}
+                    if 'ParticleName' in hits_group:
+                        data = hits_group['ParticleName']
+                        if isinstance(data, h5py.Group): data = data['pages']
+                        names = data[:total_hits]
+                        for n in names:
+                            n_str = n.decode('utf-8') if isinstance(n, bytes) else str(n)
+                            particles[n_str] = particles.get(n_str, 0) + 1
+                    
+                    return {
+                        "success": True,
+                        "summary": {
+                            "total_hits": total_hits,
+                            "particle_breakdown": particles
+                        }
+                    }
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:
         traceback.print_exc()
@@ -3057,6 +3366,10 @@ def ai_chat_route():
     })
 
     try:
+        # Tracks if any tool returned a job_id or version_id across multi-turn tool use
+        job_id = None
+        version_id = None
+
         # Loop to handle multiple tool calls (Gemini 3 is good at this)
         for _ in range(5): # Max 5 tool iterations per turn
             response = client_instance.models.generate_content(
@@ -3073,7 +3386,7 @@ def ai_chat_route():
             tool_calls = response.candidates[0].content.parts
             has_tool_call = False
             tool_results_parts = []
-
+            
             for part in tool_calls:
                 if part.function_call:
                     has_tool_call = True
@@ -3083,6 +3396,10 @@ def ai_chat_route():
                     print(f"AI Calling Tool: {tool_name} with {args}")
                     result = dispatch_ai_tool(pm, tool_name, args)
                     
+                    # Capture simulation metadata for the frontend
+                    if "job_id" in result: job_id = result["job_id"]
+                    if "version_id" in result: version_id = result["version_id"]
+                    
                     tool_results_parts.append(types.Part.from_function_response(
                         name=tool_name,
                         response=result
@@ -3090,7 +3407,14 @@ def ai_chat_route():
 
             if not has_tool_call:
                 # No more tools to call, return the final text response
-                return create_success_response(pm, response.text)
+                res_obj = create_success_response(pm, response.text)
+                # Re-inject captured job metadata into the final response
+                if job_id:
+                    res_json = res_obj.get_json()
+                    res_json['job_id'] = job_id
+                    res_json['version_id'] = version_id or pm.current_version_id
+                    return jsonify(res_json)
+                return res_obj
             
             # Add results to history for next model iteration
             pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))

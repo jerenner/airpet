@@ -1,0 +1,9 @@
+{
+  "job_id": "0f2e926a-4c22-4885-8eab-3d8b7d8e3417",
+  "timestamp": "2026-02-16T19:58:50.755219",
+  "total_events": 500,
+  "sim_options": {
+    "events": 500,
+    "threads": 1
+  }
+}
