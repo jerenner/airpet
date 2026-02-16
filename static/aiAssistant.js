@@ -57,6 +57,19 @@ function renderHistory(history) {
             addMessageToUI(msg.role === 'user' ? 'user' : 'model', text);
         }
     });
+
+    // Ensure the model selector is synced if history was loaded
+    if (history.length > 0) {
+        // Trigger a tiny delay to ensure models are loaded
+        setTimeout(() => {
+            // Find the last message that has a model_id metadata
+            const lastModelMsg = [...history].reverse().find(m => m.model_id);
+            if (lastModelMsg && lastModelMsg.model_id) {
+                const select = document.getElementById('ai_model_select');
+                if (select) select.value = lastModelMsg.model_id;
+            }
+        }, 500);
+    }
     scrollToBottom();
 }
 

@@ -744,12 +744,16 @@ class ProjectManager:
 
     def save_project_to_json_string(self):
         if self.current_geometry_state:
-            return json.dumps(self.current_geometry_state.to_dict(), indent=2)
+            data = self.current_geometry_state.to_dict()
+            data['chat_history'] = self.chat_history
+            return json.dumps(data, indent=2)
         return "{}"
 
     def load_project_from_json_string(self, json_string):
         data = json.loads(json_string)
         self.current_geometry_state = GeometryState.from_dict(data)
+        self.chat_history = data.get('chat_history', [])
+        
         success, error_msg = self.recalculate_geometry_state()
         if not success:
             print(f"Warning after loading JSON project: {error_msg}")

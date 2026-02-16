@@ -3262,7 +3262,31 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": False, "error": error}
 
         elif tool_name == "delete_objects":
-            success, res = pm.delete_objects_batch(args['objects'])
+            objs = args['objects']
+            # Allow AI to use names for PVs by resolving them to IDs
+            resolved_objs = []
+            for item in objs:
+                if item['type'] == 'physical_volume':
+                    # Search for the PV by name or ID
+                    pv_to_del = pm._find_pv_by_id(item['id'])
+                    if not pv_to_del:
+                        # Try searching by name across all LVs
+                        for lv in pm.current_geometry_state.logical_volumes.values():
+                            if lv.content_type == 'physvol':
+                                for pv in lv.content:
+                                    if pv.name == item['id']:
+                                        pv_to_del = pv
+                                        break
+                            if pv_to_del: break
+                    
+                    if pv_to_del:
+                        resolved_objs.append({"type": "physical_volume", "id": pv_to_del.id})
+                    else:
+                        return {"success": False, "error": f"Physical volume '{item['id']}' not found."}
+                else:
+                    resolved_objs.append(item)
+
+            success, res = pm.delete_objects_batch(resolved_objs)
             if success: return {"success": True, "message": "Objects deleted."}
             return {"success": False, "error": res}
 
@@ -3413,7 +3437,11 @@ def ai_chat_route():
         if not client_instance:
             return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
 
-        pm.chat_history.append({"role": "user", "parts": [{"text": formatted_user_msg}]})
+        pm.chat_history.append({
+            "role": "user", 
+            "parts": [{"text": formatted_user_msg}],
+            "model_id": model_id # Metadata
+        })
 
         # --- DEBUG: Dump payload to file ---
         try:
@@ -3476,7 +3504,11 @@ def ai_chat_route():
             return jsonify({"success": False, "error": str(e)}), 500
 
     else: # Ollama Path
-        pm.chat_history.append({"role": "user", "content": formatted_user_msg})
+        pm.chat_history.append({
+            "role": "user", 
+            "content": formatted_user_msg,
+            "model_id": model_id # Metadata
+        })
         try:
             # Map tool schema to Ollama format (Ollama uses OpenAI-like tool schema)
             ollama_tools = []
