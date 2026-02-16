@@ -1,0 +1,146 @@
+// static/aiAssistant.js
+import * as APIService from './apiService.js';
+import * as UIManager from './uiManager.js';
+
+let messageList, promptInput, generateButton, clearButton;
+let isProcessing = false;
+let onGeometryUpdateCallback = () => {};
+
+export function init(callbacks) {
+    messageList = document.getElementById('ai_message_list');
+    promptInput = document.getElementById('ai_prompt_input');
+    generateButton = document.getElementById('ai_generate_button');
+    clearButton = document.getElementById('clear_chat_btn');
+    
+    if (callbacks && callbacks.onGeometryUpdate) {
+        onGeometryUpdateCallback = callbacks.onGeometryUpdate;
+    }
+
+    generateButton.addEventListener('click', handleSend);
+    promptInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSend();
+        }
+    });
+
+    if (clearButton) {
+        clearButton.addEventListener('click', handleClear);
+    }
+
+    // Load existing history
+    loadHistory();
+}
+
+async function loadHistory() {
+    try {
+        const res = await APIService.getAiChatHistory();
+        if (res.history) {
+            renderHistory(res.history);
+        }
+    } catch (err) {
+        console.error("Failed to load chat history:", err);
+    }
+}
+
+function renderHistory(history) {
+    messageList.innerHTML = '';
+    // Skip the first two messages (system instructions)
+    if (history.length <= 2) {
+        addMessageToUI('system', "Welcome to AIRPET AI. How can I help you with your detector geometry today?");
+        return;
+    }
+    history.slice(2).forEach(msg => {
+        // Gemini API uses 'parts' with 'text'
+        const text = msg.parts ? msg.parts.map(p => p.text || '').join('\n') : msg.content;
+        if (text && !text.startsWith('[System Context Update]')) {
+            addMessageToUI(msg.role === 'user' ? 'user' : 'model', text);
+        }
+    });
+    scrollToBottom();
+}
+
+async function handleSend() {
+    if (isProcessing) return;
+    
+    const message = promptInput.value.trim();
+    if (!message) return;
+
+    const model = UIManager.getAiSelectedModel();
+    if (!model || model === '--export--') {
+        UIManager.showError("Please select a valid AI model for chat.");
+        return;
+    }
+
+    setLoading(true);
+    addMessageToUI('user', message);
+    promptInput.value = '';
+    scrollToBottom();
+
+    try {
+        const result = await APIService.sendAiChatMessage(message, model);
+        
+        // The result of /api/ai/chat is the final text response from the model
+        // after all tools have been executed.
+        addMessageToUI('model', result.message);
+        
+        // Notify main.js that geometry might have changed
+        if (onGeometryUpdateCallback) {
+            onGeometryUpdateCallback(result);
+        }
+    } catch (err) {
+        UIManager.showError("AI Error: " + err.message);
+        addMessageToUI('system', "Error: " + err.message);
+    } finally {
+        setLoading(false);
+        scrollToBottom();
+    }
+}
+
+async function handleClear() {
+    if (!confirm("Clear AI chat history? This won't undo geometry changes.")) return;
+    try {
+        await APIService.clearAiChatHistory();
+        messageList.innerHTML = '';
+        addMessageToUI('system', "History cleared.");
+    } catch (err) {
+        UIManager.showError("Failed to clear history: " + err.message);
+    }
+}
+
+function addMessageToUI(role, text) {
+    const div = document.createElement('div');
+    div.className = `chat-message ${role}`;
+    
+    // Simple markdown-ish rendering for code blocks or tool calls
+    // In the future, we could use a proper library like marked.js
+    let formattedText = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+    
+    // Highlight bracketed tool calls if present in the text (often added by AI explanation)
+    formattedText = formattedText.replace(/\[Tool: (.*?)\]/g, '<span class="tool-call">🛠️ $1</span>');
+
+    div.innerHTML = formattedText;
+    messageList.appendChild(div);
+}
+
+function setLoading(loading) {
+    isProcessing = loading;
+    generateButton.classList.toggle('loading', loading);
+    generateButton.disabled = loading;
+    promptInput.disabled = loading;
+}
+
+function scrollToBottom() {
+    messageList.scrollTop = messageList.scrollHeight;
+}
+
+function scrollToBottomSmooth() {
+    messageList.scrollTo({
+        top: messageList.scrollHeight,
+        behavior: 'smooth'
+    });
+}

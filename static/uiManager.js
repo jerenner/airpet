@@ -440,7 +440,8 @@ export function initUI(cb) {
         }
     });
 
-    // AI Panel Listener
+    // AI Panel Listener (removed, handled by aiAssistant.js)
+    /*
     aiGenerateButton.addEventListener('click', () => {
         const promptText = aiPromptInput.value.trim();
         if (promptText) {
@@ -449,6 +450,7 @@ export function initUI(cb) {
             showError("Please enter a prompt for the AI assistant.");
         }
     });
+    */
 
     // API key modal listeners
     setApiKeyButton.addEventListener('click', callbacks.onSetApiKeyClicked);
@@ -559,6 +561,8 @@ export function initUI(cb) {
     bottomTabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetTabId = button.dataset.tab;
+            // Set active tab attribute for CSS styling
+            bottomPanel.dataset.activeTab = targetTabId;
             // Activate button in the bottom panel only
             bottomTabButtons.forEach(btn => btn.classList.toggle('active', btn === button));
             // Show content in the bottom panel only
@@ -567,6 +571,9 @@ export function initUI(cb) {
             });
         });
     });
+
+    // Set initial active tab attribute
+    bottomPanel.dataset.activeTab = 'tab_ai_panel';
 
     // Set default active tabs for both panels
     document.querySelector('#left_panel_tabs .tab_button[data-tab="tab_structure"]').classList.add('active');

@@ -19,6 +19,7 @@ import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
 import * as StepImportEditor from './stepImportEditor.js';
 import * as UIManager from './uiManager.js';
+import * as AIAssistant from './aiAssistant.js';
 
 // --- Global Application State (Keep this minimal) ---
 const AppState = {
@@ -417,6 +418,13 @@ async function initializeApp() {
     });
 
     console.log("Application Initialized.");
+
+    // Initialize AI Assistant
+    AIAssistant.init({
+        onGeometryUpdate: (result) => {
+            syncUIWithState(result);
+        }
+    });
 }
 
 // --- State Synchronization and Selection Management ---
