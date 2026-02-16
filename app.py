@@ -3109,6 +3109,13 @@ def ai_get_full_prompt_route():
 # --- AI Tool Dispatcher ---
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
+    
+    # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
+    def to_vec_dict(val):
+        if isinstance(val, list) and len(val) == 3:
+            return {'x': str(val[0]), 'y': str(val[1]), 'z': str(val[2])}
+        return val
+
     try:
         if tool_name == "get_project_summary":
             return {"success": True, "result": get_project_summary(pm)}
@@ -3121,12 +3128,13 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "manage_define":
             name = args.get('name')
+            value = to_vec_dict(args['value'])
             if name in pm.current_geometry_state.defines:
-                success, error = pm.update_define(name, args['value'], args.get('unit'))
+                success, error = pm.update_define(name, value, args.get('unit'))
                 if success: return {"success": True, "message": f"Define '{name}' updated."}
                 return {"success": False, "error": error}
             else:
-                res, error = pm.add_define(name, args['define_type'], args['value'], args.get('unit'))
+                res, error = pm.add_define(name, args['define_type'], value, args.get('unit'))
                 if res: return {"success": True, "message": f"Define '{res['name']}' created."}
                 return {"success": False, "error": error}
 
@@ -3151,9 +3159,15 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
-            res, error = pm.add_solid(args['name'], args['solid_type'], args['params'])
+            # Support both 'params' and 'dimensions' key for flexibility with small models
+            p = args.get('params') or args.get('dimensions')
+            if isinstance(p, list) and len(p) == 3:
+                # Convert list [x, y, z] to dict {'x':..., 'y':..., 'z':...}
+                p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
+            
+            res, error = pm.add_solid(args['name'], args['solid_type'], p)
             if res:
-                pm.recalculate_geometry_state() # Ensure evaluated params are populated
+                pm.recalculate_geometry_state()
                 return {"success": True, "message": f"Solid '{res['name']}' created."}
             return {"success": False, "error": error}
 
@@ -3163,54 +3177,71 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": False, "error": error}
 
         elif tool_name == "create_boolean_solid":
-            res, error = pm.add_boolean_solid(args['name'], args['recipe'])
+            recipe = args['recipe']
+            # Fix nested transforms in boolean recipe
+            for item in recipe:
+                if 'transform' in item and item['transform']:
+                    t = item['transform']
+                    if 'position' in t: t['position'] = to_vec_dict(t['position'])
+                    if 'rotation' in t: t['rotation'] = to_vec_dict(t['rotation'])
+            
+            res, error = pm.add_boolean_solid(args['name'], recipe)
             if res: return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "manage_logical_volume":
             name = args.get('name')
+            solid_ref = args.get('solid_ref') or args.get('solid')
+            material_ref = args.get('material_ref') or args.get('material')
+            is_sensitive = args.get('is_sensitive') or args.get('sensitive', False)
+            
             if name in pm.current_geometry_state.logical_volumes:
                 success, error = pm.update_logical_volume(
-                    name, args.get('solid_ref'), args.get('material_ref'), 
-                    new_is_sensitive=args.get('is_sensitive')
+                    name, solid_ref, material_ref, 
+                    new_is_sensitive=is_sensitive
                 )
                 if success: return {"success": True, "message": f"Logical volume '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_logical_volume(
-                    name, args['solid_ref'], args['material_ref'], 
-                    is_sensitive=args.get('is_sensitive', False)
+                    name, solid_ref, material_ref, 
+                    is_sensitive=is_sensitive
                 )
                 if res: return {"success": True, "message": f"Logical volume '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "place_volume":
+            parent = args.get('parent_lv_name') or args.get('mother') or args.get('parent')
+            placed = args.get('placed_lv_ref') or args.get('volume')
+            
             res, error = pm.add_physical_volume(
-                args['parent_lv_name'], args.get('name'), args['placed_lv_ref'],
-                args.get('position', {'x':'0','y':'0','z':'0'}),
-                args.get('rotation', {'x':'0','y':'0','z':'0'}),
-                args.get('scale', {'x':'1','y':'1','z':'1'})
+                parent, args.get('name'), placed,
+                to_vec_dict(args.get('position', {'x':'0','y':'0','z':'0'})),
+                to_vec_dict(args.get('rotation', {'x':'0','y':'0','z':'0'})),
+                to_vec_dict(args.get('scale', {'x':'1','y':'1','z':'1'}))
             )
             if res: return {"success": True, "message": f"Volume placed as '{res['name']}'."}
             return {"success": False, "error": error}
 
         elif tool_name == "modify_physical_volume":
             success, error = pm.update_physical_volume(
-                args['pv_id'], args.get('name'), args.get('position'), 
-                args.get('rotation'), args.get('scale')
+                args['pv_id'], args.get('name'), 
+                to_vec_dict(args.get('position')), 
+                to_vec_dict(args.get('rotation')), 
+                to_vec_dict(args.get('scale'))
             )
             if success: return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
             return {"success": False, "error": error}
 
         elif tool_name == "create_detector_ring":
             res, error = pm.create_detector_ring(
-                parent_lv_name=args['parent_lv_name'],
-                lv_to_place_ref=args['lv_to_place_ref'],
+                parent_lv_name=args.get('parent_lv_name') or args.get('mother'),
+                lv_to_place_ref=args.get('lv_to_place_ref') or args.get('volume'),
                 ring_name=args['ring_name'],
                 num_detectors=args['num_detectors'],
                 radius=args['radius'],
-                center=args.get('center', {'x':'0','y':'0','z':'0'}),
-                orientation=args.get('orientation', {'x':'0','y':'0','z':'0'}),
+                center=to_vec_dict(args.get('center', {'x':'0','y':'0','z':'0'})),
+                orientation=to_vec_dict(args.get('orientation', {'x':'0','y':'0','z':'0'})),
                 point_to_center=args.get('point_to_center', True),
                 inward_axis=args.get('inward_axis', '+x'),
                 num_rings=args.get('num_rings', '1'),
@@ -3423,30 +3454,53 @@ def ai_chat_route():
     else: # Ollama Path
         pm.chat_history.append({"role": "user", "content": formatted_user_msg})
         try:
-            # Note: 8b models often struggle with complex multi-tool loops.
-            # We will use the simplified chat completion for now.
-            # In the future, we can map AI_GEOMETRY_TOOLS to Ollama's tool format.
-            response = ollama.chat(
-                model=model_id,
-                messages=pm.chat_history
-            )
-            
-            assistant_msg = response['message']['content']
-            pm.chat_history.append({"role": "assistant", "content": assistant_msg})
-            
-            # Simple check for JSON if the model tried to output it manually
-            # (Backwards compatibility for non-tool-aware local models)
-            if "{" in assistant_msg and "}" in assistant_msg:
-                try:
-                    # Attempt to extract and process JSON if it looks like a one-shot response
-                    json_match = re.search(r'\{.*\}', assistant_msg, re.DOTALL)
-                    if json_match:
-                        ai_data = json.loads(json_match.group())
-                        pm.process_ai_response(ai_data)
-                except:
-                    pass
+            # Map tool schema to Ollama format (Ollama uses OpenAI-like tool schema)
+            ollama_tools = []
+            for tool in AI_GEOMETRY_TOOLS:
+                ollama_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": tool["parameters"]
+                    }
+                })
 
-            return create_success_response(pm, assistant_msg)
+            job_id = None
+            version_id = None
+
+            # Tool loop for Ollama
+            for _ in range(5):
+                response = ollama.chat(
+                    model=model_id,
+                    messages=pm.chat_history,
+                    tools=ollama_tools
+                )
+                
+                assistant_msg = response['message']
+                pm.chat_history.append(assistant_msg)
+                
+                if not assistant_msg.get('tool_calls'):
+                    # No tool calls, finish
+                    return create_success_response(pm, assistant_msg['content'])
+
+                # Process tool calls
+                for tool_call in assistant_msg['tool_calls']:
+                    f_name = tool_call['function']['name']
+                    f_args = tool_call['function']['arguments']
+                    
+                    print(f"Ollama AI Calling Tool: {f_name} with {f_args}")
+                    result = dispatch_ai_tool(pm, f_name, f_args)
+                    
+                    if "job_id" in result: job_id = result["job_id"]
+                    if "version_id" in result: version_id = result["version_id"]
+                    
+                    pm.chat_history.append({
+                        "role": "tool",
+                        "content": json.dumps(result)
+                    })
+            
+            return create_success_response(pm, "Too many tool iterations (Ollama).")
 
         except Exception as e:
             traceback.print_exc()
