@@ -246,5 +246,38 @@ AI_GEOMETRY_TOOLS = [
             },
             "required": ["objects"]
         }
+    },
+    {
+        "name": "run_simulation",
+        "description": "Start a Geant4 simulation run to test the current geometry.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "events": {"type": "integer", "description": "Number of events to simulate (default: 1000)."},
+                "threads": {"type": "integer", "description": "Number of CPU threads (default: 1)."}
+            }
+        }
+    },
+    {
+        "name": "get_simulation_status",
+        "description": "Check the status of a previously started simulation job.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "The unique ID of the simulation job."}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "get_analysis_summary",
+        "description": "Get a physics-based summary of the simulation results (energy peaks, hit counts, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string", "description": "The unique ID of the simulation job."}
+            },
+            "required": ["job_id"]
+        }
     }
 ]

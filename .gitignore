@@ -1,10 +1,12 @@
-# Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-venv/
 .env
-
-# Other common files
-.DS_Store
+projects/
+tmp/
+*.h5
+*.hdf5
+*.png
+*.npz
+build/
+geant4_app/build/
+tests/__pycache__/

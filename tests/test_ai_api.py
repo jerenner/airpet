@@ -84,3 +84,61 @@ def test_project_summary_context_string(pm):
     assert "World Volume: World" in summary
     assert "Materials: G4_Galactic, Lead" in summary
     assert "TestLV(TestSolid)" in summary
+
+def test_ai_simulation_tools(pm):
+    # Setup for simulation
+    with patch('threading.Thread') as MockThread, \
+         patch('app.run_g4_simulation') as MockRunSim:
+        
+        # 1. Run simulation
+        res = dispatch_ai_tool(pm, "run_simulation", {"events": 500})
+        assert res['success']
+        assert 'job_id' in res
+        assert MockThread.called
+
+        # 2. Check status
+        from app import SIMULATION_STATUS, SIMULATION_LOCK
+        job_id = res['job_id']
+        with SIMULATION_LOCK:
+            SIMULATION_STATUS[job_id] = {"status": "Finished", "progress": 500, "total_events": 500, "stdout": [], "stderr": []}
+        
+        res_status = dispatch_ai_tool(pm, "get_simulation_status", {"job_id": job_id})
+        assert res_status['success']
+        assert res_status['status'] == "Finished"
+
+def test_ai_analysis_summary(pm):
+    # Mocking h5py File
+    with patch('h5py.File') as MockFile:
+        job_id = "test-job-id"
+        pm.current_version_id = "test-version"
+        
+        mock_f = MockFile.return_value.__enter__.return_value
+        
+        # Mock 'default_ntuples/Hits' group
+        mock_hits = MagicMock()
+        mock_f.__contains__.side_effect = lambda k: k == 'default_ntuples/Hits'
+        mock_f.__getitem__.return_value = mock_hits
+        
+        # Mock 'entries' dataset
+        mock_entries = MagicMock()
+        mock_entries.shape = ()
+        mock_entries.__getitem__.return_value = 10
+        
+        # Mock 'ParticleName' dataset
+        mock_names = MagicMock()
+        mock_names.__getitem__.return_value = [b"gamma"] * 10
+        
+        # Setup __contains__ and __getitem__ for hits group
+        def hits_getitem(key):
+            if key == 'entries': return mock_entries
+            if key == 'ParticleName': return mock_names
+            return MagicMock()
+            
+        mock_hits.__getitem__.side_effect = hits_getitem
+        mock_hits.__contains__.side_effect = lambda k: k in ['entries', 'ParticleName']
+        
+        with patch('os.path.exists', return_value=True):
+            res = dispatch_ai_tool(pm, "get_analysis_summary", {"job_id": job_id})
+            assert res['success'], f"Error: {res.get('error')}"
+            assert res['summary']['total_hits'] == 10
+            assert res['summary']['particle_breakdown']['gamma'] == 10

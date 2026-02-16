@@ -1,84 +1,103 @@
 import pytest
-import requests
 import json
-import time
-import subprocess
-import os
 from unittest.mock import MagicMock, patch
+from app import app, dispatch_ai_tool
+from src.project_manager import ProjectManager
+from src.expression_evaluator import ExpressionEvaluator
 
-BASE_URL = "http://127.0.0.1:5003"
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
 
-@pytest.fixture(scope="module")
-def flask_server():
-    # Start the flask server in a subprocess
-    # We pass a dummy API key so the client initializes
-    process = subprocess.Popen(
-        ["/Users/marth/miniconda/envs/airpet/bin/python", "app.py"],
-        cwd="/Users/marth/projects/airpet",
-        env={**os.environ, "FLASK_RUN_PORT": "5003", "APP_MODE": "local", "GEMINI_API_KEY": "dummy_key"}
-    )
-    time.sleep(3) # Wait for startup
-    yield
-    process.terminate()
+def test_ai_chat_flow_mocked(client):
+    """Verify that the AI can trigger a simulation via chat using test_client."""
+    from google.genai import types
+    
+    # turn 1: model calls tool
+    mock_call_part = MagicMock()
+    mock_call_part.function_call = MagicMock()
+    mock_call_part.function_call.name = "run_simulation"
+    mock_call_part.function_call.args = {"events": 10}
+    mock_call_part.text = None
 
-def test_ai_chat_flow_mocked(flask_server):
-    """
-    Since we don't want to make real API calls during automated tests 
-    (to avoid cost and dependency on keys), we would normally mock the 
-    genai client inside the flask app. 
+    mock_response = MagicMock()
+    mock_response.candidates = [MagicMock()]
+    mock_response.candidates[0].content.parts = [mock_call_part]
+    mock_response.candidates[0].content.role = "model"
     
-    However, since it's a separate process, we'll test the tool dispatch 
-    logic directly using the dispatch_ai_tool helper which we already tested in test_ai_api.py.
+    # turn 2: model gives final text
+    final_part = MagicMock()
+    final_part.function_call = None
+    final_part.text = "Simulation started."
     
-    For THIS integration test, we'll verify the endpoints exist and handle history.
-    """
-    
-    # 1. Clear history
-    res = requests.post(f"{BASE_URL}/api/ai/clear")
-    assert res.status_code == 200
+    final_response = MagicMock()
+    final_response.candidates = [MagicMock()]
+    final_response.candidates[0].content.parts = [final_part]
+    final_response.candidates[0].content.role = "model"
+    final_response.text = "Simulation started."
 
-    # 2. Check initial history
-    hist_res = requests.get(f"{BASE_URL}/api/ai/history")
-    assert hist_res.status_code == 200
-    assert len(hist_res.json()['history']) == 0
+    with patch('app.get_gemini_client_for_session') as MockClientGetter, \
+         patch('app.get_project_manager_for_session') as MockPMGetter:
+        
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+        
+        mock_client = MagicMock()
+        MockClientGetter.return_value = mock_client
+        # The loop iterates up to 5 times.
+        mock_client.models.generate_content.side_effect = [mock_response, final_response]
+        
+        with patch('threading.Thread') as MockThread, \
+             patch('app.run_g4_simulation') as MockRunG4:
+            
+            payload = {"message": "Run a quick sim", "model": "models/gemini-2.0-flash-exp"}
+            response = client.post("/api/ai/chat", json=payload)
+            
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['success']
+            # We expect job_id to be injected into the response
+            assert 'job_id' in data, f"Data was: {data}"
+            assert "Simulation started." in data['message']
+            assert MockThread.called
 
-    # 3. Verify health check
-    health_res = requests.get(f"{BASE_URL}/ai_health_check")
-    assert health_res.status_code == 200
-    data = health_res.json()
-    assert data['success']
-    # Gemini should be listed (even if it fails to list models due to dummy key)
-    assert 'models' in data
+def test_ai_analysis_summary_integration(client):
+    """Verify the analysis summary tool integration."""
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('h5py.File') as MockFile, \
+         patch('os.path.exists', return_value=True):
+        
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        pm.current_version_id = "test-v"
+        MockPMGetter.return_value = pm
 
-def test_ai_tool_dispatch_integration():
-    """Verify that the tool dispatcher is correctly integrated in the app."""
-    from src.project_manager import ProjectManager
-    from src.expression_evaluator import ExpressionEvaluator
-    from app import dispatch_ai_tool
-    
-    evaluator = ExpressionEvaluator()
-    pm = ProjectManager(evaluator)
-    pm.create_empty_project()
-    
-    # Test a complex tool: create_detector_ring
-    args = {
-        "parent_lv_name": "World",
-        "lv_to_place_ref": "box_LV",
-        "ring_name": "TestRing",
-        "num_detectors": "8",
-        "radius": "200",
-        "center": {"x": "0", "y": "0", "z": "0"},
-        "orientation": {"x": "0", "y": "0", "z": "0"},
-        "point_to_center": True,
-        "inward_axis": "-z",
-        "num_rings": "1",
-        "ring_spacing": "0"
-    }
-    
-    result = dispatch_ai_tool(pm, "create_detector_ring", args)
-    assert result['success']
-    
-    # Verify the placements were created in the state
-    world_lv = pm.current_geometry_state.logical_volumes["World"]
-    placements = [pv for pv in world_lv.content if "TestRing" in pv.name]
-    assert len(placements) == 8
+        mock_f = MockFile.return_value.__enter__.return_value
+        mock_hits = MagicMock()
+        mock_f.__getitem__.side_effect = lambda k: mock_hits if k == 'default_ntuples/Hits' else MagicMock()
+        mock_f.__contains__.side_effect = lambda k: k == 'default_ntuples/Hits'
+        
+        mock_entries = MagicMock()
+        mock_entries.shape = ()
+        mock_entries.__getitem__.return_value = 5
+        
+        mock_names = MagicMock()
+        mock_names.__getitem__.return_value = [b"gamma"] * 5
+        
+        def hits_getitem(key):
+            if key == 'entries': return mock_entries
+            if key == 'ParticleName': return mock_names
+            return MagicMock()
+            
+        mock_hits.__getitem__.side_effect = hits_getitem
+        mock_hits.__contains__.side_effect = lambda k: k in ['entries', 'ParticleName']
+
+        result = dispatch_ai_tool(pm, "get_analysis_summary", {"job_id": "test-job"})
+        assert result['success'], f"Error: {result.get('error')}"
+        assert result['summary']['total_hits'] == 5
+        assert result['summary']['particle_breakdown']['gamma'] == 5
