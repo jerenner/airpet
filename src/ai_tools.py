@@ -44,11 +44,26 @@ AI_GEOMETRY_TOOLS = [
             "properties": {
                 "component_type": {
                     "type": "string", 
-                    "enum": ["define", "material", "element", "solid", "logical_volume", "assembly", "particle_source"]
+                    "enum": ["define", "material", "element", "solid", "logical_volume", "assembly", "particle_source", "physical_volume"]
                 },
                 "name": {"type": "string", "description": "The name of the component or its unique ID (for physical_volumes)."}
             },
             "required": ["component_type", "name"]
+        }
+    },
+    {
+        "name": "search_components",
+        "description": "Search for components by name using a regex pattern.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "component_type": {
+                    "type": "string",
+                    "enum": ["solid", "logical_volume", "material", "physical_volume"]
+                },
+                "pattern": {"type": "string", "description": "Regex pattern to match names."}
+            },
+            "required": ["component_type", "pattern"]
         }
     },
     {

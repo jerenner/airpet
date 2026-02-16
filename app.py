@@ -2074,14 +2074,15 @@ def get_project_list_route():
 def construct_full_ai_prompt(project_manager, user_prompt):
 
     system_prompt = load_system_prompt()
-    current_geometry_json = project_manager.save_project_to_json_string()
+    # Context Management: provide a summary instead of full JSON to save tokens/complexity
+    context_summary = project_manager.get_summarized_context()
 
     full_prompt = (f"{system_prompt}\n\n"
-                    f"## Current Geometry State\n\n"
-                    f"```json\n{current_geometry_json}\n```\n\n"
+                    f"## Current Project Summary\n\n"
+                    f"{context_summary}\n\n"
                     f"## User Request\n\n"
                     f'"{user_prompt}"\n\n'
-                    f"## Your JSON Response:\n")
+                    f"NOTE: Use your tools to inspect details or modify the state. If you are in one-shot mode, provide the JSON response for modifications as requested.")
 
     return full_prompt
 
@@ -2945,6 +2946,31 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if success: return {"success": True, "message": "Objects deleted."}
             return {"success": False, "error": res}
 
+        elif tool_name == "search_components":
+            import re
+            pattern = args['pattern']
+            ctype = args['component_type']
+            state = pm.current_geometry_state
+            results = []
+            
+            items = []
+            if ctype == "solid": items = list(state.solids.keys())
+            elif ctype == "logical_volume": items = list(state.logical_volumes.keys())
+            elif ctype == "material": items = list(state.materials.keys())
+            elif ctype == "physical_volume":
+                # For PVs, we search by name across all LVs
+                for lv in state.logical_volumes.values():
+                    if lv.content_type == 'physvol':
+                        for pv in lv.content:
+                            if re.search(pattern, pv.name, re.IGNORECASE):
+                                results.append({"id": pv.id, "name": pv.name, "parent": lv.name})
+                return {"success": True, "results": results}
+
+            for item in items:
+                if re.search(pattern, item, re.IGNORECASE):
+                    results.append(item)
+            return {"success": True, "results": results}
+
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:
         traceback.print_exc()
@@ -2966,14 +2992,18 @@ def ai_chat_route():
 
     # Initialize chat history if empty
     if not pm.chat_history:
+        system_prompt = load_system_prompt()
         pm.chat_history = [
-            {"role": "user", "parts": [{"text": "You are AIRPET AI, a specialist in Geant4 detector design. "
-                                        "Use the provided tools to inspect and modify the geometry. "
-                                        "Always explain your changes briefly after making them."}]},
-            {"role": "model", "parts": [{"text": "Understood. I am ready to help you design your detector."}]}
+            {"role": "user", "parts": [{"text": system_prompt}]},
+            {"role": "model", "parts": [{"text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."}]}
         ]
     
-    pm.chat_history.append({"role": "user", "parts": [{"text": user_message}]})
+    # Inject current project context as a "system hint" before the user message
+    context_summary = pm.get_summarized_context()
+    pm.chat_history.append({
+        "role": "user", 
+        "parts": [{"text": f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"}]
+    })
 
     try:
         # Loop to handle multiple tool calls (Gemini 3 is good at this)
