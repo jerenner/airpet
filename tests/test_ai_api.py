@@ -157,3 +157,20 @@ def test_ai_analysis_summary(pm):
             assert res['success'], f"Error: {res.get('error')}"
             assert res['summary']['total_hits'] == 10
             assert res['summary']['particle_breakdown']['gamma'] == 10
+
+def test_ai_physics_template(pm):
+    # Test inserting a phantom template
+    res = dispatch_ai_tool(pm, "insert_physics_template", {
+        "template_name": "phantom",
+        "params": {"radius": 100, "length": 200},
+        "parent_lv_name": "World",
+        "position": {"x": 0, "y": 0, "z": 0}
+    })
+    
+    assert res['success']
+    assert any("Phantom_LV" in name for name in pm.current_geometry_state.logical_volumes)
+    assert any("Phantom_Solid" in name for name in pm.current_geometry_state.solids)
+    
+    # Check if PV was placed
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+    assert any("Phantom_LV" in pv.volume_ref for pv in world_lv.content)

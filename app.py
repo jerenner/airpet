@@ -38,6 +38,7 @@ from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
 from src.ai_tools import AI_GEOMETRY_TOOLS, get_project_summary, get_component_details
+from src.templates import PHYSICS_TEMPLATES
 
 from PIL import Image
 
@@ -3382,6 +3383,69 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     "progress": status["progress"], 
                     "total": status["total_events"]
                 }
+
+        elif tool_name == "insert_physics_template":
+            template_name = args['template_name']
+            if template_name not in PHYSICS_TEMPLATES:
+                return {"success": False, "error": f"Template '{template_name}' not found."}
+            
+            t_info = PHYSICS_TEMPLATES[template_name]
+            t_func = t_info['func']
+            t_params = args['params']
+            
+            # Execute template logic to get recipe
+            try:
+                recipe = t_func(**t_params)
+            except Exception as e:
+                return {"success": False, "error": f"Failed to generate template: {str(e)}"}
+
+            # Add solids
+            for solid in recipe.get('solids', []):
+                pm.add_solid(solid.name, solid.type, solid.raw_parameters)
+            
+            # Add materials (ensure NIST materials like G4_SILICON exist)
+            for lv in recipe.get('logical_volumes', []):
+                # Ensure material exists or create as NIST
+                mat_name = lv.material_ref
+                if not pm.current_geometry_state.get_material(mat_name):
+                    if mat_name.startswith("G4_"):
+                        pm.add_material(mat_name, {"mat_type": "nist"})
+                    else:
+                        return {"success": False, "error": f"Material '{mat_name}' required by template not found."}
+                
+                # Add LV
+                pm.add_logical_volume(lv.name, lv.solid_ref, lv.material_ref, is_sensitive=lv.is_sensitive)
+            
+            # Add placements
+            parent_lv_name = args['parent_lv_name']
+            base_pos = to_vec_dict(args.get('position', {'x':'0','y':'0','z':'0'}))
+            
+            created_pvs = []
+            for p_data in recipe.get('placements', []):
+                # If template returns no placements (like cryostat), we place the top LV directly
+                pass
+
+            if not recipe.get('placements'):
+                # If it's a single component (like cryostat), place its main LV
+                last_lv = recipe['logical_volumes'][-1]
+                pv_res, err = pm.add_physical_volume(parent_lv_name, f"{last_lv.name}_PV", last_lv.name, base_pos, {'x':'0','y':'0','z':'0'}, {'x':'1','y':'1','z':'1'})
+                if pv_res: created_pvs.append(pv_res['name'])
+            else:
+                # Place multiple parts relative to base_pos
+                for p_data in recipe['placements']:
+                    # Offset position by base_pos
+                    # (Simple string-based addition for parametric support)
+                    p_pos = p_data['position']
+                    final_pos = {
+                        'x': f"({p_pos['x']}) + ({base_pos['x']})",
+                        'y': f"({p_pos['y']}) + ({base_pos['y']})",
+                        'z': f"({p_pos['z']}) + ({base_pos['z']})"
+                    }
+                    pv_res, err = pm.add_physical_volume(parent_lv_name, p_data['name'], p_data['volume_ref'], final_pos, p_data['rotation'], {'x':'1','y':'1','z':'1'})
+                    if pv_res: created_pvs.append(pv_res['name'])
+
+            pm.recalculate_geometry_state()
+            return {"success": True, "message": f"Inserted {template_name} template into {parent_lv_name}."}
 
         elif tool_name == "get_analysis_summary":
             job_id = args['job_id']

@@ -294,5 +294,19 @@ AI_GEOMETRY_TOOLS = [
             },
             "required": ["job_id"]
         }
+    },
+    {
+        "name": "insert_physics_template",
+        "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, or phantom).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "template_name": {"type": "string", "enum": ["sipm_array", "cryostat", "phantom"]},
+                "params": {"type": "object", "description": "Parameters for the chosen template."},
+                "parent_lv_name": {"type": "string", "description": "Which volume to place the component into."},
+                "position": {"type": "object", "description": "Relative position of the whole component {'x':..., 'y':..., 'z':...}"}
+            },
+            "required": ["template_name", "params", "parent_lv_name"]
+        }
     }
 ]
