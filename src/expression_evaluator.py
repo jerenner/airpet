@@ -125,6 +125,11 @@ class ExpressionEvaluator:
             result = self.interpreter.eval(processed_expression, show_errors=False, raise_errors=True)
             return True, result
         except Exception as e:
+            err_str = str(e)
+            # Help the AI understand that x, y, z are not predefined variables
+            if "name 'x'" in err_str or "name 'y'" in err_str or "name 'z'" in err_str:
+                err_str = f"{err_str}. NOTE: 'x', 'y', and 'z' are not pre-defined variables; use numeric values or define them first using 'manage_define'."
+            
             if verbose:
-                print(f"ERROR: {expression} {str(e)}")
-            return False, 0
+                print(f"ERROR: {expression} {err_str}")
+            return False, err_str

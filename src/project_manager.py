@@ -272,8 +272,11 @@ class ProjectManager:
         state = self.current_geometry_state
         summary = [f"Project: {self.project_name}", f"World Volume: {state.world_volume_ref}"]
         
-        if state.defines:
-            summary.append(f"Variables: {', '.join(list(state.defines.keys())[:20])}" + ("..." if len(state.defines) > 20 else ""))
+        defines = list(state.defines.keys())
+        if defines:
+            summary.append(f"Available Variables (Defines): {', '.join(defines[:30])}" + ("..." if len(defines) > 30 else ""))
+        else:
+            summary.append("Available Variables (Defines): (none defined yet)")
         
         if state.materials:
             summary.append(f"Materials: {', '.join(list(state.materials.keys()))}")
