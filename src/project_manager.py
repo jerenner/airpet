@@ -2267,12 +2267,14 @@ class ProjectManager:
             # It's a reference to a define
             success, value = self.expression_evaluator.evaluate(expr_data)
             if success and isinstance(value, dict):
-                return value
+                # Ensure all keys exist in the resolved dict
+                return {k: float(value.get(k, default_dict.get(k, 0))) for k in ['x', 'y', 'z']}
             else:
                 raise ValueError(f"Define '{expr_data}' did not resolve to a valid dictionary.")
         elif isinstance(expr_data, dict):
             evaluated_dict = {}
-            for axis, raw_expr in expr_data.items():
+            for axis in ['x', 'y', 'z']:
+                raw_expr = expr_data.get(axis, default_dict.get(axis, 0))
                 success, value = self.expression_evaluator.evaluate(str(raw_expr))
                 if success:
                     evaluated_dict[axis] = value
@@ -2292,6 +2294,18 @@ class ProjectManager:
         """
         if not self.current_geometry_state:
             return None, "No project loaded"
+
+        # --- AUTO-CLEANUP: If a ring with this name already exists, delete it first ---
+        existing_pvs = []
+        for lv in self.current_geometry_state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.name == ring_name:
+                        existing_pvs.append({"type": "physical_volume", "id": pv.id})
+        
+        if existing_pvs:
+            print(f"create_detector_ring: Automatically cleaning up {len(existing_pvs)} existing instances of '{ring_name}'.")
+            self.delete_objects_batch(existing_pvs)
 
         try:
             # --- Evaluate all expression-capable arguments ---

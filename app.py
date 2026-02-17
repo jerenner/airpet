@@ -3112,9 +3112,16 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
     
     # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
-    def to_vec_dict(val):
+    def to_vec_dict(val, default_val='0'):
         if isinstance(val, list) and len(val) == 3:
             return {'x': str(val[0]), 'y': str(val[1]), 'z': str(val[2])}
+        if isinstance(val, dict):
+            # Ensure all keys exist
+            return {
+                'x': str(val.get('x', default_val)),
+                'y': str(val.get('y', default_val)),
+                'z': str(val.get('z', default_val))
+            }
         return val
 
     def parse_color_to_rgba(color_str, opacity=1.0):
@@ -3608,14 +3615,18 @@ def ai_chat_route():
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
-                print(f"AI Turn {turn+1}/5...")
-                response = client_instance.models.generate_content(
-                    model=model_id,
-                    contents=sanitized_history,
-                    config=types.GenerateContentConfig(
-                        tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+                print(f"AI Turn {turn+1}/10...")
+                try:
+                    response = client_instance.models.generate_content(
+                        model=model_id,
+                        contents=sanitized_history,
+                        config=types.GenerateContentConfig(
+                            tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+                        )
                     )
-                )
+                except Exception as api_err:
+                    pm.end_transaction("Gemini API Error")
+                    raise api_err
                 
                 # Update sanitized history with model response
                 sanitized_history.append(response.candidates[0].content)
@@ -3734,11 +3745,15 @@ def ai_chat_route():
                 time.sleep(1)
                 print(f"Ollama Turn {turn+1}/10...")
                 
-                response = ollama.chat(
-                    model=model_id,
-                    messages=sanitized_history,
-                    tools=ollama_tools
-                )
+                try:
+                    response = ollama.chat(
+                        model=model_id,
+                        messages=sanitized_history,
+                        tools=ollama_tools
+                    )
+                except Exception as ollama_err:
+                    pm.end_transaction("Ollama API Error")
+                    raise ollama_err
                 
                 # Convert Ollama Message object to a plain dict for serialization
                 raw_assistant_msg = response['message']
