@@ -3783,7 +3783,44 @@ def ai_chat_route():
 @app.route('/api/ai/history', methods=['GET'])
 def get_ai_history():
     pm = get_project_manager_for_session()
-    return jsonify({"history": pm.chat_history})
+    
+    # Ensure history is JSON serializable (handles Gemini SDK objects)
+    serializable_history = []
+    for msg in pm.chat_history:
+        if isinstance(msg, dict):
+            # Already a dict, but might contain nested non-serializable parts
+            clean_msg = {"role": msg["role"]}
+            if "parts" in msg:
+                clean_parts = []
+                for p in msg["parts"]:
+                    if isinstance(p, dict):
+                        clean_parts.append(p)
+                    else: # Handle Gemini Part objects
+                        part_dict = {}
+                        if hasattr(p, 'text') and p.text: part_dict["text"] = p.text
+                        if hasattr(p, 'function_call') and p.function_call:
+                            part_dict["function_call"] = {"name": p.function_call.name, "args": p.function_call.args}
+                        if hasattr(p, 'function_response') and p.function_response:
+                            part_dict["function_response"] = {"name": p.function_response.name, "response": p.function_response.response}
+                        if part_dict: clean_parts.append(part_dict)
+                clean_msg["parts"] = clean_parts
+            if "content" in msg:
+                clean_msg["content"] = msg["content"]
+            if "metadata" in msg:
+                clean_msg["metadata"] = msg["metadata"]
+            serializable_history.append(clean_msg)
+        else:
+            # Gemini Content objects
+            try:
+                serializable_history.append({
+                    "role": getattr(msg, 'role', 'model'),
+                    "parts": [{"text": p.text} for p in getattr(msg, 'parts', []) if hasattr(p, 'text') and p.text] or \
+                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in getattr(msg, 'parts', []) if hasattr(p, 'function_call') and p.function_call]
+                })
+            except:
+                pass
+
+    return jsonify({"history": serializable_history})
 
 @app.route('/api/ai/clear', methods=['POST'])
 def clear_ai_history():
