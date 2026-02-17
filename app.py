@@ -3470,6 +3470,9 @@ def ai_chat_route():
             version_id = None
 
             for _ in range(5):
+                # Add a small delay to avoid hitting rate limits on free-tier keys
+                time.sleep(1)
+                
                 response = client_instance.models.generate_content(
                     model=model_id,
                     contents=sanitized_history,
@@ -3579,6 +3582,8 @@ def ai_chat_route():
 
             # Tool loop for Ollama
             for _ in range(5):
+                time.sleep(1)
+                
                 response = ollama.chat(
                     model=model_id,
                     messages=sanitized_history,
