@@ -3443,6 +3443,9 @@ def ai_chat_route():
             "metadata": {"model_id": model_id} # Move to a nested dict to avoid top-level key collision
         })
 
+        # --- OPTIMIZATION: Start Transaction ---
+        pm.begin_transaction()
+
         try:
             # Sanitize history for Gemini API (remove our custom metadata)
             sanitized_history = []
@@ -3469,10 +3472,11 @@ def ai_chat_route():
             job_id = None
             version_id = None
 
-            for _ in range(5):
+            for turn in range(5):
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
+                print(f"AI Turn {turn+1}/5...")
                 response = client_instance.models.generate_content(
                     model=model_id,
                     contents=sanitized_history,
@@ -3499,7 +3503,11 @@ def ai_chat_route():
                         has_tool_call = True
                         tool_name = part.function_call.name
                         args = part.function_call.args
+                        
+                        print(f"AI Calling Tool: {tool_name}")
                         result = dispatch_ai_tool(pm, tool_name, args)
+                        
+                        # Capture simulation metadata for the frontend
                         if "job_id" in result: job_id = result["job_id"]
                         if "version_id" in result: version_id = result["version_id"]
                         
@@ -3509,7 +3517,11 @@ def ai_chat_route():
                         ))
 
                 if not has_tool_call:
+                    # End the transaction before responding
+                    pm.end_transaction(f"AI: {user_message[:50]}")
+                    
                     res_obj = create_success_response(pm, response.text)
+                    # Re-inject captured job metadata into the final response
                     if job_id:
                         res_json = res_obj.get_json()
                         res_json['job_id'] = job_id
@@ -3525,9 +3537,11 @@ def ai_chat_route():
                     "parts": [{"function_response": {"name": p.function_response.name, "response": p.function_response.response}} for p in tool_results_parts]
                 })
 
+            pm.end_transaction("AI Timeout")
             return create_success_response(pm, "Too many tool iterations.")
 
         except Exception as e:
+            pm.end_transaction("AI Error")
             traceback.print_exc()
             err_msg = str(e)
             status_code = 500
@@ -3542,6 +3556,9 @@ def ai_chat_route():
             "content": formatted_user_msg,
             "metadata": {"model_id": model_id} # Metadata
         })
+
+        pm.begin_transaction()
+
         try:
             # Map tool schema to Ollama format (Ollama uses OpenAI-like tool schema)
             ollama_tools = []
@@ -3581,8 +3598,9 @@ def ai_chat_route():
             version_id = None
 
             # Tool loop for Ollama
-            for _ in range(5):
+            for turn in range(5):
                 time.sleep(1)
+                print(f"Ollama Turn {turn+1}/5...")
                 
                 response = ollama.chat(
                     model=model_id,
@@ -3596,6 +3614,7 @@ def ai_chat_route():
                 pm.chat_history.append(assistant_msg)
                 
                 if not assistant_msg.get('tool_calls'):
+                    pm.end_transaction(f"AI: {user_message[:50]}")
                     return create_success_response(pm, assistant_msg['content'])
 
                 # Process tool calls
@@ -3603,7 +3622,7 @@ def ai_chat_route():
                     f_name = tool_call['function']['name']
                     f_args = tool_call['function']['arguments']
                     
-                    print(f"Ollama AI Calling Tool: {f_name} with {f_args}")
+                    print(f"Ollama AI Calling Tool: {f_name}")
                     result = dispatch_ai_tool(pm, f_name, f_args)
                     
                     if "job_id" in result: job_id = result["job_id"]
@@ -3616,9 +3635,11 @@ def ai_chat_route():
                     sanitized_history.append(tool_res)
                     pm.chat_history.append(tool_res)
             
+            pm.end_transaction("AI Timeout")
             return create_success_response(pm, "Too many tool iterations (Ollama).")
 
         except Exception as e:
+            pm.end_transaction("AI Error")
             traceback.print_exc()
             err_msg = str(e)
             status_code = 500

@@ -732,23 +732,21 @@
             }
         }
 
-        #ai_generate_button.loading .button-text {
-            visibility: hidden;
-            /* Hide the '➤' text when loading */
-        }
-
         #ai_generate_button .loader {
             display: none;
-            /* Hide loader by default */
             position: absolute;
-            /* Position it in the center of the button */
-            left: 18%;
-            top: 18%;
+            left: 50%;
+            top: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+        }
+
+        #ai_generate_button.loading .button-text {
+            visibility: hidden;
         }
 
         #ai_generate_button.loading .loader {
             display: block;
-            /* Show loader when button has .loading class */
         }
 
         /* Solid editor */

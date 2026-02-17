@@ -96,9 +96,6 @@ async function handleSend() {
 
     try {
         const result = await APIService.sendAiChatMessage(message, model);
-        
-        // The result of /api/ai/chat is the final text response from the model
-        // after all tools have been executed.
         addMessageToUI('model', result.message);
         
         // Notify main.js that geometry might have changed
