@@ -3447,6 +3447,13 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             pm.recalculate_geometry_state()
             return {"success": True, "message": f"Inserted {template_name} template into {parent_lv_name}."}
 
+        elif tool_name == "batch_geometry_update":
+            ops = args['operations']
+            batch_results = []
+            for op in ops:
+                batch_results.append(dispatch_ai_tool(pm, op['tool_name'], op['arguments']))
+            return {"success": True, "batch_results": batch_results}
+
         elif tool_name == "get_analysis_summary":
             job_id = args['job_id']
             version_id = pm.current_version_id
@@ -3567,7 +3574,8 @@ def ai_chat_route():
             job_id = None
             version_id = None
 
-            for turn in range(5):
+            # Increased turn limit to 10 for complex operations
+            for turn in range(10):
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
@@ -3693,9 +3701,9 @@ def ai_chat_route():
             version_id = None
 
             # Tool loop for Ollama
-            for turn in range(5):
+            for turn in range(10):
                 time.sleep(1)
-                print(f"Ollama Turn {turn+1}/5...")
+                print(f"Ollama Turn {turn+1}/10...")
                 
                 response = ollama.chat(
                     model=model_id,

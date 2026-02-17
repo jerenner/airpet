@@ -296,6 +296,26 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "batch_geometry_update",
+        "description": "Execute multiple geometry operations in a single high-efficiency batch. Use this when you have many objects to create or modify at once.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool_name": {"type": "string", "description": "Name of the tool to call."},
+                            "arguments": {"type": "object", "description": "Arguments for that tool."}
+                        }
+                    }
+                }
+            },
+            "required": ["operations"]
+        }
+    },
+    {
         "name": "insert_physics_template",
         "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, or phantom).",
         "parameters": {
