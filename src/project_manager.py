@@ -1647,7 +1647,7 @@ class ProjectManager:
             dependencies = self._find_dependencies(obj_type, obj_id)
             
             # Filter out dependencies that are also scheduled for deletion in this batch.
-            item_ids_being_deleted = {i['id'] for i in objects_to_delete}
+            item_ids_being_deleted = {i.get('id') for i in objects_to_delete if i.get('id')}
             filtered_deps = []
             for dep_string in dependencies:
                 is_also_being_deleted = False
