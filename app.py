@@ -3595,6 +3595,7 @@ def ai_chat_route():
     data = request.get_json()
     user_message = data.get('message')
     model_id = data.get('model', 'models/gemini-2.0-flash-exp') 
+    turn_limit = data.get('turn_limit', 10)
     
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
@@ -3643,28 +3644,14 @@ def ai_chat_route():
                 }
                 sanitized_history.append(sanitized_msg)
 
-            # --- DEBUG: Dump payload to file ---
-            try:
-                debug_payload = {
-                    "model": model_id,
-                    "contents": sanitized_history,
-                    "tools": AI_GEOMETRY_TOOLS
-                }
-                with open("ai_debug_payload.json", "w") as df:
-                    json.dump(debug_payload, df, indent=2, default=str)
-            except Exception as e:
-                print(f"Warning: Could not write debug payload: {e}")
-            # -----------------------------------
-
             job_id = None
             version_id = None
 
-            # Increased turn limit to 10 for complex operations
-            for turn in range(10):
+            for turn in range(turn_limit):
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
-                print(f"AI Turn {turn+1}/10...")
+                print(f"AI Turn {turn+1}/{turn_limit}...")
                 try:
                     response = client_instance.models.generate_content(
                         model=model_id,
@@ -3790,9 +3777,9 @@ def ai_chat_route():
             version_id = None
 
             # Tool loop for Ollama
-            for turn in range(10):
+            for turn in range(turn_limit):
                 time.sleep(1)
-                print(f"Ollama Turn {turn+1}/10...")
+                print(f"Ollama Turn {turn+1}/{turn_limit}...")
                 
                 try:
                     response = ollama.chat(

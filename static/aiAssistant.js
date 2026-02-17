@@ -95,13 +95,16 @@ async function handleSend() {
         return;
     }
 
+    const turnLimitInput = document.getElementById('ai_turn_limit');
+    const turnLimit = turnLimitInput ? parseInt(turnLimitInput.value, 10) : 10;
+
     setLoading(true);
     addMessageToUI('user', message);
     promptInput.value = '';
     scrollToBottom();
 
     try {
-        const result = await APIService.sendAiChatMessage(message, model);
+        const result = await APIService.sendAiChatMessage(message, model, turnLimit);
         addMessageToUI('model', result.message);
         
         // Notify main.js that geometry might have changed

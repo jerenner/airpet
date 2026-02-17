@@ -509,13 +509,14 @@ export async function checkAiServiceStatus() {
  * Sends a message to the stateful AI chat assistant.
  * @param {string} message - The user's text message.
  * @param {string} model - The model ID to use.
+ * @param {number} turnLimit - Maximum number of tool iterations.
  * @returns {Promise<Object>}
  */
-export async function sendAiChatMessage(message, model) {
+export async function sendAiChatMessage(message, model, turnLimit = 10) {
     const response = await fetch(`${API_BASE_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, model })
+        body: JSON.stringify({ message, model, turn_limit: turnLimit })
     });
     return handleResponse(response);
 }
