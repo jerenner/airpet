@@ -3432,6 +3432,11 @@ def ai_chat_route():
     context_summary = pm.get_summarized_context()
     formatted_user_msg = f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"
 
+    if is_gemini:
+        client_instance = get_gemini_client_for_session()
+        if not client_instance:
+            return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
+
         pm.chat_history.append({
             "role": "user", 
             "parts": [{"text": formatted_user_msg}],
