@@ -51,8 +51,12 @@ function renderHistory(history) {
         return;
     }
     history.slice(2).forEach(msg => {
-        // Gemini API uses 'parts' with 'text'
-        const text = msg.parts ? msg.parts.map(p => p.text || '').join('\n') : msg.content;
+        // Gemini API uses 'parts' with 'text', Ollama uses 'content'
+        // Skip tool results and system updates
+        if (msg.role === 'tool' || msg.role === 'system') return;
+        
+        const text = msg.parts ? msg.parts.map(p => p.text || '').join('\n').trim() : (msg.content || '').trim();
+        
         if (text && !text.startsWith('[System Context Update]')) {
             addMessageToUI(msg.role === 'user' ? 'user' : 'model', text);
         }

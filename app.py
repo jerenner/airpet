@@ -3522,9 +3522,16 @@ def ai_chat_route():
                     "parts": [{"function_response": {"name": p.function_response.name, "response": p.function_response.response}} for p in tool_results_parts]
                 })
 
+            return create_success_response(pm, "Too many tool iterations.")
+
         except Exception as e:
             traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)}), 500
+            err_msg = str(e)
+            status_code = 500
+            if "429" in err_msg or "ResourceExhausted" in err_msg or "Quota" in err_msg:
+                err_msg = f"AI Rate Limit Exceeded (429): {err_msg}. Please wait a moment before trying again."
+                status_code = 429
+            return jsonify({"success": False, "error": err_msg}), status_code
 
     else: # Ollama Path
         pm.chat_history.append({
@@ -3608,7 +3615,12 @@ def ai_chat_route():
 
         except Exception as e:
             traceback.print_exc()
-            return jsonify({"success": False, "error": str(e)}), 500
+            err_msg = str(e)
+            status_code = 500
+            if "429" in err_msg:
+                err_msg = f"Local AI Overloaded (429): {err_msg}."
+                status_code = 429
+            return jsonify({"success": False, "error": err_msg}), status_code
 
 @app.route('/api/ai/history', methods=['GET'])
 def get_ai_history():
