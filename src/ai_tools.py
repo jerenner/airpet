@@ -339,5 +339,5 @@ AI_GEOMETRY_TOOLS = [
             },
             "required": ["template_name", "params", "parent_lv_name"]
         }
-    }
+    },
 ]
