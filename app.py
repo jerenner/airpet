@@ -3147,13 +3147,21 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "manage_define":
             name = args.get('name')
-            value = to_vec_dict(args['value'])
+            if not name:
+                return {"success": False, "error": "Argument 'name' is required."}
+            
+            # Flexibility for missing 'value'
+            raw_val = args.get('value')
+            if raw_val is None:
+                return {"success": False, "error": "Argument 'value' (expression or position dict) is required."}
+                
+            value = to_vec_dict(raw_val)
             if name in pm.current_geometry_state.defines:
                 success, error = pm.update_define(name, value, args.get('unit'))
                 if success: return {"success": True, "message": f"Define '{name}' updated."}
                 return {"success": False, "error": error}
             else:
-                res, error = pm.add_define(name, args['define_type'], value, args.get('unit'))
+                res, error = pm.add_define(name, args.get('define_type', 'constant'), value, args.get('unit'))
                 if res: return {"success": True, "message": f"Define '{res['name']}' created."}
                 return {"success": False, "error": error}
 
@@ -3270,12 +3278,16 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": False, "error": error}
 
         elif tool_name == "create_detector_ring":
+            ring_name = args.get('ring_name')
+            if not ring_name:
+                return {"success": False, "error": "Argument 'ring_name' is required."}
+                
             res, error = pm.create_detector_ring(
-                parent_lv_name=args.get('parent_lv_name') or args.get('mother'),
+                parent_lv_name=args.get('parent_lv_name') or args.get('mother') or 'World',
                 lv_to_place_ref=args.get('lv_to_place_ref') or args.get('volume'),
-                ring_name=args['ring_name'],
-                num_detectors=args['num_detectors'],
-                radius=args['radius'],
+                ring_name=ring_name,
+                num_detectors=args.get('num_detectors', '10'),
+                radius=args.get('radius', '100'),
                 center=to_vec_dict(args.get('center', {'x':'0','y':'0','z':'0'})),
                 orientation=to_vec_dict(args.get('orientation', {'x':'0','y':'0','z':'0'})),
                 point_to_center=args.get('point_to_center', True),
@@ -3287,19 +3299,34 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": False, "error": error}
 
         elif tool_name == "delete_objects":
-            objs = args['objects']
+            objs = args.get('objects')
+            if not objs or not isinstance(objs, list):
+                return {"success": False, "error": "Argument 'objects' must be a list of {type, id}."}
+                
             # Allow AI to use names for PVs by resolving them to IDs
             resolved_objs = []
             for item in objs:
-                if item['type'] == 'physical_volume':
+                # Robustness: Handle if model passed a string instead of a dict
+                if isinstance(item, str):
+                    # Guess type or ask for it? Let's assume it might be a solid or LV if it's just a string.
+                    # Better to return an error so the AI corrects its format.
+                    return {"success": False, "error": f"Each object in 'objects' must be a dict with 'type' and 'id'. Got string: '{item}'"}
+
+                obj_type = item.get('type')
+                obj_id = item.get('id') or item.get('name') # Fallback to name if id missing
+                
+                if not obj_type or not obj_id:
+                    return {"success": False, "error": "Each object to delete requires a 'type' and an 'id'."}
+
+                if obj_type == 'physical_volume':
                     # Search for the PV by name or ID
-                    pv_to_del = pm._find_pv_by_id(item['id'])
+                    pv_to_del = pm._find_pv_by_id(obj_id)
                     if not pv_to_del:
                         # Try searching by name across all LVs
                         for lv in pm.current_geometry_state.logical_volumes.values():
                             if lv.content_type == 'physvol':
                                 for pv in lv.content:
-                                    if pv.name == item['id']:
+                                    if pv.name == obj_id:
                                         pv_to_del = pv
                                         break
                             if pv_to_del: break
@@ -3307,9 +3334,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     if pv_to_del:
                         resolved_objs.append({"type": "physical_volume", "id": pv_to_del.id})
                     else:
-                        return {"success": False, "error": f"Physical volume '{item['id']}' not found."}
+                        return {"success": False, "error": f"Physical volume '{obj_id}' not found."}
                 else:
-                    resolved_objs.append(item)
+                    resolved_objs.append({"type": obj_type, "id": obj_id})
 
             success, res = pm.delete_objects_batch(resolved_objs)
             if success: return {"success": True, "message": "Objects deleted."}
@@ -3448,10 +3475,12 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": True, "message": f"Inserted {template_name} template into {parent_lv_name}."}
 
         elif tool_name == "batch_geometry_update":
-            ops = args['operations']
+            ops = args.get('operations')
+            if not ops or not isinstance(ops, list):
+                return {"success": False, "error": "Argument 'operations' must be a list of tool calls."}
             batch_results = []
             for op in ops:
-                batch_results.append(dispatch_ai_tool(pm, op['tool_name'], op['arguments']))
+                batch_results.append(dispatch_ai_tool(pm, op.get('tool_name'), op.get('arguments', {})))
             return {"success": True, "batch_results": batch_results}
 
         elif tool_name == "get_analysis_summary":

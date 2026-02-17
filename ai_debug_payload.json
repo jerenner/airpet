@@ -5,7 +5,7 @@
       "role": "user",
       "parts": [
         {
-          "text": "# AIRPET AI System Instructions\n\nYou are AIRPET AI, a specialized assistant for designing Geant4-based radiation detector geometries. You operate within the AIRPET environment, which uses GDML-like structures.\n\n## Operating Principles\n\n1.  **Iterative Design:** You work with the user through a stateful chat. You can inspect the current state and make incremental changes.\n2.  **STRICT Tool-Based Interaction:** You must use the provided tools for ALL geometry modifications and inspections. Do not write pseudo-code or Python scripts in your response. If you need to create multiple objects, call the tools sequentially.\n3.  **Parameter Precision:** Pay close attention to tool argument names. For example, `create_primitive_solid` expects parameters in a `params` object (e.g., `{\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`).\n4.  **Context Awareness:** You are provided with a compact summary of the project structure at the start of each turn. If you need specific details (like dimensions or material composition), use the `get_component_details` tool.\n4.  **Physics Intent:** Understand that this is for Geant4. When creating volumes, consider material properties (density, Z) and whether a volume should be marked as \"sensitive\" for hit recording.\n\n## Tool Usage Guide\n\n*   **Inspection:**\n    *   `get_project_summary`: Use this if you lose track of the overall structure.\n    *   `search_components`: Use this to find existing parts by name.\n    *   `get_component_details`: Always use this before modifying an existing object.\n*   **Modification:**\n    *   `manage_define`: Use this to keep the geometry parametric.\n    *   `create_primitive_solid`: Create the shape first, then bind it to a Logical Volume. Example for a 10cm box: `name=\"Box\", solid_type=\"box\", params={\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`.\n    *   `place_volume`: Remember that physical volumes (PVs) represent instances of Logical Volumes (LVs).\n    *   `create_detector_ring`: Use this specialized tool for PET rings or circular arrays.\n*   **Simulation & Analysis:**\n    *   `run_simulation`: Use this to test the performance of the current geometry. Start with a small number of events (e.g., 500-1000) for quick checks.\n    *   `get_simulation_status`: Check if a run is finished.\n    *   `get_analysis_summary`: Once a simulation is complete, use this to see hit counts and particle species. Use this data to suggest improvements.\n\n## Workflow Example: Optimization\n1.  User: \"Optimize the shield.\"\n2.  You: `run_simulation(events=1000)` -> returns `job_id`.\n3.  You: `get_simulation_status(job_id)` -> wait for \"Completed\".\n4.  You: `get_analysis_summary(job_id)` -> inspect hits in sensitive volumes.\n5.  You: `manage_define` (increase thickness) -> explain why.\n\n## Response Style\n*   Be technical and precise.\n*   Briefly explain the geometry logic you are applying (e.g., \"I'm adding a 2mm lead shield to reduce background...\").\n*   Confirm once the tools have been called.\n"
+          "text": "# AIRPET AI System Instructions\n\nYou are AIRPET AI, a specialized assistant for designing Geant4-based radiation detector geometries. You operate within the AIRPET environment, which uses GDML-like structures.\n\n## Operating Principles\n\n1.  **Iterative Design:** You work with the user through a stateful chat. You can inspect the current state and make incremental changes.\n2.  **STRICT Tool-Based Interaction:** You must use the provided tools for ALL geometry modifications and inspections. Do not write pseudo-code or Python scripts in your response. If you need to create multiple objects, call the tools sequentially.\n3.  **Parameter Precision:** Pay close attention to tool argument names. For example, `create_primitive_solid` expects parameters in a `params` object (e.g., `{\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`).\n4.  **Context Awareness:** You are provided with a compact summary of the project structure at the start of each turn. If you need specific details (like dimensions or material composition), use the `get_component_details` tool.\n4.  **Physics Intent:** Understand that this is for Geant4. When creating volumes, consider material properties (density, Z) and whether a volume should be marked as \"sensitive\" for hit recording.\n\n## Tool Usage Guide\n\n*   **Inspection:**\n    *   `get_project_summary`: Use this if you lose track of the overall structure.\n    *   `search_components`: Use this to find existing parts by name.\n    *   `get_component_details`: Always use this before modifying an existing object.\n*   **Modification:**\n    *   `manage_define`: Use this to keep the geometry parametric.\n    *   `create_primitive_solid`: Create the shape first, then bind it to a Logical Volume. Example for a 10cm box: `name=\"Box\", solid_type=\"box\", params={\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`.\n    *   `place_volume`: Remember that physical volumes (PVs) represent instances of Logical Volumes (LVs).\n    *   `create_detector_ring`: Use this specialized tool for PET rings or circular arrays.\n    *   `insert_physics_template`: Use this specialized tool for PET phantoms, SiPM arrays, or cryostats; it handles many objects in one turn.\n    *   `batch_geometry_update`: If you need to perform many different operations (e.g. creating 10 different variables or 5 different solids), use this tool to group them and avoid hitting the conversation turn limit.\n*   **Simulation & Analysis:**\n    *   `run_simulation`: Use this to test the performance of the current geometry. Start with a small number of events (e.g., 500-1000) for quick checks.\n    *   `get_simulation_status`: Check if a run is finished.\n    *   `get_analysis_summary`: Once a simulation is complete, use this to see hit counts and particle species. Use this data to suggest improvements.\n\n## Workflow Example: Optimization\n1.  User: \"Optimize the shield.\"\n2.  You: `run_simulation(events=1000)` -> returns `job_id`.\n3.  You: `get_simulation_status(job_id)` -> wait for \"Completed\".\n4.  You: `get_analysis_summary(job_id)` -> inspect hits in sensitive volumes.\n5.  You: `manage_define` (increase thickness) -> explain why.\n\n## Response Style\n*   Be technical and precise.\n*   Briefly explain the geometry logic you are applying (e.g., \"I'm adding a 2mm lead shield to reduce background...\").\n*   Confirm once the tools have been called.\n"
         }
       ]
     },
@@ -273,7 +273,7 @@
     },
     {
       "name": "manage_logical_volume",
-      "description": "Create or update a logical volume (binds a solid to a material).",
+      "description": "Create or update a logical volume (binds a solid to a material and sets visual appearance).",
       "parameters": {
         "type": "object",
         "properties": {
@@ -288,6 +288,14 @@
           },
           "is_sensitive": {
             "type": "boolean"
+          },
+          "color": {
+            "type": "string",
+            "description": "Hex color string (e.g., '#0000ff' for blue) or CSS color name."
+          },
+          "opacity": {
+            "type": "number",
+            "description": "Opacity from 0.0 (transparent) to 1.0 (opaque)."
           }
         },
         "required": [
@@ -456,6 +464,31 @@
       }
     },
     {
+      "name": "set_volume_appearance",
+      "description": "Set the visual color and opacity of a logical volume.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the logical volume."
+          },
+          "color": {
+            "type": "string",
+            "description": "Hex color string or common name (blue, red, lead, etc.)."
+          },
+          "opacity": {
+            "type": "number",
+            "description": "Opacity from 0.0 to 1.0."
+          }
+        },
+        "required": [
+          "name",
+          "color"
+        ]
+      }
+    },
+    {
       "name": "run_simulation",
       "description": "Start a Geant4 simulation run to test the current geometry.",
       "parameters": {
@@ -501,6 +534,68 @@
         },
         "required": [
           "job_id"
+        ]
+      }
+    },
+    {
+      "name": "batch_geometry_update",
+      "description": "Execute multiple geometry operations in a single high-efficiency batch. Use this when you have many objects to create or modify at once.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool_name": {
+                  "type": "string",
+                  "description": "Name of the tool to call."
+                },
+                "arguments": {
+                  "type": "object",
+                  "description": "Arguments for that tool."
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "operations"
+        ]
+      }
+    },
+    {
+      "name": "insert_physics_template",
+      "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, or phantom).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "template_name": {
+            "type": "string",
+            "enum": [
+              "sipm_array",
+              "cryostat",
+              "phantom"
+            ]
+          },
+          "params": {
+            "type": "object",
+            "description": "Parameters for the chosen template."
+          },
+          "parent_lv_name": {
+            "type": "string",
+            "description": "Which volume to place the component into."
+          },
+          "position": {
+            "type": "object",
+            "description": "Relative position of the whole component {'x':..., 'y':..., 'z':...}"
+          }
+        },
+        "required": [
+          "template_name",
+          "params",
+          "parent_lv_name"
         ]
       }
     }

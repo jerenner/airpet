@@ -745,7 +745,23 @@ class ProjectManager:
     def save_project_to_json_string(self):
         if self.current_geometry_state:
             data = self.current_geometry_state.to_dict()
-            data['chat_history'] = self.chat_history
+            
+            # Ensure chat history is JSON serializable (no raw Message objects)
+            clean_history = []
+            for msg in self.chat_history:
+                if isinstance(msg, dict):
+                    clean_history.append(msg)
+                else:
+                    # Convert Gemini Content/Part objects to simple dicts
+                    try:
+                        clean_history.append({
+                            "role": getattr(msg, 'role', 'model'),
+                            "parts": [{"text": p.text} for p in getattr(msg, 'parts', []) if hasattr(p, 'text') and p.text]
+                        })
+                    except:
+                        pass
+            
+            data['chat_history'] = clean_history
             return json.dumps(data, indent=2)
         return "{}"
 
