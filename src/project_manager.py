@@ -753,13 +753,24 @@ class ProjectManager:
             clean_history = []
             for msg in self.chat_history:
                 if isinstance(msg, dict):
-                    clean_history.append(msg)
+                    # Deep-sanitize the dict to catch nested non-serializable objects
+                    def sanitize_deep(obj):
+                        if isinstance(obj, dict):
+                            return {k: sanitize_deep(v) for k, v in obj.items()}
+                        elif isinstance(obj, list):
+                            return [sanitize_deep(i) for i in obj]
+                        elif isinstance(obj, (str, int, float, bool, type(None))):
+                            return obj
+                        else:
+                            return str(obj) # Force to string
+                    
+                    clean_history.append(sanitize_deep(msg))
                 else:
-                    # Convert Gemini Content/Part objects to simple dicts
+                    # Convert Gemini Content/Part or Ollama Message objects to simple dicts
                     try:
                         clean_history.append({
-                            "role": getattr(msg, 'role', 'model'),
-                            "parts": [{"text": p.text} for p in getattr(msg, 'parts', []) if hasattr(p, 'text') and p.text]
+                            "role": getattr(msg, 'role', 'assistant'),
+                            "content": str(getattr(msg, 'content', ''))
                         })
                     except:
                         pass

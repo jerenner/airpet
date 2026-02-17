@@ -3740,7 +3740,22 @@ def ai_chat_route():
                     tools=ollama_tools
                 )
                 
-                assistant_msg = response['message']
+                # Convert Ollama Message object to a plain dict for serialization
+                raw_assistant_msg = response['message']
+                assistant_msg = {
+                    "role": getattr(raw_assistant_msg, 'role', 'assistant'),
+                    "content": getattr(raw_assistant_msg, 'content', ""),
+                }
+                if hasattr(raw_assistant_msg, 'tool_calls') and raw_assistant_msg.tool_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        } for tc in raw_assistant_msg.tool_calls
+                    ]
+                
                 sanitized_history.append(assistant_msg)
                 # Keep persistent history simple
                 pm.chat_history.append(assistant_msg)
