@@ -55,7 +55,13 @@ function renderHistory(history) {
         // Skip tool results and system updates
         if (msg.role === 'tool' || msg.role === 'system') return;
         
-        const text = msg.parts ? msg.parts.map(p => p.text || '').join('\n').trim() : (msg.content || '').trim();
+        // --- NEW: Use original_message from metadata if available ---
+        let text = "";
+        if (msg.role === 'user' && msg.metadata && msg.metadata.original_message) {
+            text = msg.metadata.original_message;
+        } else {
+            text = msg.parts ? msg.parts.map(p => p.text || '').join('\n').trim() : (msg.content || '').trim();
+        }
         
         if (text && !text.startsWith('[System Context Update]')) {
             addMessageToUI(msg.role === 'user' ? 'user' : 'model', text);

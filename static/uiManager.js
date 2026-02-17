@@ -436,15 +436,19 @@ export function initUI(cb) {
 
     // Listener for the bottom panel expand/collapse button
     toggleBottomPanelBtn.addEventListener('click', () => {
-        bottomPanel.classList.toggle('expanded');
-
-        // Update the button's icon based on the new state
         if (bottomPanel.classList.contains('expanded')) {
-            toggleBottomPanelBtn.textContent = '↓'; // Down arrow for collapse
-            toggleBottomPanelBtn.title = 'Collapse Panel';
-        } else {
-            toggleBottomPanelBtn.textContent = '↑'; // Up arrow for expand
+            bottomPanel.classList.remove('expanded');
+            bottomPanel.classList.add('minimized');
+            toggleBottomPanelBtn.textContent = '↑';
+            toggleBottomPanelBtn.title = 'Restore Panel';
+        } else if (bottomPanel.classList.contains('minimized')) {
+            bottomPanel.classList.remove('minimized');
+            toggleBottomPanelBtn.textContent = '↑';
             toggleBottomPanelBtn.title = 'Expand Panel';
+        } else {
+            bottomPanel.classList.add('expanded');
+            toggleBottomPanelBtn.textContent = '↓';
+            toggleBottomPanelBtn.title = 'Minimize Panel';
         }
     });
 

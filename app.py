@@ -3571,7 +3571,7 @@ def ai_chat_route():
         pm.chat_history.append({
             "role": "user", 
             "parts": [{"text": formatted_user_msg}],
-            "metadata": {"model_id": model_id} # Move to a nested dict to avoid top-level key collision
+            "metadata": {"model_id": model_id, "original_message": user_message} # Store original message for UI
         })
 
         # --- OPTIMIZATION: Start Transaction ---
@@ -3686,7 +3686,7 @@ def ai_chat_route():
         pm.chat_history.append({
             "role": "user", 
             "content": formatted_user_msg,
-            "metadata": {"model_id": model_id} # Metadata
+            "metadata": {"model_id": model_id, "original_message": user_message} # Store original message for UI
         })
 
         pm.begin_transaction()

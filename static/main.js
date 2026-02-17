@@ -1999,7 +1999,6 @@ async function handleAiGenerate(promptText) {
     }
 
     // If not exporting, proceed with the API call
-    UIManager.showLoading("Processing AI prompt...");
     UIManager.setAiPanelState('loading'); // Set loading state
 
     try {

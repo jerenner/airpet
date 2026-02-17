@@ -17,8 +17,8 @@
         }
 
         #left_panel_container {
-            width: 600px;
-            min-width: 600px;
+            width: 350px;
+            min-width: 300px;
             flex-shrink: 0;
             /* Fixed width for now */
             height: 100vh;
@@ -493,7 +493,7 @@
             /* ...and are flex containers for their internal content. */
             display: flex;
             flex-direction: column;
-            height: 82%;
+            height: 100%;
             /* Make the pane fill the content area's height */
         }
 
@@ -537,12 +537,22 @@
             transition: max-height 0.3s ease-in-out;
         }
 
+        #bottom_panel.minimized .tab_content_area {
+            max-height: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #bottom_panel.minimized .tab_navigation {
+            border-bottom: none;
+        }
+
         /* --- AI PANEL --- */
         #tab_ai_panel {
             display: flex;
             flex-direction: column;
             height: 100%;
-            padding: 0;
+            padding: 0; /* No padding for AI chat */
             overflow: hidden;
         }
 
