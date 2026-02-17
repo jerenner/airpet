@@ -3391,10 +3391,26 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {"success": True, "results": results}
 
         elif tool_name == "set_volume_appearance":
-            name = args['name']
-            vis_attrs = parse_color_to_rgba(args['color'], args.get('opacity', 1.0))
+            name = args.get('name')
+            if not name:
+                return {"success": False, "error": "Argument 'name' is required."}
+            
+            color_str = args.get('color') or args.get('hex')
+            # Handle if model just passes the color name as a key (e.g. {"blue": true})
+            if not color_str:
+                for cname in ['blue', 'red', 'green', 'yellow', 'cyan', 'magenta', 'white', 'black', 'gray', 'lead']:
+                    # Use a truthy check but handle if it's 'None' or 'False' as a string
+                    val = args.get(cname)
+                    if val and val != "False" and val != "none":
+                        color_str = cname
+                        break
+            
+            if not color_str:
+                return {"success": False, "error": "Argument 'color' (name or hex) is required."}
+
+            vis_attrs = parse_color_to_rgba(color_str, args.get('opacity', 1.0))
             success, error = pm.update_logical_volume(name, None, None, new_vis_attributes=vis_attrs)
-            if success: return {"success": True, "message": f"Appearance for '{name}' updated."}
+            if success: return {"success": True, "message": f"Appearance for '{name}' updated to {color_str}."}
             return {"success": False, "error": error}
 
         elif tool_name == "delete_detector_ring":
