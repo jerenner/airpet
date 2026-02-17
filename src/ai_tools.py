@@ -163,14 +163,16 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "manage_logical_volume",
-        "description": "Create or update a logical volume (binds a solid to a material).",
+        "description": "Create or update a logical volume (binds a solid to a material and sets visual appearance).",
         "parameters": {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
                 "solid_ref": {"type": "string"},
                 "material_ref": {"type": "string"},
-                "is_sensitive": {"type": "boolean"}
+                "is_sensitive": {"type": "boolean"},
+                "color": {"type": "string", "description": "Hex color string (e.g., '#0000ff' for blue) or CSS color name."},
+                "opacity": {"type": "number", "description": "Opacity from 0.0 (transparent) to 1.0 (opaque)."}
             },
             "required": ["name"]
         }
@@ -245,6 +247,19 @@ AI_GEOMETRY_TOOLS = [
                 }
             },
             "required": ["objects"]
+        }
+    },
+    {
+        "name": "set_volume_appearance",
+        "description": "Set the visual color and opacity of a logical volume.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The name of the logical volume."},
+                "color": {"type": "string", "description": "Hex color string or common name (blue, red, lead, etc.)."},
+                "opacity": {"type": "number", "description": "Opacity from 0.0 to 1.0."}
+            },
+            "required": ["name", "color"]
         }
     },
     {

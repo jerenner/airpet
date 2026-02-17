@@ -62,6 +62,21 @@ def test_ai_tool_get_summary(pm):
     assert "counts" in res['result']
     assert res['result']['world_volume'] == "World"
 
+def test_ai_tool_set_appearance(pm):
+    pm.add_solid("Box", "box", {"x": 10, "y": 10, "z": 10})
+    pm.add_material("Lead", {"density_expr": "11.35", "Z_expr": "82"})
+    pm.add_logical_volume("LeadLV", "Box", "Lead")
+    
+    res = dispatch_ai_tool(pm, "set_volume_appearance", {
+        "name": "LeadLV",
+        "color": "blue",
+        "opacity": 0.5
+    })
+    assert res['success']
+    lv = pm.current_geometry_state.logical_volumes["LeadLV"]
+    assert lv.vis_attributes['color']['b'] == 1.0
+    assert lv.vis_attributes['color']['a'] == 0.5
+
 def test_ai_tool_search_components(pm):
     # Setup: Create some components
     pm.add_solid("DetectorBox", "box", {"x": "10", "y": "10", "z": "10"})

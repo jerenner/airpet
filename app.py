@@ -3116,6 +3116,24 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {'x': str(val[0]), 'y': str(val[1]), 'z': str(val[2])}
         return val
 
+    def parse_color_to_rgba(color_str, opacity=1.0):
+        if not color_str: return None
+        # Basic hex to rgba
+        if color_str.startswith('#'):
+            hex_color = color_str.lstrip('#')
+            if len(hex_color) == 6:
+                r, g, b = tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+                return {'color': {'r': r, 'g': g, 'b': b, 'a': opacity}}
+        # Fallback for common names
+        names = {
+            'blue': (0,0,1), 'red': (1,0,0), 'green': (0,1,0), 'yellow': (1,1,0),
+            'cyan': (0,1,1), 'magenta': (1,0,1), 'white': (1,1,1), 'black': (0,0,0),
+            'gray': (0.5,0.5,0.5), 'lead': (0.3,0.3,0.3), 'water': (0,0.5,1.0),
+            'lucite': (0.5, 0.5, 0.9), 'plastic': (0.7, 0.7, 0.7)
+        }
+        rgb = names.get(color_str.lower(), (0.8, 0.8, 0.8))
+        return {'color': {'r': rgb[0], 'g': rgb[1], 'b': rgb[2], 'a': opacity}}
+
     try:
         if tool_name == "get_project_summary":
             return {"success": True, "result": get_project_summary(pm)}
@@ -3206,9 +3224,14 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             material_ref = args.get('material_ref') or args.get('material')
             is_sensitive = args.get('is_sensitive') or args.get('sensitive', False)
             
+            color_str = args.get('color')
+            opacity = args.get('opacity', 1.0)
+            vis_attrs = parse_color_to_rgba(color_str, opacity)
+
             if name in pm.current_geometry_state.logical_volumes:
                 success, error = pm.update_logical_volume(
                     name, solid_ref, material_ref, 
+                    new_vis_attributes=vis_attrs,
                     new_is_sensitive=is_sensitive
                 )
                 if success: return {"success": True, "message": f"Logical volume '{name}' updated."}
@@ -3216,6 +3239,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             else:
                 res, error = pm.add_logical_volume(
                     name, solid_ref, material_ref, 
+                    vis_attributes=vis_attrs,
                     is_sensitive=is_sensitive
                 )
                 if res: return {"success": True, "message": f"Logical volume '{res['name']}' created."}
@@ -3314,6 +3338,13 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 if re.search(pattern, item, re.IGNORECASE):
                     results.append(item)
             return {"success": True, "results": results}
+
+        elif tool_name == "set_volume_appearance":
+            name = args['name']
+            vis_attrs = parse_color_to_rgba(args['color'], args.get('opacity', 1.0))
+            success, error = pm.update_logical_volume(name, None, None, new_vis_attributes=vis_attrs)
+            if success: return {"success": True, "message": f"Appearance for '{name}' updated."}
+            return {"success": False, "error": error}
 
         elif tool_name == "run_simulation":
             # Call the internal logic of run_simulation route
