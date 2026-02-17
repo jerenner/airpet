@@ -3432,44 +3432,56 @@ def ai_chat_route():
     context_summary = pm.get_summarized_context()
     formatted_user_msg = f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"
 
-    if is_gemini:
-        client_instance = get_gemini_client_for_session()
-        if not client_instance:
-            return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
-
         pm.chat_history.append({
             "role": "user", 
             "parts": [{"text": formatted_user_msg}],
-            "model_id": model_id # Metadata
+            "metadata": {"model_id": model_id} # Move to a nested dict to avoid top-level key collision
         })
 
-        # --- DEBUG: Dump payload to file ---
         try:
-            debug_payload = {
-                "model": model_id,
-                "contents": pm.chat_history,
-                "tools": AI_GEOMETRY_TOOLS
-            }
-            with open("ai_debug_payload.json", "w") as df:
-                json.dump(debug_payload, df, indent=2, default=str)
-        except Exception as e:
-            print(f"Warning: Could not write debug payload: {e}")
-        # -----------------------------------
+            # Sanitize history for Gemini API (remove our custom metadata)
+            sanitized_history = []
+            for msg in pm.chat_history:
+                sanitized_msg = {
+                    "role": msg["role"],
+                    "parts": msg["parts"]
+                }
+                sanitized_history.append(sanitized_msg)
 
-        try:
+            # --- DEBUG: Dump payload to file ---
+            try:
+                debug_payload = {
+                    "model": model_id,
+                    "contents": sanitized_history,
+                    "tools": AI_GEOMETRY_TOOLS
+                }
+                with open("ai_debug_payload.json", "w") as df:
+                    json.dump(debug_payload, df, indent=2, default=str)
+            except Exception as e:
+                print(f"Warning: Could not write debug payload: {e}")
+            # -----------------------------------
+
             job_id = None
             version_id = None
 
             for _ in range(5):
                 response = client_instance.models.generate_content(
                     model=model_id,
-                    contents=pm.chat_history,
+                    contents=sanitized_history,
                     config=types.GenerateContentConfig(
                         tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
                     )
                 )
                 
-                pm.chat_history.append(response.candidates[0].content)
+                # Update sanitized history with model response
+                sanitized_history.append(response.candidates[0].content)
+                # And update our persistent history (keeping it as a simple list of dicts for JSON compat)
+                pm.chat_history.append({
+                    "role": response.candidates[0].content.role,
+                    "parts": [{"text": p.text} for p in response.candidates[0].content.parts if p.text] or \
+                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in response.candidates[0].content.parts if p.function_call]
+                })
+                
                 tool_calls = response.candidates[0].content.parts
                 has_tool_call = False
                 tool_results_parts = []
@@ -3497,7 +3509,13 @@ def ai_chat_route():
                         return jsonify(res_json)
                     return res_obj
                 
-                pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))
+                # Add results to both histories
+                tool_content = types.Content(role="user", parts=tool_results_parts)
+                sanitized_history.append(tool_content)
+                pm.chat_history.append({
+                    "role": "user",
+                    "parts": [{"function_response": {"name": p.function_response.name, "response": p.function_response.response}} for p in tool_results_parts]
+                })
 
         except Exception as e:
             traceback.print_exc()
@@ -3507,7 +3525,7 @@ def ai_chat_route():
         pm.chat_history.append({
             "role": "user", 
             "content": formatted_user_msg,
-            "model_id": model_id # Metadata
+            "metadata": {"model_id": model_id} # Metadata
         })
         try:
             # Map tool schema to Ollama format (Ollama uses OpenAI-like tool schema)
@@ -3535,6 +3553,15 @@ def ai_chat_route():
                 print(f"Warning: Could not write debug payload: {e}")
             # -----------------------------------
 
+            # Sanitize history for Ollama API (remove metadata)
+            sanitized_history = []
+            for msg in pm.chat_history:
+                sanitized_msg = {
+                    "role": msg["role"],
+                    "content": msg.get("content") or msg.get("parts", [{}])[0].get("text", "")
+                }
+                sanitized_history.append(sanitized_msg)
+
             job_id = None
             version_id = None
 
@@ -3542,15 +3569,16 @@ def ai_chat_route():
             for _ in range(5):
                 response = ollama.chat(
                     model=model_id,
-                    messages=pm.chat_history,
+                    messages=sanitized_history,
                     tools=ollama_tools
                 )
                 
                 assistant_msg = response['message']
+                sanitized_history.append(assistant_msg)
+                # Keep persistent history simple
                 pm.chat_history.append(assistant_msg)
                 
                 if not assistant_msg.get('tool_calls'):
-                    # No tool calls, finish
                     return create_success_response(pm, assistant_msg['content'])
 
                 # Process tool calls
@@ -3564,10 +3592,12 @@ def ai_chat_route():
                     if "job_id" in result: job_id = result["job_id"]
                     if "version_id" in result: version_id = result["version_id"]
                     
-                    pm.chat_history.append({
+                    tool_res = {
                         "role": "tool",
                         "content": json.dumps(result)
-                    })
+                    }
+                    sanitized_history.append(tool_res)
+                    pm.chat_history.append(tool_res)
             
             return create_success_response(pm, "Too many tool iterations (Ollama).")
 
