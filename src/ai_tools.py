@@ -263,6 +263,17 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "delete_detector_ring",
+        "description": "Delete all instances of a detector ring by its name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "ring_name": {"type": "string", "description": "The base name of the ring to delete (e.g., 'PET_ring')."}
+            },
+            "required": ["ring_name"]
+        }
+    },
+    {
         "name": "run_simulation",
         "description": "Start a Geant4 simulation run to test the current geometry.",
         "parameters": {

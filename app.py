@@ -3310,20 +3310,35 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if not objs or not isinstance(objs, list):
                 return {"success": False, "error": "Argument 'objects' must be a list of {type, id}."}
                 
-            # Allow AI to use names for PVs by resolving them to IDs
             resolved_objs = []
             for item in objs:
-                # Robustness: Handle if model passed a string instead of a dict
                 if isinstance(item, str):
-                    # Guess type or ask for it? Let's assume it might be a solid or LV if it's just a string.
-                    # Better to return an error so the AI corrects its format.
-                    return {"success": False, "error": f"Each object in 'objects' must be a dict with 'type' and 'id'. Got string: '{item}'"}
+                    # AI passed just a name string. We'll try to find its type.
+                    item = {"id": item}
 
+                obj_id = item.get('id') or item.get('name')
                 obj_type = item.get('type')
-                obj_id = item.get('id') or item.get('name') # Fallback to name if id missing
                 
-                if not obj_type or not obj_id:
-                    return {"success": False, "error": "Each object to delete requires a 'type' and an 'id'."}
+                if not obj_id:
+                    continue # Skip malformed items
+
+                # --- AUTO-DETECT TYPE if missing ---
+                if not obj_type:
+                    # Check Solids
+                    if obj_id in pm.current_geometry_state.solids:
+                        obj_type = "solid"
+                    # Check LVs
+                    elif obj_id in pm.current_geometry_state.logical_volumes:
+                        obj_type = "logical_volume"
+                    # Check Defines
+                    elif obj_id in pm.current_geometry_state.defines:
+                        obj_type = "define"
+                    # Check Materials
+                    elif obj_id in pm.current_geometry_state.materials:
+                        obj_type = "material"
+                    # Assume Physical Volume if not found elsewhere (search by name)
+                    else:
+                        obj_type = "physical_volume"
 
                 if obj_type == 'physical_volume':
                     # Search for the PV by name or ID
@@ -3340,13 +3355,14 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     
                     if pv_to_del:
                         resolved_objs.append({"type": "physical_volume", "id": pv_to_del.id})
-                    else:
-                        return {"success": False, "error": f"Physical volume '{obj_id}' not found."}
                 else:
                     resolved_objs.append({"type": obj_type, "id": obj_id})
 
+            if not resolved_objs:
+                return {"success": False, "error": "No valid objects found to delete."}
+
             success, res = pm.delete_objects_batch(resolved_objs)
-            if success: return {"success": True, "message": "Objects deleted."}
+            if success: return {"success": True, "message": f"{len(resolved_objs)} objects deleted."}
             return {"success": False, "error": res}
 
         elif tool_name == "search_components":
@@ -3380,6 +3396,23 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             success, error = pm.update_logical_volume(name, None, None, new_vis_attributes=vis_attrs)
             if success: return {"success": True, "message": f"Appearance for '{name}' updated."}
             return {"success": False, "error": error}
+
+        elif tool_name == "delete_detector_ring":
+            ring_name = args['ring_name']
+            state = pm.current_geometry_state
+            to_delete = []
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.name == ring_name:
+                            to_delete.append({"type": "physical_volume", "id": pv.id})
+            
+            if not to_delete:
+                return {"success": False, "error": f"No physical volumes with name '{ring_name}' found."}
+                
+            success, res = pm.delete_objects_batch(to_delete)
+            if success: return {"success": True, "message": f"All {len(to_delete)} instances of ring '{ring_name}' deleted."}
+            return {"success": False, "error": res}
 
         elif tool_name == "run_simulation":
             # Call the internal logic of run_simulation route

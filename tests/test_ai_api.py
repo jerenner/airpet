@@ -56,11 +56,29 @@ def test_ai_tool_place_volume(pm):
     world_lv = pm.current_geometry_state.logical_volumes["World"]
     assert any(pv.name == "AI_Placement" for pv in world_lv.content)
 
-def test_ai_tool_get_summary(pm):
-    res = dispatch_ai_tool(pm, "get_project_summary", {})
+def test_ai_tool_delete_autodetect_type(pm):
+    # Setup: Create a solid
+    pm.add_solid("BoxToDelete", "box", {"x": "10", "y": "10", "z": "10"})
+    assert "BoxToDelete" in pm.current_geometry_state.solids
+    
+    # Delete without specifying type
+    res = dispatch_ai_tool(pm, "delete_objects", {
+        "objects": [{"id": "BoxToDelete"}] # type is missing
+    })
     assert res['success']
-    assert "counts" in res['result']
-    assert res['result']['world_volume'] == "World"
+    assert "BoxToDelete" not in pm.current_geometry_state.solids
+
+def test_ai_tool_delete_ring_macro(pm):
+    # Setup: Create a ring
+    pm.add_solid("RingCrystal", "box", {"x": "10", "y": "10", "z": "10"})
+    pm.add_logical_volume("RingLV", "RingCrystal", "G4_Galactic")
+    pm.create_detector_ring("World", "RingLV", "PET_Ring", num_detectors=8, radius=100, center={'x':0,'y':0,'z':0}, orientation={'x':0,'y':0,'z':0}, point_to_center=True, inward_axis='+x')
+    
+    # Delete via macro
+    res = dispatch_ai_tool(pm, "delete_detector_ring", {"ring_name": "PET_Ring"})
+    assert res['success']
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+    assert not any(pv.name == "PET_Ring" for pv in world_lv.content)
 
 def test_ai_tool_set_appearance(pm):
     pm.add_solid("Box", "box", {"x": 10, "y": 10, "z": 10})
