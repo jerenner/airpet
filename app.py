@@ -4732,7 +4732,9 @@ def get_ai_context_stats():
     estimated_tokens = max(0, int(len(serialized) / 4))
 
     max_context_tokens = None
+    context_source = "unknown"
     if model_id.startswith('models/'):
+        context_source = "gemini"
         gemini_client = get_gemini_client_for_session()
         if gemini_client:
             try:
@@ -4743,6 +4745,7 @@ def get_ai_context_stats():
             except Exception:
                 pass
     elif model_id and model_id != '--export--':
+        context_source = "ollama"
         # Try to read Ollama context length from local model metadata.
         try:
             show_resp = requests.post(
@@ -4779,6 +4782,7 @@ def get_ai_context_stats():
     return jsonify({
         "success": True,
         "model": model_id,
+        "context_source": context_source,
         "estimated_tokens": estimated_tokens,
         "max_context_tokens": max_context_tokens,
         "utilization_pct": utilization

@@ -172,10 +172,14 @@ async function refreshContextStats() {
         const stats = await APIService.getAiContextStats(model);
         if (!stats.success) throw new Error(stats.error || 'Could not read context stats');
 
+        const sourceLabel = stats.context_source === 'gemini'
+            ? 'Gemini'
+            : (stats.context_source === 'ollama' ? 'Ollama' : 'Unknown');
+
         if (stats.max_context_tokens) {
-            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens}/${stats.max_context_tokens} (${stats.utilization_pct || 0}%)`;
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens}/${stats.max_context_tokens} (${sourceLabel})`;
         } else {
-            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens} tokens`;
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens} tokens (${sourceLabel})`;
         }
     } catch (err) {
         contextStatsEl.textContent = 'Context: n/a';
