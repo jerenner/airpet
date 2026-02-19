@@ -182,6 +182,15 @@ export async function loadVersion(projectName, versionId) {
     return handleResponse(response);
 }
 
+export async function renameVersion(projectName, versionId, newDescription) {
+    const response = await fetch(`${API_BASE_URL}/api/rename_version`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_name: projectName, version_id: versionId, new_description: newDescription })
+    });
+    return handleResponse(response);
+}
+
 /**
  * Fetches a list of all available project names from the backend.
  * @returns {Promise<Object>} A promise that resolves to the list of project names.
@@ -538,6 +547,12 @@ export async function clearAiChatHistory() {
     const response = await fetch(`${API_BASE_URL}/api/ai/clear`, {
         method: 'POST'
     });
+    return handleResponse(response);
+}
+
+export async function getAiContextStats(model) {
+    const q = model ? `?model=${encodeURIComponent(model)}` : '';
+    const response = await fetch(`${API_BASE_URL}/api/ai/context_stats${q}`);
     return handleResponse(response);
 }
 

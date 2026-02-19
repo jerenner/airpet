@@ -2,7 +2,7 @@
 import * as APIService from './apiService.js';
 import * as UIManager from './uiManager.js';
 
-let messageList, promptInput, generateButton, clearButton;
+let messageList, promptInput, generateButton, clearButton, modelSelect, contextStatsEl;
 let isProcessing = false;
 let onGeometryUpdateCallback = () => {};
 
@@ -11,6 +11,8 @@ export function init(callbacks) {
     promptInput = document.getElementById('ai_prompt_input');
     generateButton = document.getElementById('ai_generate_button');
     clearButton = document.getElementById('clear_chat_btn');
+    modelSelect = document.getElementById('ai_model_select');
+    contextStatsEl = document.getElementById('ai_context_stats');
     
     if (callbacks && callbacks.onGeometryUpdate) {
         onGeometryUpdateCallback = callbacks.onGeometryUpdate;
@@ -28,6 +30,10 @@ export function init(callbacks) {
         clearButton.addEventListener('click', handleClear);
     }
 
+    if (modelSelect) {
+        modelSelect.addEventListener('change', refreshContextStats);
+    }
+
     // Load existing history
     loadHistory();
 }
@@ -40,7 +46,13 @@ async function loadHistory() {
         }
     } catch (err) {
         console.error("Failed to load chat history:", err);
+    } finally {
+        refreshContextStats();
     }
+}
+
+export function reloadHistory() {
+    loadHistory();
 }
 
 function renderHistory(history) {
@@ -117,6 +129,7 @@ async function handleSend() {
     } finally {
         setLoading(false);
         scrollToBottom();
+        refreshContextStats();
     }
 }
 
@@ -128,6 +141,8 @@ async function handleClear() {
         addMessageToUI('system', "History cleared.");
     } catch (err) {
         UIManager.showError("Failed to clear history: " + err.message);
+    } finally {
+        refreshContextStats();
     }
 }
 
@@ -148,6 +163,23 @@ function addMessageToUI(role, text) {
 
     div.innerHTML = formattedText;
     messageList.appendChild(div);
+}
+
+async function refreshContextStats() {
+    if (!contextStatsEl) return;
+    const model = UIManager.getAiSelectedModel?.() || '';
+    try {
+        const stats = await APIService.getAiContextStats(model);
+        if (!stats.success) throw new Error(stats.error || 'Could not read context stats');
+
+        if (stats.max_context_tokens) {
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens}/${stats.max_context_tokens} (${stats.utilization_pct || 0}%)`;
+        } else {
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens} tokens`;
+        }
+    } catch (err) {
+        contextStatsEl.textContent = 'Context: n/a';
+    }
 }
 
 function setLoading(loading) {

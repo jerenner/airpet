@@ -2325,6 +2325,50 @@ def load_version_route():
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
+@app.route('/api/rename_version', methods=['POST'])
+def rename_version_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    project_name = data.get('project_name') or pm.project_name
+    version_id = data.get('version_id')
+    new_description = (data.get('new_description') or '').strip()
+
+    if not version_id or not new_description:
+        return jsonify({"success": False, "error": "version_id and new_description are required."}), 400
+
+    if version_id == AUTOSAVE_VERSION_ID:
+        return jsonify({"success": False, "error": "Autosave entry cannot be renamed."}), 400
+
+    if '_' in version_id:
+        timestamp = version_id.split('_', 1)[0]
+    else:
+        timestamp = version_id
+
+    safe_desc = re.sub(r'[^a-zA-Z0-9_\- ]', '', new_description).strip().replace(' ', '_')
+    if not safe_desc:
+        return jsonify({"success": False, "error": "Description became empty after sanitization."}), 400
+
+    new_version_id = f"{timestamp}_{safe_desc}"
+    if new_version_id == version_id:
+        return jsonify({"success": True, "message": "Version name unchanged.", "version_id": version_id})
+
+    old_dir = os.path.join(pm.projects_dir, project_name, 'versions', version_id)
+    new_dir = os.path.join(pm.projects_dir, project_name, 'versions', new_version_id)
+
+    if not os.path.isdir(old_dir):
+        return jsonify({"success": False, "error": f"Version '{version_id}' not found."}), 404
+    if os.path.exists(new_dir):
+        return jsonify({"success": False, "error": f"A version named '{new_version_id}' already exists."}), 409
+
+    try:
+        os.rename(old_dir, new_dir)
+        if pm.current_version_id == version_id:
+            pm.current_version_id = new_version_id
+        return jsonify({"success": True, "message": "Version renamed.", "version_id": new_version_id})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to rename version: {e}"}), 500
+
 @app.route('/api/get_project_list', methods=['GET'])
 def get_project_list_route():
     """
@@ -4644,10 +4688,44 @@ def get_ai_history():
     serializable_history = [sanitize_for_json(msg) for msg in pm.chat_history]
     return jsonify({"history": serializable_history})
 
+@app.route('/api/ai/context_stats', methods=['GET'])
+def get_ai_context_stats():
+    pm = get_project_manager_for_session()
+    model_id = request.args.get('model', '').strip()
+
+    # Rough estimate: ~4 chars/token for English-ish mixed content.
+    serialized = json.dumps(pm.chat_history, ensure_ascii=False, default=str)
+    estimated_tokens = max(0, int(len(serialized) / 4))
+
+    max_context_tokens = None
+    if model_id.startswith('models/'):
+        gemini_client = get_gemini_client_for_session()
+        if gemini_client:
+            try:
+                for model in gemini_client.models.list():
+                    if model.name == model_id:
+                        max_context_tokens = getattr(model, 'input_token_limit', None)
+                        break
+            except Exception:
+                pass
+
+    utilization = None
+    if isinstance(max_context_tokens, int) and max_context_tokens > 0:
+        utilization = round((estimated_tokens / max_context_tokens) * 100.0, 2)
+
+    return jsonify({
+        "success": True,
+        "model": model_id,
+        "estimated_tokens": estimated_tokens,
+        "max_context_tokens": max_context_tokens,
+        "utilization_pct": utilization
+    })
+
 @app.route('/api/ai/clear', methods=['POST'])
 def clear_ai_history():
     pm = get_project_manager_for_session()
     pm.chat_history = []
+    pm.is_changed = True
     return jsonify({"success": True})
 
 @app.route('/import_ai_json', methods=['POST'])

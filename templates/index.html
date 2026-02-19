@@ -648,12 +648,23 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             padding: 0 5px;
+        }
+
+        .ai-status-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
         }
 
         .ai-model-info {
             font-size: 11px;
             color: #6c757d;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
 
         #clear_chat_btn {
@@ -744,13 +755,25 @@
             }
         }
 
+        #ai_generate_button {
+            position: relative;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 42px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
         #ai_generate_button .loader {
             display: none;
             position: absolute;
             left: 50%;
             top: 50%;
-            margin-left: -10px;
-            margin-top: -10px;
+            transform: translate(-50%, -50%);
+            margin: 0;
+            pointer-events: none;
         }
 
         #ai_generate_button.loading .button-text {
@@ -1825,7 +1848,7 @@
                 <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
                 <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
                 <button class="tab_button" data-tab="tab_analysis_panel">Analysis</button>
-                <button id="toggleBottomPanelBtn" title="Expand/Collapse Panel">↑</button>
+                <button id="toggleBottomPanelBtn" title="Minimize Panel">↓</button>
             </div>
             <div id="bottom_panel_content" class="tab_content_area">
                 <!-- AI Panel Content -->
@@ -1835,8 +1858,11 @@
                     </div>
                     <div id="ai_input_area">
                         <div class="ai-status-bar">
-                            <span class="ai-model-info">Model: <select id="ai_model_select"></select></span>
-                            <span class="ai-model-info">Limit: <input type="number" id="ai_turn_limit" value="10" min="1" max="50" style="width: 40px; font-size: 11px;"></span>
+                            <div class="ai-status-left">
+                                <span class="ai-model-info">Model: <select id="ai_model_select"></select></span>
+                                <span class="ai-model-info">Max turns: <input type="number" id="ai_turn_limit" value="10" min="1" max="50" style="width: 44px; font-size: 11px;"></span>
+                                <span class="ai-model-info" id="ai_context_stats">Context: n/a</span>
+                            </div>
                             <button id="clear_chat_btn">Clear History</button>
                         </div>
                         <div id="ai_input_row">

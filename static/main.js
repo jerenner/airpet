@@ -107,6 +107,7 @@ async function initializeApp() {
         onProjectListRequested: handleProjectListRequested,
         onSwitchProject: handleSwitchProject,
         onLoadVersionClicked: handleLoadVersion,
+        onRenameVersion: handleRenameVersion,
         // Add/edit solids
         onAddSolidClicked: handleAddSolid,
         onEditSolidClicked: handleEditSolid,
@@ -895,6 +896,7 @@ async function handleOpenGdmlProject(file) {
     try {
         const result = await APIService.openGdmlProject(file);
         syncUIWithState(result);
+        AIAssistant.reloadHistory();
         //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) {
         // Show the specific error message from the backend
@@ -915,6 +917,7 @@ async function handleOpenJsonProject(file) {
     try {
         const result = await APIService.openJsonProject(file);
         syncUIWithState(result);
+        AIAssistant.reloadHistory();
     } catch (error) {
         UIManager.showError("Failed to open JSON Project: " + (error.message || error));
     } finally {
@@ -976,6 +979,7 @@ async function handleNewProject() {
     try {
         const result = await APIService.newProject();
         syncUIWithState(result); // No selection to restore
+        AIAssistant.reloadHistory();
 
         // Clear simulation status
         AppState.lastSimJobId = null;
@@ -1043,9 +1047,28 @@ async function handleLoadVersion(projectName, versionId) {
     try {
         const result = await APIService.loadVersion(projectName, versionId);
         syncUIWithState(result);
+        AIAssistant.reloadHistory();
         UIManager.hideHistoryPanel();
     } catch (error) { UIManager.showError(error.message); }
     finally { UIManager.hideLoading(); }
+}
+
+async function handleRenameVersion(projectName, versionId, newDescription) {
+    UIManager.showLoading("Renaming version...");
+    try {
+        const result = await APIService.renameVersion(projectName, versionId, newDescription);
+        if (result.success) {
+            const refreshed = await APIService.getProjectHistory(projectName);
+            if (refreshed.success) {
+                UIManager.populateHistoryPanel(refreshed.history, projectName);
+            }
+            UIManager.showTemporaryStatus("Version renamed");
+        }
+    } catch (error) {
+        UIManager.showError("Failed to rename version: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
 }
 
 async function handleLoadRunResults(versionId, jobId) {
@@ -1057,6 +1080,7 @@ async function handleLoadRunResults(versionId, jobId) {
 
         // This syncs the geometry but doesn't restore selection
         syncUIWithState(loadResult);
+        AIAssistant.reloadHistory();
 
         // Step 2: Fetch the metadata for this specific run
         const metaResult = await APIService.getSimulationMetadata(versionId, jobId);
