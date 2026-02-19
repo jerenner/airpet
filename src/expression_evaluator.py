@@ -47,6 +47,28 @@ class ExpressionEvaluator:
         """Gets a symbol from the symbol table, returning default_val if it does not exist"""
         return self.interpreter.symtable.get(name,default_val)
     
+    def _preprocess_units(self, expression):
+        """
+        Handles cases like '90 deg' or '10mm' by converting them to '90 * deg' or '10 * mm'.
+        This makes the evaluator much more robust to AI-generated inputs.
+        """
+        # List of units defined in create_configured_asteval
+        units = [
+            'nm', 'um', 'mm', 'cm', 'm', 'km', 'mm2', 'cm2', 'm2', 'mm3', 'cm3', 'm3',
+            'urad', 'mrad', 'rad', 'radian', 'deg', 'degree', 'eV', 'keV', 'MeV', 
+            'g', 'kg', 'ns', 'us', 'ms', 's'
+        ]
+        # Sort by length descending to match 'mm' before 'm'
+        units.sort(key=len, reverse=True)
+        
+        processed = expression
+        for unit in units:
+            # Match digit, optional space, then unit with word boundary at the end
+            pattern = re.compile(rf'(?<=\d)\s?({unit})\b')
+            processed = pattern.sub(rf' * \1', processed)
+            
+        return processed
+
     def _preprocess_gdml_indexing(self, expression):
         """
         Converts GDML-style array indexing like 'm[i,j]' into 'm_i_j'.
@@ -93,13 +115,21 @@ class ExpressionEvaluator:
             return True, expression # It's already a number
             
         try:
-            # First, process GDML-style array indexing
-            processed_expression = self._preprocess_gdml_indexing(expression)
+            # 1. Process units (e.g. '90 deg' -> '90 * deg')
+            processed_expression = self._preprocess_units(expression)
+
+            # 2. Process GDML-style array indexing
+            processed_expression = self._preprocess_gdml_indexing(processed_expression)
             
-            # Then, evaluate the final processed string
+            # 3. Evaluate the final processed string
             result = self.interpreter.eval(processed_expression, show_errors=False, raise_errors=True)
             return True, result
         except Exception as e:
+            err_str = str(e)
+            # Help the AI understand that x, y, z are not predefined variables
+            if "name 'x'" in err_str or "name 'y'" in err_str or "name 'z'" in err_str:
+                err_str = f"{err_str}. NOTE: 'x', 'y', and 'z' are not pre-defined variables; use numeric values or define them first using 'manage_define'."
+            
             if verbose:
-                print(f"ERROR: {str(e)}")
-            return False, 0
+                print(f"ERROR: {expression} {err_str}")
+            return False, err_str

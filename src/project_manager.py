@@ -272,8 +272,11 @@ class ProjectManager:
         state = self.current_geometry_state
         summary = [f"Project: {self.project_name}", f"World Volume: {state.world_volume_ref}"]
         
-        if state.defines:
-            summary.append(f"Variables: {', '.join(list(state.defines.keys())[:20])}" + ("..." if len(state.defines) > 20 else ""))
+        defines = list(state.defines.keys())
+        if defines:
+            summary.append(f"Available Variables (Defines): {', '.join(defines[:30])}" + ("..." if len(defines) > 30 else ""))
+        else:
+            summary.append("Available Variables (Defines): (none defined yet)")
         
         if state.materials:
             summary.append(f"Materials: {', '.join(list(state.materials.keys()))}")
@@ -744,12 +747,43 @@ class ProjectManager:
 
     def save_project_to_json_string(self):
         if self.current_geometry_state:
-            return json.dumps(self.current_geometry_state.to_dict(), indent=2)
+            data = self.current_geometry_state.to_dict()
+            
+            # Ensure chat history is JSON serializable (no raw Message objects)
+            clean_history = []
+            for msg in self.chat_history:
+                if isinstance(msg, dict):
+                    # Deep-sanitize the dict to catch nested non-serializable objects
+                    def sanitize_deep(obj):
+                        if isinstance(obj, dict):
+                            return {k: sanitize_deep(v) for k, v in obj.items()}
+                        elif isinstance(obj, list):
+                            return [sanitize_deep(i) for i in obj]
+                        elif isinstance(obj, (str, int, float, bool, type(None))):
+                            return obj
+                        else:
+                            return str(obj) # Force to string
+                    
+                    clean_history.append(sanitize_deep(msg))
+                else:
+                    # Convert Gemini Content/Part or Ollama Message objects to simple dicts
+                    try:
+                        clean_history.append({
+                            "role": getattr(msg, 'role', 'assistant'),
+                            "content": str(getattr(msg, 'content', ''))
+                        })
+                    except:
+                        pass
+            
+            data['chat_history'] = clean_history
+            return json.dumps(data, indent=2)
         return "{}"
 
     def load_project_from_json_string(self, json_string):
         data = json.loads(json_string)
         self.current_geometry_state = GeometryState.from_dict(data)
+        self.chat_history = data.get('chat_history', [])
+        
         success, error_msg = self.recalculate_geometry_state()
         if not success:
             print(f"Warning after loading JSON project: {error_msg}")
@@ -1613,7 +1647,7 @@ class ProjectManager:
             dependencies = self._find_dependencies(obj_type, obj_id)
             
             # Filter out dependencies that are also scheduled for deletion in this batch.
-            item_ids_being_deleted = {i['id'] for i in objects_to_delete}
+            item_ids_being_deleted = {i.get('id') for i in objects_to_delete if i.get('id')}
             filtered_deps = []
             for dep_string in dependencies:
                 is_also_being_deleted = False
@@ -2233,12 +2267,14 @@ class ProjectManager:
             # It's a reference to a define
             success, value = self.expression_evaluator.evaluate(expr_data)
             if success and isinstance(value, dict):
-                return value
+                # Ensure all keys exist in the resolved dict
+                return {k: float(value.get(k, default_dict.get(k, 0))) for k in ['x', 'y', 'z']}
             else:
                 raise ValueError(f"Define '{expr_data}' did not resolve to a valid dictionary.")
         elif isinstance(expr_data, dict):
             evaluated_dict = {}
-            for axis, raw_expr in expr_data.items():
+            for axis in ['x', 'y', 'z']:
+                raw_expr = expr_data.get(axis, default_dict.get(axis, 0))
                 success, value = self.expression_evaluator.evaluate(str(raw_expr))
                 if success:
                     evaluated_dict[axis] = value
@@ -2258,6 +2294,18 @@ class ProjectManager:
         """
         if not self.current_geometry_state:
             return None, "No project loaded"
+
+        # --- AUTO-CLEANUP: If a ring with this name already exists, delete it first ---
+        existing_pvs = []
+        for lv in self.current_geometry_state.logical_volumes.values():
+            if lv.content_type == 'physvol':
+                for pv in lv.content:
+                    if pv.name == ring_name:
+                        existing_pvs.append({"type": "physical_volume", "id": pv.id})
+        
+        if existing_pvs:
+            print(f"create_detector_ring: Automatically cleaning up {len(existing_pvs)} existing instances of '{ring_name}'.")
+            self.delete_objects_batch(existing_pvs)
 
         try:
             # --- Evaluate all expression-capable arguments ---

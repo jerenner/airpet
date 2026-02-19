@@ -2,7 +2,7 @@
 import * as APIService from './apiService.js';
 import * as UIManager from './uiManager.js';
 
-let messageList, promptInput, generateButton, clearButton;
+let messageList, promptInput, generateButton, clearButton, modelSelect, contextStatsEl;
 let isProcessing = false;
 let onGeometryUpdateCallback = () => {};
 
@@ -11,6 +11,8 @@ export function init(callbacks) {
     promptInput = document.getElementById('ai_prompt_input');
     generateButton = document.getElementById('ai_generate_button');
     clearButton = document.getElementById('clear_chat_btn');
+    modelSelect = document.getElementById('ai_model_select');
+    contextStatsEl = document.getElementById('ai_context_stats');
     
     if (callbacks && callbacks.onGeometryUpdate) {
         onGeometryUpdateCallback = callbacks.onGeometryUpdate;
@@ -28,6 +30,10 @@ export function init(callbacks) {
         clearButton.addEventListener('click', handleClear);
     }
 
+    if (modelSelect) {
+        modelSelect.addEventListener('change', refreshContextStats);
+    }
+
     // Load existing history
     loadHistory();
 }
@@ -40,7 +46,13 @@ async function loadHistory() {
         }
     } catch (err) {
         console.error("Failed to load chat history:", err);
+    } finally {
+        refreshContextStats();
     }
+}
+
+export function reloadHistory() {
+    loadHistory();
 }
 
 function renderHistory(history) {
@@ -51,12 +63,35 @@ function renderHistory(history) {
         return;
     }
     history.slice(2).forEach(msg => {
-        // Gemini API uses 'parts' with 'text'
-        const text = msg.parts ? msg.parts.map(p => p.text || '').join('\n') : msg.content;
+        // Gemini API uses 'parts' with 'text', Ollama uses 'content'
+        // Skip tool results and system updates
+        if (msg.role === 'tool' || msg.role === 'system') return;
+        
+        // --- NEW: Use original_message from metadata if available ---
+        let text = "";
+        if (msg.role === 'user' && msg.metadata && msg.metadata.original_message) {
+            text = msg.metadata.original_message;
+        } else {
+            text = msg.parts ? msg.parts.map(p => p.text || '').join('\n').trim() : (msg.content || '').trim();
+        }
+        
         if (text && !text.startsWith('[System Context Update]')) {
             addMessageToUI(msg.role === 'user' ? 'user' : 'model', text);
         }
     });
+
+    // Ensure the model selector is synced if history was loaded
+    if (history.length > 0) {
+        // Trigger a tiny delay to ensure models are loaded
+        setTimeout(() => {
+            // Find the last message that has a model_id in its metadata
+            const lastModelMsg = [...history].reverse().find(m => m.metadata && m.metadata.model_id);
+            if (lastModelMsg && lastModelMsg.metadata.model_id) {
+                const select = document.getElementById('ai_model_select');
+                if (select) select.value = lastModelMsg.metadata.model_id;
+            }
+        }, 500);
+    }
     scrollToBottom();
 }
 
@@ -72,16 +107,16 @@ async function handleSend() {
         return;
     }
 
+    const turnLimitInput = document.getElementById('ai_turn_limit');
+    const turnLimit = turnLimitInput ? parseInt(turnLimitInput.value, 10) : 10;
+
     setLoading(true);
     addMessageToUI('user', message);
     promptInput.value = '';
     scrollToBottom();
 
     try {
-        const result = await APIService.sendAiChatMessage(message, model);
-        
-        // The result of /api/ai/chat is the final text response from the model
-        // after all tools have been executed.
+        const result = await APIService.sendAiChatMessage(message, model, turnLimit);
         addMessageToUI('model', result.message);
         
         // Notify main.js that geometry might have changed
@@ -94,6 +129,7 @@ async function handleSend() {
     } finally {
         setLoading(false);
         scrollToBottom();
+        refreshContextStats();
     }
 }
 
@@ -105,6 +141,8 @@ async function handleClear() {
         addMessageToUI('system', "History cleared.");
     } catch (err) {
         UIManager.showError("Failed to clear history: " + err.message);
+    } finally {
+        refreshContextStats();
     }
 }
 
@@ -125,6 +163,27 @@ function addMessageToUI(role, text) {
 
     div.innerHTML = formattedText;
     messageList.appendChild(div);
+}
+
+async function refreshContextStats() {
+    if (!contextStatsEl) return;
+    const model = UIManager.getAiSelectedModel?.() || '';
+    try {
+        const stats = await APIService.getAiContextStats(model);
+        if (!stats.success) throw new Error(stats.error || 'Could not read context stats');
+
+        const sourceLabel = stats.context_source === 'gemini'
+            ? 'Gemini'
+            : (stats.context_source === 'ollama' ? 'Ollama' : 'Unknown');
+
+        if (stats.max_context_tokens) {
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens}/${stats.max_context_tokens} (${sourceLabel})`;
+        } else {
+            contextStatsEl.textContent = `Context: ~${stats.estimated_tokens} tokens (${sourceLabel})`;
+        }
+    } catch (err) {
+        contextStatsEl.textContent = 'Context: n/a';
+    }
 }
 
 function setLoading(loading) {

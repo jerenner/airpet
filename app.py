@@ -37,7 +37,8 @@ from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
-from src.ai_tools import AI_GEOMETRY_TOOLS, get_project_summary, get_component_details
+from src.ai_tools import AI_GEOMETRY_TOOLS, PRIMITIVE_SOLID_PARAM_SPECS, get_project_summary, get_component_details
+from src.templates import PHYSICS_TEMPLATES
 
 from PIL import Image
 
@@ -2324,6 +2325,50 @@ def load_version_route():
     except Exception as e:
         return jsonify({"success": False, "error": f"Failed to load version: {e}"}), 500
 
+@app.route('/api/rename_version', methods=['POST'])
+def rename_version_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    project_name = data.get('project_name') or pm.project_name
+    version_id = data.get('version_id')
+    new_description = (data.get('new_description') or '').strip()
+
+    if not version_id or not new_description:
+        return jsonify({"success": False, "error": "version_id and new_description are required."}), 400
+
+    if version_id == AUTOSAVE_VERSION_ID:
+        return jsonify({"success": False, "error": "Autosave entry cannot be renamed."}), 400
+
+    if '_' in version_id:
+        timestamp = version_id.split('_', 1)[0]
+    else:
+        timestamp = version_id
+
+    safe_desc = re.sub(r'[^a-zA-Z0-9_\- ]', '', new_description).strip().replace(' ', '_')
+    if not safe_desc:
+        return jsonify({"success": False, "error": "Description became empty after sanitization."}), 400
+
+    new_version_id = f"{timestamp}_{safe_desc}"
+    if new_version_id == version_id:
+        return jsonify({"success": True, "message": "Version name unchanged.", "version_id": version_id})
+
+    old_dir = os.path.join(pm.projects_dir, project_name, 'versions', version_id)
+    new_dir = os.path.join(pm.projects_dir, project_name, 'versions', new_version_id)
+
+    if not os.path.isdir(old_dir):
+        return jsonify({"success": False, "error": f"Version '{version_id}' not found."}), 404
+    if os.path.exists(new_dir):
+        return jsonify({"success": False, "error": f"A version named '{new_version_id}' already exists."}), 409
+
+    try:
+        os.rename(old_dir, new_dir)
+        if pm.current_version_id == version_id:
+            pm.current_version_id = new_version_id
+        return jsonify({"success": True, "message": "Version renamed.", "version_id": new_version_id})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to rename version: {e}"}), 500
+
 @app.route('/api/get_project_list', methods=['GET'])
 def get_project_list_route():
     """
@@ -3107,12 +3152,528 @@ def ai_get_full_prompt_route():
         return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
 
 # --- AI Tool Dispatcher ---
+AI_TOOL_PARAM_SCHEMAS = {
+    tool["name"]: tool.get("parameters", {}) for tool in AI_GEOMETRY_TOOLS
+}
+
+# Aliases that normalize common model mistakes/synonyms into canonical tool args.
+AI_TOOL_ARG_ALIASES = {
+    "manage_define": {
+        "type": "define_type",
+        "raw_expression": "value"
+    },
+    "create_primitive_solid": {
+        "dimensions": "params",
+        "type": "solid_type"
+    },
+    "manage_logical_volume": {
+        "solid": "solid_ref",
+        "material": "material_ref",
+        "sensitive": "is_sensitive"
+    },
+    "place_volume": {
+        "mother": "parent_lv_name",
+        "parent": "parent_lv_name",
+        "volume": "placed_lv_ref"
+    },
+    "modify_physical_volume": {
+        "id": "pv_id",
+        "pv_id": "pv_id"
+    },
+    "create_detector_ring": {
+        "mother": "parent_lv_name",
+        "volume": "lv_to_place_ref",
+        "lv_to_place": "lv_to_place_ref"
+    },
+    "delete_objects": {
+        "items": "objects"
+    },
+    "batch_geometry_update": {
+        "ops": "operations"
+    },
+    "manage_surface_link": {
+        "surfaceproperty_ref": "surface_ref",
+        "physvol1_ref": "pv1_id",
+        "physvol2_ref": "pv2_id",
+        "volume": "volume_ref"
+    },
+    "manage_ui_group": {
+        "target_group_name": "group_name",
+        "operation": "action"
+    },
+    "run_simulation": {
+        "num_events": "events",
+        "n_events": "events",
+        "num_threads": "threads",
+        "n_threads": "threads"
+    },
+    "manage_particle_source": {
+        "id": "source_id",
+        "source": "source_id",
+        "gps": "gps_commands",
+        "commands": "gps_commands"
+    },
+    "set_active_source": {
+        "id": "source_id"
+    },
+    "process_lors": {
+        "version": "version_id"
+    },
+    "check_lor_file": {
+        "version": "version_id"
+    },
+    "run_reconstruction": {
+        "version": "version_id",
+        "image_shape": "image_size",
+        "n_iter": "iterations"
+    },
+    "compute_sensitivity": {
+        "version": "version_id",
+        "num_lors": "num_random_lors"
+    },
+    "get_sensitivity_status": {
+        "version": "version_id"
+    },
+    "get_simulation_metadata": {
+        "version": "version_id"
+    },
+    "get_simulation_analysis": {
+        "version": "version_id"
+    },
+    "rename_ui_group": {
+        "from": "old_name",
+        "to": "new_name"
+    }
+}
+
+# Defaults used to keep tool calls resilient when small/fast models omit fields.
+AI_TOOL_DEFAULTS = {
+    "manage_define": {"define_type": "constant"},
+    "create_detector_ring": {
+        "parent_lv_name": "World",
+        "num_detectors": "10",
+        "radius": "100",
+        "center": {"x": "0", "y": "0", "z": "0"},
+        "orientation": {"x": "0", "y": "0", "z": "0"},
+        "point_to_center": True,
+        "inward_axis": "+x",
+        "num_rings": "1",
+        "ring_spacing": "0"
+    },
+    "run_simulation": {"events": 1000, "threads": 1},
+    "manage_ui_group": {"item_ids": []},
+    "manage_particle_source": {
+        "name": "gps_source",
+        "gps_commands": {},
+        "position": {"x": "0", "y": "0", "z": "0"},
+        "rotation": {"x": "0", "y": "0", "z": "0"},
+        "activity": 1.0
+    },
+    "process_lors": {
+        "coincidence_window_ns": 4.0,
+        "energy_cut": 0.0,
+        "energy_resolution": 0.05,
+        "position_resolution": {"x": 0.0, "y": 0.0, "z": 0.0}
+    },
+    "run_reconstruction": {
+        "iterations": 1,
+        "image_size": [128, 128, 128],
+        "voxel_size": [2.0, 2.0, 2.0],
+        "normalization": True,
+        "ac_enabled": False,
+        "ac_shape": "cylinder",
+        "ac_radius": 108.0,
+        "ac_length": 186.0,
+        "ac_mu": 0.096
+    },
+    "compute_sensitivity": {
+        "voxel_size": 2.0,
+        "matrix_size": 128,
+        "ac_enabled": False,
+        "ac_mu": 0.096,
+        "ac_radius": 0.0,
+        "num_random_lors": 20000000
+    },
+    "get_simulation_analysis": {
+        "energy_bins": 100,
+        "spatial_bins": 50
+    }
+}
+
+# Canonicalization fallback for common model/user aliases in primitive solid params.
+PRIMITIVE_SOLID_PARAM_ALIASES = {
+    "tube": {
+        "innerradius": "rmin",
+        "outerradius": "rmax",
+        "halfz": "z",
+        "halflength": "z",
+        "startangle": "startphi",
+        "spanangle": "deltaphi"
+    },
+    "cone": {
+        "innerradius1": "rmin1",
+        "outerradius1": "rmax1",
+        "innerradius2": "rmin2",
+        "outerradius2": "rmax2",
+        "halfz": "z",
+        "halflength": "z",
+        "startangle": "startphi",
+        "spanangle": "deltaphi"
+    },
+    "sphere": {
+        "innerradius": "rmin",
+        "outerradius": "rmax",
+        "startangle": "startphi",
+        "spanangle": "deltaphi",
+        "startpolarangle": "starttheta",
+        "spanpolarangle": "deltatheta"
+    }
+}
+
+ANGLE_PARAM_NAMES = {"startphi", "deltaphi", "starttheta", "deltatheta", "theta", "phi", "alpha", "inst", "outst", "twistedangle", "phitwist", "alph"}
+
+
+def _normalize_param_alias_key(key: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', str(key).lower())
+
+
+def _coerce_angle_expr_if_bare_number(expr: Any) -> Any:
+    if not isinstance(expr, str):
+        return expr
+
+    s = expr.strip().lower()
+    if any(tok in s for tok in ('deg', 'rad', 'pi', '*', '/', '+', '-', '(', ')')):
+        return expr
+
+    return f"({expr})*deg"
+
+
+def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
+    if not isinstance(raw_params, dict):
+        return raw_params
+
+    def _coerce_unit_expr_if_bare_number(expr: Any) -> Any:
+        if not isinstance(expr, str):
+            return expr
+        s = expr.strip()
+        # e.g. "70mm", "70 mm", "360deg" -> "(70)*mm", "(360)*deg"
+        m = re.match(r'^([+-]?(?:\d+\.?\d*|\d*\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z]+)$', s)
+        if not m:
+            return expr
+        num, unit = m.group(1), m.group(2)
+        known_units = {
+            'mm', 'cm', 'm', 'um', 'nm', 'km',
+            'deg', 'rad',
+            'g', 'kg', 'mg',
+            's', 'ms', 'us', 'ns'
+        }
+        if unit.lower() in known_units:
+            return f"({num})*{unit}"
+        return expr
+
+    st = str(solid_type or '').strip()
+    aliases = PRIMITIVE_SOLID_PARAM_ALIASES.get(st, {})
+
+    mapped = dict(raw_params)
+
+    # 1) Canonicalize key casing/format against the selected solid spec.
+    spec = PRIMITIVE_SOLID_PARAM_SPECS.get(st, {})
+    canonical_props = list((spec.get('properties') or {}).keys())
+    canonical_norm = {_normalize_param_alias_key(k): k for k in canonical_props}
+
+    for key, value in list(raw_params.items()):
+        norm = _normalize_param_alias_key(key)
+        canonical_key = canonical_norm.get(norm)
+        if canonical_key and canonical_key not in mapped:
+            mapped[canonical_key] = value
+
+    # 2) Apply common alias mappings (innerRadius->rmin, halfZ->z, ...)
+    for key, value in raw_params.items():
+        target = aliases.get(_normalize_param_alias_key(key))
+        if target and target not in mapped:
+            mapped[target] = value
+
+    # 3) Normalize numeric-with-unit shortcuts and angle defaults.
+    for k in list(mapped.keys()):
+        mapped[k] = _coerce_unit_expr_if_bare_number(mapped[k])
+        if _normalize_param_alias_key(k) in ANGLE_PARAM_NAMES:
+            mapped[k] = _coerce_angle_expr_if_bare_number(mapped[k])
+
+    return mapped
+
+
+def _camel_to_snake(key: str) -> str:
+    # parentLvName -> parent_lv_name
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
+
+
+def _parse_json_like(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+    if not stripped:
+        return value
+
+    # Only attempt parsing values that look like structured data.
+    if not ((stripped.startswith('{') and stripped.endswith('}')) or
+            (stripped.startswith('[') and stripped.endswith(']'))):
+        return value
+
+    try:
+        return json.loads(stripped)
+    except Exception:
+        try:
+            return ast.literal_eval(stripped)
+        except Exception:
+            return value
+
+
+def _coerce_value_by_schema(value: Any, schema: Optional[Dict[str, Any]]) -> Any:
+    if schema is None:
+        return _parse_json_like(value)
+
+    if value is None:
+        return value
+
+    schema_type = schema.get("type")
+
+    if schema_type == "object":
+        value = _parse_json_like(value)
+        if isinstance(value, dict):
+            props = schema.get("properties", {})
+            coerced = {}
+            for k, v in value.items():
+                child_schema = props.get(k)
+                coerced[k] = _coerce_value_by_schema(v, child_schema)
+            return coerced
+        return value
+
+    if schema_type == "array":
+        value = _parse_json_like(value)
+        if isinstance(value, list):
+            item_schema = schema.get("items")
+            return [_coerce_value_by_schema(v, item_schema) for v in value]
+        return value
+
+    if schema_type == "boolean" and isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1", "yes", "on"):
+            return True
+        if low in ("false", "0", "no", "off"):
+            return False
+        return value
+
+    if schema_type == "integer" and isinstance(value, str):
+        try:
+            return int(float(value))
+        except Exception:
+            return value
+
+    if schema_type == "number" and isinstance(value, str):
+        try:
+            return float(value)
+        except Exception:
+            return value
+
+    return _parse_json_like(value)
+
+
+def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name)
+    if not schema:
+        return None, f"Unknown tool: {tool_name}"
+
+    # Gemini/Ollama can provide dict-like objects or JSON strings.
+    if hasattr(args, "to_dict"):
+        args = args.to_dict()
+
+    args = _parse_json_like(args)
+    if args is None:
+        args = {}
+
+    if not isinstance(args, dict):
+        return None, f"Tool '{tool_name}' arguments must be an object/dict, got {type(args).__name__}."
+
+    # Normalize top-level keys (camelCase -> snake_case).
+    normalized: Dict[str, Any] = {}
+    for key, value in args.items():
+        key_str = str(key)
+        normalized[_camel_to_snake(key_str)] = _parse_json_like(value)
+
+    # Apply per-tool aliases.
+    for old_key, canonical_key in AI_TOOL_ARG_ALIASES.get(tool_name, {}).items():
+        old_norm = _camel_to_snake(old_key)
+        canonical_norm = _camel_to_snake(canonical_key)
+        if old_norm in normalized and canonical_norm not in normalized:
+            normalized[canonical_norm] = normalized[old_norm]
+
+    # Coerce known values according to schema.
+    properties = schema.get("properties", {})
+    for key, prop_schema in properties.items():
+        if key in normalized:
+            normalized[key] = _coerce_value_by_schema(normalized[key], prop_schema)
+
+    # Apply defaults after aliasing/coercion.
+    for key, value in AI_TOOL_DEFAULTS.get(tool_name, {}).items():
+        if normalized.get(key) is None:
+            normalized[key] = value
+
+    return normalized, None
+
+
+def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]:
+    solid_type = args.get('solid_type')
+    params = args.get('params')
+
+    if not isinstance(params, dict):
+        return "Tool 'create_primitive_solid' expects 'params' to be an object."
+
+    spec = PRIMITIVE_SOLID_PARAM_SPECS.get(str(solid_type))
+    if not spec:
+        return (
+            f"Unsupported solid_type '{solid_type}'. "
+            f"Supported: {sorted(PRIMITIVE_SOLID_PARAM_SPECS.keys())}."
+        )
+
+    normalized_params = normalize_primitive_solid_params(solid_type, params)
+    args['params'] = normalized_params
+
+    required_params = spec.get('required', [])
+    missing = [
+        key for key in required_params
+        if key not in normalized_params or normalized_params.get(key) in (None, "")
+    ]
+    if not missing:
+        return None
+
+    canonical_props = spec.get('properties', {})
+    canonical_names = list(canonical_props.keys())
+
+    alias_pairs = PRIMITIVE_SOLID_PARAM_ALIASES.get(str(solid_type), {})
+    alias_hint = ""
+    if alias_pairs:
+        rendered = ", ".join([f"{a}->{c}" for a, c in sorted(alias_pairs.items())])
+        alias_hint = f" Common aliases accepted: {rendered}."
+
+    provided_keys = sorted(params.keys()) if isinstance(params, dict) else []
+
+    return (
+        f"Tool 'create_primitive_solid' for solid_type='{solid_type}' is missing required param(s): {missing}. "
+        f"Use canonical params: {canonical_names}. "
+        f"Provided keys: {provided_keys}.{alias_hint}"
+    )
+
+
+def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+    schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name, {})
+
+    required = schema.get("required", [])
+    missing = [
+        req for req in required
+        if req not in args or args[req] is None or args[req] == ""
+    ]
+    if missing:
+        return f"Tool '{tool_name}' missing required argument(s): {', '.join(missing)}."
+
+    properties = schema.get("properties", {})
+    for key, prop_schema in properties.items():
+        if key not in args or args[key] is None:
+            continue
+
+        allowed = prop_schema.get("enum")
+        if allowed and args[key] not in allowed:
+            return (
+                f"Tool '{tool_name}' has invalid value for '{key}': {args[key]!r}. "
+                f"Allowed: {allowed}."
+            )
+
+    if tool_name == 'create_primitive_solid':
+        return _validate_create_primitive_solid_args(args)
+
+    return None
+
+
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
+
+    # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
+    def to_vec_dict(val, default_val='0'):
+        if isinstance(val, list) and len(val) == 3:
+            return {'x': str(val[0]), 'y': str(val[1]), 'z': str(val[2])}
+        if isinstance(val, dict):
+            # Ensure all keys exist
+            return {
+                'x': str(val.get('x', default_val)),
+                'y': str(val.get('y', default_val)),
+                'z': str(val.get('z', default_val))
+            }
+        return val
+
+    def parse_color_to_rgba(color_str, opacity=1.0):
+        if not color_str:
+            return None
+        # Basic hex to rgba
+        if isinstance(color_str, str) and color_str.startswith('#'):
+            hex_color = color_str.lstrip('#')
+            if len(hex_color) == 6:
+                r, g, b = tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+                return {'color': {'r': r, 'g': g, 'b': b, 'a': opacity}}
+        # Fallback for common names
+        names = {
+            'blue': (0, 0, 1), 'red': (1, 0, 0), 'green': (0, 1, 0), 'yellow': (1, 1, 0),
+            'cyan': (0, 1, 1), 'magenta': (1, 0, 1), 'white': (1, 1, 1), 'black': (0, 0, 0),
+            'gray': (0.5, 0.5, 0.5), 'lead': (0.3, 0.3, 0.3), 'water': (0, 0.5, 1.0),
+            'lucite': (0.5, 0.5, 0.9), 'plastic': (0.7, 0.7, 0.7)
+        }
+        rgb = names.get(str(color_str).lower(), (0.8, 0.8, 0.8))
+        return {'color': {'r': rgb[0], 'g': rgb[1], 'b': rgb[2], 'a': opacity}}
+
+    def call_route_json(route_fn, route_args=None, payload=None, query_params=None):
+        """Call an existing Flask route function with a synthetic JSON request context."""
+        route_args = route_args or []
+
+        current_user_id = session.get('user_id')
+        current_api_key = session.get('gemini_api_key')
+
+        with app.test_request_context(json=payload, query_string=query_params):
+            if current_user_id is not None:
+                session['user_id'] = current_user_id
+            if current_api_key is not None:
+                session['gemini_api_key'] = current_api_key
+
+            route_result = route_fn(*route_args)
+
+        status_code = 200
+        response_obj = route_result
+        if isinstance(route_result, tuple):
+            response_obj = route_result[0]
+            if len(route_result) > 1 and isinstance(route_result[1], int):
+                status_code = route_result[1]
+
+        if hasattr(response_obj, 'get_json'):
+            body = response_obj.get_json(silent=True)
+        else:
+            body = response_obj
+
+        if body is None:
+            body = {"success": False, "error": "Route returned no JSON body."}
+
+        return status_code, body
+
+
+    args, normalize_error = _normalize_tool_args(tool_name, args)
+    if normalize_error:
+        return {"success": False, "error": normalize_error}
+
+    validation_error = _validate_tool_args(tool_name, args)
+    if validation_error:
+        return {"success": False, "error": validation_error}
+
     try:
         if tool_name == "get_project_summary":
             return {"success": True, "result": get_project_summary(pm)}
-            
+
         elif tool_name == "get_component_details":
             details = get_component_details(pm, args['component_type'], args['name'])
             if details:
@@ -3121,122 +3682,223 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "manage_define":
             name = args.get('name')
+            raw_val = args.get('value')
+            value = to_vec_dict(raw_val)
+
             if name in pm.current_geometry_state.defines:
-                success, error = pm.update_define(name, args['value'], args.get('unit'))
-                if success: return {"success": True, "message": f"Define '{name}' updated."}
+                success, error = pm.update_define(name, value, args.get('unit'))
+                if success:
+                    return {"success": True, "message": f"Define '{name}' updated."}
                 return {"success": False, "error": error}
             else:
-                res, error = pm.add_define(name, args['define_type'], args['value'], args.get('unit'))
-                if res: return {"success": True, "message": f"Define '{res['name']}' created."}
+                res, error = pm.add_define(name, args.get('define_type', 'constant'), value, args.get('unit'))
+                if res:
+                    return {"success": True, "message": f"Define '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "manage_material":
             name = args.get('name')
             props = {
                 "density_expr": args.get('density'),
-                "Z_expr": args.get('Z'),
-                "A_expr": args.get('A'),
+                "Z_expr": args.get('z') if args.get('z') is not None else args.get('Z'),
+                "A_expr": args.get('a') if args.get('a') is not None else args.get('A'),
                 "components": args.get('components')
             }
-            # Remove None values
             props = {k: v for k, v in props.items() if v is not None}
-            
+
             if name in pm.current_geometry_state.materials:
                 success, error = pm.update_material(name, props)
-                if success: return {"success": True, "message": f"Material '{name}' updated."}
+                if success:
+                    return {"success": True, "message": f"Material '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_material(name, props)
-                if res: return {"success": True, "message": f"Material '{res['name']}' created."}
+                if res:
+                    return {"success": True, "message": f"Material '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
-            res, error = pm.add_solid(args['name'], args['solid_type'], args['params'])
+            stype = args.get('solid_type')
+            p = args.get('params')
+
+            if isinstance(p, list) and len(p) == 3:
+                p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
+
+            p = normalize_primitive_solid_params(stype, p)
+
+            res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
             if res:
-                pm.recalculate_geometry_state() # Ensure evaluated params are populated
+                pm.recalculate_geometry_state()
                 return {"success": True, "message": f"Solid '{res['name']}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "modify_solid":
             success, error = pm.update_solid(args['name'], args['params'])
-            if success: return {"success": True, "message": f"Solid '{args['name']}' updated."}
+            if success:
+                return {"success": True, "message": f"Solid '{args['name']}' updated."}
             return {"success": False, "error": error}
 
         elif tool_name == "create_boolean_solid":
-            res, error = pm.add_boolean_solid(args['name'], args['recipe'])
-            if res: return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
+            name = args.get('name')
+            recipe = args.get('recipe')
+
+            for item in recipe:
+                if 'transform' in item and item['transform']:
+                    t = item['transform']
+                    if 'position' in t:
+                        t['position'] = to_vec_dict(t['position'])
+                    if 'rotation' in t:
+                        t['rotation'] = to_vec_dict(t['rotation'])
+
+            res, error = pm.add_boolean_solid(name, recipe)
+            if res:
+                return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "manage_logical_volume":
             name = args.get('name')
+            solid_ref = args.get('solid_ref')
+            material_ref = args.get('material_ref')
+            is_sensitive = args.get('is_sensitive', False)
+
+            color_str = args.get('color')
+            opacity = args.get('opacity', 1.0)
+            vis_attrs = parse_color_to_rgba(color_str, opacity)
+
             if name in pm.current_geometry_state.logical_volumes:
                 success, error = pm.update_logical_volume(
-                    name, args.get('solid_ref'), args.get('material_ref'), 
-                    new_is_sensitive=args.get('is_sensitive')
+                    name, solid_ref, material_ref,
+                    new_vis_attributes=vis_attrs,
+                    new_is_sensitive=is_sensitive
                 )
-                if success: return {"success": True, "message": f"Logical volume '{name}' updated."}
+                if success:
+                    return {"success": True, "message": f"Logical volume '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_logical_volume(
-                    name, args['solid_ref'], args['material_ref'], 
-                    is_sensitive=args.get('is_sensitive', False)
+                    name, solid_ref, material_ref,
+                    vis_attributes=vis_attrs,
+                    is_sensitive=is_sensitive
                 )
-                if res: return {"success": True, "message": f"Logical volume '{res['name']}' created."}
+                if res:
+                    return {"success": True, "message": f"Logical volume '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "place_volume":
+            parent = args.get('parent_lv_name')
+            placed = args.get('placed_lv_ref')
+
             res, error = pm.add_physical_volume(
-                args['parent_lv_name'], args.get('name'), args['placed_lv_ref'],
-                args.get('position', {'x':'0','y':'0','z':'0'}),
-                args.get('rotation', {'x':'0','y':'0','z':'0'}),
-                args.get('scale', {'x':'1','y':'1','z':'1'})
+                parent, args.get('name'), placed,
+                to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'})),
+                to_vec_dict(args.get('rotation', {'x': '0', 'y': '0', 'z': '0'})),
+                to_vec_dict(args.get('scale', {'x': '1', 'y': '1', 'z': '1'}))
             )
-            if res: return {"success": True, "message": f"Volume placed as '{res['name']}'."}
+            if res:
+                return {"success": True, "message": f"Volume placed as '{res['name']}'."}
             return {"success": False, "error": error}
 
         elif tool_name == "modify_physical_volume":
             success, error = pm.update_physical_volume(
-                args['pv_id'], args.get('name'), args.get('position'), 
-                args.get('rotation'), args.get('scale')
+                args['pv_id'], args.get('name'),
+                to_vec_dict(args.get('position')),
+                to_vec_dict(args.get('rotation')),
+                to_vec_dict(args.get('scale'))
             )
-            if success: return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
+            if success:
+                return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
             return {"success": False, "error": error}
 
         elif tool_name == "create_detector_ring":
+            ring_name = args.get('ring_name')
+
             res, error = pm.create_detector_ring(
-                parent_lv_name=args['parent_lv_name'],
-                lv_to_place_ref=args['lv_to_place_ref'],
-                ring_name=args['ring_name'],
-                num_detectors=args['num_detectors'],
-                radius=args['radius'],
-                center=args.get('center', {'x':'0','y':'0','z':'0'}),
-                orientation=args.get('orientation', {'x':'0','y':'0','z':'0'}),
+                parent_lv_name=args.get('parent_lv_name', 'World'),
+                lv_to_place_ref=args.get('lv_to_place_ref'),
+                ring_name=ring_name,
+                num_detectors=args.get('num_detectors', '10'),
+                radius=args.get('radius', '100'),
+                center=to_vec_dict(args.get('center', {'x': '0', 'y': '0', 'z': '0'})),
+                orientation=to_vec_dict(args.get('orientation', {'x': '0', 'y': '0', 'z': '0'})),
                 point_to_center=args.get('point_to_center', True),
                 inward_axis=args.get('inward_axis', '+x'),
                 num_rings=args.get('num_rings', '1'),
                 ring_spacing=args.get('ring_spacing', '0')
             )
-            if res: return {"success": True, "message": f"Detector ring '{args['ring_name']}' created."}
+            if res:
+                return {"success": True, "message": f"Detector ring '{ring_name}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "delete_objects":
-            success, res = pm.delete_objects_batch(args['objects'])
-            if success: return {"success": True, "message": "Objects deleted."}
+            objs = args.get('objects')
+            if not objs or not isinstance(objs, list):
+                return {"success": False, "error": "Argument 'objects' must be a list of {type, id}."}
+
+            resolved_objs = []
+            for item in objs:
+                if isinstance(item, str):
+                    item = {"id": item}
+
+                if not isinstance(item, dict):
+                    continue
+
+                obj_id = item.get('id') or item.get('name')
+                obj_type = item.get('type')
+
+                if not obj_id:
+                    continue
+
+                if not obj_type:
+                    if obj_id in pm.current_geometry_state.solids:
+                        obj_type = "solid"
+                    elif obj_id in pm.current_geometry_state.logical_volumes:
+                        obj_type = "logical_volume"
+                    elif obj_id in pm.current_geometry_state.defines:
+                        obj_type = "define"
+                    elif obj_id in pm.current_geometry_state.materials:
+                        obj_type = "material"
+                    else:
+                        obj_type = "physical_volume"
+
+                if obj_type == 'physical_volume':
+                    pv_to_del = pm._find_pv_by_id(obj_id)
+                    if not pv_to_del:
+                        for lv in pm.current_geometry_state.logical_volumes.values():
+                            if lv.content_type == 'physvol':
+                                for pv in lv.content:
+                                    if pv.name == obj_id:
+                                        pv_to_del = pv
+                                        break
+                            if pv_to_del:
+                                break
+
+                    if pv_to_del:
+                        resolved_objs.append({"type": "physical_volume", "id": pv_to_del.id})
+                else:
+                    resolved_objs.append({"type": obj_type, "id": obj_id})
+
+            if not resolved_objs:
+                return {"success": False, "error": "No valid objects found to delete."}
+
+            success, res = pm.delete_objects_batch(resolved_objs)
+            if success:
+                return {"success": True, "message": f"{len(resolved_objs)} objects deleted."}
             return {"success": False, "error": res}
 
         elif tool_name == "search_components":
-            import re
             pattern = args['pattern']
             ctype = args['component_type']
             state = pm.current_geometry_state
             results = []
-            
+
             items = []
-            if ctype == "solid": items = list(state.solids.keys())
-            elif ctype == "logical_volume": items = list(state.logical_volumes.keys())
-            elif ctype == "material": items = list(state.materials.keys())
+            if ctype == "solid":
+                items = list(state.solids.keys())
+            elif ctype == "logical_volume":
+                items = list(state.logical_volumes.keys())
+            elif ctype == "material":
+                items = list(state.materials.keys())
             elif ctype == "physical_volume":
-                # For PVs, we search by name across all LVs
                 for lv in state.logical_volumes.values():
                     if lv.content_type == 'physvol':
                         for pv in lv.content:
@@ -3249,28 +3911,74 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     results.append(item)
             return {"success": True, "results": results}
 
+        elif tool_name == "set_volume_appearance":
+            name = args.get('name')
+
+            color_str = args.get('color') or args.get('hex')
+            if not color_str:
+                for cname in ['blue', 'red', 'green', 'yellow', 'cyan', 'magenta', 'white', 'black', 'gray', 'lead']:
+                    val = args.get(cname)
+                    if val and val != "False" and val != "none":
+                        color_str = cname
+                        break
+
+            if not color_str:
+                return {"success": False, "error": "Argument 'color' (name or hex) is required."}
+
+            vis_attrs = parse_color_to_rgba(color_str, args.get('opacity', 1.0))
+            success, error = pm.update_logical_volume(name, None, None, new_vis_attributes=vis_attrs)
+            if success:
+                return {"success": True, "message": f"Appearance for '{name}' updated to {color_str}."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "delete_detector_ring":
+            ring_name = args['ring_name']
+            state = pm.current_geometry_state
+            to_delete = []
+            for lv in state.logical_volumes.values():
+                if lv.content_type == 'physvol':
+                    for pv in lv.content:
+                        if pv.name == ring_name:
+                            to_delete.append({"type": "physical_volume", "id": pv.id})
+
+            if not to_delete:
+                return {"success": False, "error": f"No physical volumes with name '{ring_name}' found."}
+
+            success, res = pm.delete_objects_batch(to_delete)
+            if success:
+                return {"success": True, "message": f"All {len(to_delete)} instances of ring '{ring_name}' deleted."}
+            return {"success": False, "error": res}
+
         elif tool_name == "run_simulation":
-            # Call the internal logic of run_simulation route
             job_id = str(uuid.uuid4())
+            try:
+                events = int(args.get("events", 1000))
+            except Exception:
+                events = 1000
+            try:
+                threads = int(args.get("threads", 1))
+            except Exception:
+                threads = 1
+
             sim_params = {
-                "events": args.get("events", 1000),
-                "threads": args.get("threads", 1)
+                "events": events,
+                "threads": threads
             }
             version_id = pm.current_version_id
             if pm.is_changed or not version_id:
                 version_id, _ = pm.save_project_version(f"AI_Sim_Run_{job_id[:8]}")
-            
+
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
             os.makedirs(run_dir, exist_ok=True)
-            
-            macro_path = pm.generate_macro_file(
+
+            pm.generate_macro_file(
                 job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
             )
-            
+
             thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
             thread.start()
-            
+
             return {"success": True, "job_id": job_id, "message": f"Simulation started (ID: {job_id})."}
 
         elif tool_name == "get_simulation_status":
@@ -3280,47 +3988,120 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 if not status:
                     return {"success": False, "error": "Job ID not found."}
                 return {
-                    "success": True, 
-                    "status": status["status"], 
-                    "progress": status["progress"], 
+                    "success": True,
+                    "status": status["status"],
+                    "progress": status["progress"],
                     "total": status["total_events"]
                 }
+
+        elif tool_name == "insert_physics_template":
+            template_name = args['template_name']
+            if template_name not in PHYSICS_TEMPLATES:
+                return {"success": False, "error": f"Template '{template_name}' not found."}
+
+            t_info = PHYSICS_TEMPLATES[template_name]
+            t_func = t_info['func']
+            t_params = args['params']
+
+            try:
+                recipe = t_func(**t_params)
+            except Exception as e:
+                return {"success": False, "error": f"Failed to generate template: {str(e)}"}
+
+            for solid in recipe.get('solids', []):
+                pm.add_solid(solid.name, solid.type, solid.raw_parameters)
+
+            for lv in recipe.get('logical_volumes', []):
+                mat_name = lv.material_ref
+                if not pm.current_geometry_state.get_material(mat_name):
+                    if mat_name.startswith("G4_"):
+                        pm.add_material(mat_name, {"mat_type": "nist"})
+                    else:
+                        return {"success": False, "error": f"Material '{mat_name}' required by template not found."}
+
+                pm.add_logical_volume(lv.name, lv.solid_ref, lv.material_ref, is_sensitive=lv.is_sensitive)
+
+            parent_lv_name = args['parent_lv_name']
+            base_pos = to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'}))
+
+            created_pvs = []
+            for _ in recipe.get('placements', []):
+                pass
+
+            if not recipe.get('placements'):
+                last_lv = recipe['logical_volumes'][-1]
+                pv_res, err = pm.add_physical_volume(parent_lv_name, f"{last_lv.name}_PV", last_lv.name, base_pos, {'x': '0', 'y': '0', 'z': '0'}, {'x': '1', 'y': '1', 'z': '1'})
+                if pv_res:
+                    created_pvs.append(pv_res['name'])
+            else:
+                for p_data in recipe['placements']:
+                    p_pos = p_data['position']
+                    final_pos = {
+                        'x': f"({p_pos['x']}) + ({base_pos['x']})",
+                        'y': f"({p_pos['y']}) + ({base_pos['y']})",
+                        'z': f"({p_pos['z']}) + ({base_pos['z']})"
+                    }
+                    pv_res, err = pm.add_physical_volume(parent_lv_name, p_data['name'], p_data['volume_ref'], final_pos, p_data['rotation'], {'x': '1', 'y': '1', 'z': '1'})
+                    if pv_res:
+                        created_pvs.append(pv_res['name'])
+
+            pm.recalculate_geometry_state()
+            return {"success": True, "message": f"Inserted {template_name} template into {parent_lv_name}."}
+
+        elif tool_name == "batch_geometry_update":
+            ops = args.get('operations')
+            if not ops or not isinstance(ops, list):
+                return {"success": False, "error": "Argument 'operations' must be a list of tool calls."}
+            batch_results = []
+            for op in ops:
+                if not isinstance(op, dict):
+                    batch_results.append({"success": False, "error": f"Invalid operation entry: {op!r}"})
+                    continue
+
+                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool')
+                op_args = op.get('arguments') if op.get('arguments') is not None else op.get('args', {})
+
+                batch_results.append(dispatch_ai_tool(pm, op_tool_name, op_args))
+            return {"success": True, "batch_results": batch_results}
 
         elif tool_name == "get_analysis_summary":
             job_id = args['job_id']
             version_id = pm.current_version_id
-            if not version_id: return {"success": False, "error": "No active version."}
-            
+            if not version_id:
+                return {"success": False, "error": "No active version."}
+
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
             output_path = os.path.join(run_dir, "output.hdf5")
-            
+
             if not os.path.exists(output_path):
                 return {"success": False, "error": "Simulation output not yet available."}
-            
+
             try:
                 with h5py.File(output_path, 'r') as f:
                     if 'default_ntuples/Hits' not in f:
                         return {"success": False, "error": "No hits found in output."}
-                    
+
                     hits_group = f['default_ntuples/Hits']
+
                     def get_hits_len():
                         if 'entries' in hits_group:
                             ent = hits_group['entries']
                             return int(ent[0]) if ent.shape != () else int(ent[()])
                         return 0
-                    
+
                     total_hits = get_hits_len()
-                    
+
                     particles = {}
                     if 'ParticleName' in hits_group:
                         data = hits_group['ParticleName']
-                        if isinstance(data, h5py.Group): data = data['pages']
+                        if isinstance(data, h5py.Group):
+                            data = data['pages']
                         names = data[:total_hits]
                         for n in names:
                             n_str = n.decode('utf-8') if isinstance(n, bytes) else str(n)
                             particles[n_str] = particles.get(n_str, 0) + 1
-                    
+
                     return {
                         "success": True,
                         "summary": {
@@ -3330,6 +4111,313 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     }
             except Exception as e:
                 return {"success": False, "error": str(e)}
+
+        elif tool_name == "manage_optical_surface":
+            name = args['name']
+            params = {
+                'model': args.get('model'),
+                'finish': args.get('finish'),
+                'surf_type': args.get('type'),
+                'value': args.get('value'),
+                'properties': args.get('properties', {})
+            }
+            if name in pm.current_geometry_state.optical_surfaces:
+                success, error = pm.update_optical_surface(name, params)
+                if success:
+                    return {"success": True, "message": f"Optical surface '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_optical_surface(name, params)
+                if res:
+                    return {"success": True, "message": f"Optical surface '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "manage_surface_link":
+            name = args['name']
+            ltype = args['link_type']
+            s_ref = args['surface_ref']
+
+            if ltype == 'skin':
+                v_ref = args.get('volume_ref')
+                if not v_ref:
+                    return {"success": False, "error": "'volume_ref' is required for skin surface links."}
+
+                if name in pm.current_geometry_state.skin_surfaces:
+                    success, error = pm.update_skin_surface(name, v_ref, s_ref)
+                    if success:
+                        return {"success": True, "message": f"Skin surface link '{name}' updated."}
+                    return {"success": False, "error": error}
+
+                res, error = pm.add_skin_surface(name, v_ref, s_ref)
+                if res:
+                    return {"success": True, "message": f"Skin surface link '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+            if ltype == 'border':
+                pv1 = args.get('pv1_id')
+                pv2 = args.get('pv2_id')
+                if not pv1 or not pv2:
+                    return {"success": False, "error": "'pv1_id' and 'pv2_id' are required for border surface links."}
+
+                if name in pm.current_geometry_state.border_surfaces:
+                    success, error = pm.update_border_surface(name, pv1, pv2, s_ref)
+                    if success:
+                        return {"success": True, "message": f"Border surface link '{name}' updated."}
+                    return {"success": False, "error": error}
+
+                res, error = pm.add_border_surface(name, pv1, pv2, s_ref)
+                if res:
+                    return {"success": True, "message": f"Border surface link '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+            return {"success": False, "error": f"Invalid link_type '{ltype}'. Expected 'skin' or 'border'."}
+
+        elif tool_name == "manage_assembly":
+            name = args['name']
+            pls = args['placements']
+            for p in pls:
+                if 'position' in p:
+                    p['position'] = to_vec_dict(p['position'])
+                if 'rotation' in p:
+                    p['rotation'] = to_vec_dict(p['rotation'])
+
+            if name in pm.current_geometry_state.assemblies:
+                success, error = pm.update_assembly(name, pls)
+                if success:
+                    return {"success": True, "message": f"Assembly '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_assembly(name, pls)
+                if res:
+                    return {"success": True, "message": f"Assembly '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "manage_ui_group":
+            gtype = args['group_type']
+            gname = args['group_name']
+            action = args['action']
+
+            if action == 'create':
+                success, error = pm.create_group(gtype, gname)
+            elif action == 'add_items':
+                success, error = pm.move_items_to_group(gtype, args.get('item_ids', []), gname)
+            elif action == 'remove_group':
+                success, error = pm.delete_group(gtype, gname)
+            else:
+                return {"success": False, "error": f"Invalid action '{action}' for manage_ui_group."}
+
+            if success:
+                return {"success": True, "message": f"UI Group action '{action}' on '{gname}' successful."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "evaluate_expression":
+            success, res = pm.expression_evaluator.evaluate(args['expression'])
+            if success:
+                return {"success": True, "result": res}
+            return {"success": False, "error": res}
+
+        elif tool_name == "rename_ui_group":
+            success, error = pm.rename_group(args['group_type'], args['old_name'], args['new_name'])
+            if success:
+                return {"success": True, "message": f"Group '{args['old_name']}' renamed to '{args['new_name']}'."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "manage_particle_source":
+            action = str(args.get('action', '')).lower()
+            if action in ('transform', 'move', 'set_transform'):
+                action = 'update_transform'
+
+            if action == 'create':
+                new_source, error = pm.add_source(
+                    args.get('name', 'gps_source'),
+                    args.get('gps_commands', {}),
+                    to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'})),
+                    to_vec_dict(args.get('rotation', {'x': '0', 'y': '0', 'z': '0'})),
+                    args.get('activity', 1.0),
+                    args.get('confine_to_pv'),
+                    args.get('volume_link_id')
+                )
+                if new_source:
+                    return {
+                        "success": True,
+                        "message": f"Particle source '{new_source.get('name', args.get('name', 'gps_source'))}' created.",
+                        "source": new_source,
+                        "source_id": new_source.get('id')
+                    }
+                return {"success": False, "error": error}
+
+            if action == 'update':
+                source_id = args.get('source_id')
+                if not source_id:
+                    return {"success": False, "error": "'source_id' is required for action='update'."}
+
+                pos = to_vec_dict(args.get('position')) if args.get('position') is not None else None
+                rot = to_vec_dict(args.get('rotation')) if args.get('rotation') is not None else None
+
+                success, error = pm.update_particle_source(
+                    source_id,
+                    args.get('name'),
+                    args.get('gps_commands'),
+                    pos,
+                    rot,
+                    args.get('activity'),
+                    args.get('confine_to_pv'),
+                    args.get('volume_link_id')
+                )
+                if success:
+                    return {"success": True, "message": f"Particle source '{source_id}' updated."}
+                return {"success": False, "error": error}
+
+            if action == 'update_transform':
+                source_id = args.get('source_id')
+                if not source_id:
+                    return {"success": False, "error": "'source_id' is required for action='update_transform'."}
+
+                pos = to_vec_dict(args.get('position')) if args.get('position') is not None else None
+                rot = to_vec_dict(args.get('rotation')) if args.get('rotation') is not None else None
+                success, error = pm.update_source_transform(source_id, pos, rot)
+                if success:
+                    return {"success": True, "message": f"Particle source '{source_id}' transform updated."}
+                return {"success": False, "error": error}
+
+            return {"success": False, "error": f"Invalid action '{action}' for manage_particle_source."}
+
+        elif tool_name == "set_active_source":
+            source_id = args.get('source_id')
+            if isinstance(source_id, str) and source_id.strip().lower() in ('', 'none', 'null'):
+                source_id = None
+
+            success, msg = pm.set_active_source(source_id)
+            if success:
+                return {"success": True, "message": msg}
+            return {"success": False, "error": msg}
+
+        elif tool_name == "process_lors":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "coincidence_window_ns": args.get('coincidence_window_ns', 4.0),
+                "energy_cut": args.get('energy_cut', 0.0),
+                "energy_resolution": args.get('energy_resolution', 0.05),
+                "position_resolution": args.get('position_resolution', {'x': 0.0, 'y': 0.0, 'z': 0.0})
+            }
+            status_code, body = call_route_json(process_lors_route, [version_id, args['job_id']], payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"LOR processing failed (status {status_code}).")}
+            return {"success": True, "message": body.get('message', 'LOR processing started.')}
+
+        elif tool_name == "get_lor_status":
+            status_code, body = call_route_json(get_lor_processing_status, [args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch LOR status (status {status_code}).")}
+            return {"success": True, "status": body.get('status', {})}
+
+        elif tool_name == "check_lor_file":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+            status_code, body = call_route_json(check_lor_file_route, [version_id, args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not check LOR file (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "run_reconstruction":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "iterations": args.get('iterations', 1),
+                "image_size": args.get('image_size', [128, 128, 128]),
+                "voxel_size": args.get('voxel_size', [2.0, 2.0, 2.0]),
+                "normalization": args.get('normalization', True),
+                "ac_enabled": args.get('ac_enabled', False),
+                "ac_shape": args.get('ac_shape', 'cylinder'),
+                "ac_radius": args.get('ac_radius', 108.0),
+                "ac_length": args.get('ac_length', 186.0),
+                "ac_mu": args.get('ac_mu', 0.096)
+            }
+            status_code, body = call_route_json(run_reconstruction_route, [version_id, args['job_id']], payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Reconstruction failed (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "compute_sensitivity":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "version_id": version_id,
+                "job_id": args['job_id'],
+                "voxel_size": args.get('voxel_size', 2.0),
+                "matrix_size": args.get('matrix_size', 128),
+                "ac_enabled": args.get('ac_enabled', False),
+                "ac_mu": args.get('ac_mu', 0.096),
+                "ac_radius": args.get('ac_radius', 0.0),
+                "num_random_lors": args.get('num_random_lors', 20000000)
+            }
+            status_code, body = call_route_json(compute_sensitivity_route, payload=payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Sensitivity computation failed (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "get_sensitivity_status":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            status_code, body = call_route_json(get_sensitivity_status_route, [version_id, args['job_id']])
+            if status_code >= 400:
+                return {"success": False, "error": body.get('error', f"Could not fetch sensitivity status (status {status_code}).")}
+            return {"success": True, "status": body}
+
+        elif tool_name == "stop_simulation":
+            job_id = args['job_id']
+            with SIMULATION_LOCK:
+                process_or_list = SIMULATION_PROCESSES.get(job_id)
+                if process_or_list:
+                    if isinstance(process_or_list, list):
+                        count = 0
+                        for p in process_or_list:
+                            if p.poll() is None:
+                                p.terminate()
+                                count += 1
+                        return {"success": True, "message": f"Stop signal sent to {count} processes for job {job_id}."}
+
+                    proc = process_or_list
+                    if proc.poll() is None:
+                        proc.terminate()
+                        return {"success": True, "message": f"Stop signal sent to job {job_id}."}
+                    return {"success": False, "error": "Job has already finished."}
+
+                return {"success": False, "error": "Job ID not found or already completed."}
+
+        elif tool_name == "get_simulation_metadata":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            status_code, body = call_route_json(get_simulation_metadata, [version_id, args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch simulation metadata (status {status_code}).")}
+            return {"success": True, "metadata": body.get('metadata', {})}
+
+        elif tool_name == "get_simulation_analysis":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            query = {
+                "energy_bins": args.get('energy_bins', 100),
+                "spatial_bins": args.get('spatial_bins', 50)
+            }
+            status_code, body = call_route_json(get_simulation_analysis, [version_id, args['job_id']], query_params=query)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch simulation analysis (status {status_code}).")}
+            return {"success": True, "analysis": body.get('analysis', {})}
 
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:
@@ -3342,99 +4430,372 @@ def ai_chat_route():
     data = request.get_json()
     user_message = data.get('message')
     model_id = data.get('model', 'models/gemini-2.0-flash-exp') 
+    turn_limit = data.get('turn_limit', 10)
     
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
 
-    client_instance = get_gemini_client_for_session()
-    if not client_instance:
-        return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
+    # Determine if we are using Gemini or Ollama
+    is_gemini = model_id.startswith("models/")
 
     # Initialize chat history if empty
     if not pm.chat_history:
         system_prompt = load_system_prompt()
-        pm.chat_history = [
-            {"role": "user", "parts": [{"text": system_prompt}]},
-            {"role": "model", "parts": [{"text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."}]}
-        ]
+        if is_gemini:
+            pm.chat_history = [
+                {"role": "user", "parts": [{"text": system_prompt}]},
+                {"role": "model", "parts": [{"text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."}]}
+            ]
+        else: # Ollama format
+            pm.chat_history = [
+                {"role": "system", "content": system_prompt},
+                {"role": "assistant", "content": "Understood. I am AIRPET AI, your detector design assistant."}
+            ]
     
-    # Inject current project context as a "system hint" before the user message
     context_summary = pm.get_summarized_context()
-    pm.chat_history.append({
-        "role": "user", 
-        "parts": [{"text": f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"}]
-    })
+    formatted_user_msg = f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"
 
-    try:
-        # Tracks if any tool returned a job_id or version_id across multi-turn tool use
-        job_id = None
-        version_id = None
+    if is_gemini:
+        client_instance = get_gemini_client_for_session()
+        if not client_instance:
+            return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
 
-        # Loop to handle multiple tool calls (Gemini 3 is good at this)
-        for _ in range(5): # Max 5 tool iterations per turn
-            response = client_instance.models.generate_content(
-                model=model_id,
-                contents=pm.chat_history,
-                config=types.GenerateContentConfig(
-                    tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
-                )
-            )
-            
-            # Record the model's turn
-            pm.chat_history.append(response.candidates[0].content)
-            
-            tool_calls = response.candidates[0].content.parts
-            has_tool_call = False
-            tool_results_parts = []
-            
-            for part in tool_calls:
-                if part.function_call:
-                    has_tool_call = True
-                    tool_name = part.function_call.name
-                    args = part.function_call.args
+        pm.chat_history.append({
+            "role": "user", 
+            "parts": [{"text": formatted_user_msg}],
+            "metadata": {"model_id": model_id, "original_message": user_message} # Store original message for UI
+        })
+
+        # --- OPTIMIZATION: Start Transaction ---
+        pm.begin_transaction()
+
+        try:
+            # Sanitize history for Gemini API (remove our custom metadata)
+            sanitized_history = []
+            for msg in pm.chat_history:
+                sanitized_msg = {
+                    "role": msg["role"],
+                    "parts": msg["parts"]
+                }
+                sanitized_history.append(sanitized_msg)
+
+            job_id = None
+            version_id = None
+
+            for turn in range(turn_limit):
+                # Add a small delay to avoid hitting rate limits on free-tier keys
+                time.sleep(1)
+                
+                print(f"AI Turn {turn+1}/{turn_limit}...")
+                try:
+                    response = client_instance.models.generate_content(
+                        model=model_id,
+                        contents=sanitized_history,
+                        config=types.GenerateContentConfig(
+                            tools=[{"function_declarations": AI_GEOMETRY_TOOLS}]
+                        )
+                    )
+                except Exception as api_err:
+                    pm.end_transaction("Gemini API Error")
+                    raise api_err
+                
+                # Update sanitized history with model response
+                sanitized_history.append(response.candidates[0].content)
+                # And update our persistent history (keeping it as a simple list of dicts for JSON compat)
+                pm.chat_history.append({
+                    "role": response.candidates[0].content.role,
+                    "parts": [{"text": p.text} for p in response.candidates[0].content.parts if p.text] or \
+                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in response.candidates[0].content.parts if p.function_call]
+                })
+                
+                tool_calls = response.candidates[0].content.parts
+                has_tool_call = False
+                tool_results_parts = []
+                
+                for part in tool_calls:
+                    if part.function_call:
+                        has_tool_call = True
+                        tool_name = part.function_call.name
+                        args = part.function_call.args
+                        
+                        print(f"AI Calling Tool: {tool_name}")
+                        result = dispatch_ai_tool(pm, tool_name, args)
+                        
+                        # Capture simulation metadata for the frontend
+                        if "job_id" in result: job_id = result["job_id"]
+                        if "version_id" in result: version_id = result["version_id"]
+                        
+                        tool_results_parts.append(types.Part.from_function_response(
+                            name=tool_name,
+                            response=result
+                        ))
+
+                if not has_tool_call:
+                    # End the transaction before responding
+                    pm.end_transaction(f"AI: {user_message[:50]}")
                     
-                    print(f"AI Calling Tool: {tool_name} with {args}")
-                    result = dispatch_ai_tool(pm, tool_name, args)
+                    res_obj = create_success_response(pm, response.text)
+                    # Re-inject captured job metadata into the final response
+                    if job_id:
+                        res_json = res_obj.get_json()
+                        res_json['job_id'] = job_id
+                        res_json['version_id'] = version_id or pm.current_version_id
+                        return jsonify(res_json)
+                    return res_obj
+                
+                # Add results to both histories
+                tool_content = types.Content(role="user", parts=tool_results_parts)
+                sanitized_history.append(tool_content)
+                pm.chat_history.append({
+                    "role": "user",
+                    "parts": [{"function_response": {"name": p.function_response.name, "response": p.function_response.response}} for p in tool_results_parts]
+                })
+
+            pm.end_transaction("AI Timeout")
+            return create_success_response(pm, "Too many tool iterations.")
+
+        except Exception as e:
+            pm.end_transaction("AI Error")
+            traceback.print_exc()
+            err_msg = str(e)
+            status_code = 500
+            if "429" in err_msg or "ResourceExhausted" in err_msg or "Quota" in err_msg:
+                err_msg = f"AI Rate Limit Exceeded (429): {err_msg}. Please wait a moment before trying again."
+                status_code = 429
+            return jsonify({"success": False, "error": err_msg}), status_code
+
+    else: # Ollama Path
+        pm.chat_history.append({
+            "role": "user", 
+            "content": formatted_user_msg,
+            "metadata": {"model_id": model_id, "original_message": user_message} # Store original message for UI
+        })
+
+        pm.begin_transaction()
+
+        try:
+            # Map tool schema to Ollama format (Ollama uses OpenAI-like tool schema)
+            ollama_tools = []
+            for tool in AI_GEOMETRY_TOOLS:
+                ollama_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": tool["parameters"]
+                    }
+                })
+
+            # --- DEBUG: Dump payload to file ---
+            try:
+                debug_payload = {
+                    "model": model_id,
+                    "messages": pm.chat_history,
+                    "tools": ollama_tools
+                }
+                with open("ai_debug_payload.json", "w") as df:
+                    json.dump(debug_payload, df, indent=2, default=str)
+            except Exception as e:
+                print(f"Warning: Could not write debug payload: {e}")
+            # -----------------------------------
+
+            # Sanitize history for Ollama API (remove metadata)
+            sanitized_history = []
+            for msg in pm.chat_history:
+                sanitized_msg = {
+                    "role": msg["role"],
+                    "content": msg.get("content") or msg.get("parts", [{}])[0].get("text", "")
+                }
+                sanitized_history.append(sanitized_msg)
+
+            job_id = None
+            version_id = None
+
+            # Tool loop for Ollama
+            for turn in range(turn_limit):
+                time.sleep(1)
+                print(f"Ollama Turn {turn+1}/{turn_limit}...")
+                
+                try:
+                    response = ollama.chat(
+                        model=model_id,
+                        messages=sanitized_history,
+                        tools=ollama_tools
+                    )
+                except Exception as ollama_err:
+                    pm.end_transaction("Ollama API Error")
+                    raise ollama_err
+                
+                # Convert Ollama Message object to a plain dict for serialization
+                raw_assistant_msg = response['message']
+                assistant_msg = {
+                    "role": getattr(raw_assistant_msg, 'role', 'assistant'),
+                    "content": getattr(raw_assistant_msg, 'content', ""),
+                }
+                if hasattr(raw_assistant_msg, 'tool_calls') and raw_assistant_msg.tool_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        } for tc in raw_assistant_msg.tool_calls
+                    ]
+                
+                sanitized_history.append(assistant_msg)
+                # Keep persistent history simple
+                pm.chat_history.append(assistant_msg)
+                
+                if not assistant_msg.get('tool_calls'):
+                    pm.end_transaction(f"AI: {user_message[:50]}")
+                    return create_success_response(pm, assistant_msg['content'])
+
+                # Process tool calls
+                for tool_call in assistant_msg['tool_calls']:
+                    f_name = tool_call['function']['name']
+                    f_args = tool_call['function']['arguments']
                     
-                    # Capture simulation metadata for the frontend
+                    print(f"Ollama AI Calling Tool: {f_name}")
+                    result = dispatch_ai_tool(pm, f_name, f_args)
+                    
                     if "job_id" in result: job_id = result["job_id"]
                     if "version_id" in result: version_id = result["version_id"]
                     
-                    tool_results_parts.append(types.Part.from_function_response(
-                        name=tool_name,
-                        response=result
-                    ))
-
-            if not has_tool_call:
-                # No more tools to call, return the final text response
-                res_obj = create_success_response(pm, response.text)
-                # Re-inject captured job metadata into the final response
-                if job_id:
-                    res_json = res_obj.get_json()
-                    res_json['job_id'] = job_id
-                    res_json['version_id'] = version_id or pm.current_version_id
-                    return jsonify(res_json)
-                return res_obj
+                    tool_res = {
+                        "role": "tool",
+                        "content": json.dumps(result)
+                    }
+                    sanitized_history.append(tool_res)
+                    pm.chat_history.append(tool_res)
             
-            # Add results to history for next model iteration
-            pm.chat_history.append(types.Content(role="user", parts=tool_results_parts))
+            pm.end_transaction("AI Timeout")
+            return create_success_response(pm, "Too many tool iterations (Ollama).")
 
-        return jsonify({"success": False, "error": "Too many tool iterations."}), 500
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        except Exception as e:
+            pm.end_transaction("AI Error")
+            traceback.print_exc()
+            err_msg = str(e)
+            status_code = 500
+            if "429" in err_msg:
+                err_msg = f"Local AI Overloaded (429): {err_msg}."
+                status_code = 429
+            return jsonify({"success": False, "error": err_msg}), status_code
 
 @app.route('/api/ai/history', methods=['GET'])
 def get_ai_history():
     pm = get_project_manager_for_session()
-    return jsonify({"history": pm.chat_history})
+    
+    # Helper to sanitize data for JSON serialization
+    def sanitize_for_json(obj):
+        if isinstance(obj, dict):
+            return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [sanitize_for_json(i) for i in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        elif hasattr(obj, 'to_dict'): # Handle objects with to_dict method
+            return sanitize_for_json(obj.to_dict())
+        else:
+            # Handle Gemini SDK objects (Part, Content, etc.) or unknown types
+            res = {}
+            if hasattr(obj, 'role'): res['role'] = obj.role
+            if hasattr(obj, 'parts'):
+                res['parts'] = []
+                for p in obj.parts:
+                    part_data = {}
+                    if hasattr(p, 'text') and p.text: part_data['text'] = p.text
+                    if hasattr(p, 'function_call') and p.function_call:
+                        part_data['function_call'] = {
+                            'name': p.function_call.name,
+                            'args': sanitize_for_json(p.function_call.args)
+                        }
+                    if hasattr(p, 'function_response') and p.function_response:
+                        part_data['function_response'] = {
+                            'name': p.function_response.name,
+                            'response': sanitize_for_json(p.function_response.response)
+                        }
+                    if part_data: res['parts'].append(part_data)
+            
+            if res: return res
+            return str(obj) # Fallback to string representation
+
+    serializable_history = [sanitize_for_json(msg) for msg in pm.chat_history]
+    return jsonify({"history": serializable_history})
+
+@app.route('/api/ai/context_stats', methods=['GET'])
+def get_ai_context_stats():
+    pm = get_project_manager_for_session()
+    model_id = request.args.get('model', '').strip()
+
+    # Rough estimate: ~4 chars/token for English-ish mixed content.
+    serialized = json.dumps(pm.chat_history, ensure_ascii=False, default=str)
+    estimated_tokens = max(0, int(len(serialized) / 4))
+
+    max_context_tokens = None
+    context_source = "unknown"
+    if model_id.startswith('models/'):
+        context_source = "gemini"
+        gemini_client = get_gemini_client_for_session()
+        if gemini_client:
+            try:
+                for model in gemini_client.models.list():
+                    if model.name == model_id:
+                        max_context_tokens = getattr(model, 'input_token_limit', None)
+                        break
+            except Exception:
+                pass
+    elif model_id and model_id != '--export--':
+        context_source = "ollama"
+        # Try to read Ollama context length from local model metadata.
+        try:
+            show_resp = requests.post(
+                'http://localhost:11434/api/show',
+                json={'model': model_id},
+                timeout=2
+            )
+            if show_resp.ok:
+                info = show_resp.json() or {}
+                model_info = info.get('model_info') or {}
+
+                # Common keys: llama.context_length, qwen2.context_length, etc.
+                for k, v in model_info.items():
+                    if str(k).endswith('.context_length'):
+                        try:
+                            max_context_tokens = int(v)
+                            break
+                        except Exception:
+                            pass
+
+                # Fallback: parse modelfile parameters for num_ctx
+                if max_context_tokens is None:
+                    params_text = info.get('parameters') or ''
+                    m = re.search(r'\bnum_ctx\s+(\d+)\b', str(params_text))
+                    if m:
+                        max_context_tokens = int(m.group(1))
+        except Exception:
+            pass
+
+    utilization = None
+    if isinstance(max_context_tokens, int) and max_context_tokens > 0:
+        utilization = round((estimated_tokens / max_context_tokens) * 100.0, 2)
+
+    return jsonify({
+        "success": True,
+        "model": model_id,
+        "context_source": context_source,
+        "estimated_tokens": estimated_tokens,
+        "max_context_tokens": max_context_tokens,
+        "utilization_pct": utilization
+    })
 
 @app.route('/api/ai/clear', methods=['POST'])
 def clear_ai_history():
     pm = get_project_manager_for_session()
     pm.chat_history = []
+    pm.is_changed = True
     return jsonify({"success": True})
+
+@app.route('/import_ai_json', methods=['POST'])
 def import_ai_json_route():
     pm = get_project_manager_for_session()
 

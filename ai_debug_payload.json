@@ -1,0 +1,603 @@
+{
+  "model": "models/gemini-2.0-flash-exp",
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "# AIRPET AI System Instructions\n\nYou are AIRPET AI, a specialized assistant for designing Geant4-based radiation detector geometries. You operate within the AIRPET environment, which uses GDML-like structures.\n\n## Operating Principles\n\n1.  **Iterative Design:** You work with the user through a stateful chat. You can inspect the current state and make incremental changes.\n2.  **STRICT Tool-Based Interaction:** You must use the provided tools for ALL geometry modifications and inspections. Do not write pseudo-code or Python scripts in your response. If you need to create multiple objects, call the tools sequentially.\n3.  **Parameter Precision:** Pay close attention to tool argument names. For example, `create_primitive_solid` expects parameters in a `params` object (e.g., `{\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`). NOTE: 'x', 'y', and 'z' are names of axes, not pre-defined variables. To use them as variables, you must first define them using `manage_define`. Otherwise, use numeric strings or existing variable names from the project summary.\n4.  **Context Awareness:** You are provided with a compact summary of the project structure at the start of each turn, including a list of **Available Variables (Defines)**. Do not use variables that are not in this list.\n4.  **Physics Intent:** Understand that this is for Geant4. When creating volumes, consider material properties (density, Z) and whether a volume should be marked as \"sensitive\" for hit recording.\n\n## Tool Usage Guide\n\n*   **Inspection:**\n    *   `get_project_summary`: Use this if you lose track of the overall structure.\n    *   `search_components`: Use this to find existing parts by name.\n    *   `get_component_details`: Always use this before modifying an existing object.\n*   **Modification:**\n    *   `manage_define`: Use this to keep the geometry parametric.\n    *   `create_primitive_solid`: Create the shape first, then bind it to a Logical Volume. Example for a 10cm box: `name=\"Box\", solid_type=\"box\", params={\"x\": \"100\", \"y\": \"100\", \"z\": \"100\"}`.\n    *   `place_volume`: Remember that physical volumes (PVs) represent instances of Logical Volumes (LVs).\n    *   `create_detector_ring`: Use this specialized tool for PET rings or circular arrays.\n    *   `insert_physics_template`: Use this specialized tool for PET phantoms, SiPM arrays, or cryostats; it handles many objects in one turn.\n    *   `batch_geometry_update`: If you need to perform many different operations (e.g. creating 10 different variables or 5 different solids), use this tool to group them and avoid hitting the conversation turn limit.\n*   **Simulation & Analysis:**\n    *   `run_simulation`: Use this to test the performance of the current geometry. Start with a small number of events (e.g., 500-1000) for quick checks.\n    *   `get_simulation_status`: Check if a run is finished.\n    *   `get_analysis_summary`: Once a simulation is complete, use this to see hit counts and particle species. Use this data to suggest improvements.\n\n## Workflow Example: Optimization\n1.  User: \"Optimize the shield.\"\n2.  You: `run_simulation(events=1000)` -> returns `job_id`.\n3.  You: `get_simulation_status(job_id)` -> wait for \"Completed\".\n4.  You: `get_analysis_summary(job_id)` -> inspect hits in sensitive volumes.\n5.  You: `manage_define` (increase thickness) -> explain why.\n\n## Response Style\n*   Be technical and precise.\n*   Briefly explain the geometry logic you are applying (e.g., \"I'm adding a 2mm lead shield to reduce background...\").\n*   Confirm once the tools have been called.\n"
+        }
+      ]
+    },
+    {
+      "role": "model",
+      "parts": [
+        {
+          "text": "Understood. I am AIRPET AI, your detector design assistant. I have my tools ready."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "[System Context Update]\nProject: untitled\nWorld Volume: World\nAvailable Variables (Defines): (none defined yet)\nMaterials: G4_Galactic\nLogical Volumes: World(world_solid), box_LV(box_solid)\n\nUser Message: Run a quick sim"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_project_summary",
+      "description": "Get a high-level overview of the project structure, including names of all volumes and materials.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_component_details",
+      "description": "Get the full JSON definition of a specific component to see its current parameters.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "component_type": {
+            "type": "string",
+            "enum": [
+              "define",
+              "material",
+              "element",
+              "solid",
+              "logical_volume",
+              "assembly",
+              "particle_source",
+              "physical_volume"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name of the component or its unique ID (for physical_volumes)."
+          }
+        },
+        "required": [
+          "component_type",
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "search_components",
+      "description": "Search for components by name using a regex pattern.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "component_type": {
+            "type": "string",
+            "enum": [
+              "solid",
+              "logical_volume",
+              "material",
+              "physical_volume"
+            ]
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Regex pattern to match names."
+          }
+        },
+        "required": [
+          "component_type",
+          "pattern"
+        ]
+      }
+    },
+    {
+      "name": "manage_define",
+      "description": "Create or update a project variable (constant, expression, position, rotation).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "define_type": {
+            "type": "string",
+            "enum": [
+              "constant",
+              "expression",
+              "position",
+              "rotation",
+              "variable"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "The expression string or a dict for position/rotation."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Optional unit (mm, cm, deg, rad, etc.)"
+          }
+        },
+        "required": [
+          "name",
+          "define_type",
+          "value"
+        ]
+      }
+    },
+    {
+      "name": "manage_material",
+      "description": "Create or update a material or element.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "density": {
+            "type": "string",
+            "description": "Density expression in g/cm3"
+          },
+          "Z": {
+            "type": "string",
+            "description": "Atomic number expression"
+          },
+          "A": {
+            "type": "string",
+            "description": "Atomic mass expression"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "fraction": {
+                  "type": "string"
+                },
+                "natoms": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "create_primitive_solid",
+      "description": "Create a new primitive shape (box, tube, cone, sphere, etc.).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "solid_type": {
+            "type": "string",
+            "enum": [
+              "box",
+              "tube",
+              "cone",
+              "sphere",
+              "orb",
+              "trd",
+              "para",
+              "trap"
+            ]
+          },
+          "params": {
+            "type": "object",
+            "description": "Dict of parameters. e.g., {'x': '100', 'y': '100', 'z': '100'} for a box."
+          }
+        },
+        "required": [
+          "name",
+          "solid_type",
+          "params"
+        ]
+      }
+    },
+    {
+      "name": "modify_solid",
+      "description": "Update parameters of an existing solid.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "description": "Dict of parameters to update or replace."
+          }
+        },
+        "required": [
+          "name",
+          "params"
+        ]
+      }
+    },
+    {
+      "name": "create_boolean_solid",
+      "description": "Create a new boolean solid from existing solids.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "recipe": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "base",
+                    "union",
+                    "subtraction",
+                    "intersection"
+                  ]
+                },
+                "solid_ref": {
+                  "type": "string"
+                },
+                "transform": {
+                  "type": "object",
+                  "properties": {
+                    "position": {
+                      "type": "object"
+                    },
+                    "rotation": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "name",
+          "recipe"
+        ]
+      }
+    },
+    {
+      "name": "manage_logical_volume",
+      "description": "Create or update a logical volume (binds a solid to a material and sets visual appearance).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "solid_ref": {
+            "type": "string"
+          },
+          "material_ref": {
+            "type": "string"
+          },
+          "is_sensitive": {
+            "type": "boolean"
+          },
+          "color": {
+            "type": "string",
+            "description": "Hex color string (e.g., '#0000ff' for blue) or CSS color name."
+          },
+          "opacity": {
+            "type": "number",
+            "description": "Opacity from 0.0 (transparent) to 1.0 (opaque)."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "place_volume",
+      "description": "Place a volume (Physical Volume) inside another volume.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "parent_lv_name": {
+            "type": "string"
+          },
+          "placed_lv_ref": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional name for the placement."
+          },
+          "position": {
+            "type": "object"
+          },
+          "rotation": {
+            "type": "object"
+          },
+          "scale": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "parent_lv_name",
+          "placed_lv_ref"
+        ]
+      }
+    },
+    {
+      "name": "modify_physical_volume",
+      "description": "Update the transform or name of an existing physical volume placement.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pv_id": {
+            "type": "string",
+            "description": "The unique ID of the physical volume."
+          },
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "object"
+          },
+          "rotation": {
+            "type": "object"
+          },
+          "scale": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "pv_id"
+        ]
+      }
+    },
+    {
+      "name": "create_detector_ring",
+      "description": "High-level tool to create a ring array of volumes (e.g., a PET ring).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "parent_lv_name": {
+            "type": "string"
+          },
+          "lv_to_place_ref": {
+            "type": "string"
+          },
+          "ring_name": {
+            "type": "string"
+          },
+          "num_detectors": {
+            "type": "string",
+            "description": "Number of detectors in one ring (expression string)."
+          },
+          "radius": {
+            "type": "string",
+            "description": "Radius of the ring (expression string)."
+          },
+          "center": {
+            "type": "object",
+            "description": "Center of the ring {'x':..., 'y':..., 'z':...}"
+          },
+          "orientation": {
+            "type": "object",
+            "description": "Orientation of the ring axes."
+          },
+          "point_to_center": {
+            "type": "boolean",
+            "description": "If true, detectors rotate to face the center."
+          },
+          "inward_axis": {
+            "type": "string",
+            "enum": [
+              "+x",
+              "-x",
+              "+y",
+              "-y",
+              "+z",
+              "-z"
+            ],
+            "description": "Which local axis of the detector should point inward."
+          },
+          "num_rings": {
+            "type": "string",
+            "description": "Number of axial rings (expression string)."
+          },
+          "ring_spacing": {
+            "type": "string",
+            "description": "Axial distance between rings."
+          }
+        },
+        "required": [
+          "parent_lv_name",
+          "lv_to_place_ref",
+          "ring_name",
+          "num_detectors",
+          "radius"
+        ]
+      }
+    },
+    {
+      "name": "delete_objects",
+      "description": "Delete one or more objects from the project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "solid",
+                    "logical_volume",
+                    "physical_volume",
+                    "material",
+                    "define",
+                    "assembly"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "The name or ID of the object."
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "objects"
+        ]
+      }
+    },
+    {
+      "name": "set_volume_appearance",
+      "description": "Set the visual color and opacity of a logical volume.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the logical volume."
+          },
+          "color": {
+            "type": "string",
+            "description": "Hex color string or common name (blue, red, lead, etc.)."
+          },
+          "opacity": {
+            "type": "number",
+            "description": "Opacity from 0.0 to 1.0."
+          }
+        },
+        "required": [
+          "name",
+          "color"
+        ]
+      }
+    },
+    {
+      "name": "run_simulation",
+      "description": "Start a Geant4 simulation run to test the current geometry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "integer",
+            "description": "Number of events to simulate (default: 1000)."
+          },
+          "threads": {
+            "type": "integer",
+            "description": "Number of CPU threads (default: 1)."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_simulation_status",
+      "description": "Check the status of a previously started simulation job.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "The unique ID of the simulation job."
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      }
+    },
+    {
+      "name": "get_analysis_summary",
+      "description": "Get a physics-based summary of the simulation results (energy peaks, hit counts, etc.).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "The unique ID of the simulation job."
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      }
+    },
+    {
+      "name": "batch_geometry_update",
+      "description": "Execute multiple geometry operations in a single high-efficiency batch. Use this when you have many objects to create or modify at once.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool_name": {
+                  "type": "string",
+                  "description": "Name of the tool to call."
+                },
+                "arguments": {
+                  "type": "object",
+                  "description": "Arguments for that tool."
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "operations"
+        ]
+      }
+    },
+    {
+      "name": "insert_physics_template",
+      "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, or phantom).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "template_name": {
+            "type": "string",
+            "enum": [
+              "sipm_array",
+              "cryostat",
+              "phantom"
+            ]
+          },
+          "params": {
+            "type": "object",
+            "description": "Parameters for the chosen template."
+          },
+          "parent_lv_name": {
+            "type": "string",
+            "description": "Which volume to place the component into."
+          },
+          "position": {
+            "type": "object",
+            "description": "Relative position of the whole component {'x':..., 'y':..., 'z':...}"
+          }
+        },
+        "required": [
+          "template_name",
+          "params",
+          "parent_lv_name"
+        ]
+      }
+    }
+  ]
+}

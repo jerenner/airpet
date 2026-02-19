@@ -83,6 +83,7 @@ let callbacks = {
     onHistoryButtonClicked: () => { },
     onProjectRenamed: (newName) => { },
     onLoadVersionClicked: () => { },
+    onRenameVersion: (projectName, versionId, newDescription) => { },
     onEditSolidClicked: (solidData) => { },
     onAddDefineClicked: () => { },
     onEditDefineClicked: (defineData) => { },
@@ -434,17 +435,17 @@ export function initUI(cb) {
         }
     });
 
-    // Listener for the bottom panel expand/collapse button
+    // Listener for the bottom panel collapse/restore button (single-click toggle)
     toggleBottomPanelBtn.addEventListener('click', () => {
-        bottomPanel.classList.toggle('expanded');
-
-        // Update the button's icon based on the new state
-        if (bottomPanel.classList.contains('expanded')) {
-            toggleBottomPanelBtn.textContent = '↓'; // Down arrow for collapse
-            toggleBottomPanelBtn.title = 'Collapse Panel';
+        const isMinimized = bottomPanel.classList.contains('minimized');
+        if (isMinimized) {
+            bottomPanel.classList.remove('minimized');
+            toggleBottomPanelBtn.textContent = '↓';
+            toggleBottomPanelBtn.title = 'Minimize Panel';
         } else {
-            toggleBottomPanelBtn.textContent = '↑'; // Up arrow for expand
-            toggleBottomPanelBtn.title = 'Expand Panel';
+            bottomPanel.classList.add('minimized');
+            toggleBottomPanelBtn.textContent = '↑';
+            toggleBottomPanelBtn.title = 'Restore Panel';
         }
     });
 
@@ -741,6 +742,20 @@ export function populateHistoryPanel(history, projectName) {
             e.stopPropagation();
             callbacks.onLoadVersionClicked(projectName, version.id);
         });
+
+        const descEl = header.querySelector('.version-desc');
+        if (descEl && !version.is_autosave) {
+            descEl.title = 'Click to rename this version';
+            descEl.style.cursor = 'pointer';
+            descEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const currentDesc = version.description || 'Saved';
+                const newDesc = prompt('Rename version description:', currentDesc);
+                if (newDesc && newDesc.trim() && newDesc.trim() !== currentDesc) {
+                    callbacks.onRenameVersion(projectName, version.id, newDesc.trim());
+                }
+            });
+        }
     });
 }
 
@@ -2049,7 +2064,6 @@ export function populateAiModelSelector(models) {
         // --- Set Default Model Preference ---
         // Prioritize user request, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
         const preferredModels = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
-        let matched = false;
 
         for (const pref of preferredModels) {
             // Check if any option value contains the preferred model name
@@ -2057,10 +2071,12 @@ export function populateAiModelSelector(models) {
             const found = options.find(opt => opt.value.includes(pref));
             if (found) {
                 aiModelSelect.value = found.value;
-                matched = true;
                 break;
             }
         }
+
+        // Notify listeners (e.g., AI context stats widget) that model list/selection changed.
+        aiModelSelect.dispatchEvent(new Event('change'));
     }
 }
 

@@ -5,6 +5,10 @@
     <title>AIrPET</title>
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             font-family: Arial, sans-serif;
@@ -13,7 +17,9 @@
         }
 
         #left_panel_container {
-            width: 600px;
+            width: 350px;
+            min-width: 300px;
+            flex-shrink: 0;
             /* Fixed width for now */
             height: 100vh;
             background-color: #e9e9e9;
@@ -487,7 +493,7 @@
             /* ...and are flex containers for their internal content. */
             display: flex;
             flex-direction: column;
-            height: 82%;
+            height: 100%;
             /* Make the pane fill the content area's height */
         }
 
@@ -531,12 +537,22 @@
             transition: max-height 0.3s ease-in-out;
         }
 
+        #bottom_panel.minimized .tab_content_area {
+            max-height: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #bottom_panel.minimized .tab_navigation {
+            border-bottom: none;
+        }
+
         /* --- AI PANEL --- */
         #tab_ai_panel {
             display: flex;
             flex-direction: column;
             height: 100%;
-            padding: 0;
+            padding: 0; /* No padding for AI chat */
             overflow: hidden;
         }
 
@@ -552,6 +568,7 @@
 
         .chat-message {
             max-width: 85%;
+            width: fit-content;
             padding: 10px 14px;
             border-radius: 18px;
             font-size: 14px;
@@ -631,12 +648,23 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             padding: 0 5px;
+        }
+
+        .ai-status-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
         }
 
         .ai-model-info {
             font-size: 11px;
             color: #6c757d;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
         }
 
         #clear_chat_btn {
@@ -727,23 +755,41 @@
             }
         }
 
-        #ai_generate_button.loading .button-text {
-            visibility: hidden;
-            /* Hide the '➤' text when loading */
+        #ai_generate_button {
+            position: relative;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 42px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
         }
 
         #ai_generate_button .loader {
             display: none;
-            /* Hide loader by default */
             position: absolute;
-            /* Position it in the center of the button */
-            left: 18%;
-            top: 18%;
+            inset: 0;
+            margin: auto;
+            pointer-events: none;
+        }
+
+        #ai_generate_button .button-text {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            line-height: 1;
+        }
+
+        #ai_generate_button.loading .button-text {
+            visibility: hidden;
         }
 
         #ai_generate_button.loading .loader {
             display: block;
-            /* Show loader when button has .loading class */
         }
 
         /* Solid editor */
@@ -1810,7 +1856,7 @@
                 <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
                 <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
                 <button class="tab_button" data-tab="tab_analysis_panel">Analysis</button>
-                <button id="toggleBottomPanelBtn" title="Expand/Collapse Panel">↑</button>
+                <button id="toggleBottomPanelBtn" title="Minimize Panel">↓</button>
             </div>
             <div id="bottom_panel_content" class="tab_content_area">
                 <!-- AI Panel Content -->
@@ -1820,7 +1866,11 @@
                     </div>
                     <div id="ai_input_area">
                         <div class="ai-status-bar">
-                            <span class="ai-model-info">Model: <select id="ai_model_select"></select></span>
+                            <div class="ai-status-left">
+                                <span class="ai-model-info">Model: <select id="ai_model_select"></select></span>
+                                <span class="ai-model-info">Max turns: <input type="number" id="ai_turn_limit" value="10" min="1" max="50" style="width: 44px; font-size: 11px;"></span>
+                                <span class="ai-model-info" id="ai_context_stats">Context: n/a</span>
+                            </div>
                             <button id="clear_chat_btn">Clear History</button>
                         </div>
                         <div id="ai_input_row">

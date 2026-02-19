@@ -1,4 +1,5 @@
 import pytest
+import math
 from src.expression_evaluator import ExpressionEvaluator
 
 def test_basic_math():
@@ -36,3 +37,20 @@ def test_error_handling():
     evaluator = ExpressionEvaluator()
     success, result = evaluator.evaluate("undefined_variable", verbose=False)
     assert not success
+
+def test_unit_preprocessing():
+    evaluator = ExpressionEvaluator()
+    # Test space-separated unit
+    success, result = evaluator.evaluate("90 deg")
+    assert success
+    assert abs(result - math.pi / 2) < 1e-9
+    
+    # Test attached unit
+    success, result = evaluator.evaluate("10mm")
+    assert success
+    assert result == 10.0
+    
+    # Test multiple units in expression
+    success, result = evaluator.evaluate("10cm + 5mm")
+    assert success
+    assert result == 105.0
