@@ -4593,21 +4593,60 @@ def ai_chat_route():
                     pm.end_transaction("Gemini API Error")
                     raise api_err
                 
+                candidates = getattr(response, 'candidates', None) or []
+                candidate = candidates[0] if candidates else None
+                content = getattr(candidate, 'content', None) if candidate else None
+
+                # Gemini occasionally returns a candidate with no content (e.g. filtered/empty output).
+                # Fall back to response.text when available, otherwise return a repair-friendly error.
+                if content is None:
+                    fallback_text = getattr(response, 'text', None)
+                    if fallback_text:
+                        pm.chat_history.append({
+                            "role": "model",
+                            "parts": [{"text": fallback_text}]
+                        })
+                        pm.end_transaction(f"AI: {user_message[:50]}")
+                        return create_success_response(pm, fallback_text)
+
+                    raise RuntimeError(
+                        "Gemini returned an empty candidate content (possibly filtered/empty output). "
+                        "Please retry or simplify the request."
+                    )
+
+                response_parts = getattr(content, 'parts', None) or []
+                response_role = getattr(content, 'role', None) or 'model'
+
                 # Update sanitized history with model response
-                sanitized_history.append(response.candidates[0].content)
+                sanitized_history.append(content)
+
+                assistant_parts = []
+                for p in response_parts:
+                    if getattr(p, 'text', None):
+                        assistant_parts.append({"text": p.text})
+                    if getattr(p, 'function_call', None):
+                        assistant_parts.append({
+                            "function_call": {
+                                "name": p.function_call.name,
+                                "args": p.function_call.args
+                            }
+                        })
+
+                if not assistant_parts and getattr(response, 'text', None):
+                    assistant_parts = [{"text": response.text}]
+
                 # And update our persistent history (keeping it as a simple list of dicts for JSON compat)
                 pm.chat_history.append({
-                    "role": response.candidates[0].content.role,
-                    "parts": [{"text": p.text} for p in response.candidates[0].content.parts if p.text] or \
-                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in response.candidates[0].content.parts if p.function_call]
+                    "role": response_role,
+                    "parts": assistant_parts
                 })
                 
-                tool_calls = response.candidates[0].content.parts
+                tool_calls = response_parts
                 has_tool_call = False
                 tool_results_parts = []
                 
                 for part in tool_calls:
-                    if part.function_call:
+                    if getattr(part, 'function_call', None):
                         has_tool_call = True
                         tool_name = part.function_call.name
                         args = part.function_call.args
@@ -4627,8 +4666,13 @@ def ai_chat_route():
                 if not has_tool_call:
                     # End the transaction before responding
                     pm.end_transaction(f"AI: {user_message[:50]}")
+
+                    final_text = getattr(response, 'text', None)
+                    if not final_text:
+                        text_parts = [p.get('text') for p in assistant_parts if isinstance(p, dict) and p.get('text')]
+                        final_text = "\n".join(text_parts) if text_parts else "Done."
                     
-                    res_obj = create_success_response(pm, response.text)
+                    res_obj = create_success_response(pm, final_text)
                     # Re-inject captured job metadata into the final response
                     if job_id:
                         res_json = res_obj.get_json()
