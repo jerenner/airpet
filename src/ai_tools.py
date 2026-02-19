@@ -29,6 +29,280 @@ def get_component_details(pm, component_type: str, name: str) -> Optional[Dict[s
     """Returns full details for a specific component (define, material, solid, lv, assembly)."""
     return pm.get_object_details(component_type, name)
 
+
+
+# Canonical primitive-solid parameter specs (source of truth for AI schema + backend validation).
+def _expr_param(description: str) -> Dict[str, Any]:
+    # Keep Gemini-compatible primitive schema types: expression fields are represented as strings.
+    return {
+        "type": "string",
+        "description": f"{description}. Use numeric strings or expressions (e.g., '42', 'radius+5', '360*deg')."
+    }
+
+
+def _int_or_expr_param(description: str) -> Dict[str, Any]:
+    # Integer-or-expression fields are represented as strings for cross-provider compatibility.
+    return {
+        "type": "string",
+        "description": f"{description}. Use integer-like strings or expressions."
+    }
+
+
+PRIMITIVE_SOLID_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
+    "box": {
+        "required": ["x", "y", "z"],
+        "properties": {
+            "x": _expr_param("Full X length (mm)"),
+            "y": _expr_param("Full Y length (mm)"),
+            "z": _expr_param("Full Z length (mm)")
+        }
+    },
+    "tube": {
+        "required": ["rmin", "rmax", "z", "startphi", "deltaphi"],
+        "properties": {
+            "rmin": _expr_param("Inner radius (mm)"),
+            "rmax": _expr_param("Outer radius (mm)"),
+            "z": _expr_param("Half-length in Z (mm)"),
+            "startphi": _expr_param("Start angle (e.g., 0*deg)"),
+            "deltaphi": _expr_param("Span angle (e.g., 360*deg)")
+        }
+    },
+    "cone": {
+        "required": ["rmin1", "rmax1", "rmin2", "rmax2", "z", "startphi", "deltaphi"],
+        "properties": {
+            "rmin1": _expr_param("Inner radius at -Z side (mm)"),
+            "rmax1": _expr_param("Outer radius at -Z side (mm)"),
+            "rmin2": _expr_param("Inner radius at +Z side (mm)"),
+            "rmax2": _expr_param("Outer radius at +Z side (mm)"),
+            "z": _expr_param("Half-length in Z (mm)"),
+            "startphi": _expr_param("Start angle (e.g., 0*deg)"),
+            "deltaphi": _expr_param("Span angle (e.g., 360*deg)")
+        }
+    },
+    "sphere": {
+        "required": ["rmin", "rmax", "startphi", "deltaphi", "starttheta", "deltatheta"],
+        "properties": {
+            "rmin": _expr_param("Inner radius (mm)"),
+            "rmax": _expr_param("Outer radius (mm)"),
+            "startphi": _expr_param("Start azimuth angle"),
+            "deltaphi": _expr_param("Azimuth span angle"),
+            "starttheta": _expr_param("Start polar angle"),
+            "deltatheta": _expr_param("Polar span angle")
+        }
+    },
+    "orb": {
+        "required": ["r"],
+        "properties": {
+            "r": _expr_param("Outer radius (mm)")
+        }
+    },
+    "trd": {
+        "required": ["x1", "x2", "y1", "y2", "z"],
+        "properties": {
+            "x1": _expr_param("X length at -Z side (mm)"),
+            "x2": _expr_param("X length at +Z side (mm)"),
+            "y1": _expr_param("Y length at -Z side (mm)"),
+            "y2": _expr_param("Y length at +Z side (mm)"),
+            "z": _expr_param("Full Z length (mm)")
+        }
+    },
+    "para": {
+        "required": ["x", "y", "z", "alpha", "theta", "phi"],
+        "properties": {
+            "x": _expr_param("Full X length (mm)"),
+            "y": _expr_param("Full Y length (mm)"),
+            "z": _expr_param("Full Z length (mm)"),
+            "alpha": _expr_param("Alpha angle"),
+            "theta": _expr_param("Theta angle"),
+            "phi": _expr_param("Phi angle")
+        }
+    },
+    "trap": {
+        "required": ["z", "theta", "phi", "y1", "x1", "x2", "alpha1", "y2", "x3", "x4", "alpha2"],
+        "properties": {
+            "z": _expr_param("Full Z length (mm)"),
+            "theta": _expr_param("Theta angle"),
+            "phi": _expr_param("Phi angle"),
+            "y1": _expr_param("Y length at -Z side (mm)"),
+            "x1": _expr_param("X1 at -Z side (mm)"),
+            "x2": _expr_param("X2 at -Z side (mm)"),
+            "alpha1": _expr_param("Alpha1 angle"),
+            "y2": _expr_param("Y length at +Z side (mm)"),
+            "x3": _expr_param("X3 at +Z side (mm)"),
+            "x4": _expr_param("X4 at +Z side (mm)"),
+            "alpha2": _expr_param("Alpha2 angle")
+        }
+    },
+    "hype": {
+        "required": ["rmin", "rmax", "inst", "outst", "z"],
+        "properties": {
+            "rmin": _expr_param("Inner radius at z=0 (mm)"),
+            "rmax": _expr_param("Outer radius at z=0 (mm)"),
+            "inst": _expr_param("Inner stereo angle"),
+            "outst": _expr_param("Outer stereo angle"),
+            "z": _expr_param("Half-length in Z (mm)")
+        }
+    },
+    "twistedbox": {
+        "required": ["x", "y", "z", "PhiTwist"],
+        "properties": {
+            "x": _expr_param("Full X length (mm)"),
+            "y": _expr_param("Full Y length (mm)"),
+            "z": _expr_param("Full Z length (mm)"),
+            "PhiTwist": _expr_param("Twist angle")
+        }
+    },
+    "twistedtrd": {
+        "required": ["x1", "x2", "y1", "y2", "z", "PhiTwist"],
+        "properties": {
+            "x1": _expr_param("X length at -Z side (mm)"),
+            "x2": _expr_param("X length at +Z side (mm)"),
+            "y1": _expr_param("Y length at -Z side (mm)"),
+            "y2": _expr_param("Y length at +Z side (mm)"),
+            "z": _expr_param("Full Z length (mm)"),
+            "PhiTwist": _expr_param("Twist angle")
+        }
+    },
+    "twistedtrap": {
+        "required": ["PhiTwist", "z", "Theta", "Phi", "y1", "x1", "x2", "y2", "x3", "x4", "Alph"],
+        "properties": {
+            "PhiTwist": _expr_param("Twist angle"),
+            "z": _expr_param("Full Z length (mm)"),
+            "Theta": _expr_param("Theta angle"),
+            "Phi": _expr_param("Phi angle"),
+            "y1": _expr_param("Y length at -Z side (mm)"),
+            "x1": _expr_param("X1 at -Z side (mm)"),
+            "x2": _expr_param("X2 at -Z side (mm)"),
+            "y2": _expr_param("Y length at +Z side (mm)"),
+            "x3": _expr_param("X3 at +Z side (mm)"),
+            "x4": _expr_param("X4 at +Z side (mm)"),
+            "Alph": _expr_param("Alpha angle")
+        }
+    },
+    "twistedtubs": {
+        "required": ["twistedangle", "endinnerrad", "endouterrad", "zlen", "phi"],
+        "properties": {
+            "twistedangle": _expr_param("Twist angle"),
+            "endinnerrad": _expr_param("Inner radius at endcaps (mm)"),
+            "endouterrad": _expr_param("Outer radius at endcaps (mm)"),
+            "zlen": _expr_param("Full Z length (mm)"),
+            "phi": _expr_param("Angular span")
+        }
+    },
+    "genericPolycone": {
+        "required": ["startphi", "deltaphi", "rzpoints"],
+        "properties": {
+            "startphi": _expr_param("Start angle"),
+            "deltaphi": _expr_param("Span angle"),
+            "rzpoints": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "r": _expr_param("Radius at point"),
+                        "z": _expr_param("Z coordinate at point")
+                    },
+                    "required": ["r", "z"]
+                }
+            }
+        }
+    },
+    "genericPolyhedra": {
+        "required": ["startphi", "deltaphi", "numsides", "rzpoints"],
+        "properties": {
+            "startphi": _expr_param("Start angle"),
+            "deltaphi": _expr_param("Span angle"),
+            "numsides": _int_or_expr_param("Number of polygon sides"),
+            "rzpoints": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "r": _expr_param("Radius at point"),
+                        "z": _expr_param("Z coordinate at point")
+                    },
+                    "required": ["r", "z"]
+                }
+            }
+        }
+    },
+    "xtru": {
+        "required": ["twoDimVertices", "sections"],
+        "properties": {
+            "twoDimVertices": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "x": _expr_param("2D vertex X"),
+                        "y": _expr_param("2D vertex Y")
+                    },
+                    "required": ["x", "y"]
+                }
+            },
+            "sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "zOrder": _int_or_expr_param("Section order index"),
+                        "zPosition": _expr_param("Section Z position"),
+                        "xOffset": _expr_param("Section X offset"),
+                        "yOffset": _expr_param("Section Y offset"),
+                        "scalingFactor": _expr_param("Section scale factor")
+                    },
+                    "required": ["zOrder", "zPosition", "xOffset", "yOffset", "scalingFactor"]
+                }
+            }
+        }
+    }
+}
+
+
+def _build_create_primitive_solid_parameters() -> Dict[str, Any]:
+    solid_types = list(PRIMITIVE_SOLID_PARAM_SPECS.keys())
+
+    # Gemini's function schema validator rejects JSON-schema combinators like oneOf/anyOf.
+    # We keep discriminated requirements in PRIMITIVE_SOLID_PARAM_SPECS (validated server-side)
+    # and expose a comprehensive canonical param catalog here for model guidance.
+    all_param_props: Dict[str, Any] = {}
+    for spec in PRIMITIVE_SOLID_PARAM_SPECS.values():
+        for param_name, param_schema in spec.get("properties", {}).items():
+            if param_name not in all_param_props:
+                all_param_props[param_name] = param_schema
+
+    required_by_type = "; ".join(
+        [f"{solid}: {spec.get('required', [])}" for solid, spec in PRIMITIVE_SOLID_PARAM_SPECS.items()]
+    )
+
+    return {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "solid_type": {"type": "string", "enum": solid_types},
+            "params": {
+                "type": "object",
+                "properties": all_param_props,
+                "description": (
+                    "Canonical GDML-style params for the selected solid_type. "
+                    f"Required keys by solid_type: {required_by_type}"
+                )
+            }
+        },
+        "required": ["name", "solid_type", "params"]
+    }
+
+
+def _create_primitive_solid_tool() -> Dict[str, Any]:
+    return {
+        "name": "create_primitive_solid",
+        "description": (
+            "Create a new primitive shape. "
+            "Use canonical GDML-style parameter names from the schema for the selected solid_type."
+        ),
+        "parameters": _build_create_primitive_solid_parameters()
+    }
+
 # Mapping of AI tools to ProjectManager methods
 AI_GEOMETRY_TOOLS = [
     {
@@ -105,22 +379,7 @@ AI_GEOMETRY_TOOLS = [
             "required": ["name"]
         }
     },
-    {
-        "name": "create_primitive_solid",
-        "description": "Create a new primitive shape (box, tube, cone, sphere, etc.).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "solid_type": {"type": "string", "enum": ["box", "tube", "cone", "sphere", "orb", "trd", "para", "trap", "hype", "twistedbox", "twistedtrd", "twistedtrap", "twistedtubs", "genericPolycone", "genericPolyhedra", "xtru"]},
-                "params": {
-                    "type": "object",
-                    "description": "Dict of parameters using GDML-style names (e.g., box: x,y,z; tube: rmin,rmax,z,startphi,deltaphi). Common aliases like innerRadius/outerRadius/halfZ/startAngle/spanAngle are tolerated for tube/cone/sphere."
-                }
-            },
-            "required": ["name", "solid_type", "params"]
-        }
-    },
+    _create_primitive_solid_tool(),
     {
         "name": "modify_solid",
         "description": "Update parameters of an existing solid.",

@@ -37,7 +37,7 @@ from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
-from src.ai_tools import AI_GEOMETRY_TOOLS, get_project_summary, get_component_details
+from src.ai_tools import AI_GEOMETRY_TOOLS, PRIMITIVE_SOLID_PARAM_SPECS, get_project_summary, get_component_details
 from src.templates import PHYSICS_TEMPLATES
 
 from PIL import Image
@@ -3256,6 +3256,73 @@ AI_TOOL_DEFAULTS = {
     }
 }
 
+# Canonicalization fallback for common model/user aliases in primitive solid params.
+PRIMITIVE_SOLID_PARAM_ALIASES = {
+    "tube": {
+        "innerradius": "rmin",
+        "outerradius": "rmax",
+        "halfz": "z",
+        "halflength": "z",
+        "startangle": "startphi",
+        "spanangle": "deltaphi"
+    },
+    "cone": {
+        "innerradius1": "rmin1",
+        "outerradius1": "rmax1",
+        "innerradius2": "rmin2",
+        "outerradius2": "rmax2",
+        "halfz": "z",
+        "halflength": "z",
+        "startangle": "startphi",
+        "spanangle": "deltaphi"
+    },
+    "sphere": {
+        "innerradius": "rmin",
+        "outerradius": "rmax",
+        "startangle": "startphi",
+        "spanangle": "deltaphi",
+        "startpolarangle": "starttheta",
+        "spanpolarangle": "deltatheta"
+    }
+}
+
+ANGLE_PARAM_NAMES = {"startphi", "deltaphi", "starttheta", "deltatheta", "theta", "phi", "alpha", "inst", "outst", "twistedangle", "phitwist", "alph"}
+
+
+def _normalize_param_alias_key(key: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', str(key).lower())
+
+
+def _coerce_angle_expr_if_bare_number(expr: Any) -> Any:
+    if not isinstance(expr, str):
+        return expr
+
+    s = expr.strip().lower()
+    if any(tok in s for tok in ('deg', 'rad', 'pi', '*', '/', '+', '-', '(', ')')):
+        return expr
+
+    return f"({expr})*deg"
+
+
+def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
+    if not isinstance(raw_params, dict):
+        return raw_params
+
+    st = str(solid_type or '').strip()
+    aliases = PRIMITIVE_SOLID_PARAM_ALIASES.get(st, {})
+
+    mapped = dict(raw_params)
+    for key, value in raw_params.items():
+        target = aliases.get(_normalize_param_alias_key(key))
+        if target and target not in mapped:
+            mapped[target] = value
+
+    for angle_key in list(mapped.keys()):
+        if _normalize_param_alias_key(angle_key) in ANGLE_PARAM_NAMES:
+            mapped[angle_key] = _coerce_angle_expr_if_bare_number(mapped[angle_key])
+
+    return mapped
+
 
 def _camel_to_snake(key: str) -> str:
     # parentLvName -> parent_lv_name
@@ -3377,6 +3444,49 @@ def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, 
     return normalized, None
 
 
+def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]:
+    solid_type = args.get('solid_type')
+    params = args.get('params')
+
+    if not isinstance(params, dict):
+        return "Tool 'create_primitive_solid' expects 'params' to be an object."
+
+    spec = PRIMITIVE_SOLID_PARAM_SPECS.get(str(solid_type))
+    if not spec:
+        return (
+            f"Unsupported solid_type '{solid_type}'. "
+            f"Supported: {sorted(PRIMITIVE_SOLID_PARAM_SPECS.keys())}."
+        )
+
+    normalized_params = normalize_primitive_solid_params(solid_type, params)
+    args['params'] = normalized_params
+
+    required_params = spec.get('required', [])
+    missing = [
+        key for key in required_params
+        if key not in normalized_params or normalized_params.get(key) in (None, "")
+    ]
+    if not missing:
+        return None
+
+    canonical_props = spec.get('properties', {})
+    canonical_names = list(canonical_props.keys())
+
+    alias_pairs = PRIMITIVE_SOLID_PARAM_ALIASES.get(str(solid_type), {})
+    alias_hint = ""
+    if alias_pairs:
+        rendered = ", ".join([f"{a}->{c}" for a, c in sorted(alias_pairs.items())])
+        alias_hint = f" Common aliases accepted: {rendered}."
+
+    provided_keys = sorted(params.keys()) if isinstance(params, dict) else []
+
+    return (
+        f"Tool 'create_primitive_solid' for solid_type='{solid_type}' is missing required param(s): {missing}. "
+        f"Use canonical params: {canonical_names}. "
+        f"Provided keys: {provided_keys}.{alias_hint}"
+    )
+
+
 def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
     schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name, {})
 
@@ -3399,6 +3509,9 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
                 f"Tool '{tool_name}' has invalid value for '{key}': {args[key]!r}. "
                 f"Allowed: {allowed}."
             )
+
+    if tool_name == 'create_primitive_solid':
+        return _validate_create_primitive_solid_args(args)
 
     return None
 
@@ -3470,69 +3583,6 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         return status_code, body
 
-    def normalize_solid_params(solid_type, raw_params):
-        if not isinstance(raw_params, dict):
-            return raw_params
-
-        def norm_key(k):
-            return re.sub(r'[^a-z0-9]', '', str(k).lower())
-
-        def maybe_deg(expr):
-            if not isinstance(expr, str):
-                return expr
-            s = expr.strip().lower()
-            # If expression already carries units/math hints, keep as-is.
-            if any(tok in s for tok in ('deg', 'rad', 'pi', '*', '/', '+', '-', '(', ')')):
-                return expr
-            # Heuristic: bare numbers for angle-like aliases are usually degrees from users/models.
-            return f"({expr})*deg"
-
-        alias_maps = {
-            'tube': {
-                'innerradius': 'rmin',
-                'outerradius': 'rmax',
-                'halfz': 'z',
-                'halflength': 'z',
-                'startangle': 'startphi',
-                'spanangle': 'deltaphi'
-            },
-            'cone': {
-                'innerradius1': 'rmin1',
-                'outerradius1': 'rmax1',
-                'innerradius2': 'rmin2',
-                'outerradius2': 'rmax2',
-                'halfz': 'z',
-                'halflength': 'z',
-                'startangle': 'startphi',
-                'spanangle': 'deltaphi'
-            },
-            'sphere': {
-                'innerradius': 'rmin',
-                'outerradius': 'rmax',
-                'startangle': 'startphi',
-                'spanangle': 'deltaphi',
-                'startpolarangle': 'starttheta',
-                'spanpolarangle': 'deltatheta'
-            }
-        }
-
-        st = str(solid_type or '').strip()
-        mapped = dict(raw_params)
-        aliases = alias_maps.get(st, {})
-
-        for k, v in list(raw_params.items()):
-            nk = norm_key(k)
-            target = aliases.get(nk)
-            if not target:
-                continue
-
-            if target not in mapped:
-                mapped[target] = v
-
-            if target in ('startphi', 'deltaphi', 'starttheta', 'deltatheta'):
-                mapped[target] = maybe_deg(mapped[target])
-
-        return mapped
 
     args, normalize_error = _normalize_tool_args(tool_name, args)
     if normalize_error:
@@ -3596,7 +3646,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if isinstance(p, list) and len(p) == 3:
                 p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
 
-            p = normalize_solid_params(stype, p)
+            p = normalize_primitive_solid_params(stype, p)
 
             res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
             if res:

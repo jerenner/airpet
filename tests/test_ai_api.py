@@ -64,6 +64,21 @@ def test_ai_tool_create_tube_with_alias_params(pm):
     # 360 deg should map to 2*pi rad
     assert abs(ep['deltaphi'] - 6.283185307179586) < 1e-6
 
+
+def test_ai_tool_create_tube_missing_required_params_returns_repairable_error(pm):
+    res = dispatch_ai_tool(pm, "create_primitive_solid", {
+        "name": "BadTube",
+        "solid_type": "tube",
+        "params": {
+            "outerRadius": "90"
+        }
+    })
+
+    assert not res['success']
+    assert "missing required param" in res['error']
+    assert "rmin" in res['error']
+    assert "rmax" in res['error']
+
 def test_ai_tool_place_volume(pm):
     # Setup: Create a solid and LV first
     pm.add_solid("SmallBox", "box", {"x": "10", "y": "10", "z": "10"})
