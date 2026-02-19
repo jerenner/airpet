@@ -3162,6 +3162,43 @@ AI_TOOL_ARG_ALIASES = {
         "n_events": "events",
         "num_threads": "threads",
         "n_threads": "threads"
+    },
+    "manage_particle_source": {
+        "id": "source_id",
+        "source": "source_id",
+        "gps": "gps_commands",
+        "commands": "gps_commands"
+    },
+    "set_active_source": {
+        "id": "source_id"
+    },
+    "process_lors": {
+        "version": "version_id"
+    },
+    "check_lor_file": {
+        "version": "version_id"
+    },
+    "run_reconstruction": {
+        "version": "version_id",
+        "image_shape": "image_size",
+        "n_iter": "iterations"
+    },
+    "compute_sensitivity": {
+        "version": "version_id",
+        "num_lors": "num_random_lors"
+    },
+    "get_sensitivity_status": {
+        "version": "version_id"
+    },
+    "get_simulation_metadata": {
+        "version": "version_id"
+    },
+    "get_simulation_analysis": {
+        "version": "version_id"
+    },
+    "rename_ui_group": {
+        "from": "old_name",
+        "to": "new_name"
     }
 }
 
@@ -3180,7 +3217,43 @@ AI_TOOL_DEFAULTS = {
         "ring_spacing": "0"
     },
     "run_simulation": {"events": 1000, "threads": 1},
-    "manage_ui_group": {"item_ids": []}
+    "manage_ui_group": {"item_ids": []},
+    "manage_particle_source": {
+        "name": "gps_source",
+        "gps_commands": {},
+        "position": {"x": "0", "y": "0", "z": "0"},
+        "rotation": {"x": "0", "y": "0", "z": "0"},
+        "activity": 1.0
+    },
+    "process_lors": {
+        "coincidence_window_ns": 4.0,
+        "energy_cut": 0.0,
+        "energy_resolution": 0.05,
+        "position_resolution": {"x": 0.0, "y": 0.0, "z": 0.0}
+    },
+    "run_reconstruction": {
+        "iterations": 1,
+        "image_size": [128, 128, 128],
+        "voxel_size": [2.0, 2.0, 2.0],
+        "normalization": True,
+        "ac_enabled": False,
+        "ac_shape": "cylinder",
+        "ac_radius": 108.0,
+        "ac_length": 186.0,
+        "ac_mu": 0.096
+    },
+    "compute_sensitivity": {
+        "voxel_size": 2.0,
+        "matrix_size": 128,
+        "ac_enabled": False,
+        "ac_mu": 0.096,
+        "ac_radius": 0.0,
+        "num_random_lors": 20000000
+    },
+    "get_simulation_analysis": {
+        "energy_bins": 100,
+        "spatial_bins": 50
+    }
 }
 
 
@@ -3364,6 +3437,38 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         }
         rgb = names.get(str(color_str).lower(), (0.8, 0.8, 0.8))
         return {'color': {'r': rgb[0], 'g': rgb[1], 'b': rgb[2], 'a': opacity}}
+
+    def call_route_json(route_fn, route_args=None, payload=None, query_params=None):
+        """Call an existing Flask route function with a synthetic JSON request context."""
+        route_args = route_args or []
+
+        current_user_id = session.get('user_id')
+        current_api_key = session.get('gemini_api_key')
+
+        with app.test_request_context(json=payload, query_string=query_params):
+            if current_user_id is not None:
+                session['user_id'] = current_user_id
+            if current_api_key is not None:
+                session['gemini_api_key'] = current_api_key
+
+            route_result = route_fn(*route_args)
+
+        status_code = 200
+        response_obj = route_result
+        if isinstance(route_result, tuple):
+            response_obj = route_result[0]
+            if len(route_result) > 1 and isinstance(route_result[1], int):
+                status_code = route_result[1]
+
+        if hasattr(response_obj, 'get_json'):
+            body = response_obj.get_json(silent=True)
+        else:
+            body = response_obj
+
+        if body is None:
+            body = {"success": False, "error": "Route returned no JSON body."}
+
+        return status_code, body
 
     args, normalize_error = _normalize_tool_args(tool_name, args)
     if normalize_error:
@@ -3916,6 +4021,209 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if success:
                 return {"success": True, "result": res}
             return {"success": False, "error": res}
+
+        elif tool_name == "rename_ui_group":
+            success, error = pm.rename_group(args['group_type'], args['old_name'], args['new_name'])
+            if success:
+                return {"success": True, "message": f"Group '{args['old_name']}' renamed to '{args['new_name']}'."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "manage_particle_source":
+            action = str(args.get('action', '')).lower()
+            if action in ('transform', 'move', 'set_transform'):
+                action = 'update_transform'
+
+            if action == 'create':
+                new_source, error = pm.add_source(
+                    args.get('name', 'gps_source'),
+                    args.get('gps_commands', {}),
+                    to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'})),
+                    to_vec_dict(args.get('rotation', {'x': '0', 'y': '0', 'z': '0'})),
+                    args.get('activity', 1.0),
+                    args.get('confine_to_pv'),
+                    args.get('volume_link_id')
+                )
+                if new_source:
+                    return {
+                        "success": True,
+                        "message": f"Particle source '{new_source.get('name', args.get('name', 'gps_source'))}' created.",
+                        "source": new_source,
+                        "source_id": new_source.get('id')
+                    }
+                return {"success": False, "error": error}
+
+            if action == 'update':
+                source_id = args.get('source_id')
+                if not source_id:
+                    return {"success": False, "error": "'source_id' is required for action='update'."}
+
+                pos = to_vec_dict(args.get('position')) if args.get('position') is not None else None
+                rot = to_vec_dict(args.get('rotation')) if args.get('rotation') is not None else None
+
+                success, error = pm.update_particle_source(
+                    source_id,
+                    args.get('name'),
+                    args.get('gps_commands'),
+                    pos,
+                    rot,
+                    args.get('activity'),
+                    args.get('confine_to_pv'),
+                    args.get('volume_link_id')
+                )
+                if success:
+                    return {"success": True, "message": f"Particle source '{source_id}' updated."}
+                return {"success": False, "error": error}
+
+            if action == 'update_transform':
+                source_id = args.get('source_id')
+                if not source_id:
+                    return {"success": False, "error": "'source_id' is required for action='update_transform'."}
+
+                pos = to_vec_dict(args.get('position')) if args.get('position') is not None else None
+                rot = to_vec_dict(args.get('rotation')) if args.get('rotation') is not None else None
+                success, error = pm.update_source_transform(source_id, pos, rot)
+                if success:
+                    return {"success": True, "message": f"Particle source '{source_id}' transform updated."}
+                return {"success": False, "error": error}
+
+            return {"success": False, "error": f"Invalid action '{action}' for manage_particle_source."}
+
+        elif tool_name == "set_active_source":
+            source_id = args.get('source_id')
+            if isinstance(source_id, str) and source_id.strip().lower() in ('', 'none', 'null'):
+                source_id = None
+
+            success, msg = pm.set_active_source(source_id)
+            if success:
+                return {"success": True, "message": msg}
+            return {"success": False, "error": msg}
+
+        elif tool_name == "process_lors":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "coincidence_window_ns": args.get('coincidence_window_ns', 4.0),
+                "energy_cut": args.get('energy_cut', 0.0),
+                "energy_resolution": args.get('energy_resolution', 0.05),
+                "position_resolution": args.get('position_resolution', {'x': 0.0, 'y': 0.0, 'z': 0.0})
+            }
+            status_code, body = call_route_json(process_lors_route, [version_id, args['job_id']], payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"LOR processing failed (status {status_code}).")}
+            return {"success": True, "message": body.get('message', 'LOR processing started.')}
+
+        elif tool_name == "get_lor_status":
+            status_code, body = call_route_json(get_lor_processing_status, [args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch LOR status (status {status_code}).")}
+            return {"success": True, "status": body.get('status', {})}
+
+        elif tool_name == "check_lor_file":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+            status_code, body = call_route_json(check_lor_file_route, [version_id, args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not check LOR file (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "run_reconstruction":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "iterations": args.get('iterations', 1),
+                "image_size": args.get('image_size', [128, 128, 128]),
+                "voxel_size": args.get('voxel_size', [2.0, 2.0, 2.0]),
+                "normalization": args.get('normalization', True),
+                "ac_enabled": args.get('ac_enabled', False),
+                "ac_shape": args.get('ac_shape', 'cylinder'),
+                "ac_radius": args.get('ac_radius', 108.0),
+                "ac_length": args.get('ac_length', 186.0),
+                "ac_mu": args.get('ac_mu', 0.096)
+            }
+            status_code, body = call_route_json(run_reconstruction_route, [version_id, args['job_id']], payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Reconstruction failed (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "compute_sensitivity":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id' or save the project first."}
+
+            payload = {
+                "version_id": version_id,
+                "job_id": args['job_id'],
+                "voxel_size": args.get('voxel_size', 2.0),
+                "matrix_size": args.get('matrix_size', 128),
+                "ac_enabled": args.get('ac_enabled', False),
+                "ac_mu": args.get('ac_mu', 0.096),
+                "ac_radius": args.get('ac_radius', 0.0),
+                "num_random_lors": args.get('num_random_lors', 20000000)
+            }
+            status_code, body = call_route_json(compute_sensitivity_route, payload=payload)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Sensitivity computation failed (status {status_code}).")}
+            return {"success": True, **body}
+
+        elif tool_name == "get_sensitivity_status":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            status_code, body = call_route_json(get_sensitivity_status_route, [version_id, args['job_id']])
+            if status_code >= 400:
+                return {"success": False, "error": body.get('error', f"Could not fetch sensitivity status (status {status_code}).")}
+            return {"success": True, "status": body}
+
+        elif tool_name == "stop_simulation":
+            job_id = args['job_id']
+            with SIMULATION_LOCK:
+                process_or_list = SIMULATION_PROCESSES.get(job_id)
+                if process_or_list:
+                    if isinstance(process_or_list, list):
+                        count = 0
+                        for p in process_or_list:
+                            if p.poll() is None:
+                                p.terminate()
+                                count += 1
+                        return {"success": True, "message": f"Stop signal sent to {count} processes for job {job_id}."}
+
+                    proc = process_or_list
+                    if proc.poll() is None:
+                        proc.terminate()
+                        return {"success": True, "message": f"Stop signal sent to job {job_id}."}
+                    return {"success": False, "error": "Job has already finished."}
+
+                return {"success": False, "error": "Job ID not found or already completed."}
+
+        elif tool_name == "get_simulation_metadata":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            status_code, body = call_route_json(get_simulation_metadata, [version_id, args['job_id']])
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch simulation metadata (status {status_code}).")}
+            return {"success": True, "metadata": body.get('metadata', {})}
+
+        elif tool_name == "get_simulation_analysis":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            query = {
+                "energy_bins": args.get('energy_bins', 100),
+                "spatial_bins": args.get('spatial_bins', 50)
+            }
+            status_code, body = call_route_json(get_simulation_analysis, [version_id, args['job_id']], query_params=query)
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch simulation analysis (status {status_code}).")}
+            return {"success": True, "analysis": body.get('analysis', {})}
 
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:

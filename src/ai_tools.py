@@ -420,4 +420,173 @@ AI_GEOMETRY_TOOLS = [
             "required": ["expression"]
         }
     },
+    {
+        "name": "manage_particle_source",
+        "description": "Create or update a particle source (GPS commands, transform, activity, confinement).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["create", "update", "update_transform"]},
+                "source_id": {"type": "string", "description": "Required for update/update_transform."},
+                "name": {"type": "string"},
+                "gps_commands": {"type": "object"},
+                "position": {"type": "object"},
+                "rotation": {"type": "object"},
+                "activity": {"type": "number"},
+                "confine_to_pv": {"type": "string"},
+                "volume_link_id": {"type": "string"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "set_active_source",
+        "description": "Activate/deactivate a source by id, or clear all active sources by passing null/empty source_id.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_id": {"type": "string"}
+            }
+        }
+    },
+    {
+        "name": "process_lors",
+        "description": "Process simulation hits into coincidence LORs for PET reconstruction.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"},
+                "coincidence_window_ns": {"type": "number"},
+                "energy_cut": {"type": "number"},
+                "energy_resolution": {"type": "number"},
+                "position_resolution": {"type": "object"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "get_lor_status",
+        "description": "Get status/progress of a background LOR processing job.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "check_lor_file",
+        "description": "Check whether a processed LOR file exists for a run and return metadata if available.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "run_reconstruction",
+        "description": "Run PET image reconstruction from LORs (MLEM + optional normalization/attenuation correction).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"},
+                "iterations": {"type": "integer"},
+                "image_size": {"type": "array", "items": {"type": "integer"}},
+                "voxel_size": {"type": "array", "items": {"type": "number"}},
+                "normalization": {"type": "boolean"},
+                "ac_enabled": {"type": "boolean"},
+                "ac_shape": {"type": "string", "enum": ["cylinder"]},
+                "ac_radius": {"type": "number"},
+                "ac_length": {"type": "number"},
+                "ac_mu": {"type": "number"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "compute_sensitivity",
+        "description": "Compute/store a Monte Carlo sensitivity matrix for a run.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"},
+                "voxel_size": {"type": "number"},
+                "matrix_size": {"type": "integer"},
+                "ac_enabled": {"type": "boolean"},
+                "ac_mu": {"type": "number"},
+                "ac_radius": {"type": "number"},
+                "num_random_lors": {"type": "integer"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "get_sensitivity_status",
+        "description": "Check if a sensitivity matrix exists for a run.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "stop_simulation",
+        "description": "Stop a running Geant4 simulation job.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "get_simulation_metadata",
+        "description": "Fetch metadata for a simulation run (job config, paths, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "get_simulation_analysis",
+        "description": "Fetch rich analysis outputs (spectra, heatmaps, volume/particle breakdown).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"},
+                "energy_bins": {"type": "integer"},
+                "spatial_bins": {"type": "integer"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
+        "name": "rename_ui_group",
+        "description": "Rename an existing UI group.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_type": {"type": "string", "enum": ["solid", "logical_volume", "material", "assembly", "define"]},
+                "old_name": {"type": "string"},
+                "new_name": {"type": "string"}
+            },
+            "required": ["group_type", "old_name", "new_name"]
+        }
+    }
 ]

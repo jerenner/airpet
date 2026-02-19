@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
+from flask import jsonify, session
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
-from app import dispatch_ai_tool
+from app import dispatch_ai_tool, app as flask_app
 
 @pytest.fixture
 def pm():
@@ -250,3 +251,122 @@ def test_ai_tool_camelcase_arg_normalization(pm):
     assert res['success'], res
     world_lv = pm.current_geometry_state.logical_volumes["World"]
     assert any(pv.name == "PlacedViaCamel" for pv in world_lv.content)
+
+
+def test_ai_tool_manage_particle_source_create_and_update(pm):
+    create_res = dispatch_ai_tool(pm, "manage_particle_source", {
+        "action": "create",
+        "name": "SrcAI",
+        "gps_commands": {"particle": "gamma"},
+        "activity": 2.5
+    })
+    assert create_res['success'], create_res
+    source_id = create_res.get('source_id')
+    assert source_id
+
+    upd_res = dispatch_ai_tool(pm, "manage_particle_source", {
+        "action": "update_transform",
+        "source_id": source_id,
+        "position": {"x": 1, "y": 2, "z": 3}
+    })
+    assert upd_res['success'], upd_res
+
+
+def test_ai_tool_rename_ui_group(pm):
+    dispatch_ai_tool(pm, "manage_ui_group", {
+        "group_type": "solid",
+        "group_name": "OldG",
+        "action": "create"
+    })
+
+    res = dispatch_ai_tool(pm, "rename_ui_group", {
+        "group_type": "solid",
+        "old_name": "OldG",
+        "new_name": "NewG"
+    })
+    assert res['success'], res
+
+
+def test_ai_tool_route_bridge_process_lors(pm):
+    with flask_app.test_request_context('/api/ai/chat', json={}):
+        session['user_id'] = 'local_user'
+        with patch('app.process_lors_route', return_value=(jsonify({"success": True, "message": "LOR processing started."}), 202)):
+            res = dispatch_ai_tool(pm, "process_lors", {
+                "version_id": "v1",
+                "job_id": "job-1"
+            })
+    assert res['success'], res
+
+
+def test_ai_tool_route_bridge_run_reconstruction(pm):
+    with flask_app.test_request_context('/api/ai/chat', json={}):
+        session['user_id'] = 'local_user'
+        with patch('app.run_reconstruction_route', return_value=jsonify({"success": True, "message": "Reconstruction complete.", "image_shape": [64, 64, 64]})):
+            res = dispatch_ai_tool(pm, "run_reconstruction", {
+                "version_id": "v1",
+                "job_id": "job-1",
+                "iterations": 2
+            })
+    assert res['success'], res
+    assert res.get('image_shape') == [64, 64, 64]
+
+
+def test_ai_tool_stop_simulation(pm):
+    fake_proc = MagicMock()
+    fake_proc.poll.return_value = None
+
+    with patch.dict('app.SIMULATION_PROCESSES', {'job-stop': fake_proc}, clear=False):
+        res = dispatch_ai_tool(pm, "stop_simulation", {"job_id": "job-stop"})
+
+    assert res['success'], res
+    assert fake_proc.terminate.called
+
+
+def test_ai_tool_set_active_source(pm):
+    create_res = dispatch_ai_tool(pm, "manage_particle_source", {
+        "action": "create",
+        "name": "SrcActive",
+        "gps_commands": {"particle": "gamma"}
+    })
+    source_id = create_res.get('source_id')
+
+    on_res = dispatch_ai_tool(pm, "set_active_source", {"source_id": source_id})
+    assert on_res['success'], on_res
+
+    off_res = dispatch_ai_tool(pm, "set_active_source", {"source_id": source_id})
+    assert off_res['success'], off_res
+
+
+def test_ai_tool_route_bridge_compute_sensitivity(pm):
+    with flask_app.test_request_context('/api/ai/chat', json={}):
+        session['user_id'] = 'local_user'
+        with patch('app.compute_sensitivity_route', return_value=jsonify({"success": True, "message": "Sensitivity Matrix computed."})):
+            res = dispatch_ai_tool(pm, "compute_sensitivity", {
+                "version_id": "v1",
+                "job_id": "job-1"
+            })
+    assert res['success'], res
+
+
+def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
+    with flask_app.test_request_context('/api/ai/chat', json={}):
+        session['user_id'] = 'local_user'
+
+        with patch('app.get_simulation_metadata', return_value=jsonify({"success": True, "metadata": {"events": 1000}})):
+            meta_res = dispatch_ai_tool(pm, "get_simulation_metadata", {
+                "version_id": "v1",
+                "job_id": "job-1"
+            })
+
+        with patch('app.get_simulation_analysis', return_value=jsonify({"success": True, "analysis": {"total_hits": 5}})):
+            analysis_res = dispatch_ai_tool(pm, "get_simulation_analysis", {
+                "version_id": "v1",
+                "job_id": "job-1",
+                "energy_bins": 64,
+                "spatial_bins": 32
+            })
+
+    assert meta_res['success'], meta_res
+    assert meta_res['metadata']['events'] == 1000
+    assert analysis_res['success'], analysis_res
+    assert analysis_res['analysis']['total_hits'] == 5
