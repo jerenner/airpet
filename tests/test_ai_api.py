@@ -449,3 +449,35 @@ def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):
     assert res['success'], res
     assert res['batch_results'][0]['success'], res['batch_results']
     assert "BatchAliasBox" in pm.current_geometry_state.solids
+
+
+def test_ai_tool_create_boolean_accepts_action_and_solid_aliases(pm):
+    pm.add_solid("BaseSolid", "box", {"x": "20", "y": "20", "z": "20"})
+    pm.add_solid("HoleSolid", "tube", {"rmin": "0", "rmax": "2", "z": "25", "startphi": "0", "deltaphi": "360"})
+
+    res = dispatch_ai_tool(pm, "create_boolean_solid", {
+        "name": "BoolAlias",
+        "recipe": [
+            {"action": "base", "solid": "BaseSolid"},
+            {
+                "action": "subtract",
+                "solid": "HoleSolid",
+                "transform": {"pos": {"x": "0", "y": "0", "z": "0"}}
+            }
+        ]
+    })
+
+    assert res['success'], res
+    assert "BoolAlias" in pm.current_geometry_state.solids
+
+
+def test_ai_tool_create_boolean_invalid_recipe_returns_repair_hint(pm):
+    pm.add_solid("BaseSolid2", "box", {"x": "20", "y": "20", "z": "20"})
+
+    res = dispatch_ai_tool(pm, "create_boolean_solid", {
+        "name": "BadBool",
+        "recipe": [{"op": "difference", "solid_ref": "BaseSolid2"}]
+    })
+
+    assert not res['success']
+    assert "expected recipe format" in res['error'].lower() or "must start" in res['error'].lower()

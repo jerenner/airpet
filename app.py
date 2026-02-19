@@ -2750,7 +2750,7 @@ def add_boolean_solid_route():
 
     data = request.get_json()
     name_suggestion = data.get('name')
-    recipe = data.get('recipe')
+    recipe = _normalize_boolean_recipe(data.get('recipe'))
     
     success, error_msg = pm.add_boolean_solid(name_suggestion, recipe)
 
@@ -2765,7 +2765,7 @@ def update_boolean_solid_route():
 
     data = request.get_json()
     solid_name = data.get('id') # The name of the solid to update
-    recipe = data.get('recipe')
+    recipe = _normalize_boolean_recipe(data.get('recipe'))
     
     success, error_msg = pm.update_boolean_solid(solid_name, recipe)
 
@@ -3166,6 +3166,10 @@ AI_TOOL_ARG_ALIASES = {
         "dimensions": "params",
         "type": "solid_type"
     },
+    "create_boolean_solid": {
+        "operations": "recipe",
+        "ops": "recipe"
+    },
     "manage_logical_volume": {
         "solid": "solid_ref",
         "material": "material_ref",
@@ -3565,6 +3569,93 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     )
 
 
+def _normalize_boolean_recipe(recipe: Any) -> Any:
+    recipe = _parse_json_like(recipe)
+    if isinstance(recipe, dict):
+        recipe = recipe.get('recipe') or recipe.get('operations') or recipe.get('ops')
+
+    if not isinstance(recipe, list):
+        return recipe
+
+    op_aliases = {
+        'subtract': 'subtraction',
+        'difference': 'subtraction',
+        'minus': 'subtraction',
+        'intersect': 'intersection',
+        'and': 'intersection',
+        'add': 'union',
+        'merge': 'union'
+    }
+
+    normalized = []
+    for item in recipe:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        mapped = dict(item)
+
+        op_raw = mapped.get('op')
+        if op_raw is None:
+            op_raw = mapped.get('action') or mapped.get('operation')
+        if isinstance(op_raw, str):
+            op_norm = op_aliases.get(op_raw.strip().lower(), op_raw.strip().lower())
+            mapped['op'] = op_norm
+
+        solid_ref = mapped.get('solid_ref')
+        if solid_ref is None:
+            solid_ref = mapped.get('solid') or mapped.get('solid_name') or mapped.get('name')
+        if solid_ref is not None and mapped.get('solid_ref') is None:
+            mapped['solid_ref'] = solid_ref
+
+        t = mapped.get('transform')
+        if isinstance(t, dict):
+            if 'position' not in t and 'pos' in t:
+                t['position'] = t.get('pos')
+            if 'rotation' not in t and 'rot' in t:
+                t['rotation'] = t.get('rot')
+            mapped['transform'] = t
+
+        normalized.append(mapped)
+
+    return normalized
+
+
+def _validate_create_boolean_solid_args(args: Dict[str, Any]) -> Optional[str]:
+    recipe = _normalize_boolean_recipe(args.get('recipe'))
+    args['recipe'] = recipe
+
+    if not isinstance(recipe, list) or len(recipe) < 2:
+        return (
+            "Tool 'create_boolean_solid' requires 'recipe' as a list with at least two steps. "
+            "Expected recipe format example: "
+            "[{\"op\":\"base\",\"solid_ref\":\"BaseSolid\"},"
+            "{\"op\":\"subtraction\",\"solid_ref\":\"HoleSolid\","
+            "\"transform\":{\"position\":{\"x\":\"0\",\"y\":\"0\",\"z\":\"0\"}}}]"
+        )
+
+    first = recipe[0] if recipe else None
+    if not isinstance(first, dict) or first.get('op') != 'base' or not first.get('solid_ref'):
+        return (
+            "Tool 'create_boolean_solid' recipe must start with {'op':'base','solid_ref':'<existing solid>'}. "
+            "Subsequent steps must use op in ['union','subtraction','intersection'] and a valid solid_ref."
+        )
+
+    for i, item in enumerate(recipe):
+        if not isinstance(item, dict):
+            return f"Tool 'create_boolean_solid' recipe step {i} must be an object."
+        op = item.get('op')
+        if op not in ('base', 'union', 'subtraction', 'intersection'):
+            return (
+                f"Tool 'create_boolean_solid' recipe step {i} has invalid op {op!r}. "
+                "Allowed: ['base','union','subtraction','intersection']."
+            )
+        if not item.get('solid_ref'):
+            return f"Tool 'create_boolean_solid' recipe step {i} missing solid_ref."
+
+    return None
+
+
 def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
     schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name, {})
 
@@ -3590,6 +3681,9 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
 
     if tool_name == 'create_primitive_solid':
         return _validate_create_primitive_solid_args(args)
+
+    if tool_name == 'create_boolean_solid':
+        return _validate_create_boolean_solid_args(args)
 
     return None
 
@@ -3740,7 +3834,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "create_boolean_solid":
             name = args.get('name')
-            recipe = args.get('recipe')
+            recipe = _normalize_boolean_recipe(args.get('recipe'))
 
             for item in recipe:
                 if 'transform' in item and item['transform']:
