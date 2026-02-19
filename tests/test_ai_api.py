@@ -430,3 +430,22 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
     assert meta_res['metadata']['events'] == 1000
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 5
+
+
+def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):
+    res = dispatch_ai_tool(pm, "batch_geometry_update", {
+        "operations": [
+            {
+                "type": "create_primitive_solid",
+                "args": {
+                    "name": "BatchAliasBox",
+                    "solid_type": "box",
+                    "params": {"x": "5", "y": "5", "z": "5"}
+                }
+            }
+        ]
+    })
+
+    assert res['success'], res
+    assert res['batch_results'][0]['success'], res['batch_results']
+    assert "BatchAliasBox" in pm.current_geometry_state.solids

@@ -4058,7 +4058,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     batch_results.append({"success": False, "error": f"Invalid operation entry: {op!r}"})
                     continue
 
-                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool')
+                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool') or op.get('type')
                 op_args = op.get('arguments') if op.get('arguments') is not None else op.get('args', {})
 
                 batch_results.append(dispatch_ai_tool(pm, op_tool_name, op_args))
@@ -4623,8 +4623,29 @@ def ai_chat_route():
                         tools=ollama_tools
                     )
                 except Exception as ollama_err:
-                    pm.end_transaction("Ollama API Error")
-                    raise ollama_err
+                    err_text = str(ollama_err).lower()
+                    if "error parsing tool call" in err_text:
+                        print("Ollama tool-call parse error detected. Requesting one retry with strict JSON re-emission...")
+                        retry_instruction = {
+                            "role": "user",
+                            "content": (
+                                "Your previous tool call JSON was invalid and could not be parsed. "
+                                "Re-emit the same intent as valid tool-call JSON only. "
+                                "No explanatory text."
+                            )
+                        }
+                        sanitized_history.append(retry_instruction)
+
+                        try:
+                            response = ollama.chat(
+                                model=model_id,
+                                messages=sanitized_history,
+                                tools=ollama_tools
+                            )
+                        except Exception as retry_err:
+                            raise retry_err
+                    else:
+                        raise ollama_err
                 
                 # Convert Ollama Message object to a plain dict for serialization
                 raw_assistant_msg = response['message']
