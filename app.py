@@ -3108,9 +3108,231 @@ def ai_get_full_prompt_route():
         return jsonify({"success": False, "error": f"An unexpected error occurred: {e}"}), 500
 
 # --- AI Tool Dispatcher ---
+AI_TOOL_PARAM_SCHEMAS = {
+    tool["name"]: tool.get("parameters", {}) for tool in AI_GEOMETRY_TOOLS
+}
+
+# Aliases that normalize common model mistakes/synonyms into canonical tool args.
+AI_TOOL_ARG_ALIASES = {
+    "manage_define": {
+        "type": "define_type",
+        "raw_expression": "value"
+    },
+    "create_primitive_solid": {
+        "dimensions": "params",
+        "type": "solid_type"
+    },
+    "manage_logical_volume": {
+        "solid": "solid_ref",
+        "material": "material_ref",
+        "sensitive": "is_sensitive"
+    },
+    "place_volume": {
+        "mother": "parent_lv_name",
+        "parent": "parent_lv_name",
+        "volume": "placed_lv_ref"
+    },
+    "modify_physical_volume": {
+        "id": "pv_id",
+        "pv_id": "pv_id"
+    },
+    "create_detector_ring": {
+        "mother": "parent_lv_name",
+        "volume": "lv_to_place_ref",
+        "lv_to_place": "lv_to_place_ref"
+    },
+    "delete_objects": {
+        "items": "objects"
+    },
+    "batch_geometry_update": {
+        "ops": "operations"
+    },
+    "manage_surface_link": {
+        "surfaceproperty_ref": "surface_ref",
+        "physvol1_ref": "pv1_id",
+        "physvol2_ref": "pv2_id",
+        "volume": "volume_ref"
+    },
+    "manage_ui_group": {
+        "target_group_name": "group_name",
+        "operation": "action"
+    },
+    "run_simulation": {
+        "num_events": "events",
+        "n_events": "events",
+        "num_threads": "threads",
+        "n_threads": "threads"
+    }
+}
+
+# Defaults used to keep tool calls resilient when small/fast models omit fields.
+AI_TOOL_DEFAULTS = {
+    "manage_define": {"define_type": "constant"},
+    "create_detector_ring": {
+        "parent_lv_name": "World",
+        "num_detectors": "10",
+        "radius": "100",
+        "center": {"x": "0", "y": "0", "z": "0"},
+        "orientation": {"x": "0", "y": "0", "z": "0"},
+        "point_to_center": True,
+        "inward_axis": "+x",
+        "num_rings": "1",
+        "ring_spacing": "0"
+    },
+    "run_simulation": {"events": 1000, "threads": 1},
+    "manage_ui_group": {"item_ids": []}
+}
+
+
+def _camel_to_snake(key: str) -> str:
+    # parentLvName -> parent_lv_name
+    return re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
+
+
+def _parse_json_like(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+    if not stripped:
+        return value
+
+    # Only attempt parsing values that look like structured data.
+    if not ((stripped.startswith('{') and stripped.endswith('}')) or
+            (stripped.startswith('[') and stripped.endswith(']'))):
+        return value
+
+    try:
+        return json.loads(stripped)
+    except Exception:
+        try:
+            return ast.literal_eval(stripped)
+        except Exception:
+            return value
+
+
+def _coerce_value_by_schema(value: Any, schema: Optional[Dict[str, Any]]) -> Any:
+    if schema is None:
+        return _parse_json_like(value)
+
+    if value is None:
+        return value
+
+    schema_type = schema.get("type")
+
+    if schema_type == "object":
+        value = _parse_json_like(value)
+        if isinstance(value, dict):
+            props = schema.get("properties", {})
+            coerced = {}
+            for k, v in value.items():
+                child_schema = props.get(k)
+                coerced[k] = _coerce_value_by_schema(v, child_schema)
+            return coerced
+        return value
+
+    if schema_type == "array":
+        value = _parse_json_like(value)
+        if isinstance(value, list):
+            item_schema = schema.get("items")
+            return [_coerce_value_by_schema(v, item_schema) for v in value]
+        return value
+
+    if schema_type == "boolean" and isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1", "yes", "on"):
+            return True
+        if low in ("false", "0", "no", "off"):
+            return False
+        return value
+
+    if schema_type == "integer" and isinstance(value, str):
+        try:
+            return int(float(value))
+        except Exception:
+            return value
+
+    if schema_type == "number" and isinstance(value, str):
+        try:
+            return float(value)
+        except Exception:
+            return value
+
+    return _parse_json_like(value)
+
+
+def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name)
+    if not schema:
+        return None, f"Unknown tool: {tool_name}"
+
+    # Gemini/Ollama can provide dict-like objects or JSON strings.
+    if hasattr(args, "to_dict"):
+        args = args.to_dict()
+
+    args = _parse_json_like(args)
+    if args is None:
+        args = {}
+
+    if not isinstance(args, dict):
+        return None, f"Tool '{tool_name}' arguments must be an object/dict, got {type(args).__name__}."
+
+    # Normalize top-level keys (camelCase -> snake_case).
+    normalized: Dict[str, Any] = {}
+    for key, value in args.items():
+        key_str = str(key)
+        normalized[_camel_to_snake(key_str)] = _parse_json_like(value)
+
+    # Apply per-tool aliases.
+    for old_key, canonical_key in AI_TOOL_ARG_ALIASES.get(tool_name, {}).items():
+        old_norm = _camel_to_snake(old_key)
+        canonical_norm = _camel_to_snake(canonical_key)
+        if old_norm in normalized and canonical_norm not in normalized:
+            normalized[canonical_norm] = normalized[old_norm]
+
+    # Coerce known values according to schema.
+    properties = schema.get("properties", {})
+    for key, prop_schema in properties.items():
+        if key in normalized:
+            normalized[key] = _coerce_value_by_schema(normalized[key], prop_schema)
+
+    # Apply defaults after aliasing/coercion.
+    for key, value in AI_TOOL_DEFAULTS.get(tool_name, {}).items():
+        if normalized.get(key) is None:
+            normalized[key] = value
+
+    return normalized, None
+
+
+def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+    schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name, {})
+
+    required = schema.get("required", [])
+    missing = [
+        req for req in required
+        if req not in args or args[req] is None or args[req] == ""
+    ]
+    if missing:
+        return f"Tool '{tool_name}' missing required argument(s): {', '.join(missing)}."
+
+    properties = schema.get("properties", {})
+    for key, prop_schema in properties.items():
+        if key not in args or args[key] is None:
+            continue
+
+        allowed = prop_schema.get("enum")
+        if allowed and args[key] not in allowed:
+            return (
+                f"Tool '{tool_name}' has invalid value for '{key}': {args[key]!r}. "
+                f"Allowed: {allowed}."
+            )
+
+    return None
+
+
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
-    
+
     # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
     def to_vec_dict(val, default_val='0'):
         if isinstance(val, list) and len(val) == 3:
@@ -3125,27 +3347,36 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         return val
 
     def parse_color_to_rgba(color_str, opacity=1.0):
-        if not color_str: return None
+        if not color_str:
+            return None
         # Basic hex to rgba
-        if color_str.startswith('#'):
+        if isinstance(color_str, str) and color_str.startswith('#'):
             hex_color = color_str.lstrip('#')
             if len(hex_color) == 6:
                 r, g, b = tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
                 return {'color': {'r': r, 'g': g, 'b': b, 'a': opacity}}
         # Fallback for common names
         names = {
-            'blue': (0,0,1), 'red': (1,0,0), 'green': (0,1,0), 'yellow': (1,1,0),
-            'cyan': (0,1,1), 'magenta': (1,0,1), 'white': (1,1,1), 'black': (0,0,0),
-            'gray': (0.5,0.5,0.5), 'lead': (0.3,0.3,0.3), 'water': (0,0.5,1.0),
+            'blue': (0, 0, 1), 'red': (1, 0, 0), 'green': (0, 1, 0), 'yellow': (1, 1, 0),
+            'cyan': (0, 1, 1), 'magenta': (1, 0, 1), 'white': (1, 1, 1), 'black': (0, 0, 0),
+            'gray': (0.5, 0.5, 0.5), 'lead': (0.3, 0.3, 0.3), 'water': (0, 0.5, 1.0),
             'lucite': (0.5, 0.5, 0.9), 'plastic': (0.7, 0.7, 0.7)
         }
-        rgb = names.get(color_str.lower(), (0.8, 0.8, 0.8))
+        rgb = names.get(str(color_str).lower(), (0.8, 0.8, 0.8))
         return {'color': {'r': rgb[0], 'g': rgb[1], 'b': rgb[2], 'a': opacity}}
+
+    args, normalize_error = _normalize_tool_args(tool_name, args)
+    if normalize_error:
+        return {"success": False, "error": normalize_error}
+
+    validation_error = _validate_tool_args(tool_name, args)
+    if validation_error:
+        return {"success": False, "error": validation_error}
 
     try:
         if tool_name == "get_project_summary":
             return {"success": True, "result": get_project_summary(pm)}
-            
+
         elif tool_name == "get_component_details":
             details = get_component_details(pm, args['component_type'], args['name'])
             if details:
@@ -3154,57 +3385,48 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "manage_define":
             name = args.get('name')
-            if not name:
-                return {"success": False, "error": "Argument 'name' is required."}
-            
-            # Flexibility for missing 'value'
             raw_val = args.get('value')
-            if raw_val is None:
-                return {"success": False, "error": "Argument 'value' (expression or position dict) is required."}
-                
             value = to_vec_dict(raw_val)
+
             if name in pm.current_geometry_state.defines:
                 success, error = pm.update_define(name, value, args.get('unit'))
-                if success: return {"success": True, "message": f"Define '{name}' updated."}
+                if success:
+                    return {"success": True, "message": f"Define '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_define(name, args.get('define_type', 'constant'), value, args.get('unit'))
-                if res: return {"success": True, "message": f"Define '{res['name']}' created."}
+                if res:
+                    return {"success": True, "message": f"Define '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "manage_material":
             name = args.get('name')
             props = {
                 "density_expr": args.get('density'),
-                "Z_expr": args.get('Z'),
-                "A_expr": args.get('A'),
+                "Z_expr": args.get('z') if args.get('z') is not None else args.get('Z'),
+                "A_expr": args.get('a') if args.get('a') is not None else args.get('A'),
                 "components": args.get('components')
             }
-            # Remove None values
             props = {k: v for k, v in props.items() if v is not None}
-            
+
             if name in pm.current_geometry_state.materials:
                 success, error = pm.update_material(name, props)
-                if success: return {"success": True, "message": f"Material '{name}' updated."}
+                if success:
+                    return {"success": True, "message": f"Material '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_material(name, props)
-                if res: return {"success": True, "message": f"Material '{res['name']}' created."}
+                if res:
+                    return {"success": True, "message": f"Material '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
             stype = args.get('solid_type')
-            if not stype:
-                return {"success": False, "error": "Missing 'solid_type' (e.g., 'box', 'tube')."}
-                
-            # Support both 'params' and 'dimensions' key for flexibility with small models
-            p = args.get('params') or args.get('dimensions')
-            if not p:
-                return {"success": False, "error": "Missing parameters for the solid."}
+            p = args.get('params')
 
             if isinstance(p, list) and len(p) == 3:
                 p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
-            
+
             res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
             if res:
                 pm.recalculate_geometry_state()
@@ -3213,22 +3435,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "modify_solid":
             success, error = pm.update_solid(args['name'], args['params'])
-            if success: return {"success": True, "message": f"Solid '{args['name']}' updated."}
+            if success:
+                return {"success": True, "message": f"Solid '{args['name']}' updated."}
             return {"success": False, "error": error}
 
         elif tool_name == "create_boolean_solid":
             name = args.get('name')
             recipe = args.get('recipe')
-            if not name or not recipe:
-                return {"success": False, "error": "Missing 'name' or 'recipe' for boolean solid."}
-            
-            # Fix nested transforms in boolean recipe
+
             for item in recipe:
                 if 'transform' in item and item['transform']:
                     t = item['transform']
-                    if 'position' in t: t['position'] = to_vec_dict(t['position'])
-                    if 'rotation' in t: t['rotation'] = to_vec_dict(t['rotation'])
-            
+                    if 'position' in t:
+                        t['position'] = to_vec_dict(t['position'])
+                    if 'rotation' in t:
+                        t['rotation'] = to_vec_dict(t['rotation'])
+
             res, error = pm.add_boolean_solid(name, recipe)
             if res:
                 return {"success": True, "message": f"Boolean solid '{res['name']}' created."}
@@ -3236,123 +3458,121 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "manage_logical_volume":
             name = args.get('name')
-            solid_ref = args.get('solid_ref') or args.get('solid')
-            material_ref = args.get('material_ref') or args.get('material')
-            is_sensitive = args.get('is_sensitive') or args.get('sensitive', False)
-            
+            solid_ref = args.get('solid_ref')
+            material_ref = args.get('material_ref')
+            is_sensitive = args.get('is_sensitive', False)
+
             color_str = args.get('color')
             opacity = args.get('opacity', 1.0)
             vis_attrs = parse_color_to_rgba(color_str, opacity)
 
             if name in pm.current_geometry_state.logical_volumes:
                 success, error = pm.update_logical_volume(
-                    name, solid_ref, material_ref, 
+                    name, solid_ref, material_ref,
                     new_vis_attributes=vis_attrs,
                     new_is_sensitive=is_sensitive
                 )
-                if success: return {"success": True, "message": f"Logical volume '{name}' updated."}
+                if success:
+                    return {"success": True, "message": f"Logical volume '{name}' updated."}
                 return {"success": False, "error": error}
             else:
                 res, error = pm.add_logical_volume(
-                    name, solid_ref, material_ref, 
+                    name, solid_ref, material_ref,
                     vis_attributes=vis_attrs,
                     is_sensitive=is_sensitive
                 )
-                if res: return {"success": True, "message": f"Logical volume '{res['name']}' created."}
+                if res:
+                    return {"success": True, "message": f"Logical volume '{res['name']}' created."}
                 return {"success": False, "error": error}
 
         elif tool_name == "place_volume":
-            parent = args.get('parent_lv_name') or args.get('mother') or args.get('parent')
-            placed = args.get('placed_lv_ref') or args.get('volume')
-            
+            parent = args.get('parent_lv_name')
+            placed = args.get('placed_lv_ref')
+
             res, error = pm.add_physical_volume(
                 parent, args.get('name'), placed,
-                to_vec_dict(args.get('position', {'x':'0','y':'0','z':'0'})),
-                to_vec_dict(args.get('rotation', {'x':'0','y':'0','z':'0'})),
-                to_vec_dict(args.get('scale', {'x':'1','y':'1','z':'1'}))
+                to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'})),
+                to_vec_dict(args.get('rotation', {'x': '0', 'y': '0', 'z': '0'})),
+                to_vec_dict(args.get('scale', {'x': '1', 'y': '1', 'z': '1'}))
             )
-            if res: return {"success": True, "message": f"Volume placed as '{res['name']}'."}
+            if res:
+                return {"success": True, "message": f"Volume placed as '{res['name']}'."}
             return {"success": False, "error": error}
 
         elif tool_name == "modify_physical_volume":
             success, error = pm.update_physical_volume(
-                args['pv_id'], args.get('name'), 
-                to_vec_dict(args.get('position')), 
-                to_vec_dict(args.get('rotation')), 
+                args['pv_id'], args.get('name'),
+                to_vec_dict(args.get('position')),
+                to_vec_dict(args.get('rotation')),
                 to_vec_dict(args.get('scale'))
             )
-            if success: return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
+            if success:
+                return {"success": True, "message": f"Physical volume '{args['pv_id']}' updated."}
             return {"success": False, "error": error}
 
         elif tool_name == "create_detector_ring":
             ring_name = args.get('ring_name')
-            if not ring_name:
-                return {"success": False, "error": "Argument 'ring_name' is required."}
-                
+
             res, error = pm.create_detector_ring(
-                parent_lv_name=args.get('parent_lv_name') or args.get('mother') or 'World',
-                lv_to_place_ref=args.get('lv_to_place_ref') or args.get('volume'),
+                parent_lv_name=args.get('parent_lv_name', 'World'),
+                lv_to_place_ref=args.get('lv_to_place_ref'),
                 ring_name=ring_name,
                 num_detectors=args.get('num_detectors', '10'),
                 radius=args.get('radius', '100'),
-                center=to_vec_dict(args.get('center', {'x':'0','y':'0','z':'0'})),
-                orientation=to_vec_dict(args.get('orientation', {'x':'0','y':'0','z':'0'})),
+                center=to_vec_dict(args.get('center', {'x': '0', 'y': '0', 'z': '0'})),
+                orientation=to_vec_dict(args.get('orientation', {'x': '0', 'y': '0', 'z': '0'})),
                 point_to_center=args.get('point_to_center', True),
                 inward_axis=args.get('inward_axis', '+x'),
                 num_rings=args.get('num_rings', '1'),
                 ring_spacing=args.get('ring_spacing', '0')
             )
-            if res: return {"success": True, "message": f"Detector ring '{args['ring_name']}' created."}
+            if res:
+                return {"success": True, "message": f"Detector ring '{ring_name}' created."}
             return {"success": False, "error": error}
 
         elif tool_name == "delete_objects":
             objs = args.get('objects')
             if not objs or not isinstance(objs, list):
                 return {"success": False, "error": "Argument 'objects' must be a list of {type, id}."}
-                
+
             resolved_objs = []
             for item in objs:
                 if isinstance(item, str):
-                    # AI passed just a name string. We'll try to find its type.
                     item = {"id": item}
+
+                if not isinstance(item, dict):
+                    continue
 
                 obj_id = item.get('id') or item.get('name')
                 obj_type = item.get('type')
-                
-                if not obj_id:
-                    continue # Skip malformed items
 
-                # --- AUTO-DETECT TYPE if missing ---
+                if not obj_id:
+                    continue
+
                 if not obj_type:
-                    # Check Solids
                     if obj_id in pm.current_geometry_state.solids:
                         obj_type = "solid"
-                    # Check LVs
                     elif obj_id in pm.current_geometry_state.logical_volumes:
                         obj_type = "logical_volume"
-                    # Check Defines
                     elif obj_id in pm.current_geometry_state.defines:
                         obj_type = "define"
-                    # Check Materials
                     elif obj_id in pm.current_geometry_state.materials:
                         obj_type = "material"
-                    # Assume Physical Volume if not found elsewhere (search by name)
                     else:
                         obj_type = "physical_volume"
 
                 if obj_type == 'physical_volume':
-                    # Search for the PV by name or ID
                     pv_to_del = pm._find_pv_by_id(obj_id)
                     if not pv_to_del:
-                        # Try searching by name across all LVs
                         for lv in pm.current_geometry_state.logical_volumes.values():
                             if lv.content_type == 'physvol':
                                 for pv in lv.content:
                                     if pv.name == obj_id:
                                         pv_to_del = pv
                                         break
-                            if pv_to_del: break
-                    
+                            if pv_to_del:
+                                break
+
                     if pv_to_del:
                         resolved_objs.append({"type": "physical_volume", "id": pv_to_del.id})
                 else:
@@ -3362,22 +3582,24 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": "No valid objects found to delete."}
 
             success, res = pm.delete_objects_batch(resolved_objs)
-            if success: return {"success": True, "message": f"{len(resolved_objs)} objects deleted."}
+            if success:
+                return {"success": True, "message": f"{len(resolved_objs)} objects deleted."}
             return {"success": False, "error": res}
 
         elif tool_name == "search_components":
-            import re
             pattern = args['pattern']
             ctype = args['component_type']
             state = pm.current_geometry_state
             results = []
-            
+
             items = []
-            if ctype == "solid": items = list(state.solids.keys())
-            elif ctype == "logical_volume": items = list(state.logical_volumes.keys())
-            elif ctype == "material": items = list(state.materials.keys())
+            if ctype == "solid":
+                items = list(state.solids.keys())
+            elif ctype == "logical_volume":
+                items = list(state.logical_volumes.keys())
+            elif ctype == "material":
+                items = list(state.materials.keys())
             elif ctype == "physical_volume":
-                # For PVs, we search by name across all LVs
                 for lv in state.logical_volumes.values():
                     if lv.content_type == 'physvol':
                         for pv in lv.content:
@@ -3392,25 +3614,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "set_volume_appearance":
             name = args.get('name')
-            if not name:
-                return {"success": False, "error": "Argument 'name' is required."}
-            
+
             color_str = args.get('color') or args.get('hex')
-            # Handle if model just passes the color name as a key (e.g. {"blue": true})
             if not color_str:
                 for cname in ['blue', 'red', 'green', 'yellow', 'cyan', 'magenta', 'white', 'black', 'gray', 'lead']:
-                    # Use a truthy check but handle if it's 'None' or 'False' as a string
                     val = args.get(cname)
                     if val and val != "False" and val != "none":
                         color_str = cname
                         break
-            
+
             if not color_str:
                 return {"success": False, "error": "Argument 'color' (name or hex) is required."}
 
             vis_attrs = parse_color_to_rgba(color_str, args.get('opacity', 1.0))
             success, error = pm.update_logical_volume(name, None, None, new_vis_attributes=vis_attrs)
-            if success: return {"success": True, "message": f"Appearance for '{name}' updated to {color_str}."}
+            if success:
+                return {"success": True, "message": f"Appearance for '{name}' updated to {color_str}."}
             return {"success": False, "error": error}
 
         elif tool_name == "delete_detector_ring":
@@ -3422,36 +3641,45 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     for pv in lv.content:
                         if pv.name == ring_name:
                             to_delete.append({"type": "physical_volume", "id": pv.id})
-            
+
             if not to_delete:
                 return {"success": False, "error": f"No physical volumes with name '{ring_name}' found."}
-                
+
             success, res = pm.delete_objects_batch(to_delete)
-            if success: return {"success": True, "message": f"All {len(to_delete)} instances of ring '{ring_name}' deleted."}
+            if success:
+                return {"success": True, "message": f"All {len(to_delete)} instances of ring '{ring_name}' deleted."}
             return {"success": False, "error": res}
 
         elif tool_name == "run_simulation":
-            # Call the internal logic of run_simulation route
             job_id = str(uuid.uuid4())
+            try:
+                events = int(args.get("events", 1000))
+            except Exception:
+                events = 1000
+            try:
+                threads = int(args.get("threads", 1))
+            except Exception:
+                threads = 1
+
             sim_params = {
-                "events": args.get("events", 1000),
-                "threads": args.get("threads", 1)
+                "events": events,
+                "threads": threads
             }
             version_id = pm.current_version_id
             if pm.is_changed or not version_id:
                 version_id, _ = pm.save_project_version(f"AI_Sim_Run_{job_id[:8]}")
-            
+
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
             os.makedirs(run_dir, exist_ok=True)
-            
-            macro_path = pm.generate_macro_file(
+
+            pm.generate_macro_file(
                 job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
             )
-            
+
             thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
             thread.start()
-            
+
             return {"success": True, "job_id": job_id, "message": f"Simulation started (ID: {job_id})."}
 
         elif tool_name == "get_simulation_status":
@@ -3461,9 +3689,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 if not status:
                     return {"success": False, "error": "Job ID not found."}
                 return {
-                    "success": True, 
-                    "status": status["status"], 
-                    "progress": status["progress"], 
+                    "success": True,
+                    "status": status["status"],
+                    "progress": status["progress"],
                     "total": status["total_events"]
                 }
 
@@ -3471,61 +3699,52 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             template_name = args['template_name']
             if template_name not in PHYSICS_TEMPLATES:
                 return {"success": False, "error": f"Template '{template_name}' not found."}
-            
+
             t_info = PHYSICS_TEMPLATES[template_name]
             t_func = t_info['func']
             t_params = args['params']
-            
-            # Execute template logic to get recipe
+
             try:
                 recipe = t_func(**t_params)
             except Exception as e:
                 return {"success": False, "error": f"Failed to generate template: {str(e)}"}
 
-            # Add solids
             for solid in recipe.get('solids', []):
                 pm.add_solid(solid.name, solid.type, solid.raw_parameters)
-            
-            # Add materials (ensure NIST materials like G4_SILICON exist)
+
             for lv in recipe.get('logical_volumes', []):
-                # Ensure material exists or create as NIST
                 mat_name = lv.material_ref
                 if not pm.current_geometry_state.get_material(mat_name):
                     if mat_name.startswith("G4_"):
                         pm.add_material(mat_name, {"mat_type": "nist"})
                     else:
                         return {"success": False, "error": f"Material '{mat_name}' required by template not found."}
-                
-                # Add LV
+
                 pm.add_logical_volume(lv.name, lv.solid_ref, lv.material_ref, is_sensitive=lv.is_sensitive)
-            
-            # Add placements
+
             parent_lv_name = args['parent_lv_name']
-            base_pos = to_vec_dict(args.get('position', {'x':'0','y':'0','z':'0'}))
-            
+            base_pos = to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'}))
+
             created_pvs = []
-            for p_data in recipe.get('placements', []):
-                # If template returns no placements (like cryostat), we place the top LV directly
+            for _ in recipe.get('placements', []):
                 pass
 
             if not recipe.get('placements'):
-                # If it's a single component (like cryostat), place its main LV
                 last_lv = recipe['logical_volumes'][-1]
-                pv_res, err = pm.add_physical_volume(parent_lv_name, f"{last_lv.name}_PV", last_lv.name, base_pos, {'x':'0','y':'0','z':'0'}, {'x':'1','y':'1','z':'1'})
-                if pv_res: created_pvs.append(pv_res['name'])
+                pv_res, err = pm.add_physical_volume(parent_lv_name, f"{last_lv.name}_PV", last_lv.name, base_pos, {'x': '0', 'y': '0', 'z': '0'}, {'x': '1', 'y': '1', 'z': '1'})
+                if pv_res:
+                    created_pvs.append(pv_res['name'])
             else:
-                # Place multiple parts relative to base_pos
                 for p_data in recipe['placements']:
-                    # Offset position by base_pos
-                    # (Simple string-based addition for parametric support)
                     p_pos = p_data['position']
                     final_pos = {
                         'x': f"({p_pos['x']}) + ({base_pos['x']})",
                         'y': f"({p_pos['y']}) + ({base_pos['y']})",
                         'z': f"({p_pos['z']}) + ({base_pos['z']})"
                     }
-                    pv_res, err = pm.add_physical_volume(parent_lv_name, p_data['name'], p_data['volume_ref'], final_pos, p_data['rotation'], {'x':'1','y':'1','z':'1'})
-                    if pv_res: created_pvs.append(pv_res['name'])
+                    pv_res, err = pm.add_physical_volume(parent_lv_name, p_data['name'], p_data['volume_ref'], final_pos, p_data['rotation'], {'x': '1', 'y': '1', 'z': '1'})
+                    if pv_res:
+                        created_pvs.append(pv_res['name'])
 
             pm.recalculate_geometry_state()
             return {"success": True, "message": f"Inserted {template_name} template into {parent_lv_name}."}
@@ -3536,44 +3755,54 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": "Argument 'operations' must be a list of tool calls."}
             batch_results = []
             for op in ops:
-                batch_results.append(dispatch_ai_tool(pm, op.get('tool_name'), op.get('arguments', {})))
+                if not isinstance(op, dict):
+                    batch_results.append({"success": False, "error": f"Invalid operation entry: {op!r}"})
+                    continue
+
+                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool')
+                op_args = op.get('arguments') if op.get('arguments') is not None else op.get('args', {})
+
+                batch_results.append(dispatch_ai_tool(pm, op_tool_name, op_args))
             return {"success": True, "batch_results": batch_results}
 
         elif tool_name == "get_analysis_summary":
             job_id = args['job_id']
             version_id = pm.current_version_id
-            if not version_id: return {"success": False, "error": "No active version."}
-            
+            if not version_id:
+                return {"success": False, "error": "No active version."}
+
             version_dir = pm._get_version_dir(version_id)
             run_dir = os.path.join(version_dir, "sim_runs", job_id)
             output_path = os.path.join(run_dir, "output.hdf5")
-            
+
             if not os.path.exists(output_path):
                 return {"success": False, "error": "Simulation output not yet available."}
-            
+
             try:
                 with h5py.File(output_path, 'r') as f:
                     if 'default_ntuples/Hits' not in f:
                         return {"success": False, "error": "No hits found in output."}
-                    
+
                     hits_group = f['default_ntuples/Hits']
+
                     def get_hits_len():
                         if 'entries' in hits_group:
                             ent = hits_group['entries']
                             return int(ent[0]) if ent.shape != () else int(ent[()])
                         return 0
-                    
+
                     total_hits = get_hits_len()
-                    
+
                     particles = {}
                     if 'ParticleName' in hits_group:
                         data = hits_group['ParticleName']
-                        if isinstance(data, h5py.Group): data = data['pages']
+                        if isinstance(data, h5py.Group):
+                            data = data['pages']
                         names = data[:total_hits]
                         for n in names:
                             n_str = n.decode('utf-8') if isinstance(n, bytes) else str(n)
                             particles[n_str] = particles.get(n_str, 0) + 1
-                    
+
                     return {
                         "success": True,
                         "summary": {
@@ -3583,6 +3812,110 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     }
             except Exception as e:
                 return {"success": False, "error": str(e)}
+
+        elif tool_name == "manage_optical_surface":
+            name = args['name']
+            params = {
+                'model': args.get('model'),
+                'finish': args.get('finish'),
+                'surf_type': args.get('type'),
+                'value': args.get('value'),
+                'properties': args.get('properties', {})
+            }
+            if name in pm.current_geometry_state.optical_surfaces:
+                success, error = pm.update_optical_surface(name, params)
+                if success:
+                    return {"success": True, "message": f"Optical surface '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_optical_surface(name, params)
+                if res:
+                    return {"success": True, "message": f"Optical surface '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "manage_surface_link":
+            name = args['name']
+            ltype = args['link_type']
+            s_ref = args['surface_ref']
+
+            if ltype == 'skin':
+                v_ref = args.get('volume_ref')
+                if not v_ref:
+                    return {"success": False, "error": "'volume_ref' is required for skin surface links."}
+
+                if name in pm.current_geometry_state.skin_surfaces:
+                    success, error = pm.update_skin_surface(name, v_ref, s_ref)
+                    if success:
+                        return {"success": True, "message": f"Skin surface link '{name}' updated."}
+                    return {"success": False, "error": error}
+
+                res, error = pm.add_skin_surface(name, v_ref, s_ref)
+                if res:
+                    return {"success": True, "message": f"Skin surface link '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+            if ltype == 'border':
+                pv1 = args.get('pv1_id')
+                pv2 = args.get('pv2_id')
+                if not pv1 or not pv2:
+                    return {"success": False, "error": "'pv1_id' and 'pv2_id' are required for border surface links."}
+
+                if name in pm.current_geometry_state.border_surfaces:
+                    success, error = pm.update_border_surface(name, pv1, pv2, s_ref)
+                    if success:
+                        return {"success": True, "message": f"Border surface link '{name}' updated."}
+                    return {"success": False, "error": error}
+
+                res, error = pm.add_border_surface(name, pv1, pv2, s_ref)
+                if res:
+                    return {"success": True, "message": f"Border surface link '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+            return {"success": False, "error": f"Invalid link_type '{ltype}'. Expected 'skin' or 'border'."}
+
+        elif tool_name == "manage_assembly":
+            name = args['name']
+            pls = args['placements']
+            for p in pls:
+                if 'position' in p:
+                    p['position'] = to_vec_dict(p['position'])
+                if 'rotation' in p:
+                    p['rotation'] = to_vec_dict(p['rotation'])
+
+            if name in pm.current_geometry_state.assemblies:
+                success, error = pm.update_assembly(name, pls)
+                if success:
+                    return {"success": True, "message": f"Assembly '{name}' updated."}
+                return {"success": False, "error": error}
+            else:
+                res, error = pm.add_assembly(name, pls)
+                if res:
+                    return {"success": True, "message": f"Assembly '{res['name']}' created."}
+                return {"success": False, "error": error}
+
+        elif tool_name == "manage_ui_group":
+            gtype = args['group_type']
+            gname = args['group_name']
+            action = args['action']
+
+            if action == 'create':
+                success, error = pm.create_group(gtype, gname)
+            elif action == 'add_items':
+                success, error = pm.move_items_to_group(gtype, args.get('item_ids', []), gname)
+            elif action == 'remove_group':
+                success, error = pm.delete_group(gtype, gname)
+            else:
+                return {"success": False, "error": f"Invalid action '{action}' for manage_ui_group."}
+
+            if success:
+                return {"success": True, "message": f"UI Group action '{action}' on '{gname}' successful."}
+            return {"success": False, "error": error}
+
+        elif tool_name == "evaluate_expression":
+            success, res = pm.expression_evaluator.evaluate(args['expression'])
+            if success:
+                return {"success": True, "result": res}
+            return {"success": False, "error": res}
 
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:
@@ -3850,42 +4183,41 @@ def ai_chat_route():
 def get_ai_history():
     pm = get_project_manager_for_session()
     
-    # Ensure history is JSON serializable (handles Gemini SDK objects)
-    serializable_history = []
-    for msg in pm.chat_history:
-        if isinstance(msg, dict):
-            # Already a dict, but might contain nested non-serializable parts
-            clean_msg = {"role": msg["role"]}
-            if "parts" in msg:
-                clean_parts = []
-                for p in msg["parts"]:
-                    if isinstance(p, dict):
-                        clean_parts.append(p)
-                    else: # Handle Gemini Part objects
-                        part_dict = {}
-                        if hasattr(p, 'text') and p.text: part_dict["text"] = p.text
-                        if hasattr(p, 'function_call') and p.function_call:
-                            part_dict["function_call"] = {"name": p.function_call.name, "args": p.function_call.args}
-                        if hasattr(p, 'function_response') and p.function_response:
-                            part_dict["function_response"] = {"name": p.function_response.name, "response": p.function_response.response}
-                        if part_dict: clean_parts.append(part_dict)
-                clean_msg["parts"] = clean_parts
-            if "content" in msg:
-                clean_msg["content"] = msg["content"]
-            if "metadata" in msg:
-                clean_msg["metadata"] = msg["metadata"]
-            serializable_history.append(clean_msg)
+    # Helper to sanitize data for JSON serialization
+    def sanitize_for_json(obj):
+        if isinstance(obj, dict):
+            return {str(k): sanitize_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [sanitize_for_json(i) for i in obj]
+        elif isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        elif hasattr(obj, 'to_dict'): # Handle objects with to_dict method
+            return sanitize_for_json(obj.to_dict())
         else:
-            # Gemini Content objects
-            try:
-                serializable_history.append({
-                    "role": getattr(msg, 'role', 'model'),
-                    "parts": [{"text": p.text} for p in getattr(msg, 'parts', []) if hasattr(p, 'text') and p.text] or \
-                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in getattr(msg, 'parts', []) if hasattr(p, 'function_call') and p.function_call]
-                })
-            except:
-                pass
+            # Handle Gemini SDK objects (Part, Content, etc.) or unknown types
+            res = {}
+            if hasattr(obj, 'role'): res['role'] = obj.role
+            if hasattr(obj, 'parts'):
+                res['parts'] = []
+                for p in obj.parts:
+                    part_data = {}
+                    if hasattr(p, 'text') and p.text: part_data['text'] = p.text
+                    if hasattr(p, 'function_call') and p.function_call:
+                        part_data['function_call'] = {
+                            'name': p.function_call.name,
+                            'args': sanitize_for_json(p.function_call.args)
+                        }
+                    if hasattr(p, 'function_response') and p.function_response:
+                        part_data['function_response'] = {
+                            'name': p.function_response.name,
+                            'response': sanitize_for_json(p.function_response.response)
+                        }
+                    if part_data: res['parts'].append(part_data)
+            
+            if res: return res
+            return str(obj) # Fallback to string representation
 
+    serializable_history = [sanitize_for_json(msg) for msg in pm.chat_history]
     return jsonify({"history": serializable_history})
 
 @app.route('/api/ai/clear', methods=['POST'])
@@ -3893,6 +4225,8 @@ def clear_ai_history():
     pm = get_project_manager_for_session()
     pm.chat_history = []
     return jsonify({"success": True})
+
+@app.route('/import_ai_json', methods=['POST'])
 def import_ai_json_route():
     pm = get_project_manager_for_session()
 

@@ -112,7 +112,7 @@ AI_GEOMETRY_TOOLS = [
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "solid_type": {"type": "string", "enum": ["box", "tube", "cone", "sphere", "orb", "trd", "para", "trap"]},
+                "solid_type": {"type": "string", "enum": ["box", "tube", "cone", "sphere", "orb", "trd", "para", "trap", "hype", "twistedbox", "twistedtrd", "twistedtrap", "twistedtubs", "genericPolycone", "genericPolyhedra", "xtru"]},
                 "params": {
                     "type": "object",
                     "description": "Dict of parameters. e.g., {'x': '100', 'y': '100', 'z': '100'} for a box."
@@ -338,6 +338,86 @@ AI_GEOMETRY_TOOLS = [
                 "position": {"type": "object", "description": "Relative position of the whole component {'x':..., 'y':..., 'z':...}"}
             },
             "required": ["template_name", "params", "parent_lv_name"]
+        }
+    },
+    {
+        "name": "manage_optical_surface",
+        "description": "Create or update an optical surface (properties for mirrors, scintillators, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "model": {"type": "string", "enum": ["glisur", "unified"]},
+                "finish": {"type": "string", "enum": ["polished", "polishedfrontpainted", "polishedbackpainted", "ground", "groundfrontpainted", "groundbackpainted"]},
+                "type": {"type": "string", "enum": ["dielectric_metal", "dielectric_dielectric", "dielectric_LUT", "firsov", "x_ray"]},
+                "value": {"type": "string", "description": "Surface property value (e.g., sigma alpha)."},
+                "properties": {"type": "object", "description": "Optical properties (REFLECTIVITY, RINDEX, etc.) as name-value or name-array pairs."}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "manage_surface_link",
+        "description": "Link an optical surface to a volume (Skin Surface) or an interface between two volumes (Border Surface).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "surface_ref": {"type": "string", "description": "Name of the optical surface to apply."},
+                "link_type": {"type": "string", "enum": ["skin", "border"]},
+                "volume_ref": {"type": "string", "description": "For 'skin' type: the logical volume name."},
+                "pv1_id": {"type": "string", "description": "For 'border' type: the first physical volume ID."},
+                "pv2_id": {"type": "string", "description": "For 'border' type: the second physical volume ID."}
+            },
+            "required": ["name", "surface_ref", "link_type"]
+        }
+    },
+    {
+        "name": "manage_assembly",
+        "description": "Create or update an assembly (a reusable group of placements).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "placements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "volume_ref": {"type": "string"},
+                            "position": {"type": "object"},
+                            "rotation": {"type": "object"},
+                            "copy_number": {"type": "integer"}
+                        }
+                    }
+                }
+            },
+            "required": ["name", "placements"]
+        }
+    },
+    {
+        "name": "manage_ui_group",
+        "description": "Organize project components into visual groups in the UI.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "group_type": {"type": "string", "enum": ["solid", "logical_volume", "material", "assembly", "define"]},
+                "group_name": {"type": "string"},
+                "item_ids": {"type": "array", "items": {"type": "string"}, "description": "List of component names/IDs to move to this group."},
+                "action": {"type": "string", "enum": ["create", "add_items", "remove_group"]}
+            },
+            "required": ["group_type", "group_name", "action"]
+        }
+    },
+    {
+        "name": "evaluate_expression",
+        "description": "Evaluate a mathematical expression or check a variable value.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string"}
+            },
+            "required": ["expression"]
         }
     },
 ]

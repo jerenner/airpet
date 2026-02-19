@@ -192,3 +192,61 @@ def test_ai_physics_template(pm):
     # Check if PV was placed
     world_lv = pm.current_geometry_state.logical_volumes["World"]
     assert any("Phantom_LV" in pv.volume_ref for pv in world_lv.content)
+
+
+def test_ai_tool_accepts_stringified_json_args(pm):
+    # Simulates providers that pass function arguments as a JSON string.
+    res = dispatch_ai_tool(pm, "create_primitive_solid", '{"name":"S1","solid_type":"box","params":{"x":"1","y":"2","z":"3"}}')
+    assert res['success'], res
+    assert "S1" in pm.current_geometry_state.solids
+
+
+def test_ai_tool_manage_surface_link_propagates_update_error(pm):
+    # Setup a valid optical surface and LV + skin link.
+    pm.add_optical_surface("Surf1", {
+        "model": "unified",
+        "finish": "polished",
+        "surf_type": "dielectric_metal",
+        "value": "1.0",
+        "properties": {}
+    })
+    pm.add_solid("SkinBox", "box", {"x": "1", "y": "1", "z": "1"})
+    pm.add_logical_volume("SkinLV", "SkinBox", "G4_Galactic")
+    pm.add_skin_surface("Link1", "SkinLV", "Surf1")
+
+    # Update existing link with invalid volume_ref should fail (not report false success).
+    res = dispatch_ai_tool(pm, "manage_surface_link", {
+        "name": "Link1",
+        "link_type": "skin",
+        "surface_ref": "Surf1",
+        "volume_ref": "MissingLV"
+    })
+
+    assert not res['success']
+    assert "not found" in res['error'].lower()
+
+
+def test_ai_tool_manage_ui_group_invalid_action_returns_clean_error(pm):
+    res = dispatch_ai_tool(pm, "manage_ui_group", {
+        "group_type": "solid",
+        "group_name": "G1",
+        "action": "rename"
+    })
+    assert not res['success']
+    assert "action" in res['error'].lower()
+
+
+def test_ai_tool_camelcase_arg_normalization(pm):
+    pm.add_solid("SmallBox2", "box", {"x": "10", "y": "10", "z": "10"})
+    pm.add_logical_volume("SmallLV2", "SmallBox2", "G4_Galactic")
+
+    # parentLvName / placedLvRef should normalize to snake_case keys.
+    res = dispatch_ai_tool(pm, "place_volume", {
+        "parentLvName": "World",
+        "placedLvRef": "SmallLV2",
+        "name": "PlacedViaCamel"
+    })
+
+    assert res['success'], res
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+    assert any(pv.name == "PlacedViaCamel" for pv in world_lv.content)
