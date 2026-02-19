@@ -41,6 +41,29 @@ def test_ai_tool_create_primitive_solid(pm):
     assert "AI_Box" in pm.current_geometry_state.solids
     assert pm.current_geometry_state.solids["AI_Box"]._evaluated_parameters['x'] == 50
 
+
+def test_ai_tool_create_tube_with_alias_params(pm):
+    res = dispatch_ai_tool(pm, "create_primitive_solid", {
+        "name": "AI_Tube_Alias",
+        "solid_type": "tube",
+        "params": {
+            "innerRadius": "70",
+            "outerRadius": "90",
+            "halfZ": "50",
+            "startAngle": "0",
+            "spanAngle": "360"
+        }
+    })
+
+    assert res['success'], res
+    s = pm.current_geometry_state.solids["AI_Tube_Alias"]
+    ep = s._evaluated_parameters
+    assert ep['rmin'] == 70
+    assert ep['rmax'] == 90
+    assert ep['z'] == 50
+    # 360 deg should map to 2*pi rad
+    assert abs(ep['deltaphi'] - 6.283185307179586) < 1e-6
+
 def test_ai_tool_place_volume(pm):
     # Setup: Create a solid and LV first
     pm.add_solid("SmallBox", "box", {"x": "10", "y": "10", "z": "10"})

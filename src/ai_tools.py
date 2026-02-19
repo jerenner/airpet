@@ -115,7 +115,7 @@ AI_GEOMETRY_TOOLS = [
                 "solid_type": {"type": "string", "enum": ["box", "tube", "cone", "sphere", "orb", "trd", "para", "trap", "hype", "twistedbox", "twistedtrd", "twistedtrap", "twistedtubs", "genericPolycone", "genericPolyhedra", "xtru"]},
                 "params": {
                     "type": "object",
-                    "description": "Dict of parameters. e.g., {'x': '100', 'y': '100', 'z': '100'} for a box."
+                    "description": "Dict of parameters using GDML-style names (e.g., box: x,y,z; tube: rmin,rmax,z,startphi,deltaphi). Common aliases like innerRadius/outerRadius/halfZ/startAngle/spanAngle are tolerated for tube/cone/sphere."
                 }
             },
             "required": ["name", "solid_type", "params"]

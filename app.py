@@ -3470,6 +3470,70 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         return status_code, body
 
+    def normalize_solid_params(solid_type, raw_params):
+        if not isinstance(raw_params, dict):
+            return raw_params
+
+        def norm_key(k):
+            return re.sub(r'[^a-z0-9]', '', str(k).lower())
+
+        def maybe_deg(expr):
+            if not isinstance(expr, str):
+                return expr
+            s = expr.strip().lower()
+            # If expression already carries units/math hints, keep as-is.
+            if any(tok in s for tok in ('deg', 'rad', 'pi', '*', '/', '+', '-', '(', ')')):
+                return expr
+            # Heuristic: bare numbers for angle-like aliases are usually degrees from users/models.
+            return f"({expr})*deg"
+
+        alias_maps = {
+            'tube': {
+                'innerradius': 'rmin',
+                'outerradius': 'rmax',
+                'halfz': 'z',
+                'halflength': 'z',
+                'startangle': 'startphi',
+                'spanangle': 'deltaphi'
+            },
+            'cone': {
+                'innerradius1': 'rmin1',
+                'outerradius1': 'rmax1',
+                'innerradius2': 'rmin2',
+                'outerradius2': 'rmax2',
+                'halfz': 'z',
+                'halflength': 'z',
+                'startangle': 'startphi',
+                'spanangle': 'deltaphi'
+            },
+            'sphere': {
+                'innerradius': 'rmin',
+                'outerradius': 'rmax',
+                'startangle': 'startphi',
+                'spanangle': 'deltaphi',
+                'startpolarangle': 'starttheta',
+                'spanpolarangle': 'deltatheta'
+            }
+        }
+
+        st = str(solid_type or '').strip()
+        mapped = dict(raw_params)
+        aliases = alias_maps.get(st, {})
+
+        for k, v in list(raw_params.items()):
+            nk = norm_key(k)
+            target = aliases.get(nk)
+            if not target:
+                continue
+
+            if target not in mapped:
+                mapped[target] = v
+
+            if target in ('startphi', 'deltaphi', 'starttheta', 'deltatheta'):
+                mapped[target] = maybe_deg(mapped[target])
+
+        return mapped
+
     args, normalize_error = _normalize_tool_args(tool_name, args)
     if normalize_error:
         return {"success": False, "error": normalize_error}
@@ -3531,6 +3595,8 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
             if isinstance(p, list) and len(p) == 3:
                 p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
+
+            p = normalize_solid_params(stype, p)
 
             res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
             if res:
