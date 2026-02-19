@@ -65,6 +65,28 @@ def test_ai_tool_create_tube_with_alias_params(pm):
     assert abs(ep['deltaphi'] - 6.283185307179586) < 1e-6
 
 
+def test_ai_tool_create_tube_with_unit_suffix_and_camelcase(pm):
+    res = dispatch_ai_tool(pm, "create_primitive_solid", {
+        "name": "AI_Tube_Units",
+        "solid_type": "tube",
+        "params": {
+            "rMin": "70 mm",
+            "rMax": "90mm",
+            "halfZ": "50mm",
+            "startPhi": "0deg",
+            "deltaPhi": "360deg"
+        }
+    })
+
+    assert res['success'], res
+    s = pm.current_geometry_state.solids["AI_Tube_Units"]
+    ep = s._evaluated_parameters
+    assert ep['rmin'] == 70
+    assert ep['rmax'] == 90
+    assert ep['z'] == 50
+    assert abs(ep['deltaphi'] - 6.283185307179586) < 1e-6
+
+
 def test_ai_tool_create_tube_missing_required_params_returns_repairable_error(pm):
     res = dispatch_ai_tool(pm, "create_primitive_solid", {
         "name": "BadTube",

@@ -3352,18 +3352,52 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
     if not isinstance(raw_params, dict):
         return raw_params
 
+    def _coerce_unit_expr_if_bare_number(expr: Any) -> Any:
+        if not isinstance(expr, str):
+            return expr
+        s = expr.strip()
+        # e.g. "70mm", "70 mm", "360deg" -> "(70)*mm", "(360)*deg"
+        m = re.match(r'^([+-]?(?:\d+\.?\d*|\d*\.\d+)(?:[eE][+-]?\d+)?)\s*([A-Za-z]+)$', s)
+        if not m:
+            return expr
+        num, unit = m.group(1), m.group(2)
+        known_units = {
+            'mm', 'cm', 'm', 'um', 'nm', 'km',
+            'deg', 'rad',
+            'g', 'kg', 'mg',
+            's', 'ms', 'us', 'ns'
+        }
+        if unit.lower() in known_units:
+            return f"({num})*{unit}"
+        return expr
+
     st = str(solid_type or '').strip()
     aliases = PRIMITIVE_SOLID_PARAM_ALIASES.get(st, {})
 
     mapped = dict(raw_params)
+
+    # 1) Canonicalize key casing/format against the selected solid spec.
+    spec = PRIMITIVE_SOLID_PARAM_SPECS.get(st, {})
+    canonical_props = list((spec.get('properties') or {}).keys())
+    canonical_norm = {_normalize_param_alias_key(k): k for k in canonical_props}
+
+    for key, value in list(raw_params.items()):
+        norm = _normalize_param_alias_key(key)
+        canonical_key = canonical_norm.get(norm)
+        if canonical_key and canonical_key not in mapped:
+            mapped[canonical_key] = value
+
+    # 2) Apply common alias mappings (innerRadius->rmin, halfZ->z, ...)
     for key, value in raw_params.items():
         target = aliases.get(_normalize_param_alias_key(key))
         if target and target not in mapped:
             mapped[target] = value
 
-    for angle_key in list(mapped.keys()):
-        if _normalize_param_alias_key(angle_key) in ANGLE_PARAM_NAMES:
-            mapped[angle_key] = _coerce_angle_expr_if_bare_number(mapped[angle_key])
+    # 3) Normalize numeric-with-unit shortcuts and angle defaults.
+    for k in list(mapped.keys()):
+        mapped[k] = _coerce_unit_expr_if_bare_number(mapped[k])
+        if _normalize_param_alias_key(k) in ANGLE_PARAM_NAMES:
+            mapped[k] = _coerce_angle_expr_if_bare_number(mapped[k])
 
     return mapped
 
@@ -4708,6 +4742,35 @@ def get_ai_context_stats():
                         break
             except Exception:
                 pass
+    elif model_id and model_id != '--export--':
+        # Try to read Ollama context length from local model metadata.
+        try:
+            show_resp = requests.post(
+                'http://localhost:11434/api/show',
+                json={'model': model_id},
+                timeout=2
+            )
+            if show_resp.ok:
+                info = show_resp.json() or {}
+                model_info = info.get('model_info') or {}
+
+                # Common keys: llama.context_length, qwen2.context_length, etc.
+                for k, v in model_info.items():
+                    if str(k).endswith('.context_length'):
+                        try:
+                            max_context_tokens = int(v)
+                            break
+                        except Exception:
+                            pass
+
+                # Fallback: parse modelfile parameters for num_ctx
+                if max_context_tokens is None:
+                    params_text = info.get('parameters') or ''
+                    m = re.search(r'\bnum_ctx\s+(\d+)\b', str(params_text))
+                    if m:
+                        max_context_tokens = int(m.group(1))
+        except Exception:
+            pass
 
     utilization = None
     if isinstance(max_context_tokens, int) and max_context_tokens > 0:
