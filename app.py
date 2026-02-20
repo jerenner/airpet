@@ -2750,7 +2750,7 @@ def add_boolean_solid_route():
 
     data = request.get_json()
     name_suggestion = data.get('name')
-    recipe = data.get('recipe')
+    recipe = _normalize_boolean_recipe(data.get('recipe'))
     
     success, error_msg = pm.add_boolean_solid(name_suggestion, recipe)
 
@@ -2765,7 +2765,7 @@ def update_boolean_solid_route():
 
     data = request.get_json()
     solid_name = data.get('id') # The name of the solid to update
-    recipe = data.get('recipe')
+    recipe = _normalize_boolean_recipe(data.get('recipe'))
     
     success, error_msg = pm.update_boolean_solid(solid_name, recipe)
 
@@ -3166,6 +3166,10 @@ AI_TOOL_ARG_ALIASES = {
         "dimensions": "params",
         "type": "solid_type"
     },
+    "create_boolean_solid": {
+        "operations": "recipe",
+        "ops": "recipe"
+    },
     "manage_logical_volume": {
         "solid": "solid_ref",
         "material": "material_ref",
@@ -3565,6 +3569,93 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     )
 
 
+def _normalize_boolean_recipe(recipe: Any) -> Any:
+    recipe = _parse_json_like(recipe)
+    if isinstance(recipe, dict):
+        recipe = recipe.get('recipe') or recipe.get('operations') or recipe.get('ops')
+
+    if not isinstance(recipe, list):
+        return recipe
+
+    op_aliases = {
+        'subtract': 'subtraction',
+        'difference': 'subtraction',
+        'minus': 'subtraction',
+        'intersect': 'intersection',
+        'and': 'intersection',
+        'add': 'union',
+        'merge': 'union'
+    }
+
+    normalized = []
+    for item in recipe:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+
+        mapped = dict(item)
+
+        op_raw = mapped.get('op')
+        if op_raw is None:
+            op_raw = mapped.get('action') or mapped.get('operation')
+        if isinstance(op_raw, str):
+            op_norm = op_aliases.get(op_raw.strip().lower(), op_raw.strip().lower())
+            mapped['op'] = op_norm
+
+        solid_ref = mapped.get('solid_ref')
+        if solid_ref is None:
+            solid_ref = mapped.get('solid') or mapped.get('solid_name') or mapped.get('name')
+        if solid_ref is not None and mapped.get('solid_ref') is None:
+            mapped['solid_ref'] = solid_ref
+
+        t = mapped.get('transform')
+        if isinstance(t, dict):
+            if 'position' not in t and 'pos' in t:
+                t['position'] = t.get('pos')
+            if 'rotation' not in t and 'rot' in t:
+                t['rotation'] = t.get('rot')
+            mapped['transform'] = t
+
+        normalized.append(mapped)
+
+    return normalized
+
+
+def _validate_create_boolean_solid_args(args: Dict[str, Any]) -> Optional[str]:
+    recipe = _normalize_boolean_recipe(args.get('recipe'))
+    args['recipe'] = recipe
+
+    if not isinstance(recipe, list) or len(recipe) < 2:
+        return (
+            "Tool 'create_boolean_solid' requires 'recipe' as a list with at least two steps. "
+            "Expected recipe format example: "
+            "[{\"op\":\"base\",\"solid_ref\":\"BaseSolid\"},"
+            "{\"op\":\"subtraction\",\"solid_ref\":\"HoleSolid\","
+            "\"transform\":{\"position\":{\"x\":\"0\",\"y\":\"0\",\"z\":\"0\"}}}]"
+        )
+
+    first = recipe[0] if recipe else None
+    if not isinstance(first, dict) or first.get('op') != 'base' or not first.get('solid_ref'):
+        return (
+            "Tool 'create_boolean_solid' recipe must start with {'op':'base','solid_ref':'<existing solid>'}. "
+            "Subsequent steps must use op in ['union','subtraction','intersection'] and a valid solid_ref."
+        )
+
+    for i, item in enumerate(recipe):
+        if not isinstance(item, dict):
+            return f"Tool 'create_boolean_solid' recipe step {i} must be an object."
+        op = item.get('op')
+        if op not in ('base', 'union', 'subtraction', 'intersection'):
+            return (
+                f"Tool 'create_boolean_solid' recipe step {i} has invalid op {op!r}. "
+                "Allowed: ['base','union','subtraction','intersection']."
+            )
+        if not item.get('solid_ref'):
+            return f"Tool 'create_boolean_solid' recipe step {i} missing solid_ref."
+
+    return None
+
+
 def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
     schema = AI_TOOL_PARAM_SCHEMAS.get(tool_name, {})
 
@@ -3590,6 +3681,9 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
 
     if tool_name == 'create_primitive_solid':
         return _validate_create_primitive_solid_args(args)
+
+    if tool_name == 'create_boolean_solid':
+        return _validate_create_boolean_solid_args(args)
 
     return None
 
@@ -3740,7 +3834,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
         elif tool_name == "create_boolean_solid":
             name = args.get('name')
-            recipe = args.get('recipe')
+            recipe = _normalize_boolean_recipe(args.get('recipe'))
 
             for item in recipe:
                 if 'transform' in item and item['transform']:
@@ -4058,7 +4152,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     batch_results.append({"success": False, "error": f"Invalid operation entry: {op!r}"})
                     continue
 
-                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool')
+                op_tool_name = op.get('tool_name') or op.get('toolName') or op.get('tool') or op.get('type')
                 op_args = op.get('arguments') if op.get('arguments') is not None else op.get('args', {})
 
                 batch_results.append(dispatch_ai_tool(pm, op_tool_name, op_args))
@@ -4499,21 +4593,60 @@ def ai_chat_route():
                     pm.end_transaction("Gemini API Error")
                     raise api_err
                 
+                candidates = getattr(response, 'candidates', None) or []
+                candidate = candidates[0] if candidates else None
+                content = getattr(candidate, 'content', None) if candidate else None
+
+                # Gemini occasionally returns a candidate with no content (e.g. filtered/empty output).
+                # Fall back to response.text when available, otherwise return a repair-friendly error.
+                if content is None:
+                    fallback_text = getattr(response, 'text', None)
+                    if fallback_text:
+                        pm.chat_history.append({
+                            "role": "model",
+                            "parts": [{"text": fallback_text}]
+                        })
+                        pm.end_transaction(f"AI: {user_message[:50]}")
+                        return create_success_response(pm, fallback_text)
+
+                    raise RuntimeError(
+                        "Gemini returned an empty candidate content (possibly filtered/empty output). "
+                        "Please retry or simplify the request."
+                    )
+
+                response_parts = getattr(content, 'parts', None) or []
+                response_role = getattr(content, 'role', None) or 'model'
+
                 # Update sanitized history with model response
-                sanitized_history.append(response.candidates[0].content)
+                sanitized_history.append(content)
+
+                assistant_parts = []
+                for p in response_parts:
+                    if getattr(p, 'text', None):
+                        assistant_parts.append({"text": p.text})
+                    if getattr(p, 'function_call', None):
+                        assistant_parts.append({
+                            "function_call": {
+                                "name": p.function_call.name,
+                                "args": p.function_call.args
+                            }
+                        })
+
+                if not assistant_parts and getattr(response, 'text', None):
+                    assistant_parts = [{"text": response.text}]
+
                 # And update our persistent history (keeping it as a simple list of dicts for JSON compat)
                 pm.chat_history.append({
-                    "role": response.candidates[0].content.role,
-                    "parts": [{"text": p.text} for p in response.candidates[0].content.parts if p.text] or \
-                             [{"function_call": {"name": p.function_call.name, "args": p.function_call.args}} for p in response.candidates[0].content.parts if p.function_call]
+                    "role": response_role,
+                    "parts": assistant_parts
                 })
                 
-                tool_calls = response.candidates[0].content.parts
+                tool_calls = response_parts
                 has_tool_call = False
                 tool_results_parts = []
                 
                 for part in tool_calls:
-                    if part.function_call:
+                    if getattr(part, 'function_call', None):
                         has_tool_call = True
                         tool_name = part.function_call.name
                         args = part.function_call.args
@@ -4533,8 +4666,13 @@ def ai_chat_route():
                 if not has_tool_call:
                     # End the transaction before responding
                     pm.end_transaction(f"AI: {user_message[:50]}")
+
+                    final_text = getattr(response, 'text', None)
+                    if not final_text:
+                        text_parts = [p.get('text') for p in assistant_parts if isinstance(p, dict) and p.get('text')]
+                        final_text = "\n".join(text_parts) if text_parts else "Done."
                     
-                    res_obj = create_success_response(pm, response.text)
+                    res_obj = create_success_response(pm, final_text)
                     # Re-inject captured job metadata into the final response
                     if job_id:
                         res_json = res_obj.get_json()
@@ -4623,8 +4761,29 @@ def ai_chat_route():
                         tools=ollama_tools
                     )
                 except Exception as ollama_err:
-                    pm.end_transaction("Ollama API Error")
-                    raise ollama_err
+                    err_text = str(ollama_err).lower()
+                    if "error parsing tool call" in err_text:
+                        print("Ollama tool-call parse error detected. Requesting one retry with strict JSON re-emission...")
+                        retry_instruction = {
+                            "role": "user",
+                            "content": (
+                                "Your previous tool call JSON was invalid and could not be parsed. "
+                                "Re-emit the same intent as valid tool-call JSON only. "
+                                "No explanatory text."
+                            )
+                        }
+                        sanitized_history.append(retry_instruction)
+
+                        try:
+                            response = ollama.chat(
+                                model=model_id,
+                                messages=sanitized_history,
+                                tools=ollama_tools
+                            )
+                        except Exception as retry_err:
+                            raise retry_err
+                    else:
+                        raise ollama_err
                 
                 # Convert Ollama Message object to a plain dict for serialization
                 raw_assistant_msg = response['message']

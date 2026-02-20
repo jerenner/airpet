@@ -65,6 +65,33 @@ def test_ai_chat_flow_mocked(client):
             assert "Simulation started." in data['message']
             assert MockThread.called
 
+def test_ai_chat_handles_empty_gemini_candidate_content_with_text_fallback(client):
+    mock_response = MagicMock()
+    mock_response.candidates = [MagicMock()]
+    mock_response.candidates[0].content = None
+    mock_response.text = "Fallback response from Gemini."
+
+    with patch('app.get_gemini_client_for_session') as MockClientGetter, \
+         patch('app.get_project_manager_for_session') as MockPMGetter:
+
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        mock_client = MagicMock()
+        MockClientGetter.return_value = mock_client
+        mock_client.models.generate_content.return_value = mock_response
+
+        payload = {"message": "hello", "model": "models/gemini-2.0-flash-exp"}
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success']
+        assert "Fallback response from Gemini." in data['message']
+
+
 def test_ai_analysis_summary_integration(client):
     """Verify the analysis summary tool integration."""
     with patch('app.get_project_manager_for_session') as MockPMGetter, \
