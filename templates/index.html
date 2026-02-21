@@ -803,6 +803,37 @@
         .step-report-mode-pill.primitive { background: #dcfce7; color: #166534; }
         .step-report-mode-pill.tessellated { background: #fef3c7; color: #92400e; }
 
+        /* Parameter registry modal */
+        #parameterRegistryTableWrap {
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+        #parameterRegistryTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #parameterRegistryTable th, #parameterRegistryTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+        }
+        #parameterRegistryTable tr.active {
+            background: #eef6ff;
+        }
+        .pr-form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 10px;
+        }
+        .pr-form-grid .property_item {
+            margin: 0;
+        }
+
         #stopSimButton:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -1919,6 +1950,7 @@
                     <button>Object</button>
                     <div class="dropdown_content">
                         <button id="createRingArrayButton">Create Ring Array</button>
+                        <button id="parameterRegistryButton">Parameter Registry...</button>
                     </div>
                 </li>
                 <!-- Mode Menu -->
@@ -2046,6 +2078,85 @@
         </div>
         <div id="history_list_container" style="flex-grow: 1; overflow-y: auto;">
             <!-- History items will be populated here -->
+        </div>
+    </div>
+    <div id="parameterRegistryModal" class="editor-modal">
+        <div class="modal-content" style="width: 820px; height: auto; max-height: 90vh;">
+            <div class="modal-header">
+                <h4>Parameter Registry</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div id="parameterRegistryTableWrap">
+                    <table id="parameterRegistryTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Target</th>
+                                <th>Bounds</th>
+                                <th>Default</th>
+                                <th>Enabled</th>
+                            </tr>
+                        </thead>
+                        <tbody id="parameterRegistryTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="pr-form-grid">
+                    <div class="property_item">
+                        <label for="pr_name">Name:</label>
+                        <input type="text" id="pr_name" placeholder="e.g. crystal_pitch">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_type">Target Type:</label>
+                        <select id="pr_target_type">
+                            <option value="define">define</option>
+                            <option value="solid">solid</option>
+                            <option value="source">source</option>
+                            <option value="sim_option">sim_option</option>
+                        </select>
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_name">Target Name:</label>
+                        <input type="text" id="pr_target_name" placeholder="define/solid/source name">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_field">Target Field/Param/Key:</label>
+                        <input type="text" id="pr_target_field" placeholder="param / field / key">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_min">Bounds Min:</label>
+                        <input type="number" id="pr_min" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_max">Bounds Max:</label>
+                        <input type="number" id="pr_max" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_default">Default:</label>
+                        <input type="number" id="pr_default" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_units">Units:</label>
+                        <input type="text" id="pr_units" placeholder="mm, deg, ...">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_constraint_group">Constraint Group:</label>
+                        <input type="text" id="pr_constraint_group" placeholder="optional">
+                    </div>
+                    <div class="property_item" style="display:flex; align-items:end;">
+                        <label style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="pr_enabled" checked>
+                            Enabled
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="prRefreshBtn">Refresh</button>
+                <button id="prDeleteBtn">Delete</button>
+                <button id="prCancelBtn">Close</button>
+                <button id="prSaveBtn" class="confirm-button">Save</button>
+            </div>
         </div>
     </div>
     <!-- Editor for defines -->

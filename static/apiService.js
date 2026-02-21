@@ -249,6 +249,30 @@ export async function updateDefine(id, rawExpression, unit, category) {
     return handleResponse(response);
 }
 
+// --- Parameter Registry API (M3) ---
+export async function getParameterRegistry() {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/list`);
+    return handleResponse(response);
+}
+
+export async function upsertParameterRegistry(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/upsert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
+export async function deleteParameterRegistry(name) {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+}
+
 // --- Sensitivity Matrix API ---
 
 /**

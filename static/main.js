@@ -18,6 +18,7 @@ import * as SceneManager from './sceneManager.js';
 import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
 import * as StepImportEditor from './stepImportEditor.js';
+import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
 import * as UIManager from './uiManager.js';
 import * as AIAssistant from './aiAssistant.js';
 
@@ -289,6 +290,12 @@ async function initializeApp() {
         onConfirm: handleConfirmStepImport
     });
 
+    ParameterRegistryEditor.init({
+        onSave: handleParameterRegistrySave,
+        onDelete: handleParameterRegistryDelete,
+        onRefresh: handleParameterRegistryRefresh,
+    });
+
     // Add menu listeners
     // --- Check AI service status on startup ---
     checkAndSetAiStatus();
@@ -306,6 +313,11 @@ async function initializeApp() {
             if (id === 'showAllBtn') btn.addEventListener('click', handleShowAll);
         }
     });
+
+    const parameterRegistryButton = document.getElementById('parameterRegistryButton');
+    if (parameterRegistryButton) {
+        parameterRegistryButton.addEventListener('click', handleOpenParameterRegistry);
+    }
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -2487,6 +2499,48 @@ async function handleConfirmStepImport(options) {
         UIManager.showError("Failed to import STEP file: " + error.message);
     } finally {
         document.getElementById('stepFile').value = null;
+    }
+}
+
+async function handleParameterRegistryRefresh() {
+    const result = await APIService.getParameterRegistry();
+    return result.parameter_registry || {};
+}
+
+async function handleParameterRegistrySave(payload) {
+    UIManager.showLoading("Saving parameter...");
+    try {
+        const result = await APIService.upsertParameterRegistry(payload);
+        syncUIWithState(result);
+        UIManager.showNotification(`Parameter '${payload.name}' saved.`);
+    } catch (error) {
+        UIManager.showError("Failed to save parameter: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParameterRegistryDelete(name) {
+    UIManager.showLoading("Deleting parameter...");
+    try {
+        const result = await APIService.deleteParameterRegistry(name);
+        syncUIWithState(result);
+        UIManager.showNotification(`Parameter '${name}' deleted.`);
+    } catch (error) {
+        UIManager.showError("Failed to delete parameter: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleOpenParameterRegistry() {
+    try {
+        const result = await APIService.getParameterRegistry();
+        await ParameterRegistryEditor.show(result.parameter_registry || {});
+    } catch (error) {
+        UIManager.showError("Failed to open parameter registry: " + error.message);
     }
 }
 
