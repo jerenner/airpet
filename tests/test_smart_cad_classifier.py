@@ -3,10 +3,12 @@ from pathlib import Path
 
 from src.smart_cad_classifier import (
     ALLOWED_CLASSIFICATIONS,
+    ALLOWED_FALLBACK_REASONS,
     build_candidate,
     classify_candidates,
     classify_shape,
     classify_from_face_descriptors,
+    normalize_fallback_reason,
     summarize_candidates,
 )
 
@@ -33,7 +35,7 @@ def test_build_candidate_normalization_and_confidence_clamping():
     assert c["source_id"] == "s1"
     assert c["classification"] == "tessellated"
     assert c["confidence"] == 1.0
-    assert c["fallback_reason"] == "no_primitive_match_v1"
+    assert c["fallback_reason"] == "unsupported_classification"
 
 
 def test_classify_shape_defaults_to_tessellated():
@@ -153,3 +155,60 @@ def test_classify_from_face_descriptors_ambiguous_fallback():
 
     assert c["classification"] == "tessellated"
     assert c["fallback_reason"] == "ambiguous_surface_mix"
+
+
+def test_fallback_reason_is_normalized_to_allowed_set():
+    c = build_candidate(
+        source_id="bad_reason_case",
+        classification="tessellated",
+        confidence=0.0,
+        fallback_reason="THIS_REASON_DOES_NOT_EXIST",
+    )
+
+    assert c["fallback_reason"] == "no_primitive_match_v1"
+    assert c["fallback_reason"] in ALLOWED_FALLBACK_REASONS
+
+
+def test_normalize_fallback_reason_helper():
+    assert normalize_fallback_reason("below_confidence_threshold") == "below_confidence_threshold"
+    assert normalize_fallback_reason("unsupported_surface_type") == "unsupported_surface_type"
+    assert normalize_fallback_reason("unknown_reason") == "no_primitive_match_v1"
+
+
+def test_classify_from_face_descriptors_cylinder_without_obb_uses_height_hint():
+    descriptors = [
+        {"surface_type": "cylinder", "radius": 5.0, "axis": (0.0, 0.0, 1.0), "origin": (1.0, 2.0, 3.0), "height_hint": 40.0},
+        {"surface_type": "plane"},
+        {"surface_type": "plane"},
+    ]
+
+    c = classify_from_face_descriptors("cyl_no_obb", descriptors, obb_info=None)
+
+    assert c["classification"] == "cylinder"
+    assert c["fallback_reason"] is None
+    assert c["params"]["z"] == 40.0
+    assert c["params"]["center"] == (1.0, 2.0, 3.0)
+
+
+def test_classify_from_face_descriptors_cylinder_inconsistent_axes_fallback():
+    descriptors = [
+        {"surface_type": "cylinder", "radius": 5.0, "axis": (0.0, 0.0, 1.0), "height_hint": 20.0},
+        {"surface_type": "cylinder", "radius": 5.0, "axis": (1.0, 0.0, 0.0), "height_hint": 20.0},
+    ]
+
+    c = classify_from_face_descriptors("cyl_bad_axes", descriptors, obb_info=None)
+
+    assert c["classification"] == "tessellated"
+    assert c["fallback_reason"] == "inconsistent_cylinder_axes"
+
+
+def test_classify_from_face_descriptors_sphere_inconsistent_centers_fallback():
+    descriptors = [
+        {"surface_type": "sphere", "radius": 10.0, "center": (0.0, 0.0, 0.0)},
+        {"surface_type": "sphere", "radius": 10.0, "center": (2.0, 0.0, 0.0)},
+    ]
+
+    c = classify_from_face_descriptors("sphere_bad_centers", descriptors, obb_info=None)
+
+    assert c["classification"] == "tessellated"
+    assert c["fallback_reason"] == "inconsistent_sphere_centers"

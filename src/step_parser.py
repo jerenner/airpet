@@ -18,7 +18,12 @@ from .expression_evaluator import ExpressionEvaluator
 from .geometry_types import (
     GeometryState, Define, Solid, LogicalVolume, Material, PhysicalVolumePlacement, Assembly
 )
-from .smart_cad_classifier import classify_shape, summarize_candidates
+from .smart_cad_classifier import (
+    classify_shape,
+    summarize_candidates,
+    get_smart_import_policy,
+    resolve_candidate_selection,
+)
 
 def _trsf_to_dict(trsf: gp_Trsf):
     """Converts a gp_Trsf to our position and rotation dict format."""
@@ -154,6 +159,7 @@ def parse_step_file(file_path, options):
     into a GeometryState object.
     """
     smart_import_enabled = bool(options.get('smartImport', options.get('smart_import', False)))
+    smart_import_policy = get_smart_import_policy(options)
 
     doc = TDocStd_Document("pythonocc-doc")
     reader = STEPCAFControl_Reader()
@@ -168,6 +174,7 @@ def parse_step_file(file_path, options):
     # Smart CAD report scaffold (Phase 3 M1 foundation).
     imported_state.smart_import_report = {
         'enabled': smart_import_enabled,
+        'policy': smart_import_policy,
         'candidates': [],
         'summary': summarize_candidates([])
     }
@@ -201,6 +208,7 @@ def parse_step_file(file_path, options):
             TopLoc_Location(),
             grouping_name,
             smart_import=smart_import_enabled,
+            smart_import_policy=smart_import_policy,
         )
         top_level_lvs.extend(created_lvs)
 
@@ -275,7 +283,7 @@ def parse_step_file(file_path, options):
 
     return imported_state
 
-def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, grouping_name, smart_import=False):
+def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, grouping_name, smart_import=False, smart_import_policy=None):
     """
     Recursively process labels in the STEP file's document tree.
     This version correctly handles assembly, reference, and simple shape labels.
@@ -305,6 +313,7 @@ def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, groupin
                         current_loc,
                         grouping_name,
                         smart_import=smart_import,
+                        smart_import_policy=smart_import_policy,
                     )
                 )
 
@@ -313,7 +322,13 @@ def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, groupin
         shape = shape_tool.GetShape(label)
         if shape.ShapeType() == TopAbs_SOLID:
             # process_solid now returns the newly created LogicalVolume.
-            new_lv = process_solid(shape, state, grouping_name, smart_import=smart_import)
+            new_lv = process_solid(
+                shape,
+                state,
+                grouping_name,
+                smart_import=smart_import,
+                smart_import_policy=smart_import_policy,
+            )
             if new_lv:
                 # Base transform comes from the component location in the assembly tree.
                 transform_dict = _trsf_to_dict(current_loc.Transformation())
@@ -372,7 +387,7 @@ def _build_lv_for_solid(state, solid_name, solid_type, raw_params):
     return lv
 
 
-def process_solid(solid_shape, state, grouping_name, smart_import=False):
+def process_solid(solid_shape, state, grouping_name, smart_import=False, smart_import_policy=None):
     """Builds a solid from STEP geometry.
 
     Smart import path:
@@ -387,18 +402,21 @@ def process_solid(solid_shape, state, grouping_name, smart_import=False):
     if smart_import and hasattr(state, 'smart_import_report'):
         candidate = classify_shape(solid_shape, source_id=solid_base_name)
 
-        primitive_conf_threshold = 0.80
         primitive_type, primitive_params, local_transform = _candidate_to_primitive(candidate)
-        if primitive_type and candidate.get('confidence', 0.0) >= primitive_conf_threshold:
-            candidate['selected_mode'] = 'primitive'
-            state.smart_import_report.setdefault('candidates', []).append(candidate)
+        selected = resolve_candidate_selection(
+            candidate,
+            primitive_mappable=bool(primitive_type),
+            policy=smart_import_policy,
+        )
+
+        if selected.get('selected_mode') == 'primitive':
+            state.smart_import_report.setdefault('candidates', []).append(selected)
 
             lv = _build_lv_for_solid(state, solid_base_name, primitive_type, primitive_params)
             setattr(lv, '_smart_local_transform', local_transform)
             return lv
 
-        candidate['selected_mode'] = 'tessellated'
-        state.smart_import_report.setdefault('candidates', []).append(candidate)
+        state.smart_import_report.setdefault('candidates', []).append(selected)
     
     # Improved meshing quality. 
     # Linear deflection: max distance between mesh and geometry surface (mm).

@@ -347,6 +347,102 @@ def test_process_solid_marks_tessellated_mode_when_below_threshold():
         assert len(state.solids) == 1
         assert list(state.solids.values())[0].type == 'tessellated'
         assert state.smart_import_report['candidates'][0]['selected_mode'] == 'tessellated'
+        assert state.smart_import_report['candidates'][0]['fallback_reason'] == 'below_confidence_threshold'
+
+
+def test_process_solid_respects_custom_confidence_threshold_policy():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.classify_shape') as MockClassify, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh:
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'box',
+            'confidence': 0.55,
+            'params': {'x': 10.0, 'y': 10.0, 'z': 10.0},
+            'fallback_reason': None,
+        }
+
+        lv = process_solid(
+            mock_solid,
+            state,
+            grouping_name,
+            smart_import=True,
+            smart_import_policy={'primitive_confidence_threshold': 0.5},
+        )
+
+        assert lv is not None
+        assert list(state.solids.values())[0].type == 'box'
+        assert state.smart_import_report['candidates'][0]['selected_mode'] == 'primitive'
+        MockMesh.assert_not_called()
+
+
+def test_process_solid_marks_mapping_unavailable_for_unmapped_primitive_type():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.classify_shape') as MockClassify, \
+         patch('src.step_parser.TopExp_Explorer') as MockExplorer, \
+         patch('src.step_parser.BRep_Tool.Triangulation') as MockTriangulation, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh:
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'cone',
+            'confidence': 0.99,
+            'params': {'z': 10.0},
+            'fallback_reason': None,
+        }
+
+        mock_mesh_instance = MockMesh.return_value
+        mock_mesh_instance.IsDone.return_value = True
+
+        explorer_instance = MockExplorer.return_value
+        explorer_instance.More.side_effect = [True, False]
+        mock_face = MagicMock()
+        explorer_instance.Current.return_value = mock_face
+        mock_face.Orientation.return_value = 0
+
+        mock_poly = MagicMock()
+        MockTriangulation.return_value = mock_poly
+
+        class MockNode:
+            def __init__(self, x, y, z): self._x, self._y, self._z = x, y, z
+            def X(self): return self._x
+            def Y(self): return self._y
+            def Z(self): return self._z
+
+        nodes = [MockNode(0, 0, 0), MockNode(1, 0, 0), MockNode(0, 1, 0)]
+        mock_poly.NbNodes.return_value = 3
+        mock_node_array = MagicMock()
+        mock_node_array.Value.side_effect = lambda i: nodes[i-1]
+        mock_poly.MapNodeArray.return_value = mock_node_array
+
+        class MockTriangle:
+            def __init__(self, n1, n2, n3): self.nodes = (n1, n2, n3)
+            def Get(self): return self.nodes
+
+        mock_poly.NbTriangles.return_value = 1
+        mock_tri_array = MagicMock()
+        mock_tri_array.Value.side_effect = lambda i: MockTriangle(1, 2, 3)
+        mock_poly.MapTriangleArray.return_value = mock_tri_array
+
+        lv = process_solid(mock_solid, state, grouping_name, smart_import=True)
+
+        assert lv is not None
+        assert len(state.solids) == 1
+        assert list(state.solids.values())[0].type == 'tessellated'
+        candidate = state.smart_import_report['candidates'][0]
+        assert candidate['selected_mode'] == 'tessellated'
+        assert candidate['fallback_reason'] == 'primitive_mapping_unavailable'
 
 
 def test_compose_transform_dicts_applies_local_after_parent():
