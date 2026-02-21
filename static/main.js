@@ -19,6 +19,7 @@ import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
 import * as StepImportEditor from './stepImportEditor.js';
 import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
+import * as ParamStudyEditor from './paramStudyEditor.js';
 import * as UIManager from './uiManager.js';
 import * as AIAssistant from './aiAssistant.js';
 
@@ -296,6 +297,13 @@ async function initializeApp() {
         onRefresh: handleParameterRegistryRefresh,
     });
 
+    ParamStudyEditor.init({
+        onSave: handleParamStudySave,
+        onDelete: handleParamStudyDelete,
+        onRun: handleParamStudyRun,
+        onRefresh: handleParamStudyRefresh,
+    });
+
     // Add menu listeners
     // --- Check AI service status on startup ---
     checkAndSetAiStatus();
@@ -317,6 +325,11 @@ async function initializeApp() {
     const parameterRegistryButton = document.getElementById('parameterRegistryButton');
     if (parameterRegistryButton) {
         parameterRegistryButton.addEventListener('click', handleOpenParameterRegistry);
+    }
+
+    const paramStudiesButton = document.getElementById('paramStudiesButton');
+    if (paramStudiesButton) {
+        paramStudiesButton.addEventListener('click', handleOpenParamStudies);
     }
 
     // Restore session from backend on page load
@@ -2541,6 +2554,62 @@ async function handleOpenParameterRegistry() {
         await ParameterRegistryEditor.show(result.parameter_registry || {});
     } catch (error) {
         UIManager.showError("Failed to open parameter registry: " + error.message);
+    }
+}
+
+async function handleParamStudyRefresh() {
+    const result = await APIService.getParamStudies();
+    return result.param_studies || {};
+}
+
+async function handleParamStudySave(payload) {
+    UIManager.showLoading("Saving param study...");
+    try {
+        const result = await APIService.upsertParamStudy(payload);
+        syncUIWithState(result);
+        UIManager.showNotification(`Param study '${payload.name}' saved.`);
+    } catch (error) {
+        UIManager.showError("Failed to save param study: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamStudyDelete(name) {
+    UIManager.showLoading("Deleting param study...");
+    try {
+        const result = await APIService.deleteParamStudy(name);
+        syncUIWithState(result);
+        UIManager.showNotification(`Param study '${name}' deleted.`);
+    } catch (error) {
+        UIManager.showError("Failed to delete param study: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamStudyRun(name, maxRuns = null) {
+    UIManager.showLoading(`Running param study '${name}'...`);
+    try {
+        const result = await APIService.runParamStudy(name, maxRuns);
+        UIManager.showNotification(`Param study '${name}' run complete.`);
+        return result.study_result || result;
+    } catch (error) {
+        UIManager.showError("Failed to run param study: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleOpenParamStudies() {
+    try {
+        const result = await APIService.getParamStudies();
+        await ParamStudyEditor.show(result.param_studies || {});
+    } catch (error) {
+        UIManager.showError("Failed to open param studies: " + error.message);
     }
 }
 

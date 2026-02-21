@@ -114,3 +114,7 @@ def test_param_study_api_routes():
             run_data = run_resp.get_json()
             assert run_data["success"] is True
             assert run_data["study_result"]["requested_runs"] == 2
+
+            del_resp = client.post("/api/param_study/delete", json={"name": "grid_api"})
+            assert del_resp.status_code == 200
+            assert del_resp.get_json()["success"] is True

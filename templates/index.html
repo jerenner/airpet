@@ -834,6 +834,29 @@
             margin: 0;
         }
 
+        /* Param studies modal */
+        #paramStudiesTableWrap {
+            max-height: 200px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+        #paramStudiesTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #paramStudiesTable th, #paramStudiesTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+        }
+        #paramStudiesTable tr.active {
+            background: #eef6ff;
+        }
+
         #stopSimButton:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -1951,6 +1974,7 @@
                     <div class="dropdown_content">
                         <button id="createRingArrayButton">Create Ring Array</button>
                         <button id="parameterRegistryButton">Parameter Registry...</button>
+                        <button id="paramStudiesButton">Param Studies...</button>
                     </div>
                 </li>
                 <!-- Mode Menu -->
@@ -2156,6 +2180,73 @@
                 <button id="prDeleteBtn">Delete</button>
                 <button id="prCancelBtn">Close</button>
                 <button id="prSaveBtn" class="confirm-button">Save</button>
+            </div>
+        </div>
+    </div>
+    <div id="paramStudiesModal" class="editor-modal">
+        <div class="modal-content" style="width: 860px; height: auto; max-height: 90vh;">
+            <div class="modal-header">
+                <h4>Param Studies</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div id="paramStudiesTableWrap">
+                    <table id="paramStudiesTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Mode</th>
+                                <th>Parameters</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paramStudiesTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="pr-form-grid">
+                    <div class="property_item">
+                        <label for="ps_name">Name:</label>
+                        <input type="text" id="ps_name" placeholder="e.g. sweep_v1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_mode">Mode:</label>
+                        <select id="ps_mode">
+                            <option value="grid">grid</option>
+                            <option value="random">random</option>
+                        </select>
+                    </div>
+                    <div class="property_item" style="grid-column: 1 / span 2;">
+                        <label for="ps_parameters">Parameters (comma-separated):</label>
+                        <input type="text" id="ps_parameters" placeholder="param1,param2,...">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_grid_steps">Grid Steps (default):</label>
+                        <input type="number" id="ps_grid_steps" value="3" min="2" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_samples">Random Samples:</label>
+                        <input type="number" id="ps_samples" value="10" min="1" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_seed">Random Seed:</label>
+                        <input type="number" id="ps_seed" value="42" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_max_runs">Run Limit (optional):</label>
+                        <input type="number" id="ps_max_runs" min="1" step="1" placeholder="all">
+                    </div>
+                </div>
+
+                <div class="property_item" style="margin-top: 10px;">
+                    <label for="ps_run_output">Last run output:</label>
+                    <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="psRefreshBtn">Refresh</button>
+                <button id="psDeleteBtn">Delete</button>
+                <button id="psRunBtn">Run Study</button>
+                <button id="psCancelBtn">Close</button>
+                <button id="psSaveBtn" class="confirm-button">Save</button>
             </div>
         </div>
     </div>
