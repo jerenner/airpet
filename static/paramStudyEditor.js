@@ -1,5 +1,6 @@
 let modal, tableBody;
 let nameInput, modeInput, paramsInput, objectivesInput, gridStepsInput, samplesInput, seedInput, maxRunsInput, runOutput;
+let rankObjectiveSelect, rankDirectionSelect, rankingTableBody;
 let saveBtn, deleteBtn, runBtn, refreshBtn, cancelBtn;
 
 let callbacks = {
@@ -11,6 +12,7 @@ let callbacks = {
 
 let activeName = null;
 let currentStudies = {};
+let lastRunResult = null;
 
 function _setForm(study = null, name = '') {
     const s = study || {};
@@ -90,6 +92,80 @@ function _renderTable(studies = {}) {
     }
 }
 
+function _renderRankingTable() {
+    if (!rankingTableBody) return;
+
+    const runs = (lastRunResult && Array.isArray(lastRunResult.runs)) ? lastRunResult.runs : [];
+    rankingTableBody.innerHTML = '';
+
+    if (runs.length === 0) {
+        rankingTableBody.innerHTML = '<tr><td colspan="5" style="color:#64748b;">Run a study to populate ranking results.</td></tr>';
+        return;
+    }
+
+    const objectiveName = rankObjectiveSelect?.value || '';
+    const direction = rankDirectionSelect?.value || 'maximize';
+
+    const scored = runs.map(r => {
+        const val = objectiveName ? (r.objectives || {})[objectiveName] : null;
+        const numeric = Number(val);
+        return {
+            run: r,
+            objective: Number.isFinite(numeric) ? numeric : null,
+        };
+    });
+
+    scored.sort((a, b) => {
+        const av = a.objective;
+        const bv = b.objective;
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return direction === 'minimize' ? av - bv : bv - av;
+    });
+
+    scored.forEach((item, idx) => {
+        const r = item.run;
+        const tr = document.createElement('tr');
+        const paramsStr = Object.entries(r.values || {}).map(([k, v]) => `${k}=${Number(v).toFixed(4)}`).join(', ');
+        tr.innerHTML = `
+            <td>${idx + 1}</td>
+            <td>${r.run_index}</td>
+            <td>${item.objective == null ? 'n/a' : item.objective}</td>
+            <td>${r.success ? 'yes' : 'no'}</td>
+            <td>${paramsStr}</td>
+        `;
+        rankingTableBody.appendChild(tr);
+    });
+}
+
+function _updateObjectiveSelector() {
+    if (!rankObjectiveSelect) return;
+    rankObjectiveSelect.innerHTML = '';
+
+    const runs = (lastRunResult && Array.isArray(lastRunResult.runs)) ? lastRunResult.runs : [];
+    const names = new Set();
+    for (const r of runs) {
+        Object.keys(r.objectives || {}).forEach(k => names.add(k));
+    }
+
+    if (names.size === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'no objectives';
+        rankObjectiveSelect.appendChild(opt);
+        rankObjectiveSelect.disabled = true;
+    } else {
+        rankObjectiveSelect.disabled = false;
+        [...names].sort().forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            rankObjectiveSelect.appendChild(opt);
+        });
+    }
+}
+
 async function _refreshAndRender() {
     const studies = await callbacks.onRefresh();
     _renderTable(studies || {});
@@ -119,7 +195,10 @@ async function _handleRun() {
     const maxRuns = maxRunsRaw ? Number(maxRunsRaw) : null;
 
     const result = await callbacks.onRun(name, Number.isFinite(maxRuns) ? maxRuns : null);
+    lastRunResult = result || null;
     runOutput.value = JSON.stringify(result, null, 2);
+    _updateObjectiveSelector();
+    _renderRankingTable();
 }
 
 export function init(newCallbacks = {}) {
@@ -137,6 +216,9 @@ export function init(newCallbacks = {}) {
     seedInput = document.getElementById('ps_seed');
     maxRunsInput = document.getElementById('ps_max_runs');
     runOutput = document.getElementById('ps_run_output');
+    rankObjectiveSelect = document.getElementById('ps_rank_objective');
+    rankDirectionSelect = document.getElementById('ps_rank_direction');
+    rankingTableBody = document.getElementById('psRankingTableBody');
 
     saveBtn = document.getElementById('psSaveBtn');
     deleteBtn = document.getElementById('psDeleteBtn');
@@ -149,13 +231,18 @@ export function init(newCallbacks = {}) {
     runBtn.addEventListener('click', _handleRun);
     refreshBtn.addEventListener('click', _refreshAndRender);
     cancelBtn.addEventListener('click', hide);
+    if (rankObjectiveSelect) rankObjectiveSelect.addEventListener('change', _renderRankingTable);
+    if (rankDirectionSelect) rankDirectionSelect.addEventListener('change', _renderRankingTable);
 }
 
 export async function show(initialStudies = {}) {
     activeName = null;
+    lastRunResult = null;
     _setForm();
     runOutput.value = '';
     _renderTable(initialStudies);
+    _updateObjectiveSelector();
+    _renderRankingTable();
     if (modal) modal.style.display = 'block';
     await _refreshAndRender();
 }

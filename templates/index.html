@@ -857,6 +857,26 @@
             background: #eef6ff;
         }
 
+        #psRankingTableWrap {
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-top: 8px;
+            background: #fff;
+        }
+        #psRankingTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #psRankingTable th, #psRankingTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+            font-family: ui-monospace, Menlo, monospace;
+        }
+
         #stopSimButton:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -2243,6 +2263,36 @@
                 <div class="property_item" style="margin-top: 10px;">
                     <label for="ps_run_output">Last run output:</label>
                     <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                </div>
+
+                <div class="pr-form-grid" style="margin-top: 10px;">
+                    <div class="property_item">
+                        <label for="ps_rank_objective">Ranking Objective:</label>
+                        <select id="ps_rank_objective"></select>
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_rank_direction">Direction:</label>
+                        <select id="ps_rank_direction">
+                            <option value="maximize">maximize</option>
+                            <option value="minimize">minimize</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="psRankingTableWrap">
+                    <table id="psRankingTable">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Run</th>
+                                <th>Objective Value</th>
+                                <th>Success</th>
+                                <th>Parameter Values</th>
+                            </tr>
+                        </thead>
+                        <tbody id="psRankingTableBody">
+                            <tr><td colspan="5" style="color:#64748b;">Run a study to populate ranking results.</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
             <div class="modal-footer">
