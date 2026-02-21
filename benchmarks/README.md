@@ -37,7 +37,11 @@ python scripts/benchmark_smart_import.py \
 
 Output JSON includes per-mode metrics:
 - import elapsed seconds
-- import report summary (`primitive/tessellated` counts and ratio)
+- `import.normalized_summary` (stable keys across baseline + smart modes)
+  - `imported_solid_count`
+  - report availability/enabled flags
+  - candidate/selection stats (null when smart report is not enabled)
+- raw import report summary (when available)
 - optional simulation timing/status (if `simulation.enabled=true`)
 
 Default output directory:

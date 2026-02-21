@@ -36,6 +36,38 @@ def _post_json(client, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"status": resp.status_code, "json": resp.get_json(silent=True)}
 
 
+def _normalize_import_metrics(payload: Dict[str, Any], report: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+    summary = report.get("summary") or {}
+    mode_counts = summary.get("selected_mode_counts") or {}
+
+    project_state = payload.get("project_state") or {}
+    solids = project_state.get("solids") or {}
+    grouping_name = str(options.get("groupingName", ""))
+    imported_solid_count = 0
+    if grouping_name:
+        prefix = f"{grouping_name}_solid_"
+        imported_solid_count = sum(1 for solid_name in solids.keys() if str(solid_name).startswith(prefix))
+
+    report_available = bool(report)
+    report_enabled = bool(report.get("enabled", False)) if report_available else False
+
+    def _val(v):
+        return v if report_enabled else None
+
+    return {
+        "report_available": report_available,
+        "report_enabled": report_enabled,
+        "imported_solid_count": imported_solid_count,
+        "candidate_total": _val(summary.get("total", 0)),
+        "candidate_primitive_count": _val(summary.get("primitive_count", 0)),
+        "candidate_tessellated_count": _val(summary.get("tessellated_count", 0)),
+        "selected_primitive_count": _val(mode_counts.get("primitive", 0)),
+        "selected_tessellated_count": _val(mode_counts.get("tessellated", 0)),
+        "selected_primitive_ratio": _val(summary.get("selected_primitive_ratio", 0.0)),
+        "counts_by_classification": _val(summary.get("counts_by_classification") or {}),
+    }
+
+
 def _run_import_once(client, step_file: Path, options: Dict[str, Any]) -> Dict[str, Any]:
     with step_file.open("rb") as f:
         binary = f.read()
@@ -52,6 +84,7 @@ def _run_import_once(client, step_file: Path, options: Dict[str, Any]) -> Dict[s
     payload = resp.get_json(silent=True) or {}
     report = payload.get("step_import_report") or {}
     summary = report.get("summary") or {}
+    normalized = _normalize_import_metrics(payload, report, options)
 
     return {
         "http_status": resp.status_code,
@@ -59,6 +92,7 @@ def _run_import_once(client, step_file: Path, options: Dict[str, Any]) -> Dict[s
         "success": bool(payload.get("success", False)),
         "error": payload.get("error"),
         "summary": summary,
+        "normalized_summary": normalized,
         "report": report,
     }
 
@@ -155,11 +189,13 @@ def benchmark(config: Dict[str, Any]) -> Dict[str, Any]:
             import_result = _run_import_once(client, step_file, options)
             mode_entry: Dict[str, Any] = {
                 "success": import_result["success"],
+                "smart_import_requested": smart_import,
                 "import": {
                     "elapsed_s": import_result["elapsed_s"],
                     "http_status": import_result["http_status"],
                     "error": import_result["error"],
                     "summary": import_result["summary"],
+                    "normalized_summary": import_result["normalized_summary"],
                 },
             }
 
