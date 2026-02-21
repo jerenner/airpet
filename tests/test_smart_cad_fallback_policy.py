@@ -3,11 +3,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.geometry_types import GeometryState
-from src.smart_cad_classifier import ALLOWED_FALLBACK_REASONS
+from src.smart_cad_classifier import (
+    ALLOWED_FALLBACK_REASONS,
+    get_smart_import_policy,
+    resolve_candidate_selection,
+)
 from src.step_parser import process_solid
 
 
 FIXTURE_PATH = Path(__file__).parent / 'fixtures' / 'm1' / 'smart_import_report_fixture.json'
+SELECTION_FIXTURE_PATH = Path(__file__).parent / 'fixtures' / 'm2' / 'reliability_selection_cases.json'
 
 
 def _mock_minimal_tessellation_stack(MockExplorer, MockTriangulation, MockMesh):
@@ -82,3 +87,27 @@ def test_step_parser_normalizes_invalid_tessellated_fallback_reason():
         assert candidate['selected_mode'] == 'tessellated'
         assert candidate['fallback_reason'] == 'no_primitive_match_v1'
         assert candidate['fallback_reason'] in ALLOWED_FALLBACK_REASONS
+
+
+def test_selection_policy_regression_fixture_cases():
+    cases = json.loads(SELECTION_FIXTURE_PATH.read_text())
+
+    for case in cases:
+        policy = get_smart_import_policy(case.get('policy', {}))
+        selected = resolve_candidate_selection(
+            candidate=case['candidate'],
+            primitive_mappable=case['primitive_mappable'],
+            policy=policy,
+        )
+
+        expected = case['expected']
+        assert selected['selected_mode'] == expected['selected_mode'], case['name']
+        assert selected.get('fallback_reason') == expected['fallback_reason'], case['name']
+
+
+def test_policy_option_parsing_and_clamping():
+    p1 = get_smart_import_policy({'smartImportConfidenceThreshold': 0.65})
+    p2 = get_smart_import_policy({'smart_import_confidence_threshold': 5.0})
+
+    assert p1['primitive_confidence_threshold'] == 0.65
+    assert p2['primitive_confidence_threshold'] == 1.0

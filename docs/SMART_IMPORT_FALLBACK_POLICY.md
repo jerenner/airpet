@@ -45,7 +45,7 @@ Primitive fit failures:
 ## Selection rules
 
 1. Classifier proposes candidate (`classification`, `confidence`, optional reason).
-2. If candidate is mappable to an enabled primitive and confidence >= threshold (currently `0.80`):
+2. If candidate is mappable to an enabled primitive and confidence >= threshold (default `0.80`):
    - `selected_mode = primitive`
    - `fallback_reason = null`
 3. Otherwise:
@@ -60,3 +60,12 @@ Unknown/invalid fallback reasons are normalized to:
 - `no_primitive_match_v1`
 
 This keeps downstream reporting stable and testable.
+
+## Policy configuration
+
+Current configurable field:
+- `primitive_confidence_threshold` (0..1, default `0.80`)
+
+Accepted import option keys:
+- `smartImportConfidenceThreshold`
+- `smart_import_confidence_threshold`

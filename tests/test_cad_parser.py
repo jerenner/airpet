@@ -350,6 +350,38 @@ def test_process_solid_marks_tessellated_mode_when_below_threshold():
         assert state.smart_import_report['candidates'][0]['fallback_reason'] == 'below_confidence_threshold'
 
 
+def test_process_solid_respects_custom_confidence_threshold_policy():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.classify_shape') as MockClassify, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh:
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'box',
+            'confidence': 0.55,
+            'params': {'x': 10.0, 'y': 10.0, 'z': 10.0},
+            'fallback_reason': None,
+        }
+
+        lv = process_solid(
+            mock_solid,
+            state,
+            grouping_name,
+            smart_import=True,
+            smart_import_policy={'primitive_confidence_threshold': 0.5},
+        )
+
+        assert lv is not None
+        assert list(state.solids.values())[0].type == 'box'
+        assert state.smart_import_report['candidates'][0]['selected_mode'] == 'primitive'
+        MockMesh.assert_not_called()
+
+
 def test_process_solid_marks_mapping_unavailable_for_unmapped_primitive_type():
     state = GeometryState()
     state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}

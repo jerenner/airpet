@@ -1,0 +1,84 @@
+[
+  {
+    "name": "below_threshold_default",
+    "candidate": {
+      "source_id": "c1",
+      "classification": "box",
+      "confidence": 0.79,
+      "params": {},
+      "fallback_reason": null
+    },
+    "primitive_mappable": true,
+    "policy": {},
+    "expected": {
+      "selected_mode": "tessellated",
+      "fallback_reason": "below_confidence_threshold"
+    }
+  },
+  {
+    "name": "meets_threshold_default",
+    "candidate": {
+      "source_id": "c2",
+      "classification": "box",
+      "confidence": 0.8,
+      "params": {},
+      "fallback_reason": null
+    },
+    "primitive_mappable": true,
+    "policy": {},
+    "expected": {
+      "selected_mode": "primitive",
+      "fallback_reason": null
+    }
+  },
+  {
+    "name": "custom_threshold_allows_primitive",
+    "candidate": {
+      "source_id": "c3",
+      "classification": "sphere",
+      "confidence": 0.72,
+      "params": {},
+      "fallback_reason": null
+    },
+    "primitive_mappable": true,
+    "policy": {
+      "primitive_confidence_threshold": 0.7
+    },
+    "expected": {
+      "selected_mode": "primitive",
+      "fallback_reason": null
+    }
+  },
+  {
+    "name": "unmapped_primitive_type",
+    "candidate": {
+      "source_id": "c4",
+      "classification": "cone",
+      "confidence": 0.99,
+      "params": {},
+      "fallback_reason": null
+    },
+    "primitive_mappable": false,
+    "policy": {},
+    "expected": {
+      "selected_mode": "tessellated",
+      "fallback_reason": "primitive_mapping_unavailable"
+    }
+  },
+  {
+    "name": "invalid_reason_normalized",
+    "candidate": {
+      "source_id": "c5",
+      "classification": "tessellated",
+      "confidence": 0.0,
+      "params": {},
+      "fallback_reason": "BAD_REASON"
+    },
+    "primitive_mappable": false,
+    "policy": {},
+    "expected": {
+      "selected_mode": "tessellated",
+      "fallback_reason": "no_primitive_match_v1"
+    }
+  }
+]

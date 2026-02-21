@@ -74,6 +74,10 @@ SURFACE_CONE = "cone"
 SURFACE_TORUS = "torus"
 SURFACE_OTHER = "other"
 
+DEFAULT_SMART_IMPORT_POLICY = {
+    "primitive_confidence_threshold": 0.80,
+}
+
 
 @dataclass
 class SmartCadCandidate:
@@ -117,6 +121,48 @@ def normalize_fallback_reason(reason: Optional[str], default: str = "no_primitiv
     if value in ALLOWED_FALLBACK_REASONS:
         return value
     return default
+
+
+def get_smart_import_policy(options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Returns normalized smart-import policy from defaults + optional overrides."""
+    policy = dict(DEFAULT_SMART_IMPORT_POLICY)
+    options = options or {}
+
+    raw_threshold = options.get(
+        "smartImportConfidenceThreshold",
+        options.get("smart_import_confidence_threshold", options.get("primitive_confidence_threshold")),
+    )
+    if raw_threshold is not None:
+        policy["primitive_confidence_threshold"] = _clamp_confidence(raw_threshold)
+
+    return policy
+
+
+def resolve_candidate_selection(
+    candidate: Dict[str, Any],
+    primitive_mappable: bool,
+    policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Applies deterministic selection/fallback policy to a candidate."""
+    out = dict(candidate)
+    policy = policy or DEFAULT_SMART_IMPORT_POLICY
+    threshold = _clamp_confidence(policy.get("primitive_confidence_threshold", 0.80))
+    confidence = _clamp_confidence(out.get("confidence", 0.0))
+
+    if primitive_mappable and confidence >= threshold:
+        out["selected_mode"] = "primitive"
+        out["fallback_reason"] = None
+        return out
+
+    out["selected_mode"] = "tessellated"
+
+    if primitive_mappable and confidence < threshold:
+        out["fallback_reason"] = "below_confidence_threshold"
+    elif not primitive_mappable and out.get("classification") != "tessellated":
+        out["fallback_reason"] = "primitive_mapping_unavailable"
+
+    out["fallback_reason"] = normalize_fallback_reason(out.get("fallback_reason"))
+    return out
 
 
 def _vec3_tuple(obj: Any) -> Tuple[float, float, float]:
