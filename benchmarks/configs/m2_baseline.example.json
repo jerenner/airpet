@@ -1,0 +1,22 @@
+{
+  "name": "m2-smart-import-baseline",
+  "step_file": "/absolute/path/to/your_geometry.step",
+  "import": {
+    "groupingName": "m2_benchmark",
+    "placementMode": "assembly",
+    "parentLVName": "World",
+    "offset": { "x": "0", "y": "0", "z": "0" },
+    "smartImportConfidenceThreshold": 0.8
+  },
+  "simulation": {
+    "enabled": false,
+    "events": 500,
+    "threads": 1,
+    "physics_list": "FTFP_BERT",
+    "optical_physics": false,
+    "save_hits": false,
+    "save_particles": false,
+    "timeout_s": 1800,
+    "poll_interval_s": 1.0
+  }
+}

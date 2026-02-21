@@ -1,0 +1,7 @@
+{
+  "example-benchmark-name": {
+    "max_import_overhead_pct": 35.0,
+    "min_selected_primitive_ratio": 0.05,
+    "require_success": true
+  }
+}
