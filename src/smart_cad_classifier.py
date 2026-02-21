@@ -41,6 +41,26 @@ ALLOWED_CLASSIFICATIONS = {
     "tessellated",
 }
 
+ALLOWED_FALLBACK_REASONS = {
+    "no_primitive_match_v1",
+    "below_confidence_threshold",
+    "unsupported_classification",
+    "primitive_mapping_unavailable",
+    "occ_unavailable",
+    "classifier_runtime_error",
+    "no_faces_detected",
+    "unsupported_surface_type",
+    "primitive_type_not_enabled_yet",
+    "ambiguous_surface_mix",
+    "box_fit_missing_obb",
+    "box_fit_nonpositive_extent",
+    "no_cylinder_face",
+    "invalid_cylinder_radius",
+    "invalid_cylinder_height",
+    "no_sphere_face",
+    "invalid_sphere_radius",
+}
+
 SURFACE_PLANE = "plane"
 SURFACE_CYLINDER = "cylinder"
 SURFACE_SPHERE = "sphere"
@@ -86,6 +106,13 @@ def _clamp_confidence(confidence: Any) -> float:
     return c
 
 
+def normalize_fallback_reason(reason: Optional[str], default: str = "no_primitive_match_v1") -> str:
+    value = (reason or "").strip().lower()
+    if value in ALLOWED_FALLBACK_REASONS:
+        return value
+    return default
+
+
 def _vec3_tuple(obj: Any) -> Tuple[float, float, float]:
     return (float(obj.X()), float(obj.Y()), float(obj.Z()))
 
@@ -110,13 +137,16 @@ def build_candidate(
 ) -> Dict[str, Any]:
     """Builds a normalized candidate dictionary using classifier contract."""
 
+    raw_class = (classification or "").strip().lower()
     normalized_class = _normalize_classification(classification)
     normalized_conf = _clamp_confidence(confidence)
 
     if normalized_class != "tessellated":
         fallback_reason = None
-    elif not fallback_reason:
-        fallback_reason = "no_primitive_match_v1"
+    else:
+        if not fallback_reason and raw_class and raw_class not in ALLOWED_CLASSIFICATIONS:
+            fallback_reason = "unsupported_classification"
+        fallback_reason = normalize_fallback_reason(fallback_reason)
 
     candidate = SmartCadCandidate(
         source_id=source_id,

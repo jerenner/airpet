@@ -18,7 +18,7 @@ from .expression_evaluator import ExpressionEvaluator
 from .geometry_types import (
     GeometryState, Define, Solid, LogicalVolume, Material, PhysicalVolumePlacement, Assembly
 )
-from .smart_cad_classifier import classify_shape, summarize_candidates
+from .smart_cad_classifier import classify_shape, summarize_candidates, normalize_fallback_reason
 
 def _trsf_to_dict(trsf: gp_Trsf):
     """Converts a gp_Trsf to our position and rotation dict format."""
@@ -389,7 +389,9 @@ def process_solid(solid_shape, state, grouping_name, smart_import=False):
 
         primitive_conf_threshold = 0.80
         primitive_type, primitive_params, local_transform = _candidate_to_primitive(candidate)
-        if primitive_type and candidate.get('confidence', 0.0) >= primitive_conf_threshold:
+        confidence = float(candidate.get('confidence', 0.0) or 0.0)
+
+        if primitive_type and confidence >= primitive_conf_threshold:
             candidate['selected_mode'] = 'primitive'
             state.smart_import_report.setdefault('candidates', []).append(candidate)
 
@@ -398,6 +400,12 @@ def process_solid(solid_shape, state, grouping_name, smart_import=False):
             return lv
 
         candidate['selected_mode'] = 'tessellated'
+        if primitive_type and confidence < primitive_conf_threshold:
+            candidate['fallback_reason'] = 'below_confidence_threshold'
+        elif not primitive_type and candidate.get('classification') != 'tessellated':
+            candidate['fallback_reason'] = 'primitive_mapping_unavailable'
+
+        candidate['fallback_reason'] = normalize_fallback_reason(candidate.get('fallback_reason'))
         state.smart_import_report.setdefault('candidates', []).append(candidate)
     
     # Improved meshing quality. 

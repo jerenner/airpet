@@ -49,7 +49,7 @@
     "hint": "non_existing_primitive",
     "expected": {
       "classification": "tessellated",
-      "fallback_reason": "no_primitive_match_v1"
+      "fallback_reason": "unsupported_classification"
     }
   }
 ]
