@@ -1,0 +1,61 @@
+{
+  "candidates": [
+    {
+      "source_id": "detector_block_0",
+      "classification": "box",
+      "confidence": 0.96,
+      "params": {"x": 20.0, "y": 10.0, "z": 5.0},
+      "fallback_reason": null,
+      "selected_mode": "primitive"
+    },
+    {
+      "source_id": "detector_block_1",
+      "classification": "box",
+      "confidence": 0.91,
+      "params": {"x": 20.0, "y": 10.0, "z": 5.0},
+      "fallback_reason": null,
+      "selected_mode": "primitive"
+    },
+    {
+      "source_id": "ring_shell",
+      "classification": "cylinder",
+      "confidence": 0.84,
+      "params": {"rmax": 120.0, "z": 2.0},
+      "fallback_reason": null,
+      "selected_mode": "primitive"
+    },
+    {
+      "source_id": "support_mesh",
+      "classification": "tessellated",
+      "confidence": 0.2,
+      "params": {},
+      "fallback_reason": "unsupported_surface_type",
+      "selected_mode": "tessellated"
+    },
+    {
+      "source_id": "cable_bundle",
+      "classification": "tessellated",
+      "confidence": 0.0,
+      "params": {},
+      "fallback_reason": "no_primitive_match_v1",
+      "selected_mode": "tessellated"
+    },
+    {
+      "source_id": "connector_cutout",
+      "classification": "tessellated",
+      "confidence": 0.0,
+      "params": {},
+      "fallback_reason": "no_primitive_match_v1",
+      "selected_mode": "tessellated"
+    }
+  ],
+  "expected_summary": {
+    "total": 6,
+    "primitive_count": 3,
+    "tessellated_count": 3,
+    "selected_mode_counts": {
+      "primitive": 3,
+      "tessellated": 3
+    }
+  }
+}

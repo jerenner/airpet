@@ -176,6 +176,7 @@ async function initializeApp() {
         // Simulation
         onRunSimulationClicked: handleRunSimulation,
         onStopSimulationClicked: handleStopSimulation,
+        onRunPreflightClicked: handleRunPreflight,
         onSimOptionsClicked: handleOpenSimOptions,
         onSaveSimOptions: handleSaveSimOptions,
         onDrawTracksToggle: handleDrawTracksToggle,
@@ -2409,6 +2410,51 @@ function handleCameraModeChange(mode) {
     }
 }
 
+function formatStepImportReportMessage(report, smartImportRequested = false) {
+    if (!report) {
+        return smartImportRequested ? "STEP file imported. Smart CAD report unavailable." : "STEP file imported successfully.";
+    }
+
+    if (!report.enabled) {
+        return "STEP file imported successfully (smart import disabled).";
+    }
+
+    const summary = report.summary || {};
+    const total = summary.total || 0;
+    const modeCounts = summary.selected_mode_counts || {};
+    const primitiveSelected = modeCounts.primitive || 0;
+    const tessSelected = modeCounts.tessellated || 0;
+
+    const ratioPct = total > 0
+        ? ((summary.selected_primitive_ratio || 0) * 100).toFixed(1)
+        : "0.0";
+
+    const fallbackReasonCounts = {};
+    (report.candidates || []).forEach(c => {
+        if (c?.selected_mode === 'tessellated' && c?.fallback_reason) {
+            fallbackReasonCounts[c.fallback_reason] = (fallbackReasonCounts[c.fallback_reason] || 0) + 1;
+        }
+    });
+
+    const topReasons = Object.entries(fallbackReasonCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([reason, count]) => `${reason}: ${count}`);
+
+    const lines = [
+        "STEP import complete (Smart CAD).",
+        `Total solids: ${total}`,
+        `Selected primitives: ${primitiveSelected} (${ratioPct}%)`,
+        `Selected tessellated fallback: ${tessSelected}`,
+    ];
+
+    if (topReasons.length > 0) {
+        lines.push(`Top fallback reasons: ${topReasons.join(', ')}`);
+    }
+
+    return lines.join("\n");
+}
+
 async function handleConfirmStepImport(options) {
     if (!options || !options.file) return;
 
@@ -2422,12 +2468,20 @@ async function handleConfirmStepImport(options) {
         // as it's already been appended.
         const optionsForJson = { ...options };
         delete optionsForJson.file;
-        formData.append('options', JSON.stringify(options));
+        formData.append('options', JSON.stringify(optionsForJson));
 
-        const result = await APIService.importStepWithOptions(formData); // This API call is still needed
+        const result = await APIService.importStepWithOptions(formData);
         syncUIWithState(result);
         UIManager.hideLoading();
-        //UIManager.showNotification("STEP file imported successfully.");
+
+        const reportMessage = formatStepImportReportMessage(result.step_import_report, optionsForJson.smartImport);
+        if (reportMessage) {
+            UIManager.showNotification(reportMessage);
+        }
+
+        if (result.step_import_report && result.step_import_report.enabled) {
+            StepImportEditor.showImportReport(result.step_import_report, options.file?.name || '');
+        }
     } catch (error) {
         UIManager.hideLoading();
         UIManager.showError("Failed to import STEP file: " + error.message);
@@ -2519,6 +2573,69 @@ async function handleGpsEditorConfirm(data) {
 }
 
 // --- Simulation functions ---
+function formatPreflightIssues(issues, limit = 5) {
+    if (!issues || issues.length === 0) return "";
+    return issues.slice(0, limit).map(issue => {
+        const hint = issue.hint ? ` (hint: ${issue.hint})` : '';
+        return `- [${issue.severity}] ${issue.message}${hint}`;
+    }).join('\n');
+}
+
+async function runAndRenderPreflight({ enforceRunBlocking = false, confirmWarnings = false, showNotification = false } = {}) {
+    UIManager.setPreflightState('running');
+    try {
+        const preflight = await APIService.runPreflightChecks();
+        const report = preflight.preflight_report || {};
+        const summary = report.summary || {};
+
+        UIManager.renderPreflightReport(report);
+
+        const errors = summary.errors || 0;
+        const warnings = summary.warnings || 0;
+        const infos = summary.infos || 0;
+
+        if (showNotification) {
+            UIManager.showNotification(`Preflight complete: ${errors} error(s), ${warnings} warning(s), ${infos} info.`);
+        }
+
+        if (enforceRunBlocking && !summary.can_run) {
+            const errorIssues = (report.issues || []).filter(i => i.severity === 'error');
+            UIManager.showError(
+                "Preflight checks failed.\n" +
+                formatPreflightIssues(errorIssues, 8)
+            );
+            return { ok: false, report };
+        }
+
+        if (enforceRunBlocking && warnings > 0 && confirmWarnings) {
+            const warningIssues = (report.issues || []).filter(i => i.severity === 'warning');
+            const proceed = UIManager.confirmAction(
+                "Preflight warnings detected:\n\n" +
+                formatPreflightIssues(warningIssues, 8) +
+                "\n\nContinue anyway?"
+            );
+            if (!proceed) {
+                return { ok: false, report };
+            }
+        }
+
+        return { ok: true, report };
+    } catch (error) {
+        UIManager.showError("Failed to run preflight checks: " + error.message);
+        return { ok: false, report: null };
+    } finally {
+        UIManager.setPreflightState('idle');
+    }
+}
+
+async function handleRunPreflight() {
+    await runAndRenderPreflight({
+        enforceRunBlocking: false,
+        confirmWarnings: false,
+        showNotification: true,
+    });
+}
+
 async function handleRunSimulation(simSettings) {
     console.log("Checking active sources before run...");
     console.log("AppState.activeSourceIds:", AppState.activeSourceIds);
@@ -2543,6 +2660,16 @@ async function handleRunSimulation(simSettings) {
     const numEvents = parseInt(document.getElementById('simEventsInput').value, 10);
     if (numEvents <= 0) {
         UIManager.showError("Please enter a valid number of events.");
+        return;
+    }
+
+    // Preflight checks before simulation start.
+    const preflightResult = await runAndRenderPreflight({
+        enforceRunBlocking: true,
+        confirmWarnings: true,
+        showNotification: false,
+    });
+    if (!preflightResult.ok) {
         return;
     }
 

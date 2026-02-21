@@ -1,5 +1,6 @@
 # src/step_parser.py
 import os
+import numpy as np
 
 from OCC.Core.STEPControl import STEPControl_Reader
 from OCC.Core.TopAbs import TopAbs_SOLID, TopAbs_FACE, TopAbs_REVERSED
@@ -17,6 +18,7 @@ from .expression_evaluator import ExpressionEvaluator
 from .geometry_types import (
     GeometryState, Define, Solid, LogicalVolume, Material, PhysicalVolumePlacement, Assembly
 )
+from .smart_cad_classifier import classify_shape, summarize_candidates
 
 def _trsf_to_dict(trsf: gp_Trsf):
     """Converts a gp_Trsf to our position and rotation dict format."""
@@ -38,11 +40,121 @@ def _trsf_to_dict(trsf: gp_Trsf):
         "rotation": {"x": gamma, "y": beta, "z": alpha} 
     }
 
+def _as_xyz_dict(value, default=(0.0, 0.0, 0.0)):
+    if isinstance(value, dict):
+        return {
+            'x': float(value.get('x', default[0])),
+            'y': float(value.get('y', default[1])),
+            'z': float(value.get('z', default[2])),
+        }
+    if isinstance(value, (list, tuple)) and len(value) == 3:
+        return {'x': float(value[0]), 'y': float(value[1]), 'z': float(value[2])}
+    return {'x': float(default[0]), 'y': float(default[1]), 'z': float(default[2])}
+
+
+def _transform_dict_to_matrix(transform_dict):
+    pv = PhysicalVolumePlacement(name="_tmp", volume_ref="_tmp")
+    pv._evaluated_position = _as_xyz_dict(transform_dict.get('position', {}), default=(0.0, 0.0, 0.0))
+    pv._evaluated_rotation = _as_xyz_dict(transform_dict.get('rotation', {}), default=(0.0, 0.0, 0.0))
+    pv._evaluated_scale = {'x': 1.0, 'y': 1.0, 'z': 1.0}
+    return pv.get_transform_matrix()
+
+
+def _matrix_to_transform_dict(matrix):
+    pos, rot, _ = PhysicalVolumePlacement.decompose_matrix(matrix)
+    return {
+        'position': {'x': float(pos['x']), 'y': float(pos['y']), 'z': float(pos['z'])},
+        'rotation': {'x': float(rot['x']), 'y': float(rot['y']), 'z': float(rot['z'])},
+    }
+
+
+def _compose_transform_dicts(parent_transform, local_transform):
+    parent_matrix = _transform_dict_to_matrix(parent_transform)
+    local_matrix = _transform_dict_to_matrix(local_transform)
+    return _matrix_to_transform_dict(parent_matrix @ local_matrix)
+
+
+def _normalize_vec3(vec, default=(1.0, 0.0, 0.0)):
+    arr = np.array(vec, dtype=float)
+    n = np.linalg.norm(arr)
+    if n < 1e-12:
+        return np.array(default, dtype=float)
+    return arr / n
+
+
+def _orthonormal_frame_from_axis(axis):
+    z = _normalize_vec3(axis, default=(0.0, 0.0, 1.0))
+    ref = np.array([1.0, 0.0, 0.0]) if abs(np.dot(z, [1.0, 0.0, 0.0])) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x = _normalize_vec3(np.cross(ref, z), default=(1.0, 0.0, 0.0))
+    y = _normalize_vec3(np.cross(z, x), default=(0.0, 1.0, 0.0))
+    return x, y, z
+
+
+def _basis_to_rotation_transform(center, x_axis, y_axis, z_axis):
+    x = _normalize_vec3(x_axis, default=(1.0, 0.0, 0.0))
+    y_tmp = _normalize_vec3(y_axis, default=(0.0, 1.0, 0.0))
+
+    # Gram-Schmidt to keep a numerically stable orthonormal basis.
+    y = y_tmp - np.dot(y_tmp, x) * x
+    y = _normalize_vec3(y, default=(0.0, 1.0, 0.0))
+
+    z = _normalize_vec3(z_axis, default=(0.0, 0.0, 1.0))
+    z = z - np.dot(z, x) * x - np.dot(z, y) * y
+    z = _normalize_vec3(z, default=np.cross(x, y))
+
+    # Ensure right-handed frame.
+    if np.dot(np.cross(x, y), z) < 0.0:
+        z = -z
+
+    m = np.eye(4)
+    m[:3, 0] = x
+    m[:3, 1] = y
+    m[:3, 2] = z
+    m[:3, 3] = np.array(center, dtype=float)
+
+    return _matrix_to_transform_dict(m)
+
+
+def _candidate_local_transform(candidate):
+    params = candidate.get('params', {}) or {}
+    classification = candidate.get('classification')
+
+    if classification == 'box':
+        center = params.get('center', (0.0, 0.0, 0.0))
+        axes = params.get('axes', [])
+        if isinstance(axes, list) and len(axes) == 3:
+            return _basis_to_rotation_transform(center, axes[0], axes[1], axes[2])
+        return {
+            'position': _as_xyz_dict(center),
+            'rotation': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+        }
+
+    if classification == 'cylinder':
+        center = params.get('center', (0.0, 0.0, 0.0))
+        axis = params.get('axis', (0.0, 0.0, 1.0))
+        x, y, z = _orthonormal_frame_from_axis(axis)
+        return _basis_to_rotation_transform(center, x, y, z)
+
+    if classification == 'sphere':
+        center = params.get('center', (0.0, 0.0, 0.0))
+        return {
+            'position': _as_xyz_dict(center),
+            'rotation': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+        }
+
+    return {
+        'position': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+        'rotation': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+    }
+
+
 def parse_step_file(file_path, options):
     """
     Parses a STEP file with assembly structure and converts its geometry
     into a GeometryState object.
     """
+    smart_import_enabled = bool(options.get('smartImport', options.get('smart_import', False)))
+
     doc = TDocStd_Document("pythonocc-doc")
     reader = STEPCAFControl_Reader()
     reader.ReadFile(file_path)
@@ -52,6 +164,13 @@ def parse_step_file(file_path, options):
     
     # We will build a temporary state and then merge it into the project.
     imported_state = GeometryState()
+
+    # Smart CAD report scaffold (Phase 3 M1 foundation).
+    imported_state.smart_import_report = {
+        'enabled': smart_import_enabled,
+        'candidates': [],
+        'summary': summarize_candidates([])
+    }
     
     # Use a generic material. The user can change it later.
     default_mat_name = "G4_STAINLESS-STEEL"
@@ -75,7 +194,14 @@ def parse_step_file(file_path, options):
 
     for i in range(1, root_labels.Length() + 1):
         # The return value is a list of LVs created under this root label.
-        created_lvs = process_label(root_labels.Value(i), shape_tool, imported_state, TopLoc_Location(), grouping_name)
+        created_lvs = process_label(
+            root_labels.Value(i),
+            shape_tool,
+            imported_state,
+            TopLoc_Location(),
+            grouping_name,
+            smart_import=smart_import_enabled,
+        )
         top_level_lvs.extend(created_lvs)
 
     # --- Post-processing based on user options ---
@@ -143,9 +269,13 @@ def parse_step_file(file_path, options):
         
         imported_state.placements_to_add = placements
 
+    if smart_import_enabled:
+        candidates = imported_state.smart_import_report.get('candidates', [])
+        imported_state.smart_import_report['summary'] = summarize_candidates(candidates)
+
     return imported_state
 
-def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, grouping_name):
+def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, grouping_name, smart_import=False):
     """
     Recursively process labels in the STEP file's document tree.
     This version correctly handles assembly, reference, and simple shape labels.
@@ -167,25 +297,108 @@ def process_label(label, shape_tool, state, parent_loc: TopLoc_Location, groupin
             ref_label = TDF_Label()
             if shape_tool.GetReferredShape(component_label, ref_label):
                 # Recurse and aggregate the results from children.
-                created_lvs.extend(process_label(ref_label, shape_tool, state, current_loc, grouping_name))
+                created_lvs.extend(
+                    process_label(
+                        ref_label,
+                        shape_tool,
+                        state,
+                        current_loc,
+                        grouping_name,
+                        smart_import=smart_import,
+                    )
+                )
 
     # Case 2: The label is a simple shape (a leaf node in the assembly tree).
     elif shape_tool.IsSimpleShape(label):
         shape = shape_tool.GetShape(label)
         if shape.ShapeType() == TopAbs_SOLID:
             # process_solid now returns the newly created LogicalVolume.
-            new_lv = process_solid(shape, state, grouping_name)
+            new_lv = process_solid(shape, state, grouping_name, smart_import=smart_import)
             if new_lv:
-                # The transform comes from the current location in the assembly tree.
+                # Base transform comes from the component location in the assembly tree.
                 transform_dict = _trsf_to_dict(current_loc.Transformation())
+
+                # Primitive-mapped solids can carry additional local center/orientation.
+                local_transform = getattr(new_lv, '_smart_local_transform', None)
+                if local_transform:
+                    transform_dict = _compose_transform_dicts(transform_dict, local_transform)
+
                 created_lvs.append((new_lv, transform_dict))
 
     return created_lvs
 
 
-def process_solid(solid_shape, state, grouping_name):
-    """Tessellates a single solid with improved quality and vertex deduplication."""
+def _candidate_to_primitive(candidate):
+    """Maps a smart CAD candidate to primitive Solid params + local transform."""
+    classification = candidate.get('classification')
+    params = candidate.get('params', {}) or {}
+
+    if classification == 'box':
+        return 'box', {
+            'x': params.get('x', 0.0),
+            'y': params.get('y', 0.0),
+            'z': params.get('z', 0.0),
+        }, _candidate_local_transform(candidate)
+
+    if classification == 'cylinder':
+        return 'tube', {
+            'rmin': params.get('rmin', 0.0),
+            'rmax': params.get('rmax', 0.0),
+            'z': params.get('z', 0.0),
+            'startphi': params.get('startphi', 0.0),
+            'deltaphi': params.get('deltaphi', 6.283185307179586),
+        }, _candidate_local_transform(candidate)
+
+    if classification == 'sphere':
+        return 'sphere', {
+            'rmin': params.get('rmin', 0.0),
+            'rmax': params.get('rmax', 0.0),
+            'startphi': params.get('startphi', 0.0),
+            'deltaphi': params.get('deltaphi', 6.283185307179586),
+            'starttheta': params.get('starttheta', 0.0),
+            'deltatheta': params.get('deltatheta', 3.141592653589793),
+        }, _candidate_local_transform(candidate)
+
+    return None, None, None
+
+
+def _build_lv_for_solid(state, solid_name, solid_type, raw_params):
+    solid_obj = Solid(solid_name, solid_type, raw_params)
+    state.add_solid(solid_obj)
+
+    lv_name = f"{solid_name}_LV"
+    lv = LogicalVolume(lv_name, solid_obj.name, "G4_STAINLESS-STEEL")
+    state.add_logical_volume(lv)
+    return lv
+
+
+def process_solid(solid_shape, state, grouping_name, smart_import=False):
+    """Builds a solid from STEP geometry.
+
+    Smart import path:
+    - classify primitive candidates (box/cylinder/sphere)
+    - if confidence is high enough, create primitive GDML solid directly
+    - otherwise fallback to tessellated mesh construction
+    """
     solid_index = len(state.solids)
+    solid_base_name = f"{grouping_name}_solid_{solid_index}"
+
+    # Smart CAD candidate attempt before tessellation.
+    if smart_import and hasattr(state, 'smart_import_report'):
+        candidate = classify_shape(solid_shape, source_id=solid_base_name)
+
+        primitive_conf_threshold = 0.80
+        primitive_type, primitive_params, local_transform = _candidate_to_primitive(candidate)
+        if primitive_type and candidate.get('confidence', 0.0) >= primitive_conf_threshold:
+            candidate['selected_mode'] = 'primitive'
+            state.smart_import_report.setdefault('candidates', []).append(candidate)
+
+            lv = _build_lv_for_solid(state, solid_base_name, primitive_type, primitive_params)
+            setattr(lv, '_smart_local_transform', local_transform)
+            return lv
+
+        candidate['selected_mode'] = 'tessellated'
+        state.smart_import_report.setdefault('candidates', []).append(candidate)
     
     # Improved meshing quality. 
     # Linear deflection: max distance between mesh and geometry surface (mm).
@@ -266,8 +479,6 @@ def process_solid(solid_shape, state, grouping_name):
         return
 
     # Don't create defines. Store vertices directly.
-    solid_base_name = f"{grouping_name}_solid_{solid_index}"
-    
     facets = []
     for face_indices in all_faces:
         v1 = unique_vertices[face_indices[0]]

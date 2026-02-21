@@ -888,6 +888,19 @@ export async function setActiveSource(sourceId) {
 }
 
 /**
+ * Runs backend geometry preflight checks before simulation.
+ * @returns {Promise<Object>} A promise resolving to {success, preflight_report}.
+ */
+export async function runPreflightChecks() {
+    const response = await fetch(`${API_BASE_URL}/api/preflight/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    });
+    return handleResponse(response);
+}
+
+/**
  * Sends a request to the backend to start a new simulation run.
  * @param {object} simParams - An object containing simulation parameters (e.g., {events: 1000}).
  * @returns {Promise<Object>} A promise resolving to the backend's response, including a job_id.

@@ -1,6 +1,14 @@
 import pytest
+import numpy as np
 from unittest.mock import MagicMock, patch
-from src.step_parser import process_solid, process_label, _trsf_to_dict
+from src.step_parser import (
+    process_solid,
+    process_label,
+    _trsf_to_dict,
+    _compose_transform_dicts,
+    _candidate_to_primitive,
+    _transform_dict_to_matrix,
+)
 from src.geometry_types import GeometryState
 import math
 
@@ -179,3 +187,206 @@ def test_degenerate_triangle_filtering():
         solid = list(state.solids.values())[0]
         facets = solid.raw_parameters['facets']
         assert len(facets) == 1
+
+def test_process_solid_collects_smart_import_candidate():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.TopExp_Explorer') as MockExplorer, \
+         patch('src.step_parser.BRep_Tool.Triangulation') as MockTriangulation, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh, \
+         patch('src.step_parser.classify_shape') as MockClassify:
+
+        mock_mesh_instance = MockMesh.return_value
+        mock_mesh_instance.IsDone.return_value = True
+
+        explorer_instance = MockExplorer.return_value
+        explorer_instance.More.side_effect = [True, False]
+        mock_face = MagicMock()
+        explorer_instance.Current.return_value = mock_face
+        mock_face.Orientation.return_value = 0
+
+        mock_poly = MagicMock()
+        MockTriangulation.return_value = mock_poly
+
+        class MockNode:
+            def __init__(self, x, y, z): self._x, self._y, self._z = x, y, z
+            def X(self): return self._x
+            def Y(self): return self._y
+            def Z(self): return self._z
+
+        nodes = [MockNode(0, 0, 0), MockNode(1, 0, 0), MockNode(0, 1, 0)]
+        mock_poly.NbNodes.return_value = 3
+        mock_node_array = MagicMock()
+        mock_node_array.Value.side_effect = lambda i: nodes[i-1]
+        mock_poly.MapNodeArray.return_value = mock_node_array
+
+        class MockTriangle:
+            def __init__(self, n1, n2, n3): self.nodes = (n1, n2, n3)
+            def Get(self): return self.nodes
+
+        mock_poly.NbTriangles.return_value = 1
+        mock_tri_array = MagicMock()
+        mock_tri_array.Value.side_effect = lambda i: MockTriangle(1, 2, 3)
+        mock_poly.MapTriangleArray.return_value = mock_tri_array
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'box',
+            'confidence': 0.9,
+            'params': {'x': 1},
+            'fallback_reason': None,
+        }
+
+        lv = process_solid(mock_solid, state, grouping_name, smart_import=True)
+
+        assert lv is not None
+        assert len(state.smart_import_report['candidates']) == 1
+        candidate = state.smart_import_report['candidates'][0]
+        assert candidate['classification'] == 'box'
+        assert candidate['selected_mode'] == 'primitive'
+        MockClassify.assert_called_once()
+
+
+def test_process_solid_uses_primitive_when_confident():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.classify_shape') as MockClassify, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh:
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'box',
+            'confidence': 0.95,
+            'params': {
+                'x': 10.0,
+                'y': 20.0,
+                'z': 30.0,
+                'center': (5.0, 0.0, 0.0),
+                'axes': [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)],
+            },
+            'fallback_reason': None,
+        }
+
+        lv = process_solid(mock_solid, state, grouping_name, smart_import=True)
+
+        assert lv is not None
+        assert len(state.solids) == 1
+        solid = list(state.solids.values())[0]
+        assert solid.type == 'box'
+        assert solid.raw_parameters['x'] == 10.0
+        assert state.smart_import_report['candidates'][0]['selected_mode'] == 'primitive'
+
+        # Primitive path should skip tessellation mesh call.
+        MockMesh.assert_not_called()
+
+
+def test_process_solid_marks_tessellated_mode_when_below_threshold():
+    state = GeometryState()
+    state.smart_import_report = {'enabled': True, 'candidates': [], 'summary': {}}
+
+    grouping_name = "smart_group"
+    mock_solid = MagicMock()
+
+    with patch('src.step_parser.classify_shape') as MockClassify, \
+         patch('src.step_parser.TopExp_Explorer') as MockExplorer, \
+         patch('src.step_parser.BRep_Tool.Triangulation') as MockTriangulation, \
+         patch('src.step_parser.BRepMesh_IncrementalMesh') as MockMesh:
+
+        MockClassify.return_value = {
+            'source_id': 'smart_group_solid_0',
+            'classification': 'box',
+            'confidence': 0.5,
+            'params': {'x': 1.0, 'y': 1.0, 'z': 1.0},
+            'fallback_reason': None,
+        }
+
+        mock_mesh_instance = MockMesh.return_value
+        mock_mesh_instance.IsDone.return_value = True
+
+        explorer_instance = MockExplorer.return_value
+        explorer_instance.More.side_effect = [True, False]
+        mock_face = MagicMock()
+        explorer_instance.Current.return_value = mock_face
+        mock_face.Orientation.return_value = 0
+
+        mock_poly = MagicMock()
+        MockTriangulation.return_value = mock_poly
+
+        class MockNode:
+            def __init__(self, x, y, z): self._x, self._y, self._z = x, y, z
+            def X(self): return self._x
+            def Y(self): return self._y
+            def Z(self): return self._z
+
+        nodes = [MockNode(0, 0, 0), MockNode(1, 0, 0), MockNode(0, 1, 0)]
+        mock_poly.NbNodes.return_value = 3
+        mock_node_array = MagicMock()
+        mock_node_array.Value.side_effect = lambda i: nodes[i-1]
+        mock_poly.MapNodeArray.return_value = mock_node_array
+
+        class MockTriangle:
+            def __init__(self, n1, n2, n3): self.nodes = (n1, n2, n3)
+            def Get(self): return self.nodes
+
+        mock_poly.NbTriangles.return_value = 1
+        mock_tri_array = MagicMock()
+        mock_tri_array.Value.side_effect = lambda i: MockTriangle(1, 2, 3)
+        mock_poly.MapTriangleArray.return_value = mock_tri_array
+
+        lv = process_solid(mock_solid, state, grouping_name, smart_import=True)
+
+        assert lv is not None
+        assert len(state.solids) == 1
+        assert list(state.solids.values())[0].type == 'tessellated'
+        assert state.smart_import_report['candidates'][0]['selected_mode'] == 'tessellated'
+
+
+def test_compose_transform_dicts_applies_local_after_parent():
+    parent = {
+        'position': {'x': 10.0, 'y': 0.0, 'z': 0.0},
+        'rotation': {'x': 0.0, 'y': 0.0, 'z': math.pi / 2.0},
+    }
+    local = {
+        'position': {'x': 0.0, 'y': 5.0, 'z': 0.0},
+        'rotation': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+    }
+
+    composed = _compose_transform_dicts(parent, local)
+
+    assert pytest.approx(composed['position']['x'], abs=1e-6) == 5.0
+    assert pytest.approx(composed['position']['y'], abs=1e-6) == 0.0
+    assert pytest.approx(composed['position']['z'], abs=1e-6) == 0.0
+
+
+def test_candidate_to_primitive_cylinder_preserves_axis_orientation():
+    candidate = {
+        'classification': 'cylinder',
+        'params': {
+            'rmin': 0.0,
+            'rmax': 2.0,
+            'z': 10.0,
+            'center': (1.0, 2.0, 3.0),
+            'axis': (1.0, 0.0, 0.0),
+        },
+    }
+
+    primitive_type, primitive_params, local_transform = _candidate_to_primitive(candidate)
+
+    assert primitive_type == 'tube'
+    assert primitive_params['rmax'] == 2.0
+    assert pytest.approx(local_transform['position']['x']) == 1.0
+    assert pytest.approx(local_transform['position']['y']) == 2.0
+    assert pytest.approx(local_transform['position']['z']) == 3.0
+
+    matrix = _transform_dict_to_matrix(local_transform)
+    # The transformed local +Z axis should align with global +X.
+    z_axis_world = matrix[:3, 2]
+    assert np.allclose(z_axis_world, np.array([1.0, 0.0, 0.0]), atol=1e-6)

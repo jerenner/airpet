@@ -1,0 +1,65 @@
+[
+  {
+    "name": "baseline_project",
+    "mutations": [],
+    "expected": {
+      "can_run": true,
+      "codes": []
+    }
+  },
+  {
+    "name": "unknown_material_reference",
+    "mutations": [
+      {
+        "op": "set_lv_material",
+        "lv": "box_LV",
+        "value": "MissingCustomMaterial"
+      }
+    ],
+    "expected": {
+      "can_run": false,
+      "codes": ["unknown_material_reference"]
+    }
+  },
+  {
+    "name": "tiny_dimension_warning",
+    "mutations": [
+      {
+        "op": "set_solid_param",
+        "solid": "box_solid",
+        "param": "x",
+        "value": "1e-6"
+      }
+    ],
+    "expected": {
+      "can_run": true,
+      "codes": ["tiny_dimension"]
+    }
+  },
+  {
+    "name": "possible_overlap_warning",
+    "mutations": [
+      {
+        "op": "duplicate_box_overlap"
+      }
+    ],
+    "expected": {
+      "can_run": true,
+      "codes": ["possible_overlap_aabb"]
+    }
+  },
+  {
+    "name": "missing_solid_ref",
+    "mutations": [
+      {
+        "op": "set_lv_solid",
+        "lv": "box_LV",
+        "value": "ghost_solid"
+      }
+    ],
+    "expected": {
+      "can_run": false,
+      "codes": ["missing_solid_reference"]
+    }
+  }
+]

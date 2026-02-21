@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 import shutil
+import itertools
 
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
@@ -2558,6 +2559,9 @@ class ProjectManager:
         """
         Processes an uploaded STEP file using options, imports the geometry,
         and merges it into the current project.
+
+        Returns:
+            (success: bool, error_msg: Optional[str], import_report: Optional[dict])
         """
         # Save the stream to a temporary file to be read by the STEP parser
         with tempfile.NamedTemporaryFile(delete=False, suffix=".step") as temp_f:
@@ -2573,11 +2577,13 @@ class ProjectManager:
             self.changed_object_ids['solids'].update(newly_created_solid_names)
             print(f"Changed solids {self.changed_object_ids['solids']}")
             
+            import_report = getattr(imported_state, 'smart_import_report', None)
+
             # The merge_from_state function already handles placements and grouping
             success, error_msg = self.merge_from_state(imported_state)
             
             if not success:
-                return False, f"Failed to merge STEP geometry: {error_msg}"
+                return False, f"Failed to merge STEP geometry: {error_msg}", None
             
             # Recalculate is handled inside merge_from_state, but an extra one ensures consistency.
             self.recalculate_geometry_state()
@@ -2585,7 +2591,7 @@ class ProjectManager:
             # Capture this entire import as a single history event
             self._capture_history_state(f"Imported STEP file '{options.get('groupingName')}'")
 
-            return True, None
+            return True, None, import_report
             
         except Exception as e:
             # Ensure we raise the error to be caught by the app route
@@ -3291,7 +3297,283 @@ class ProjectManager:
             shape_cmds['pos/halfz'] = "200 mm"
         
         return shape_cmds, pv._evaluated_position, pv._evaluated_rotation
-    
+
+    def _preflight_add_issue(self, report, severity, code, message, object_refs=None, hint=None):
+        issue = {
+            'severity': severity,
+            'code': code,
+            'message': message,
+            'object_refs': object_refs or [],
+        }
+        if hint:
+            issue['hint'] = hint
+        report['issues'].append(issue)
+
+    def _preflight_finalize(self, report):
+        severity_counts = {'error': 0, 'warning': 0, 'info': 0}
+        code_counts = {}
+        for issue in report['issues']:
+            sev = issue.get('severity', 'info')
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            code = issue.get('code', 'unknown')
+            code_counts[code] = code_counts.get(code, 0) + 1
+
+        report['summary'] = {
+            'errors': severity_counts.get('error', 0),
+            'warnings': severity_counts.get('warning', 0),
+            'infos': severity_counts.get('info', 0),
+            'can_run': severity_counts.get('error', 0) == 0,
+            'counts_by_code': code_counts,
+        }
+        return report
+
+    def _get_solid_local_half_extents(self, solid):
+        """Returns (hx, hy, hz) for supported primitive solids, else None."""
+        p = solid._evaluated_parameters or {}
+        solid_type = solid.type
+
+        try:
+            if solid_type == 'box':
+                return (float(p.get('x', 0.0)) / 2.0, float(p.get('y', 0.0)) / 2.0, float(p.get('z', 0.0)) / 2.0)
+            if solid_type in ['tube', 'cylinder', 'tubs']:
+                rmax = float(p.get('rmax', 0.0))
+                z = float(p.get('z', 0.0))
+                return (rmax, rmax, z / 2.0)
+            if solid_type in ['sphere']:
+                rmax = float(p.get('rmax', 0.0))
+                return (rmax, rmax, rmax)
+            if solid_type in ['orb']:
+                r = float(p.get('r', 0.0))
+                return (r, r, r)
+        except Exception:
+            return None
+
+        return None
+
+    def _compute_pv_aabb(self, pv):
+        state = self.current_geometry_state
+        lv = state.logical_volumes.get(pv.volume_ref)
+        if not lv:
+            return None
+
+        solid = state.solids.get(lv.solid_ref)
+        if not solid:
+            return None
+
+        half_extents = self._get_solid_local_half_extents(solid)
+        if not half_extents:
+            return None
+
+        hx, hy, hz = half_extents
+        if hx <= 0 or hy <= 0 or hz <= 0:
+            return None
+
+        corners = np.array([
+            [sx * hx, sy * hy, sz * hz, 1.0]
+            for sx in (-1.0, 1.0)
+            for sy in (-1.0, 1.0)
+            for sz in (-1.0, 1.0)
+        ])
+
+        matrix = pv.get_transform_matrix()
+        transformed = (matrix @ corners.T).T[:, :3]
+
+        mins = transformed.min(axis=0)
+        maxs = transformed.max(axis=0)
+
+        return {
+            'pv': pv,
+            'pv_name': pv.name,
+            'pv_id': pv.id,
+            'solid_type': solid.type,
+            'min': mins,
+            'max': maxs,
+        }
+
+    def _aabb_intersection_volume(self, a, b):
+        overlap = np.minimum(a['max'], b['max']) - np.maximum(a['min'], b['min'])
+        if np.any(overlap <= 0):
+            return 0.0
+        return float(overlap[0] * overlap[1] * overlap[2])
+
+    def run_preflight_checks(self):
+        """Runs lightweight geometry preflight checks prior to simulation."""
+        report = {
+            'version': 1,
+            'name': 'geometry_preflight_v1',
+            'issues': [],
+        }
+
+        if not self.current_geometry_state:
+            self._preflight_add_issue(report, 'error', 'missing_project_state', 'No project geometry state is loaded.')
+            return self._preflight_finalize(report)
+
+        ok, err = self.recalculate_geometry_state()
+        if not ok:
+            self._preflight_add_issue(
+                report,
+                'error',
+                'recalculation_failed',
+                f'Geometry evaluation failed: {err}',
+                hint='Fix invalid expressions/defines before simulation.',
+            )
+            return self._preflight_finalize(report)
+
+        state = self.current_geometry_state
+
+        # 1) Missing references and material checks.
+        for lv in state.logical_volumes.values():
+            if not lv.solid_ref or lv.solid_ref not in state.solids:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'missing_solid_reference',
+                    f"LogicalVolume '{lv.name}' references missing solid '{lv.solid_ref}'.",
+                    object_refs=[lv.name, lv.solid_ref],
+                    hint='Assign a valid solid to this logical volume.',
+                )
+
+            mat = lv.material_ref
+            if not mat:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'missing_material_reference',
+                    f"LogicalVolume '{lv.name}' has no material assigned.",
+                    object_refs=[lv.name],
+                    hint='Assign a material before running simulation.',
+                )
+            elif (mat not in state.materials) and (not str(mat).startswith('G4_')):
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'unknown_material_reference',
+                    f"LogicalVolume '{lv.name}' references unknown material '{mat}'.",
+                    object_refs=[lv.name, mat],
+                    hint='Create this material or switch to a known/NIST material.',
+                )
+
+        # 2) Solid geometry sanity checks.
+        tiny_threshold_mm = 1e-3  # 1 micron in mm units
+        for solid in state.solids.values():
+            p = solid._evaluated_parameters or {}
+            st = solid.type
+
+            def check_positive(name, value):
+                if value is None or not np.isfinite(value):
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'non_finite_dimension',
+                        f"Solid '{solid.name}' has invalid parameter '{name}'={value}.",
+                        object_refs=[solid.name],
+                        hint='Check expressions/units for this solid parameter.',
+                    )
+                    return
+                if value <= 0:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'non_positive_dimension',
+                        f"Solid '{solid.name}' has non-positive '{name}'={value}.",
+                        object_refs=[solid.name],
+                        hint='Dimensions must be > 0.',
+                    )
+                elif value < tiny_threshold_mm:
+                    self._preflight_add_issue(
+                        report,
+                        'warning',
+                        'tiny_dimension',
+                        f"Solid '{solid.name}' has tiny '{name}'={value} mm.",
+                        object_refs=[solid.name],
+                        hint='Very small features can cause navigation issues.',
+                    )
+
+            if st == 'box':
+                for key in ['x', 'y', 'z']:
+                    check_positive(key, float(p.get(key, np.nan)))
+            elif st in ['tube', 'cylinder', 'tubs']:
+                check_positive('rmax', float(p.get('rmax', np.nan)))
+                check_positive('z', float(p.get('z', np.nan)))
+                rmin = float(p.get('rmin', 0.0))
+                rmax = float(p.get('rmax', np.nan))
+                if np.isfinite(rmin) and np.isfinite(rmax) and rmin >= rmax:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_radial_bounds',
+                        f"Solid '{solid.name}' has rmin >= rmax ({rmin} >= {rmax}).",
+                        object_refs=[solid.name],
+                        hint='Ensure rmin < rmax for tube-like solids.',
+                    )
+            elif st in ['sphere']:
+                check_positive('rmax', float(p.get('rmax', np.nan)))
+                rmin = float(p.get('rmin', 0.0))
+                rmax = float(p.get('rmax', np.nan))
+                if np.isfinite(rmin) and np.isfinite(rmax) and rmin >= rmax:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_radial_bounds',
+                        f"Solid '{solid.name}' has rmin >= rmax ({rmin} >= {rmax}).",
+                        object_refs=[solid.name],
+                    )
+            elif st == 'tessellated':
+                facets = solid.raw_parameters.get('facets', []) if isinstance(solid.raw_parameters, dict) else []
+                if len(facets) < 4:
+                    self._preflight_add_issue(
+                        report,
+                        'warning',
+                        'low_facet_count',
+                        f"Tessellated solid '{solid.name}' has very few facets ({len(facets)}).",
+                        object_refs=[solid.name],
+                        hint='Check CAD import quality; this may indicate degenerate geometry.',
+                    )
+
+        # 3) Approximate sibling overlap checks (AABB heuristic).
+        placement_groups = []
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol' and lv.content:
+                placement_groups.append((f"LV:{lv.name}", lv.content))
+        for asm in state.assemblies.values():
+            if asm.placements:
+                placement_groups.append((f"ASM:{asm.name}", asm.placements))
+
+        max_overlap_reports = 50
+        overlap_reports = 0
+        for group_name, placements in placement_groups:
+            aabbs = []
+            for pv in placements:
+                box = self._compute_pv_aabb(pv)
+                if box is not None:
+                    aabbs.append(box)
+
+            for a, b in itertools.combinations(aabbs, 2):
+                ivol = self._aabb_intersection_volume(a, b)
+                if ivol > 0.0:
+                    self._preflight_add_issue(
+                        report,
+                        'warning',
+                        'possible_overlap_aabb',
+                        (
+                            f"Possible overlap in {group_name}: '{a['pv_name']}' and '{b['pv_name']}' "
+                            f"(AABB intersection ≈ {ivol:.3f} mm^3)."
+                        ),
+                        object_refs=[a['pv_id'], b['pv_id']],
+                        hint='Run Geant4 overlap checks for exact confirmation.',
+                    )
+                    overlap_reports += 1
+                    if overlap_reports >= max_overlap_reports:
+                        self._preflight_add_issue(
+                            report,
+                            'info',
+                            'overlap_report_truncated',
+                            f"Overlap reporting truncated after {max_overlap_reports} findings.",
+                        )
+                        return self._preflight_finalize(report)
+
+        return self._preflight_finalize(report)
+
     def generate_macro_file(self, job_id, sim_params, build_dir, run_dir, version_dir):
         """
         Generates a Geant4 macro file from simulation parameters.

@@ -48,11 +48,12 @@ let lastSelectedItem = null; // Stores the DOM element of the last clicked item
 const ITEMS_PER_GROUP = 100;
 
 // Simulation control variables
-let simEventsInput, runSimButton, stopSimButton, simOptionsButton, simConsole,
+let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
-    simPhysicsListSelect, simOpticalPhysicsCheckbox;
+    simPhysicsListSelect, simOpticalPhysicsCheckbox,
+    preflightPanel, preflightSummaryLine, preflightIssuesList;
 
 // Analysis control variables
 let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
@@ -115,6 +116,12 @@ let callbacks = {
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
     onSourceActivationToggled: (sourceId) => { },
+    onRunSimulationClicked: (simSettings) => { },
+    onStopSimulationClicked: () => { },
+    onRunPreflightClicked: () => { },
+    onSimOptionsClicked: () => { },
+    onSaveSimOptions: () => { },
+    onDrawTracksToggle: () => { },
     onRefreshAnalysisClicked: (energyBins, spatialBins) => { },
     onDownloadSimDataClicked: () => { }
 };
@@ -229,12 +236,18 @@ export function initUI(cb) {
     simEventsInput = document.getElementById('simEventsInput');
     runSimButton = document.getElementById('runSimButton');
     stopSimButton = document.getElementById('stopSimButton');
+    preflightButton = document.getElementById('preflightButton');
     simOptionsButton = document.getElementById('simOptionsButton');
     simConsole = document.getElementById('sim_console');
     simStatusDisplay = document.getElementById('sim_status_display');
+    preflightPanel = document.getElementById('preflight_panel');
+    preflightSummaryLine = document.getElementById('preflight_summary_line');
+    preflightIssuesList = document.getElementById('preflight_issues_list');
 
     simOptionsModal = document.getElementById('simOptionsModal');
     saveSimOptionsButton = document.getElementById('saveSimOptions');
+
+    clearPreflightReport();
     simSeed1Input = document.getElementById('simSeed1');
     simSeed2Input = document.getElementById('simSeed2');
     simSaveHitsCheckbox = document.getElementById('simSaveHits');
@@ -478,6 +491,7 @@ export function initUI(cb) {
         }
     });
     stopSimButton.addEventListener('click', callbacks.onStopSimulationClicked);
+    if (preflightButton) preflightButton.addEventListener('click', callbacks.onRunPreflightClicked);
     simOptionsButton.addEventListener('click', callbacks.onSimOptionsClicked);
     saveSimOptionsButton.addEventListener('click', callbacks.onSaveSimOptions);
     drawTracksCheckbox.addEventListener('change', callbacks.onDrawTracksToggle);
@@ -2109,8 +2123,83 @@ export function setSimulationState(state) {
     const isRunning = state === 'running';
     runSimButton.disabled = isRunning;
     stopSimButton.disabled = !isRunning;
+    if (preflightButton) preflightButton.disabled = isRunning;
     simEventsInput.disabled = isRunning;
     simOptionsButton.disabled = isRunning;
+}
+
+export function setPreflightState(state) {
+    if (!preflightButton) return;
+    const isRunning = state === 'running';
+    preflightButton.disabled = isRunning;
+    preflightButton.textContent = isRunning ? '🧪 Preflight...' : '🧪 Preflight';
+}
+
+export function clearPreflightReport() {
+    if (preflightSummaryLine) {
+        preflightSummaryLine.textContent = 'Preflight: not run yet.';
+        preflightSummaryLine.style.color = '#334155';
+    }
+    if (preflightIssuesList) {
+        preflightIssuesList.innerHTML = '';
+        const empty = document.createElement('div');
+        empty.id = 'preflight_empty_line';
+        empty.style.color = '#64748b';
+        empty.textContent = 'Run preflight to see geometry checks and diagnostics.';
+        preflightIssuesList.appendChild(empty);
+    }
+}
+
+export function renderPreflightReport(report) {
+    if (!preflightSummaryLine || !preflightIssuesList) return;
+
+    const summary = report?.summary || {};
+    const errors = summary.errors || 0;
+    const warnings = summary.warnings || 0;
+    const infos = summary.infos || 0;
+    const canRun = !!summary.can_run;
+
+    preflightSummaryLine.textContent = `Preflight: ${errors} error(s), ${warnings} warning(s), ${infos} info. ` +
+        (canRun ? 'Simulation can run.' : 'Simulation blocked.');
+    preflightSummaryLine.style.color = canRun ? '#166534' : '#b91c1c';
+
+    preflightIssuesList.innerHTML = '';
+    const issues = report?.issues || [];
+
+    if (issues.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.color = '#64748b';
+        empty.textContent = 'No issues detected.';
+        preflightIssuesList.appendChild(empty);
+        return;
+    }
+
+    issues.forEach(issue => {
+        const row = document.createElement('div');
+        row.className = 'preflight_issue';
+
+        const badge = document.createElement('span');
+        const sev = (issue.severity || 'info').toLowerCase();
+        badge.className = `preflight_badge ${sev}`;
+        badge.textContent = sev;
+
+        const textWrap = document.createElement('div');
+        const message = document.createElement('div');
+        message.textContent = issue.message || issue.code || 'Unknown preflight issue';
+        textWrap.appendChild(message);
+
+        if (issue.hint) {
+            const hint = document.createElement('div');
+            hint.style.color = '#64748b';
+            hint.style.fontSize = '11px';
+            hint.textContent = `Hint: ${issue.hint}`;
+            textWrap.appendChild(hint);
+        }
+
+        row.appendChild(badge);
+        row.appendChild(textWrap);
+        preflightIssuesList.appendChild(row);
+    });
 }
 
 export function clearSimConsole() {

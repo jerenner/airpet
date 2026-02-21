@@ -1,0 +1,55 @@
+[
+  {
+    "source_id": "fixture_box",
+    "hint": "box",
+    "expected": {
+      "classification": "box",
+      "fallback_reason": null
+    }
+  },
+  {
+    "source_id": "fixture_cylinder",
+    "hint": {
+      "classification": "cylinder",
+      "confidence": 0.82,
+      "params": {
+        "rmax": 12.5,
+        "dz": 40.0
+      }
+    },
+    "expected": {
+      "classification": "cylinder",
+      "fallback_reason": null
+    }
+  },
+  {
+    "source_id": "fixture_sphere",
+    "hint": {
+      "classification": "sphere",
+      "confidence": 1.0,
+      "params": {
+        "rmax": 25.0
+      }
+    },
+    "expected": {
+      "classification": "sphere",
+      "fallback_reason": null
+    }
+  },
+  {
+    "source_id": "fixture_complex_fallback",
+    "hint": null,
+    "expected": {
+      "classification": "tessellated",
+      "fallback_reason": "no_primitive_match_v1"
+    }
+  },
+  {
+    "source_id": "fixture_bad_label",
+    "hint": "non_existing_primitive",
+    "expected": {
+      "classification": "tessellated",
+      "fallback_reason": "no_primitive_match_v1"
+    }
+  }
+]
