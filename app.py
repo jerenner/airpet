@@ -944,6 +944,117 @@ def get_simulation_metadata(version_id, job_id):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+def _read_hits_columns_for_objectives(output_path):
+    """Read minimal columns needed for objective extraction."""
+    with h5py.File(output_path, 'r') as f:
+        if 'default_ntuples/Hits' not in f:
+            raise RuntimeError("Hits data not found in output file.")
+
+        hits_group = f['default_ntuples/Hits']
+
+        num_entries = None
+        if 'entries' in hits_group:
+            try:
+                ent_dset = hits_group['entries']
+                if ent_dset.shape == ():
+                    num_entries = int(ent_dset[()])
+                else:
+                    num_entries = int(ent_dset[0])
+            except Exception:
+                num_entries = None
+
+        def get_col(name):
+            if name not in hits_group:
+                return np.array([])
+            dset = hits_group[name]
+            if isinstance(dset, h5py.Group) and 'pages' in dset:
+                data = dset['pages'][:]
+            elif isinstance(dset, h5py.Dataset):
+                data = dset[:]
+            else:
+                return np.array([])
+            if num_entries is not None and len(data) >= num_entries:
+                return data[:num_entries]
+            return data
+
+        return {
+            'Edep': get_col('Edep'),
+            'CopyNo': get_col('CopyNo'),
+            'ParticleName': get_col('ParticleName'),
+        }
+
+
+@app.route('/api/objectives/extract/<version_id>/<job_id>', methods=['POST'])
+def extract_objectives(version_id, job_id):
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    output_path = os.path.join(run_dir, "output.hdf5")
+
+    if not os.path.exists(output_path):
+        return jsonify({"success": False, "error": "Simulation output not found."}), 404
+
+    payload = request.get_json() or {}
+    objectives = payload.get('objectives', []) or []
+    if not isinstance(objectives, list):
+        return jsonify({"success": False, "error": "objectives must be a list."}), 400
+
+    try:
+        cols = _read_hits_columns_for_objectives(output_path)
+        edep = cols['Edep']
+        copy_no = cols['CopyNo']
+        particle_name_ds = cols['ParticleName']
+
+        objective_values = {}
+
+        for i, obj in enumerate(objectives):
+            if not isinstance(obj, dict):
+                continue
+            metric = obj.get('metric')
+            name = obj.get('name', metric or f'objective_{i}')
+
+            if metric == 'total_hits':
+                objective_values[name] = float(len(edep))
+            elif metric == 'edep_sum':
+                objective_values[name] = float(np.sum(edep)) if len(edep) > 0 else 0.0
+            elif metric == 'edep_mean':
+                objective_values[name] = float(np.mean(edep)) if len(edep) > 0 else 0.0
+            elif metric == 'edep_max':
+                objective_values[name] = float(np.max(edep)) if len(edep) > 0 else 0.0
+            elif metric == 'unique_copyno_count':
+                objective_values[name] = float(len(np.unique(copy_no))) if len(copy_no) > 0 else 0.0
+            elif metric == 'particle_unique_count':
+                if len(particle_name_ds) == 0:
+                    objective_values[name] = 0.0
+                else:
+                    p_names = [n.decode('utf-8') if isinstance(n, bytes) else str(n) for n in particle_name_ds]
+                    objective_values[name] = float(len(set(p_names)))
+            elif metric == 'particle_fraction':
+                target_particle = (obj.get('particle') or '').strip()
+                if not target_particle or len(particle_name_ds) == 0:
+                    objective_values[name] = 0.0
+                else:
+                    p_names = np.array([n.decode('utf-8') if isinstance(n, bytes) else str(n) for n in particle_name_ds])
+                    objective_values[name] = float(np.mean(p_names == target_particle))
+
+        return jsonify({
+            "success": True,
+            "objective_values": objective_values,
+            "available_metrics": [
+                "total_hits",
+                "edep_sum",
+                "edep_mean",
+                "edep_max",
+                "unique_copyno_count",
+                "particle_unique_count",
+                "particle_fraction",
+            ],
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route('/api/simulation/analysis/<version_id>/<job_id>', methods=['GET'])
 def get_simulation_analysis(version_id, job_id):
     pm = get_project_manager_for_session()
@@ -2709,6 +2820,130 @@ def update_define_route():
         return create_success_response(pm, f"Define '{define_name}' updated.")
     else:
         return jsonify({"success": False, "error": error_msg}), 500
+
+@app.route('/api/parameter_registry/list', methods=['GET'])
+def parameter_registry_list_route():
+    pm = get_project_manager_for_session()
+    registry = pm.list_parameter_registry()
+    return jsonify({"success": True, "parameter_registry": registry})
+
+
+@app.route('/api/parameter_registry/upsert', methods=['POST'])
+def parameter_registry_upsert_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "Parameter name is required."}), 400
+
+    entry, err = pm.upsert_parameter_registry_entry(name, data)
+    if entry:
+        return create_success_response(pm, f"Parameter '{name}' saved.")
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/parameter_registry/delete', methods=['POST'])
+def parameter_registry_delete_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "Parameter name is required."}), 400
+
+    ok, err = pm.delete_parameter_registry_entry(name)
+    if ok:
+        return create_success_response(pm, f"Parameter '{name}' deleted.")
+    return jsonify({"success": False, "error": err}), 404
+
+
+@app.route('/api/param_study/list', methods=['GET'])
+def param_study_list_route():
+    pm = get_project_manager_for_session()
+    studies = pm.list_param_studies()
+    return jsonify({"success": True, "param_studies": studies})
+
+
+@app.route('/api/param_study/upsert', methods=['POST'])
+def param_study_upsert_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "Study name is required."}), 400
+
+    study, err = pm.upsert_param_study(name, data)
+    if study:
+        return create_success_response(pm, f"Param study '{name}' saved.")
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_study/delete', methods=['POST'])
+def param_study_delete_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "Study name is required."}), 400
+
+    ok, err = pm.delete_param_study(name)
+    if ok:
+        return create_success_response(pm, f"Param study '{name}' deleted.")
+    return jsonify({"success": False, "error": err}), 404
+
+
+@app.route('/api/param_study/run', methods=['POST'])
+def param_study_run_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "Study name is required."}), 400
+
+    max_runs = data.get('max_runs')
+    result, err = pm.run_param_study(name, max_runs=max_runs)
+    if result:
+        return jsonify({"success": True, "study_result": result})
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/list', methods=['GET'])
+def param_optimizer_list_route():
+    pm = get_project_manager_for_session()
+    study_name = request.args.get('study_name')
+    limit = request.args.get('limit', default=50, type=int)
+    runs = pm.list_optimizer_runs(study_name=study_name, limit=limit)
+    return jsonify({"success": True, "optimizer_runs": runs})
+
+
+@app.route('/api/param_optimizer/run', methods=['POST'])
+def param_optimizer_run_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    method = data.get('method', 'random_search')
+    budget = data.get('budget', 20)
+    seed = data.get('seed', 42)
+    objective_name = data.get('objective_name')
+    direction = data.get('direction')
+
+    result, err = pm.run_param_optimizer(
+        study_name=study_name,
+        method=method,
+        budget=budget,
+        seed=seed,
+        objective_name=objective_name,
+        direction=direction,
+    )
+    if result:
+        return jsonify({"success": True, "optimizer_result": result})
+    return jsonify({"success": False, "error": err}), 400
+
 
 @app.route('/add_solid_and_place', methods=['POST'])
 def add_solid_and_place_route():

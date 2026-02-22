@@ -783,6 +783,43 @@ class GeometryState:
         # Changed from single ID to list of IDs for multiple active sources
         self.active_source_ids = [] 
 
+        # Parameter registry for M3 studies/optimization.
+        # Format:
+        # {
+        #   'param_name': {
+        #       'name': 'param_name',
+        #       'target_type': 'define|solid|source|sim_option',
+        #       'target_ref': {...},
+        #       'bounds': {'min': x, 'max': y},
+        #       'default': x,
+        #       'units': 'mm',
+        #       'enabled': True,
+        #       'constraint_group': None,
+        #   }
+        # }
+        self.parameter_registry = {}
+
+        # Parametric study definitions (M3).
+        # {
+        #   'study_name': {
+        #       'name': 'study_name',
+        #       'mode': 'grid|random',
+        #       'parameters': ['p1', 'p2'],
+        #       'grid': {'steps': 3, 'per_parameter_steps': {'p1': 5}},
+        #       'random': {'samples': 20, 'seed': 42},
+        #   }
+        # }
+        self.param_studies = {}
+
+        # Optimizer run history/provenance (M3 classical optimizer).
+        # {
+        #   '<run_id>': {
+        #       'run_id': ..., 'study_name': ..., 'method': ..., 'seed': ...,
+        #       'budget': ..., 'objective': ..., 'best_run': {...}, 'candidates': [...]
+        #   }
+        # }
+        self.optimizer_runs = {}
+
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
         self.ui_groups = {
@@ -835,6 +872,9 @@ class GeometryState:
             "border_surfaces": {k: v.to_dict() for k, v in self.border_surfaces.items()},
             "sources": {k: v.to_dict() for k, v in self.sources.items()},
             "active_source_ids": self.active_source_ids,
+            "parameter_registry": self.parameter_registry,
+            "param_studies": self.param_studies,
+            "optimizer_runs": self.optimizer_runs,
             "ui_groups": self.ui_groups
         }
 
@@ -872,6 +912,24 @@ class GeometryState:
             instance.active_source_ids = [legacy_id]
         else:
             instance.active_source_ids = []
+
+        registry = data.get('parameter_registry', {})
+        if isinstance(registry, dict):
+            instance.parameter_registry = registry
+        else:
+            instance.parameter_registry = {}
+
+        param_studies = data.get('param_studies', {})
+        if isinstance(param_studies, dict):
+            instance.param_studies = param_studies
+        else:
+            instance.param_studies = {}
+
+        optimizer_runs = data.get('optimizer_runs', {})
+        if isinstance(optimizer_runs, dict):
+            instance.optimizer_runs = optimizer_runs
+        else:
+            instance.optimizer_runs = {}
 
         instance.ui_groups = data.get('ui_groups', instance.ui_groups)
 

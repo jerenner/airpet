@@ -803,6 +803,80 @@
         .step-report-mode-pill.primitive { background: #dcfce7; color: #166534; }
         .step-report-mode-pill.tessellated { background: #fef3c7; color: #92400e; }
 
+        /* Parameter registry modal */
+        #parameterRegistryTableWrap {
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+        #parameterRegistryTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #parameterRegistryTable th, #parameterRegistryTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+        }
+        #parameterRegistryTable tr.active {
+            background: #eef6ff;
+        }
+        .pr-form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 10px;
+        }
+        .pr-form-grid .property_item {
+            margin: 0;
+        }
+
+        /* Param studies modal */
+        #paramStudiesTableWrap {
+            max-height: 200px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            background: #fff;
+        }
+        #paramStudiesTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #paramStudiesTable th, #paramStudiesTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+        }
+        #paramStudiesTable tr.active {
+            background: #eef6ff;
+        }
+
+        #psRankingTableWrap {
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid #dbe2ea;
+            border-radius: 4px;
+            margin-top: 8px;
+            background: #fff;
+        }
+        #psRankingTable {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        #psRankingTable th, #psRankingTable td {
+            text-align: left;
+            border-bottom: 1px solid #eef2f7;
+            padding: 6px 8px;
+            font-family: ui-monospace, Menlo, monospace;
+        }
+
         #stopSimButton:disabled {
             cursor: not-allowed;
             opacity: 0.5;
@@ -1919,6 +1993,8 @@
                     <button>Object</button>
                     <div class="dropdown_content">
                         <button id="createRingArrayButton">Create Ring Array</button>
+                        <button id="parameterRegistryButton">Parameter Registry...</button>
+                        <button id="paramStudiesButton">Param Studies...</button>
                     </div>
                 </li>
                 <!-- Mode Menu -->
@@ -2046,6 +2122,196 @@
         </div>
         <div id="history_list_container" style="flex-grow: 1; overflow-y: auto;">
             <!-- History items will be populated here -->
+        </div>
+    </div>
+    <div id="parameterRegistryModal" class="editor-modal">
+        <div class="modal-content" style="width: 820px; height: auto; max-height: 90vh;">
+            <div class="modal-header">
+                <h4>Parameter Registry</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div id="parameterRegistryTableWrap">
+                    <table id="parameterRegistryTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Target</th>
+                                <th>Bounds</th>
+                                <th>Default</th>
+                                <th>Enabled</th>
+                            </tr>
+                        </thead>
+                        <tbody id="parameterRegistryTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="pr-form-grid">
+                    <div class="property_item">
+                        <label for="pr_name">Name:</label>
+                        <input type="text" id="pr_name" placeholder="e.g. crystal_pitch">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_type">Target Type:</label>
+                        <select id="pr_target_type">
+                            <option value="define">define</option>
+                            <option value="solid">solid</option>
+                            <option value="source">source</option>
+                            <option value="sim_option">sim_option</option>
+                        </select>
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_name">Target Name:</label>
+                        <input type="text" id="pr_target_name" placeholder="define/solid/source name">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_target_field">Target Field/Param/Key:</label>
+                        <input type="text" id="pr_target_field" placeholder="param / field / key">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_min">Bounds Min:</label>
+                        <input type="number" id="pr_min" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_max">Bounds Max:</label>
+                        <input type="number" id="pr_max" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_default">Default:</label>
+                        <input type="number" id="pr_default" step="any">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_units">Units:</label>
+                        <input type="text" id="pr_units" placeholder="mm, deg, ...">
+                    </div>
+                    <div class="property_item">
+                        <label for="pr_constraint_group">Constraint Group:</label>
+                        <input type="text" id="pr_constraint_group" placeholder="optional">
+                    </div>
+                    <div class="property_item" style="display:flex; align-items:end;">
+                        <label style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="pr_enabled" checked>
+                            Enabled
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="prRefreshBtn">Refresh</button>
+                <button id="prDeleteBtn">Delete</button>
+                <button id="prCancelBtn">Close</button>
+                <button id="prSaveBtn" class="confirm-button">Save</button>
+            </div>
+        </div>
+    </div>
+    <div id="paramStudiesModal" class="editor-modal">
+        <div class="modal-content" style="width: 860px; height: auto; max-height: 90vh;">
+            <div class="modal-header">
+                <h4>Param Studies</h4>
+            </div>
+            <div class="modal-body" style="flex-direction: column;">
+                <div id="paramStudiesTableWrap">
+                    <table id="paramStudiesTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Mode</th>
+                                <th>Parameters</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paramStudiesTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="pr-form-grid">
+                    <div class="property_item">
+                        <label for="ps_name">Name:</label>
+                        <input type="text" id="ps_name" placeholder="e.g. sweep_v1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_mode">Mode:</label>
+                        <select id="ps_mode">
+                            <option value="grid">grid</option>
+                            <option value="random">random</option>
+                        </select>
+                    </div>
+                    <div class="property_item" style="grid-column: 1 / span 2;">
+                        <label for="ps_parameters">Parameters (comma-separated):</label>
+                        <input type="text" id="ps_parameters" placeholder="param1,param2,...">
+                    </div>
+                    <div class="property_item" style="grid-column: 1 / span 2;">
+                        <label for="ps_objectives">Objectives (metric[:name[:direction]], comma-separated):</label>
+                        <input type="text" id="ps_objectives" placeholder="success_flag:success:maximize, placements_count:placements:minimize">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_grid_steps">Grid Steps (default):</label>
+                        <input type="number" id="ps_grid_steps" value="3" min="2" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_samples">Random Samples:</label>
+                        <input type="number" id="ps_samples" value="10" min="1" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_seed">Random Seed:</label>
+                        <input type="number" id="ps_seed" value="42" step="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_max_runs">Run Limit (optional):</label>
+                        <input type="number" id="ps_max_runs" min="1" step="1" placeholder="all">
+                    </div>
+                </div>
+
+                <div class="property_item" style="margin-top: 10px;">
+                    <label for="ps_run_output">Last run output:</label>
+                    <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                </div>
+
+                <div class="pr-form-grid" style="margin-top: 10px;">
+                    <div class="property_item">
+                        <label for="ps_rank_objective">Ranking Objective:</label>
+                        <select id="ps_rank_objective"></select>
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_rank_direction">Direction:</label>
+                        <select id="ps_rank_direction">
+                            <option value="maximize">maximize</option>
+                            <option value="minimize">minimize</option>
+                        </select>
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_opt_budget">Optimizer Budget:</label>
+                        <input type="number" id="ps_opt_budget" min="1" step="1" value="20">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_opt_seed">Optimizer Seed:</label>
+                        <input type="number" id="ps_opt_seed" step="1" value="42">
+                    </div>
+                </div>
+                <div id="psRankingTableWrap">
+                    <table id="psRankingTable">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Run</th>
+                                <th>Objective Value</th>
+                                <th>Success</th>
+                                <th>Parameter Values</th>
+                            </tr>
+                        </thead>
+                        <tbody id="psRankingTableBody">
+                            <tr><td colspan="5" style="color:#64748b;">Run a study to populate ranking results.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="psRefreshBtn">Refresh</button>
+                <button id="psDeleteBtn">Delete</button>
+                <button id="psRunBtn">Run Study</button>
+                <button id="psRunOptimizerBtn">Run Optimizer</button>
+                <button id="psDownloadResultsBtn">Download Results</button>
+                <button id="psCancelBtn">Close</button>
+                <button id="psSaveBtn" class="confirm-button">Save</button>
+            </div>
         </div>
     </div>
     <!-- Editor for defines -->

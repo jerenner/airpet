@@ -9,6 +9,7 @@ from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 import shutil
 import itertools
+import random
 
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
@@ -32,6 +33,8 @@ class ProjectManager:
         self.history = []
         self.history_index = -1
         self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
+        self.MAX_PARAM_STUDY_RUNS = 2000
+        self.MAX_OPTIMIZER_BUDGET = 1000
         self._is_transaction_open = False
         self._pre_transaction_state = None
         self.chat_history = [] # For AI conversation continuity
@@ -833,6 +836,576 @@ class ProjectManager:
             state_dict['solids'] = filtered_solids
         
         return state_dict
+
+    def _validate_parameter_entry(self, name, entry, is_update=False):
+        if not self.current_geometry_state:
+            return False, "No active project state."
+
+        if not name or not isinstance(name, str):
+            return False, "Parameter name is required."
+
+        if not isinstance(entry, dict):
+            return False, "Parameter payload must be an object."
+
+        target_type = entry.get('target_type')
+        if target_type not in {'define', 'solid', 'source', 'sim_option'}:
+            return False, "target_type must be one of: define, solid, source, sim_option."
+
+        target_ref = entry.get('target_ref')
+        if not isinstance(target_ref, dict):
+            return False, "target_ref must be an object."
+
+        bounds = entry.get('bounds')
+        if not isinstance(bounds, dict):
+            return False, "bounds must be an object with min/max."
+
+        try:
+            min_v = float(bounds.get('min'))
+            max_v = float(bounds.get('max'))
+        except (TypeError, ValueError):
+            return False, "bounds.min and bounds.max must be numeric."
+
+        if min_v >= max_v:
+            return False, "bounds.min must be smaller than bounds.max."
+
+        try:
+            default_v = float(entry.get('default'))
+        except (TypeError, ValueError):
+            return False, "default must be numeric."
+
+        if default_v < min_v or default_v > max_v:
+            return False, "default must be inside [bounds.min, bounds.max]."
+
+        # Target validation
+        if target_type == 'define':
+            define_name = target_ref.get('name')
+            if not define_name or define_name not in self.current_geometry_state.defines:
+                return False, f"Define target '{define_name}' not found."
+        elif target_type == 'solid':
+            solid_name = target_ref.get('name')
+            param_name = target_ref.get('param')
+            if not solid_name or solid_name not in self.current_geometry_state.solids:
+                return False, f"Solid target '{solid_name}' not found."
+            if not param_name:
+                return False, "Solid parameter target_ref.param is required."
+        elif target_type == 'source':
+            source_name = target_ref.get('name')
+            field_name = target_ref.get('field')
+            if not source_name or source_name not in self.current_geometry_state.sources:
+                return False, f"Source target '{source_name}' not found."
+            if not field_name:
+                return False, "Source target_ref.field is required."
+        elif target_type == 'sim_option':
+            option_key = target_ref.get('key')
+            if not option_key:
+                return False, "sim_option target_ref.key is required."
+
+        return True, None
+
+    def list_parameter_registry(self):
+        if not self.current_geometry_state:
+            return {}
+        return dict(self.current_geometry_state.parameter_registry or {})
+
+    def upsert_parameter_registry_entry(self, name, entry):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        ok, err = self._validate_parameter_entry(name, entry)
+        if not ok:
+            return None, err
+
+        registry = self.current_geometry_state.parameter_registry
+        if name in registry and entry.get('name') and entry.get('name') != name:
+            return None, "Payload name must match parameter key for updates."
+
+        normalized = {
+            'name': name,
+            'target_type': entry.get('target_type'),
+            'target_ref': entry.get('target_ref'),
+            'bounds': {
+                'min': float(entry['bounds']['min']),
+                'max': float(entry['bounds']['max']),
+            },
+            'default': float(entry.get('default')),
+            'units': entry.get('units', ''),
+            'enabled': bool(entry.get('enabled', True)),
+            'constraint_group': entry.get('constraint_group'),
+        }
+
+        registry[name] = normalized
+        self._capture_history_state(f"Updated parameter registry entry '{name}'")
+        return normalized, None
+
+    def delete_parameter_registry_entry(self, name):
+        if not self.current_geometry_state:
+            return False, "No active project state."
+
+        registry = self.current_geometry_state.parameter_registry
+        if name not in registry:
+            return False, f"Parameter '{name}' not found."
+
+        del registry[name]
+        self._capture_history_state(f"Deleted parameter registry entry '{name}'")
+        return True, None
+
+    def _validate_param_study(self, name, config):
+        if not self.current_geometry_state:
+            return False, "No active project state."
+        if not name or not isinstance(name, str):
+            return False, "Study name is required."
+        if not isinstance(config, dict):
+            return False, "Study config must be an object."
+
+        mode = config.get('mode', 'grid')
+        if mode not in {'grid', 'random'}:
+            return False, "Study mode must be 'grid' or 'random'."
+
+        params = config.get('parameters', [])
+        if not isinstance(params, list) or not params:
+            return False, "Study must include a non-empty parameter list."
+
+        registry = self.current_geometry_state.parameter_registry or {}
+        for p in params:
+            if p not in registry:
+                return False, f"Parameter '{p}' not found in registry."
+
+        if mode == 'grid':
+            grid_cfg = config.get('grid', {}) or {}
+            steps = int(grid_cfg.get('steps', 3))
+            if steps < 2:
+                return False, "Grid studies require at least 2 steps."
+            if steps > self.MAX_PARAM_STUDY_RUNS:
+                return False, f"Grid steps too large. Max allowed is {self.MAX_PARAM_STUDY_RUNS}."
+        else:
+            rnd_cfg = config.get('random', {}) or {}
+            samples = int(rnd_cfg.get('samples', 10))
+            if samples < 1:
+                return False, "Random studies require at least 1 sample."
+            if samples > self.MAX_PARAM_STUDY_RUNS:
+                return False, f"Random samples too large. Max allowed is {self.MAX_PARAM_STUDY_RUNS}."
+
+        objectives = config.get('objectives', []) or []
+        if not isinstance(objectives, list):
+            return False, "objectives must be a list."
+        allowed_metrics = {
+            'success_flag',
+            'solids_count',
+            'logical_volumes_count',
+            'placements_count',
+            'sources_count',
+        }
+        for idx, obj in enumerate(objectives):
+            if not isinstance(obj, dict):
+                return False, f"Objective at index {idx} must be an object."
+            metric = obj.get('metric')
+            if metric not in allowed_metrics:
+                return False, f"Objective metric '{metric}' is not supported."
+            direction = obj.get('direction', 'maximize')
+            if direction not in {'maximize', 'minimize'}:
+                return False, f"Objective direction '{direction}' is invalid."
+
+        return True, None
+
+    def list_param_studies(self):
+        if not self.current_geometry_state:
+            return {}
+        return dict(self.current_geometry_state.param_studies or {})
+
+    def upsert_param_study(self, name, config):
+        ok, err = self._validate_param_study(name, config)
+        if not ok:
+            return None, err
+
+        mode = config.get('mode', 'grid')
+        normalized = {
+            'name': name,
+            'mode': mode,
+            'parameters': list(config.get('parameters', [])),
+            'grid': config.get('grid', {}) or {},
+            'random': config.get('random', {}) or {},
+            'objectives': config.get('objectives', []) or [],
+        }
+
+        if mode == 'grid':
+            normalized['grid'].setdefault('steps', 3)
+            normalized['grid'].setdefault('per_parameter_steps', {})
+        else:
+            normalized['random'].setdefault('samples', 10)
+            normalized['random'].setdefault('seed', 42)
+
+        self.current_geometry_state.param_studies[name] = normalized
+        self._capture_history_state(f"Updated param study '{name}'")
+        return normalized, None
+
+    def delete_param_study(self, name):
+        if not self.current_geometry_state:
+            return False, "No active project state."
+        studies = self.current_geometry_state.param_studies
+        if name not in studies:
+            return False, f"Study '{name}' not found."
+        del studies[name]
+        self._capture_history_state(f"Deleted param study '{name}'")
+        return True, None
+
+    def _apply_param_value(self, param_entry, value, sim_options):
+        target_type = param_entry.get('target_type')
+        target_ref = param_entry.get('target_ref', {})
+        value_str = str(value)
+
+        if target_type == 'define':
+            dname = target_ref.get('name')
+            define = self.current_geometry_state.defines.get(dname)
+            if define is None:
+                return False, f"Define target '{dname}' not found."
+            define.raw_expression = value_str
+            return True, None
+
+        if target_type == 'solid':
+            sname = target_ref.get('name')
+            pname = target_ref.get('param')
+            solid = self.current_geometry_state.solids.get(sname)
+            if solid is None:
+                return False, f"Solid target '{sname}' not found."
+            if not pname:
+                return False, "Solid target param is missing."
+            solid.raw_parameters[pname] = value_str
+            return True, None
+
+        if target_type == 'source':
+            src_name = target_ref.get('name')
+            field = target_ref.get('field')
+            source = self.current_geometry_state.sources.get(src_name)
+            if source is None:
+                return False, f"Source target '{src_name}' not found."
+            if not field:
+                return False, "Source field target is missing."
+
+            if field.startswith('position.'):
+                axis = field.split('.', 1)[1]
+                source.position[axis] = value_str
+            elif field.startswith('rotation.'):
+                axis = field.split('.', 1)[1]
+                source.rotation[axis] = value_str
+            elif field == 'activity':
+                source.activity = float(value)
+            else:
+                setattr(source, field, value)
+            return True, None
+
+        if target_type == 'sim_option':
+            key = target_ref.get('key')
+            if not key:
+                return False, "sim_option key is missing."
+            sim_options[key] = value
+            return True, None
+
+        return False, f"Unsupported target_type '{target_type}'."
+
+    def _compute_run_metrics(self):
+        """Compute lightweight per-run metrics for study objective evaluation."""
+        state = self.current_geometry_state
+        placement_count = 0
+        for lv in state.logical_volumes.values():
+            if lv.content_type == 'physvol' and isinstance(lv.content, list):
+                placement_count += len(lv.content)
+        for asm in state.assemblies.values():
+            placement_count += len(getattr(asm, 'placements', []) or [])
+
+        return {
+            'solids_count': len(state.solids),
+            'logical_volumes_count': len(state.logical_volumes),
+            'sources_count': len(state.sources),
+            'placements_count': placement_count,
+        }
+
+    def _evaluate_study_objectives(self, objectives, run_record):
+        """Evaluate configured objectives from run-local metrics.
+
+        Supported objective fields:
+          - name (optional; defaults to metric)
+          - metric: success_flag|solids_count|logical_volumes_count|placements_count|sources_count
+          - direction: maximize|minimize (metadata only for now)
+        """
+        if not objectives:
+            return {}
+
+        out = {}
+        metrics = run_record.get('metrics', {}) or {}
+        success = 1.0 if run_record.get('success') else 0.0
+
+        for obj in objectives:
+            if not isinstance(obj, dict):
+                continue
+            metric = obj.get('metric')
+            if not metric:
+                continue
+            name = obj.get('name', metric)
+
+            if metric == 'success_flag':
+                out[name] = success
+            elif metric in {'solids_count', 'logical_volumes_count', 'placements_count', 'sources_count'}:
+                out[name] = float(metrics.get(metric, 0.0))
+
+        return out
+
+    def _generate_param_study_samples(self, study):
+        registry = self.current_geometry_state.parameter_registry
+        param_names = study.get('parameters', [])
+        mode = study.get('mode', 'grid')
+
+        if mode == 'grid':
+            grid_cfg = study.get('grid', {}) or {}
+            default_steps = int(grid_cfg.get('steps', 3))
+            per_param_steps = grid_cfg.get('per_parameter_steps', {}) or {}
+
+            value_arrays = []
+            for p in param_names:
+                p_entry = registry[p]
+                mn = float(p_entry['bounds']['min'])
+                mx = float(p_entry['bounds']['max'])
+                steps = int(per_param_steps.get(p, default_steps))
+                steps = max(2, steps)
+                value_arrays.append(np.linspace(mn, mx, steps).tolist())
+
+            samples = []
+            for combo in itertools.product(*value_arrays):
+                sample = {param_names[i]: float(combo[i]) for i in range(len(param_names))}
+                samples.append(sample)
+            return samples
+
+        rnd_cfg = study.get('random', {}) or {}
+        n_samples = max(1, int(rnd_cfg.get('samples', 10)))
+        seed = int(rnd_cfg.get('seed', 42))
+        rng = random.Random(seed)
+
+        samples = []
+        for _ in range(n_samples):
+            sample = {}
+            for p in param_names:
+                p_entry = registry[p]
+                mn = float(p_entry['bounds']['min'])
+                mx = float(p_entry['bounds']['max'])
+                sample[p] = rng.uniform(mn, mx)
+            samples.append(sample)
+        return samples
+
+    def run_param_study(self, name, max_runs=None):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        studies = self.current_geometry_state.param_studies or {}
+        if name not in studies:
+            return None, f"Study '{name}' not found."
+
+        study = studies[name]
+        samples = self._generate_param_study_samples(study)
+        requested_limit = self.MAX_PARAM_STUDY_RUNS
+        if max_runs is not None:
+            requested_limit = min(requested_limit, max(0, int(max_runs)))
+        samples = samples[:requested_limit]
+
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+        runs = []
+        success_count = 0
+
+        try:
+            for i, sample in enumerate(samples):
+                self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
+
+                sim_options = {}
+                apply_error = None
+                for param_name, value in sample.items():
+                    param_entry = self.current_geometry_state.parameter_registry.get(param_name)
+                    if not param_entry:
+                        apply_error = f"Parameter '{param_name}' missing in registry during run."
+                        break
+                    ok, err = self._apply_param_value(param_entry, value, sim_options)
+                    if not ok:
+                        apply_error = err
+                        break
+
+                if apply_error:
+                    run_record = {
+                        'run_index': i,
+                        'values': sample,
+                        'sim_options': sim_options,
+                        'success': False,
+                        'error': apply_error,
+                        'metrics': {},
+                    }
+                    run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+                    runs.append(run_record)
+                    continue
+
+                ok, err = self.recalculate_geometry_state()
+                if ok:
+                    success_count += 1
+
+                run_record = {
+                    'run_index': i,
+                    'values': sample,
+                    'sim_options': sim_options,
+                    'success': bool(ok),
+                    'error': err,
+                    'metrics': self._compute_run_metrics() if ok else {},
+                }
+                run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+
+                runs.append(run_record)
+        finally:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+
+        return {
+            'study_name': name,
+            'mode': study.get('mode'),
+            'requested_runs': len(samples),
+            'successful_runs': success_count,
+            'failed_runs': len(samples) - success_count,
+            'runs': runs,
+        }, None
+
+    def _evaluate_param_sample(self, study, sample, run_index=0):
+        sim_options = {}
+        apply_error = None
+        for param_name, value in sample.items():
+            param_entry = self.current_geometry_state.parameter_registry.get(param_name)
+            if not param_entry:
+                apply_error = f"Parameter '{param_name}' missing in registry during run."
+                break
+            ok, err = self._apply_param_value(param_entry, value, sim_options)
+            if not ok:
+                apply_error = err
+                break
+
+        if apply_error:
+            run_record = {
+                'run_index': run_index,
+                'values': sample,
+                'sim_options': sim_options,
+                'success': False,
+                'error': apply_error,
+                'metrics': {},
+            }
+            run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+            return run_record
+
+        ok, err = self.recalculate_geometry_state()
+        run_record = {
+            'run_index': run_index,
+            'values': sample,
+            'sim_options': sim_options,
+            'success': bool(ok),
+            'error': err,
+            'metrics': self._compute_run_metrics() if ok else {},
+        }
+        run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+        return run_record
+
+    def _score_run_for_objective(self, run_record, objective_name, direction='maximize'):
+        val = run_record.get('objectives', {}).get(objective_name)
+        if val is None:
+            return -float('inf')
+        try:
+            x = float(val)
+        except (TypeError, ValueError):
+            return -float('inf')
+        return x if direction == 'maximize' else -x
+
+    def list_optimizer_runs(self, study_name=None, limit=50):
+        if not self.current_geometry_state:
+            return []
+        runs = list((self.current_geometry_state.optimizer_runs or {}).values())
+        runs.sort(key=lambda r: r.get('created_at', ''), reverse=True)
+        if study_name:
+            runs = [r for r in runs if r.get('study_name') == study_name]
+        return runs[:max(1, int(limit))]
+
+    def run_param_optimizer(self, study_name, method='random_search', budget=20, seed=42, objective_name=None, direction=None):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        studies = self.current_geometry_state.param_studies or {}
+        if study_name not in studies:
+            return None, f"Study '{study_name}' not found."
+
+        study = studies[study_name]
+        if method not in {'random_search'}:
+            return None, f"Unsupported optimizer method '{method}'."
+
+        budget = max(1, int(budget))
+        budget = min(budget, self.MAX_OPTIMIZER_BUDGET)
+        seed = int(seed)
+        rng = random.Random(seed)
+
+        objectives = study.get('objectives', []) or []
+        if objective_name is None:
+            objective_name = objectives[0].get('name', objectives[0].get('metric')) if objectives else 'success_flag'
+        if direction is None:
+            if objectives:
+                for o in objectives:
+                    nm = o.get('name', o.get('metric'))
+                    if nm == objective_name:
+                        direction = o.get('direction', 'maximize')
+                        break
+            if direction is None:
+                direction = 'maximize'
+
+        param_names = study.get('parameters', [])
+        registry = self.current_geometry_state.parameter_registry
+
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+        candidates = []
+        best = None
+        best_score = -float('inf')
+
+        try:
+            for i in range(budget):
+                self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
+
+                sample = {}
+                for p in param_names:
+                    entry = registry[p]
+                    mn = float(entry['bounds']['min'])
+                    mx = float(entry['bounds']['max'])
+                    sample[p] = rng.uniform(mn, mx)
+
+                run_record = self._evaluate_param_sample(study, sample, run_index=i)
+                score = self._score_run_for_objective(run_record, objective_name, direction=direction)
+                run_record['optimizer_score'] = score
+                candidates.append(run_record)
+
+                if score > best_score:
+                    best_score = score
+                    best = run_record
+        finally:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+
+        run_id = f"opt_{datetime.utcnow().strftime('%Y%m%dT%H%M%S_%f')}"
+        summary = {
+            'run_id': run_id,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'study_name': study_name,
+            'method': method,
+            'seed': seed,
+            'budget': budget,
+            'max_budget_cap': self.MAX_OPTIMIZER_BUDGET,
+            'objective': {
+                'name': objective_name,
+                'direction': direction,
+            },
+            'success_count': sum(1 for c in candidates if c.get('success')),
+            'failure_count': sum(1 for c in candidates if not c.get('success')),
+            'best_run': best,
+            'candidates': candidates,
+        }
+
+        self.current_geometry_state.optimizer_runs[run_id] = summary
+        self._capture_history_state(f"Ran optimizer '{method}' on study '{study_name}'")
+
+        return summary, None
 
     def get_object_details(self, object_type, object_name_or_id):
         """

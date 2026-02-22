@@ -249,6 +249,90 @@ export async function updateDefine(id, rawExpression, unit, category) {
     return handleResponse(response);
 }
 
+// --- Parameter Registry API (M3) ---
+export async function getParameterRegistry() {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/list`);
+    return handleResponse(response);
+}
+
+export async function upsertParameterRegistry(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/upsert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
+export async function deleteParameterRegistry(name) {
+    const response = await fetch(`${API_BASE_URL}/api/parameter_registry/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+}
+
+// --- Param Study API (M3 step 3) ---
+export async function getParamStudies() {
+    const response = await fetch(`${API_BASE_URL}/api/param_study/list`);
+    return handleResponse(response);
+}
+
+export async function upsertParamStudy(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/param_study/upsert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
+export async function deleteParamStudy(name) {
+    const response = await fetch(`${API_BASE_URL}/api/param_study/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+}
+
+export async function runParamStudy(name, maxRuns = null) {
+    const response = await fetch(`${API_BASE_URL}/api/param_study/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, max_runs: maxRuns }),
+    });
+    return handleResponse(response);
+}
+
+export async function listParamOptimizerRuns(studyName = null, limit = 50) {
+    const params = new URLSearchParams();
+    if (studyName) params.set('study_name', studyName);
+    if (limit != null) params.set('limit', String(limit));
+    const qs = params.toString();
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/list${qs ? `?${qs}` : ''}`);
+    return handleResponse(response);
+}
+
+export async function runParamOptimizer(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
+export async function extractObjectives(versionId, jobId, objectives) {
+    const response = await fetch(`${API_BASE_URL}/api/objectives/extract/${versionId}/${jobId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ objectives }),
+    });
+    return handleResponse(response);
+}
+
 // --- Sensitivity Matrix API ---
 
 /**
