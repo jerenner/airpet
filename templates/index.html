@@ -2277,6 +2277,14 @@
                             <option value="minimize">minimize</option>
                         </select>
                     </div>
+                    <div class="property_item">
+                        <label for="ps_opt_budget">Optimizer Budget:</label>
+                        <input type="number" id="ps_opt_budget" min="1" step="1" value="20">
+                    </div>
+                    <div class="property_item">
+                        <label for="ps_opt_seed">Optimizer Seed:</label>
+                        <input type="number" id="ps_opt_seed" step="1" value="42">
+                    </div>
                 </div>
                 <div id="psRankingTableWrap">
                     <table id="psRankingTable">
@@ -2299,6 +2307,7 @@
                 <button id="psRefreshBtn">Refresh</button>
                 <button id="psDeleteBtn">Delete</button>
                 <button id="psRunBtn">Run Study</button>
+                <button id="psRunOptimizerBtn">Run Optimizer</button>
                 <button id="psCancelBtn">Close</button>
                 <button id="psSaveBtn" class="confirm-button">Save</button>
             </div>

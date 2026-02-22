@@ -131,6 +131,67 @@ def test_param_study_api_routes():
             assert del_resp.get_json()["success"] is True
 
 
+def test_param_optimizer_basic_and_provenance():
+    pm = _make_pm()
+    _add_define_param(pm, name="p1")
+
+    study, err = pm.upsert_param_study("opt1", {
+        "name": "opt1",
+        "mode": "random",
+        "parameters": ["p1"],
+        "random": {"samples": 4, "seed": 123},
+        "objectives": [{"metric": "success_flag", "name": "success", "direction": "maximize"}],
+    })
+    assert study is not None and err is None
+
+    result, err = pm.run_param_optimizer("opt1", budget=5, seed=7)
+    assert err is None
+    assert result["budget"] == 5
+    assert len(result["candidates"]) == 5
+    assert result["best_run"] is not None
+    assert result["objective"]["name"] == "success"
+
+    runs = pm.list_optimizer_runs(study_name="opt1")
+    assert len(runs) >= 1
+    assert runs[0]["study_name"] == "opt1"
+
+
+def test_param_optimizer_api_routes():
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        _add_define_param(pm, name="p1")
+
+        study, err = pm.upsert_param_study("opt_api", {
+            "name": "opt_api",
+            "mode": "random",
+            "parameters": ["p1"],
+            "random": {"samples": 3, "seed": 42},
+            "objectives": [{"metric": "success_flag", "name": "success", "direction": "maximize"}],
+        })
+        assert study is not None and err is None
+
+        with patch("app.get_project_manager_for_session", return_value=pm):
+            run_resp = client.post("/api/param_optimizer/run", json={
+                "study_name": "opt_api",
+                "method": "random_search",
+                "budget": 4,
+                "seed": 11,
+                "objective_name": "success",
+                "direction": "maximize",
+            })
+            assert run_resp.status_code == 200
+            run_data = run_resp.get_json()
+            assert run_data["success"] is True
+            assert run_data["optimizer_result"]["budget"] == 4
+
+            list_resp = client.get("/api/param_optimizer/list?study_name=opt_api")
+            assert list_resp.status_code == 200
+            list_data = list_resp.get_json()
+            assert list_data["success"] is True
+            assert len(list_data["optimizer_runs"]) >= 1
+
+
 def test_objective_extraction_api_from_hdf5():
     app.config["TESTING"] = True
     with app.test_client() as client:

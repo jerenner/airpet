@@ -306,6 +306,24 @@ export async function runParamStudy(name, maxRuns = null) {
     return handleResponse(response);
 }
 
+export async function listParamOptimizerRuns(studyName = null, limit = 50) {
+    const params = new URLSearchParams();
+    if (studyName) params.set('study_name', studyName);
+    if (limit != null) params.set('limit', String(limit));
+    const qs = params.toString();
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/list${qs ? `?${qs}` : ''}`);
+    return handleResponse(response);
+}
+
+export async function runParamOptimizer(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
 export async function extractObjectives(versionId, jobId, objectives) {
     const response = await fetch(`${API_BASE_URL}/api/objectives/extract/${versionId}/${jobId}`, {
         method: 'POST',

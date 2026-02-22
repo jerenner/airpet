@@ -301,6 +301,7 @@ async function initializeApp() {
         onSave: handleParamStudySave,
         onDelete: handleParamStudyDelete,
         onRun: handleParamStudyRun,
+        onRunOptimizer: handleParamStudyRunOptimizer,
         onRefresh: handleParamStudyRefresh,
     });
 
@@ -2598,6 +2599,20 @@ async function handleParamStudyRun(name, maxRuns = null) {
         return result.study_result || result;
     } catch (error) {
         UIManager.showError("Failed to run param study: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamStudyRunOptimizer(payload) {
+    UIManager.showLoading(`Running optimizer for '${payload.study_name}'...`);
+    try {
+        const result = await APIService.runParamOptimizer(payload);
+        UIManager.showNotification(`Optimizer run complete for '${payload.study_name}'.`);
+        return result.optimizer_result || result;
+    } catch (error) {
+        UIManager.showError("Failed to run optimizer: " + error.message);
         throw error;
     } finally {
         UIManager.hideLoading();

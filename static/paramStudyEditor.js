@@ -1,12 +1,14 @@
 let modal, tableBody;
 let nameInput, modeInput, paramsInput, objectivesInput, gridStepsInput, samplesInput, seedInput, maxRunsInput, runOutput;
 let rankObjectiveSelect, rankDirectionSelect, rankingTableBody;
-let saveBtn, deleteBtn, runBtn, refreshBtn, cancelBtn;
+let optBudgetInput, optSeedInput;
+let saveBtn, deleteBtn, runBtn, runOptimizerBtn, refreshBtn, cancelBtn;
 
 let callbacks = {
     onSave: async (_payload) => { },
     onDelete: async (_name) => { },
     onRun: async (_name, _maxRuns) => ({}),
+    onRunOptimizer: async (_payload) => ({}),
     onRefresh: async () => ({})
 };
 
@@ -92,10 +94,17 @@ function _renderTable(studies = {}) {
     }
 }
 
+function _extractRunsFromLastResult() {
+    if (!lastRunResult) return [];
+    if (Array.isArray(lastRunResult.runs)) return lastRunResult.runs;
+    if (Array.isArray(lastRunResult.candidates)) return lastRunResult.candidates;
+    return [];
+}
+
 function _renderRankingTable() {
     if (!rankingTableBody) return;
 
-    const runs = (lastRunResult && Array.isArray(lastRunResult.runs)) ? lastRunResult.runs : [];
+    const runs = _extractRunsFromLastResult();
     rankingTableBody.innerHTML = '';
 
     if (runs.length === 0) {
@@ -143,7 +152,7 @@ function _updateObjectiveSelector() {
     if (!rankObjectiveSelect) return;
     rankObjectiveSelect.innerHTML = '';
 
-    const runs = (lastRunResult && Array.isArray(lastRunResult.runs)) ? lastRunResult.runs : [];
+    const runs = _extractRunsFromLastResult();
     const names = new Set();
     for (const r of runs) {
         Object.keys(r.objectives || {}).forEach(k => names.add(k));
@@ -201,6 +210,32 @@ async function _handleRun() {
     _renderRankingTable();
 }
 
+async function _handleRunOptimizer() {
+    const studyName = nameInput.value.trim() || activeName;
+    if (!studyName) return;
+
+    const objectiveName = rankObjectiveSelect?.value || null;
+    const direction = rankDirectionSelect?.value || 'maximize';
+    const budget = Number(optBudgetInput?.value || 20);
+    const seed = Number(optSeedInput?.value || 42);
+
+    const result = await callbacks.onRunOptimizer({
+        study_name: studyName,
+        method: 'random_search',
+        budget: Number.isFinite(budget) ? budget : 20,
+        seed: Number.isFinite(seed) ? seed : 42,
+        objective_name: objectiveName,
+        direction,
+    });
+
+    lastRunResult = result || null;
+    runOutput.value = JSON.stringify(result, null, 2);
+    _updateObjectiveSelector();
+    if (objectiveName) rankObjectiveSelect.value = objectiveName;
+    if (direction) rankDirectionSelect.value = direction;
+    _renderRankingTable();
+}
+
 export function init(newCallbacks = {}) {
     callbacks = { ...callbacks, ...newCallbacks };
 
@@ -219,16 +254,20 @@ export function init(newCallbacks = {}) {
     rankObjectiveSelect = document.getElementById('ps_rank_objective');
     rankDirectionSelect = document.getElementById('ps_rank_direction');
     rankingTableBody = document.getElementById('psRankingTableBody');
+    optBudgetInput = document.getElementById('ps_opt_budget');
+    optSeedInput = document.getElementById('ps_opt_seed');
 
     saveBtn = document.getElementById('psSaveBtn');
     deleteBtn = document.getElementById('psDeleteBtn');
     runBtn = document.getElementById('psRunBtn');
+    runOptimizerBtn = document.getElementById('psRunOptimizerBtn');
     refreshBtn = document.getElementById('psRefreshBtn');
     cancelBtn = document.getElementById('psCancelBtn');
 
     saveBtn.addEventListener('click', _handleSave);
     deleteBtn.addEventListener('click', _handleDelete);
     runBtn.addEventListener('click', _handleRun);
+    if (runOptimizerBtn) runOptimizerBtn.addEventListener('click', _handleRunOptimizer);
     refreshBtn.addEventListener('click', _refreshAndRender);
     cancelBtn.addEventListener('click', hide);
     if (rankObjectiveSelect) rankObjectiveSelect.addEventListener('change', _renderRankingTable);

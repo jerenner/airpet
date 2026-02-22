@@ -811,6 +811,15 @@ class GeometryState:
         # }
         self.param_studies = {}
 
+        # Optimizer run history/provenance (M3 classical optimizer).
+        # {
+        #   '<run_id>': {
+        #       'run_id': ..., 'study_name': ..., 'method': ..., 'seed': ...,
+        #       'budget': ..., 'objective': ..., 'best_run': {...}, 'candidates': [...]
+        #   }
+        # }
+        self.optimizer_runs = {}
+
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
         self.ui_groups = {
@@ -865,6 +874,7 @@ class GeometryState:
             "active_source_ids": self.active_source_ids,
             "parameter_registry": self.parameter_registry,
             "param_studies": self.param_studies,
+            "optimizer_runs": self.optimizer_runs,
             "ui_groups": self.ui_groups
         }
 
@@ -914,6 +924,12 @@ class GeometryState:
             instance.param_studies = param_studies
         else:
             instance.param_studies = {}
+
+        optimizer_runs = data.get('optimizer_runs', {})
+        if isinstance(optimizer_runs, dict):
+            instance.optimizer_runs = optimizer_runs
+        else:
+            instance.optimizer_runs = {}
 
         instance.ui_groups = data.get('ui_groups', instance.ui_groups)
 

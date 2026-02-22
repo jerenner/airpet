@@ -1258,6 +1258,145 @@ class ProjectManager:
             'runs': runs,
         }, None
 
+    def _evaluate_param_sample(self, study, sample, run_index=0):
+        sim_options = {}
+        apply_error = None
+        for param_name, value in sample.items():
+            param_entry = self.current_geometry_state.parameter_registry.get(param_name)
+            if not param_entry:
+                apply_error = f"Parameter '{param_name}' missing in registry during run."
+                break
+            ok, err = self._apply_param_value(param_entry, value, sim_options)
+            if not ok:
+                apply_error = err
+                break
+
+        if apply_error:
+            run_record = {
+                'run_index': run_index,
+                'values': sample,
+                'sim_options': sim_options,
+                'success': False,
+                'error': apply_error,
+                'metrics': {},
+            }
+            run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+            return run_record
+
+        ok, err = self.recalculate_geometry_state()
+        run_record = {
+            'run_index': run_index,
+            'values': sample,
+            'sim_options': sim_options,
+            'success': bool(ok),
+            'error': err,
+            'metrics': self._compute_run_metrics() if ok else {},
+        }
+        run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
+        return run_record
+
+    def _score_run_for_objective(self, run_record, objective_name, direction='maximize'):
+        val = run_record.get('objectives', {}).get(objective_name)
+        if val is None:
+            return -float('inf')
+        try:
+            x = float(val)
+        except (TypeError, ValueError):
+            return -float('inf')
+        return x if direction == 'maximize' else -x
+
+    def list_optimizer_runs(self, study_name=None, limit=50):
+        if not self.current_geometry_state:
+            return []
+        runs = list((self.current_geometry_state.optimizer_runs or {}).values())
+        runs.sort(key=lambda r: r.get('created_at', ''), reverse=True)
+        if study_name:
+            runs = [r for r in runs if r.get('study_name') == study_name]
+        return runs[:max(1, int(limit))]
+
+    def run_param_optimizer(self, study_name, method='random_search', budget=20, seed=42, objective_name=None, direction=None):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        studies = self.current_geometry_state.param_studies or {}
+        if study_name not in studies:
+            return None, f"Study '{study_name}' not found."
+
+        study = studies[study_name]
+        if method not in {'random_search'}:
+            return None, f"Unsupported optimizer method '{method}'."
+
+        budget = max(1, int(budget))
+        seed = int(seed)
+        rng = random.Random(seed)
+
+        objectives = study.get('objectives', []) or []
+        if objective_name is None:
+            objective_name = objectives[0].get('name', objectives[0].get('metric')) if objectives else 'success_flag'
+        if direction is None:
+            if objectives:
+                for o in objectives:
+                    nm = o.get('name', o.get('metric'))
+                    if nm == objective_name:
+                        direction = o.get('direction', 'maximize')
+                        break
+            if direction is None:
+                direction = 'maximize'
+
+        param_names = study.get('parameters', [])
+        registry = self.current_geometry_state.parameter_registry
+
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+        candidates = []
+        best = None
+        best_score = -float('inf')
+
+        try:
+            for i in range(budget):
+                self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
+
+                sample = {}
+                for p in param_names:
+                    entry = registry[p]
+                    mn = float(entry['bounds']['min'])
+                    mx = float(entry['bounds']['max'])
+                    sample[p] = rng.uniform(mn, mx)
+
+                run_record = self._evaluate_param_sample(study, sample, run_index=i)
+                score = self._score_run_for_objective(run_record, objective_name, direction=direction)
+                run_record['optimizer_score'] = score
+                candidates.append(run_record)
+
+                if score > best_score:
+                    best_score = score
+                    best = run_record
+        finally:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+
+        run_id = f"opt_{datetime.utcnow().strftime('%Y%m%dT%H%M%S_%f')}"
+        summary = {
+            'run_id': run_id,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'study_name': study_name,
+            'method': method,
+            'seed': seed,
+            'budget': budget,
+            'objective': {
+                'name': objective_name,
+                'direction': direction,
+            },
+            'success_count': sum(1 for c in candidates if c.get('success')),
+            'failure_count': sum(1 for c in candidates if not c.get('success')),
+            'best_run': best,
+            'candidates': candidates,
+        }
+
+        self.current_geometry_state.optimizer_runs[run_id] = summary
+        self._capture_history_state(f"Ran optimizer '{method}' on study '{study_name}'")
+
+        return summary, None
+
     def get_object_details(self, object_type, object_name_or_id):
         """
         Get details for a specific object by its type and name/ID.

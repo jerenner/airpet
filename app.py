@@ -2908,6 +2908,43 @@ def param_study_run_route():
     return jsonify({"success": False, "error": err}), 400
 
 
+@app.route('/api/param_optimizer/list', methods=['GET'])
+def param_optimizer_list_route():
+    pm = get_project_manager_for_session()
+    study_name = request.args.get('study_name')
+    limit = request.args.get('limit', default=50, type=int)
+    runs = pm.list_optimizer_runs(study_name=study_name, limit=limit)
+    return jsonify({"success": True, "optimizer_runs": runs})
+
+
+@app.route('/api/param_optimizer/run', methods=['POST'])
+def param_optimizer_run_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    method = data.get('method', 'random_search')
+    budget = data.get('budget', 20)
+    seed = data.get('seed', 42)
+    objective_name = data.get('objective_name')
+    direction = data.get('direction')
+
+    result, err = pm.run_param_optimizer(
+        study_name=study_name,
+        method=method,
+        budget=budget,
+        seed=seed,
+        objective_name=objective_name,
+        direction=direction,
+    )
+    if result:
+        return jsonify({"success": True, "optimizer_result": result})
+    return jsonify({"success": False, "error": err}), 400
+
+
 @app.route('/add_solid_and_place', methods=['POST'])
 def add_solid_and_place_route():
     pm = get_project_manager_for_session()
