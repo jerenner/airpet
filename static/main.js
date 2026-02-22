@@ -302,6 +302,8 @@ async function initializeApp() {
         onDelete: handleParamStudyDelete,
         onRun: handleParamStudyRun,
         onRunOptimizer: handleParamStudyRunOptimizer,
+        onReplayBest: handleParamOptimizerReplayBest,
+        onVerifyBest: handleParamOptimizerVerifyBest,
         onRefresh: handleParamStudyRefresh,
     });
 
@@ -2613,6 +2615,37 @@ async function handleParamStudyRunOptimizer(payload) {
         return result.optimizer_result || result;
     } catch (error) {
         UIManager.showError("Failed to run optimizer: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamOptimizerReplayBest(runId, applyToProject = true) {
+    UIManager.showLoading(`Replaying best candidate (${runId})...`);
+    try {
+        const result = await APIService.replayParamOptimizerBest(runId, applyToProject);
+        if (applyToProject) {
+            syncUIWithState(result);
+        }
+        UIManager.showNotification('Best candidate replay completed.');
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to replay best candidate: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamOptimizerVerifyBest(runId, repeats = 3) {
+    UIManager.showLoading(`Verifying best candidate (${runId})...`);
+    try {
+        const result = await APIService.verifyParamOptimizerBest(runId, repeats);
+        UIManager.showNotification('Best candidate verification completed.');
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to verify best candidate: " + error.message);
         throw error;
     } finally {
         UIManager.hideLoading();

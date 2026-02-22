@@ -324,6 +324,24 @@ export async function runParamOptimizer(payload) {
     return handleResponse(response);
 }
 
+export async function replayParamOptimizerBest(runId, applyToProject = true) {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/replay_best`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId, apply_to_project: applyToProject }),
+    });
+    return handleResponse(response);
+}
+
+export async function verifyParamOptimizerBest(runId, repeats = 3) {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/verify_best`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId, repeats }),
+    });
+    return handleResponse(response);
+}
+
 export async function extractObjectives(versionId, jobId, objectives) {
     const response = await fetch(`${API_BASE_URL}/api/objectives/extract/${versionId}/${jobId}`, {
         method: 'POST',

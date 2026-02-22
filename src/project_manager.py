@@ -1555,6 +1555,10 @@ class ProjectManager:
             runs = [r for r in runs if r.get('study_name') == study_name]
         return runs[:max(1, int(limit))]
 
+    def _get_optimizer_run(self, run_id):
+        runs = (self.current_geometry_state.optimizer_runs or {}) if self.current_geometry_state else {}
+        return runs.get(run_id)
+
     def run_param_optimizer(self, study_name, method='random_search', budget=20, seed=42, objective_name=None, direction=None, cmaes_config=None):
         if not self.current_geometry_state:
             return None, "No active project state."
@@ -1649,6 +1653,136 @@ class ProjectManager:
         self._capture_history_state(f"Ran optimizer '{method}' on study '{study_name}'")
 
         return summary, None
+
+    def replay_optimizer_best_candidate(self, run_id, apply_to_project=True):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        opt_run = self._get_optimizer_run(run_id)
+        if not opt_run:
+            return None, f"Optimizer run '{run_id}' not found."
+
+        study_name = opt_run.get('study_name')
+        studies = self.current_geometry_state.param_studies or {}
+        if study_name not in studies:
+            return None, f"Study '{study_name}' referenced by optimizer run not found."
+
+        best = opt_run.get('best_run') or {}
+        best_values = best.get('values')
+        if not isinstance(best_values, dict) or not best_values:
+            return None, "Optimizer run has no best candidate values to replay."
+
+        study = studies[study_name]
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+
+        try:
+            run_record = self._evaluate_param_sample(study, dict(best_values), run_index=0)
+            replay_record = {
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'run_id': run_id,
+                'success': bool(run_record.get('success')),
+                'error': run_record.get('error'),
+                'objective_values': run_record.get('objectives', {}),
+                'optimizer_score': run_record.get('optimizer_score'),
+            }
+
+            opt_run.setdefault('replay_records', []).append(replay_record)
+
+            if apply_to_project:
+                self._capture_history_state(f"Replayed best candidate from optimizer run '{run_id}'")
+                return {
+                    'run_id': run_id,
+                    'applied_to_project': True,
+                    'replay_record': replay_record,
+                    'run_record': run_record,
+                }, None
+
+            # not applying: restore previous state
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+            return {
+                'run_id': run_id,
+                'applied_to_project': False,
+                'replay_record': replay_record,
+                'run_record': run_record,
+            }, None
+        except Exception as e:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+            return None, str(e)
+
+    def verify_optimizer_best_candidate(self, run_id, repeats=3):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        opt_run = self._get_optimizer_run(run_id)
+        if not opt_run:
+            return None, f"Optimizer run '{run_id}' not found."
+
+        study_name = opt_run.get('study_name')
+        studies = self.current_geometry_state.param_studies or {}
+        if study_name not in studies:
+            return None, f"Study '{study_name}' referenced by optimizer run not found."
+
+        best = opt_run.get('best_run') or {}
+        best_values = best.get('values')
+        if not isinstance(best_values, dict) or not best_values:
+            return None, "Optimizer run has no best candidate values to verify."
+
+        repeats = max(1, min(int(repeats), 100))
+        objective = opt_run.get('objective', {}) or {}
+        objective_name = objective.get('name')
+
+        study = studies[study_name]
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+
+        verification_runs = []
+        try:
+            for i in range(repeats):
+                self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
+                rr = self._evaluate_param_sample(study, dict(best_values), run_index=i)
+                verification_runs.append(rr)
+        finally:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+
+        obj_values = []
+        if objective_name:
+            for rr in verification_runs:
+                val = rr.get('objectives', {}).get(objective_name)
+                try:
+                    obj_values.append(float(val))
+                except (TypeError, ValueError):
+                    pass
+
+        if obj_values:
+            stats = {
+                'count': len(obj_values),
+                'mean': float(np.mean(obj_values)),
+                'std': float(np.std(obj_values)),
+                'min': float(np.min(obj_values)),
+                'max': float(np.max(obj_values)),
+            }
+        else:
+            stats = {'count': 0, 'mean': None, 'std': None, 'min': None, 'max': None}
+
+        verification_record = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'run_id': run_id,
+            'repeats': repeats,
+            'objective_name': objective_name,
+            'stats': stats,
+            'success_count': sum(1 for r in verification_runs if r.get('success')),
+            'failure_count': sum(1 for r in verification_runs if not r.get('success')),
+        }
+        opt_run.setdefault('verification_records', []).append(verification_record)
+
+        return {
+            'run_id': run_id,
+            'objective_name': objective_name,
+            'verification_record': verification_record,
+            'runs': verification_runs,
+        }, None
 
     def get_object_details(self, object_type, object_name_or_id):
         """

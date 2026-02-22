@@ -2316,6 +2316,10 @@
                         <label for="ps_opt_stag">CMA-ES Stagnation Gens:</label>
                         <input type="number" id="ps_opt_stag" min="1" step="1" placeholder="12">
                     </div>
+                    <div class="property_item">
+                        <label for="ps_verify_repeats">Verify Repeats:</label>
+                        <input type="number" id="ps_verify_repeats" min="1" step="1" value="3">
+                    </div>
                 </div>
                 <div id="psRankingTableWrap">
                     <table id="psRankingTable">
@@ -2339,6 +2343,8 @@
                 <button id="psDeleteBtn">Delete</button>
                 <button id="psRunBtn">Run Study</button>
                 <button id="psRunOptimizerBtn">Run Optimizer</button>
+                <button id="psReplayBestBtn">Replay Best</button>
+                <button id="psVerifyBestBtn">Verify Best</button>
                 <button id="psDownloadResultsBtn">Download Results</button>
                 <button id="psCancelBtn">Close</button>
                 <button id="psSaveBtn" class="confirm-button">Save</button>

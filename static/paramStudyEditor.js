@@ -1,9 +1,9 @@
 let modal, tableBody;
 let nameInput, modeInput, paramsInput, objectivesInput, gridStepsInput, samplesInput, seedInput, maxRunsInput, runOutput;
 let rankObjectiveSelect, rankDirectionSelect, rankingTableBody;
-let optMethodInput, optBudgetInput, optSeedInput, optPopSizeInput, optSigmaRelInput, optStagInput;
+let optMethodInput, optBudgetInput, optSeedInput, optPopSizeInput, optSigmaRelInput, optStagInput, verifyRepeatsInput;
 let summaryStatusEl, summaryMethodEl, summaryStopReasonEl, summaryEvalsEl, summaryObjectiveEl, summaryBestScoreEl;
-let saveBtn, deleteBtn, runBtn, runOptimizerBtn, downloadResultsBtn, refreshBtn, cancelBtn;
+let saveBtn, deleteBtn, runBtn, runOptimizerBtn, replayBestBtn, verifyBestBtn, downloadResultsBtn, refreshBtn, cancelBtn;
 
 const ALLOWED_OBJECTIVE_METRICS = new Set([
     'success_flag',
@@ -18,6 +18,8 @@ let callbacks = {
     onDelete: async (_name) => { },
     onRun: async (_name, _maxRuns) => ({}),
     onRunOptimizer: async (_payload) => ({}),
+    onReplayBest: async (_runId, _applyToProject) => ({}),
+    onVerifyBest: async (_runId, _repeats) => ({}),
     onRefresh: async () => ({})
 };
 
@@ -129,6 +131,14 @@ function _extractRunsFromLastResult() {
     if (Array.isArray(lastRunResult.runs)) return lastRunResult.runs;
     if (Array.isArray(lastRunResult.candidates)) return lastRunResult.candidates;
     return [];
+}
+
+function _getOptimizerRunIdFromLastResult() {
+    if (!lastRunResult) return null;
+    if (typeof lastRunResult.run_id === 'string' && lastRunResult.run_id.length > 0) {
+        return lastRunResult.run_id;
+    }
+    return null;
 }
 
 function _renderOptimizerSummary() {
@@ -311,6 +321,41 @@ async function _handleRunOptimizer() {
     _renderOptimizerSummary();
 }
 
+async function _handleReplayBest() {
+    const runId = _getOptimizerRunIdFromLastResult();
+    if (!runId) {
+        window.alert('No optimizer run selected yet. Run optimizer first.');
+        return;
+    }
+
+    const result = await callbacks.onReplayBest(runId, true);
+    runOutput.value = JSON.stringify(result, null, 2);
+    if (result?.replay_result?.run_record) {
+        // keep optimizer summary card context; do not overwrite optimizer lastRunResult
+    }
+}
+
+async function _handleVerifyBest() {
+    const runId = _getOptimizerRunIdFromLastResult();
+    if (!runId) {
+        window.alert('No optimizer run selected yet. Run optimizer first.');
+        return;
+    }
+
+    const repeats = Number(verifyRepeatsInput?.value || 3);
+    const safeRepeats = Number.isFinite(repeats) && repeats > 0 ? repeats : 3;
+    const result = await callbacks.onVerifyBest(runId, safeRepeats);
+    runOutput.value = JSON.stringify(result, null, 2);
+
+    const stats = result?.verification_result?.verification_record?.stats;
+    if (stats && summaryStatusEl) {
+        summaryStatusEl.textContent = `Verified (${stats.count} runs)`;
+        if (summaryBestScoreEl && Number.isFinite(Number(stats.mean))) {
+            summaryBestScoreEl.textContent = `${Number(stats.mean).toFixed(6)} ± ${Number(stats.std || 0).toFixed(6)}`;
+        }
+    }
+}
+
 function _handleDownloadResults() {
     if (!lastRunResult) {
         window.alert('No run result to download yet.');
@@ -356,6 +401,7 @@ export function init(newCallbacks = {}) {
     optPopSizeInput = document.getElementById('ps_opt_popsize');
     optSigmaRelInput = document.getElementById('ps_opt_sigma_rel');
     optStagInput = document.getElementById('ps_opt_stag');
+    verifyRepeatsInput = document.getElementById('ps_verify_repeats');
 
     summaryStatusEl = document.getElementById('psSummaryStatus');
     summaryMethodEl = document.getElementById('psSummaryMethod');
@@ -368,6 +414,8 @@ export function init(newCallbacks = {}) {
     deleteBtn = document.getElementById('psDeleteBtn');
     runBtn = document.getElementById('psRunBtn');
     runOptimizerBtn = document.getElementById('psRunOptimizerBtn');
+    replayBestBtn = document.getElementById('psReplayBestBtn');
+    verifyBestBtn = document.getElementById('psVerifyBestBtn');
     downloadResultsBtn = document.getElementById('psDownloadResultsBtn');
     refreshBtn = document.getElementById('psRefreshBtn');
     cancelBtn = document.getElementById('psCancelBtn');
@@ -376,6 +424,8 @@ export function init(newCallbacks = {}) {
     deleteBtn.addEventListener('click', _handleDelete);
     runBtn.addEventListener('click', _handleRun);
     if (runOptimizerBtn) runOptimizerBtn.addEventListener('click', _handleRunOptimizer);
+    if (replayBestBtn) replayBestBtn.addEventListener('click', _handleReplayBest);
+    if (verifyBestBtn) verifyBestBtn.addEventListener('click', _handleVerifyBest);
     if (downloadResultsBtn) downloadResultsBtn.addEventListener('click', _handleDownloadResults);
     refreshBtn.addEventListener('click', _refreshAndRender);
     cancelBtn.addEventListener('click', hide);

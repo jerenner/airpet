@@ -2946,6 +2946,44 @@ def param_optimizer_run_route():
     return jsonify({"success": False, "error": err}), 400
 
 
+@app.route('/api/param_optimizer/replay_best', methods=['POST'])
+def param_optimizer_replay_best_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+    run_id = data.get('run_id')
+    if not run_id:
+        return jsonify({"success": False, "error": "run_id is required."}), 400
+
+    apply_to_project = bool(data.get('apply_to_project', True))
+    result, err = pm.replay_optimizer_best_candidate(run_id=run_id, apply_to_project=apply_to_project)
+    if not result:
+        return jsonify({"success": False, "error": err}), 400
+
+    if apply_to_project:
+        return create_success_response(
+            pm,
+            f"Replayed best candidate from optimizer run '{run_id}'.",
+            extra_payload={"replay_result": result}
+        )
+
+    return jsonify({"success": True, "replay_result": result})
+
+
+@app.route('/api/param_optimizer/verify_best', methods=['POST'])
+def param_optimizer_verify_best_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+    run_id = data.get('run_id')
+    if not run_id:
+        return jsonify({"success": False, "error": "run_id is required."}), 400
+
+    repeats = data.get('repeats', 3)
+    result, err = pm.verify_optimizer_best_candidate(run_id=run_id, repeats=repeats)
+    if result:
+        return jsonify({"success": True, "verification_result": result})
+    return jsonify({"success": False, "error": err}), 400
+
+
 @app.route('/add_solid_and_place', methods=['POST'])
 def add_solid_and_place_route():
     pm = get_project_manager_for_session()
