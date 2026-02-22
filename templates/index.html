@@ -2260,6 +2260,18 @@
                     </div>
                 </div>
 
+                <div id="psOptimizerSummaryCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Optimizer Summary</div>
+                    <div id="psOptimizerSummaryGrid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color: #334155;">
+                        <div><b>Status:</b> <span id="psSummaryStatus">No optimizer run yet</span></div>
+                        <div><b>Method:</b> <span id="psSummaryMethod">-</span></div>
+                        <div><b>Stop reason:</b> <span id="psSummaryStopReason">-</span></div>
+                        <div><b>Evaluations:</b> <span id="psSummaryEvals">-</span></div>
+                        <div><b>Objective:</b> <span id="psSummaryObjective">-</span></div>
+                        <div><b>Best score:</b> <span id="psSummaryBestScore">-</span></div>
+                    </div>
+                </div>
+
                 <div class="property_item" style="margin-top: 10px;">
                     <label for="ps_run_output">Last run output:</label>
                     <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
