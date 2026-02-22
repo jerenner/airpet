@@ -309,6 +309,12 @@
             cursor: pointer;
         }
 
+        #menu_bar .dropdown_content .dropdown-separator {
+            border: none;
+            border-top: 1px solid #d8dde6;
+            margin: 4px 0;
+        }
+
         #menu_bar li:hover .dropdown_content {
             display: block;
         }
@@ -836,7 +842,8 @@
 
         /* Param studies modal */
         #paramStudiesTableWrap {
-            max-height: 200px;
+            max-height: 260px;
+            min-height: 140px;
             overflow: auto;
             border: 1px solid #dbe2ea;
             border-radius: 4px;
@@ -853,12 +860,19 @@
             border-bottom: 1px solid #eef2f7;
             padding: 6px 8px;
         }
+        #paramStudiesTable th {
+            position: sticky;
+            top: 0;
+            background: #f8fafc;
+            z-index: 1;
+        }
         #paramStudiesTable tr.active {
             background: #eef6ff;
         }
 
         #psRankingTableWrap {
-            max-height: 220px;
+            max-height: 280px;
+            min-height: 160px;
             overflow: auto;
             border: 1px solid #dbe2ea;
             border-radius: 4px;
@@ -875,6 +889,16 @@
             border-bottom: 1px solid #eef2f7;
             padding: 6px 8px;
             font-family: ui-monospace, Menlo, monospace;
+        }
+        #psRankingTable th {
+            position: sticky;
+            top: 0;
+            background: #f8fafc;
+            z-index: 1;
+        }
+        #psRankingTable td:last-child {
+            white-space: normal;
+            word-break: break-word;
         }
 
         #stopSimButton:disabled {
@@ -1993,6 +2017,7 @@
                     <button>Object</button>
                     <div class="dropdown_content">
                         <button id="createRingArrayButton">Create Ring Array</button>
+                        <hr class="dropdown-separator">
                         <button id="parameterRegistryButton">Parameter Registry...</button>
                         <button id="paramStudiesButton">Param Studies...</button>
                     </div>
@@ -2204,7 +2229,7 @@
         </div>
     </div>
     <div id="paramStudiesModal" class="editor-modal">
-        <div class="modal-content" style="width: 860px; height: auto; max-height: 90vh;">
+        <div class="modal-content" style="width: 980px; height: auto; max-height: 92vh;">
             <div class="modal-header">
                 <h4>Param Studies</h4>
             </div>
