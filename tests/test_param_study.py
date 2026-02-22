@@ -156,6 +156,25 @@ def test_param_optimizer_basic_and_provenance():
     assert runs[0]["study_name"] == "opt1"
 
 
+def test_param_optimizer_budget_cap_is_enforced():
+    pm = _make_pm()
+    _add_define_param(pm, name="p1")
+
+    study, err = pm.upsert_param_study("opt_cap", {
+        "name": "opt_cap",
+        "mode": "random",
+        "parameters": ["p1"],
+        "random": {"samples": 4, "seed": 123},
+        "objectives": [{"metric": "success_flag", "name": "success", "direction": "maximize"}],
+    })
+    assert study is not None and err is None
+
+    result, err = pm.run_param_optimizer("opt_cap", budget=100000, seed=1)
+    assert err is None
+    assert result["budget"] == pm.MAX_OPTIMIZER_BUDGET
+    assert len(result["candidates"]) == pm.MAX_OPTIMIZER_BUDGET
+
+
 def test_param_optimizer_api_routes():
     app.config["TESTING"] = True
     with app.test_client() as client:

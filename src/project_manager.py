@@ -33,6 +33,8 @@ class ProjectManager:
         self.history = []
         self.history_index = -1
         self.MAX_HISTORY_SIZE = 50 # Cap the undo stack
+        self.MAX_PARAM_STUDY_RUNS = 2000
+        self.MAX_OPTIMIZER_BUDGET = 1000
         self._is_transaction_open = False
         self._pre_transaction_state = None
         self.chat_history = [] # For AI conversation continuity
@@ -973,11 +975,15 @@ class ProjectManager:
             steps = int(grid_cfg.get('steps', 3))
             if steps < 2:
                 return False, "Grid studies require at least 2 steps."
+            if steps > self.MAX_PARAM_STUDY_RUNS:
+                return False, f"Grid steps too large. Max allowed is {self.MAX_PARAM_STUDY_RUNS}."
         else:
             rnd_cfg = config.get('random', {}) or {}
             samples = int(rnd_cfg.get('samples', 10))
             if samples < 1:
                 return False, "Random studies require at least 1 sample."
+            if samples > self.MAX_PARAM_STUDY_RUNS:
+                return False, f"Random samples too large. Max allowed is {self.MAX_PARAM_STUDY_RUNS}."
 
         objectives = config.get('objectives', []) or []
         if not isinstance(objectives, list):
@@ -1194,8 +1200,10 @@ class ProjectManager:
 
         study = studies[name]
         samples = self._generate_param_study_samples(study)
+        requested_limit = self.MAX_PARAM_STUDY_RUNS
         if max_runs is not None:
-            samples = samples[:max(0, int(max_runs))]
+            requested_limit = min(requested_limit, max(0, int(max_runs)))
+        samples = samples[:requested_limit]
 
         original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
         runs = []
@@ -1327,6 +1335,7 @@ class ProjectManager:
             return None, f"Unsupported optimizer method '{method}'."
 
         budget = max(1, int(budget))
+        budget = min(budget, self.MAX_OPTIMIZER_BUDGET)
         seed = int(seed)
         rng = random.Random(seed)
 
@@ -1382,6 +1391,7 @@ class ProjectManager:
             'method': method,
             'seed': seed,
             'budget': budget,
+            'max_budget_cap': self.MAX_OPTIMIZER_BUDGET,
             'objective': {
                 'name': objective_name,
                 'direction': direction,

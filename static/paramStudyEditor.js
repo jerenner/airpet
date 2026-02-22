@@ -2,7 +2,15 @@ let modal, tableBody;
 let nameInput, modeInput, paramsInput, objectivesInput, gridStepsInput, samplesInput, seedInput, maxRunsInput, runOutput;
 let rankObjectiveSelect, rankDirectionSelect, rankingTableBody;
 let optBudgetInput, optSeedInput;
-let saveBtn, deleteBtn, runBtn, runOptimizerBtn, refreshBtn, cancelBtn;
+let saveBtn, deleteBtn, runBtn, runOptimizerBtn, downloadResultsBtn, refreshBtn, cancelBtn;
+
+const ALLOWED_OBJECTIVE_METRICS = new Set([
+    'success_flag',
+    'solids_count',
+    'logical_volumes_count',
+    'placements_count',
+    'sources_count',
+]);
 
 let callbacks = {
     onSave: async (_payload) => { },
@@ -37,6 +45,10 @@ function _studyFromForm() {
     const mode = modeInput.value;
     const parameters = paramsInput.value.split(',').map(x => x.trim()).filter(Boolean);
 
+    if (parameters.length === 0) {
+        throw new Error('Please provide at least one parameter name.');
+    }
+
     const objectives = objectivesInput.value
         .split(',')
         .map(x => x.trim())
@@ -46,8 +58,25 @@ function _studyFromForm() {
             const metric = parts[0];
             const name = parts[1] || metric;
             const direction = parts[2] || 'maximize';
+
+            if (!ALLOWED_OBJECTIVE_METRICS.has(metric)) {
+                throw new Error(`Unsupported objective metric '${metric}'.`);
+            }
+            if (!['maximize', 'minimize'].includes(direction)) {
+                throw new Error(`Invalid objective direction '${direction}'. Use maximize|minimize.`);
+            }
+
             return { metric, name, direction };
         });
+
+    const gridSteps = Number(gridStepsInput.value || 3);
+    const randomSamples = Number(samplesInput.value || 10);
+    if (!Number.isFinite(gridSteps) || gridSteps < 2) {
+        throw new Error('Grid steps must be >= 2.');
+    }
+    if (!Number.isFinite(randomSamples) || randomSamples < 1) {
+        throw new Error('Random samples must be >= 1.');
+    }
 
     return {
         name: nameInput.value.trim(),
@@ -55,11 +84,11 @@ function _studyFromForm() {
         parameters,
         objectives,
         grid: {
-            steps: Number(gridStepsInput.value || 3),
+            steps: gridSteps,
             per_parameter_steps: {},
         },
         random: {
-            samples: Number(samplesInput.value || 10),
+            samples: randomSamples,
             seed: Number(seedInput.value || 42),
         },
     };
@@ -181,10 +210,14 @@ async function _refreshAndRender() {
 }
 
 async function _handleSave() {
-    const payload = _studyFromForm();
-    await callbacks.onSave(payload);
-    activeName = payload.name;
-    await _refreshAndRender();
+    try {
+        const payload = _studyFromForm();
+        await callbacks.onSave(payload);
+        activeName = payload.name;
+        await _refreshAndRender();
+    } catch (error) {
+        window.alert(error.message || String(error));
+    }
 }
 
 async function _handleDelete() {
@@ -236,6 +269,27 @@ async function _handleRunOptimizer() {
     _renderRankingTable();
 }
 
+function _handleDownloadResults() {
+    if (!lastRunResult) {
+        window.alert('No run result to download yet.');
+        return;
+    }
+    const studyName = (nameInput?.value || activeName || 'study').trim() || 'study';
+    const kind = Array.isArray(lastRunResult?.candidates) ? 'optimizer' : 'sweep';
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${studyName}_${kind}_results_${ts}.json`;
+
+    const blob = new Blob([JSON.stringify(lastRunResult, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 export function init(newCallbacks = {}) {
     callbacks = { ...callbacks, ...newCallbacks };
 
@@ -261,6 +315,7 @@ export function init(newCallbacks = {}) {
     deleteBtn = document.getElementById('psDeleteBtn');
     runBtn = document.getElementById('psRunBtn');
     runOptimizerBtn = document.getElementById('psRunOptimizerBtn');
+    downloadResultsBtn = document.getElementById('psDownloadResultsBtn');
     refreshBtn = document.getElementById('psRefreshBtn');
     cancelBtn = document.getElementById('psCancelBtn');
 
@@ -268,6 +323,7 @@ export function init(newCallbacks = {}) {
     deleteBtn.addEventListener('click', _handleDelete);
     runBtn.addEventListener('click', _handleRun);
     if (runOptimizerBtn) runOptimizerBtn.addEventListener('click', _handleRunOptimizer);
+    if (downloadResultsBtn) downloadResultsBtn.addEventListener('click', _handleDownloadResults);
     refreshBtn.addEventListener('click', _refreshAndRender);
     cancelBtn.addEventListener('click', hide);
     if (rankObjectiveSelect) rankObjectiveSelect.addEventListener('change', _renderRankingTable);
