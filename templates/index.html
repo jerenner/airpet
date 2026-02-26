@@ -2234,6 +2234,7 @@
                 <h4>Param Studies</h4>
             </div>
             <div class="modal-body" style="flex-direction: column;">
+                <div id="psNotice" style="display:none; margin: 0 0 8px 0; padding: 8px 10px; border-radius: 4px; font-size: 12px;"></div>
                 <div id="paramStudiesTableWrap">
                     <table id="paramStudiesTable">
                         <thead>
@@ -2264,9 +2265,78 @@
                         <input type="text" id="ps_parameters" placeholder="param1,param2,...">
                     </div>
                     <div class="property_item" style="grid-column: 1 / span 2;">
-                        <label for="ps_objectives">Objectives (metric[:name[:direction]], comma-separated):</label>
+                        <label style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="ps_show_legacy_objectives">
+                            <span>Show legacy objective text input (advanced)</span>
+                        </label>
+                        <div style="font-size:12px; color:#64748b; margin-top:4px;">Objective Builder is the default path. Legacy objective text input is optional for advanced/manual workflows.</div>
+                    </div>
+                    <div class="property_item" id="psLegacyObjectivesRow" style="grid-column: 1 / span 2; display:none;">
+                        <label for="ps_objectives">Objectives (legacy quick input, metric[:name[:direction[:parameter]]], comma-separated):</label>
                         <input type="text" id="ps_objectives" placeholder="success_flag:success:maximize, placements_count:placements:minimize">
                     </div>
+
+                    <div id="psObjectiveBuilderCard" style="grid-column: 1 / span 2; margin-top: 6px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc;">
+                        <div style="font-weight: 600; margin-bottom: 8px;">Objective Builder (M6 MVP)</div>
+                        <div id="psObPolicyCaps" style="font-size:12px; color:#334155; background:#fff; border:1px solid #e2e8f0; border-radius:4px; padding:6px 8px; margin-bottom:8px;">Loading run policy limits...</div>
+
+                        <div class="pr-form-grid" style="margin-top: 0;">
+                            <div class="property_item">
+                                <label for="ps_ob_template">Template:</label>
+                                <select id="ps_ob_template">
+                                    <option value="weighted_tradeoff">weighted_tradeoff</option>
+                                </select>
+                            </div>
+                            <div class="property_item" style="display:flex; align-items:end; gap:8px;">
+                                <button id="psObLoadExampleBtn" type="button">Load Example</button>
+                                <button id="psObValidateBtn" type="button">Validate</button>
+                            </div>
+                            <div class="property_item" style="grid-column: 1 / span 2;">
+                                <label for="ps_ob_dataset_path">Simulation metric dataset path:</label>
+                                <input type="text" id="ps_ob_dataset_path" value="default_ntuples/Hits/Edep" placeholder="default_ntuples/Hits/Edep">
+                                <div id="psObDatasetHint" style="font-size:12px; color:#64748b; margin-top:4px;">Use an HDF5 dataset path (e.g. default_ntuples/Hits/Edep) with reduce=sum for total deposited energy.</div>
+                            </div>
+                            <div class="property_item">
+                                <label for="ps_ob_cost_key">Context cost key:</label>
+                                <input type="text" id="ps_ob_cost_key" value="cost_norm" placeholder="cost_norm">
+                            </div>
+                            <div class="property_item">
+                                <label for="ps_ob_score_expr">Score expression:</label>
+                                <input type="text" id="ps_ob_score_expr" value="0.8*edep_sum - 0.2*cost_norm" placeholder="0.8*edep_sum - 0.2*cost_norm">
+                                <div style="font-size:12px; color:#64748b; margin-top:4px;">Formula can reference extract objective names and prior study aliases.</div>
+                                <div id="psObAllowedFunctions" style="font-size:12px; color:#475569; margin-top:2px;">Allowed functions: loading...</div>
+                                <div id="psObFormulaVars" style="font-size:12px; color:#475569; margin-top:4px;">Formula variables: loading...</div>
+                            </div>
+                            <div class="property_item" style="display:flex; align-items:end; gap:8px; flex-wrap:wrap;">
+                                <button id="psObBuildBtn" type="button">Build</button>
+                                <button id="psObUpsertBtn" type="button">Upsert Study</button>
+                                <button id="psObLaunchDryRunBtn" type="button">Launch Dry Run</button>
+                                <button id="psObGuidedBtn" type="button" class="confirm-button">Guided: Validate → Build → Dry Run</button>
+                            </div>
+                            <div class="property_item" style="grid-column: 1 / span 2; border:1px solid #e2e8f0; border-radius:4px; padding:8px; background:#fff;">
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 12px; font-size:12px; color:#334155;">
+                                    <div><b>Status:</b> <span id="psObStatus">idle</span></div>
+                                    <div><b>Last Stage:</b> <span id="psObStage">-</span></div>
+                                </div>
+                                <div style="margin-top:6px; font-size:12px; color:#334155;"><b>Errors</b></div>
+                                <ul id="psObErrors" style="margin:4px 0 6px 18px; color:#b91c1c; font-size:12px;"><li style="color:#64748b;">none</li></ul>
+                                <div style="font-size:12px; color:#334155;"><b>Warnings</b></div>
+                                <ul id="psObWarnings" style="margin:4px 0 0 18px; color:#92400e; font-size:12px;"><li style="color:#64748b;">none</li></ul>
+                            </div>
+                            <div class="property_item" style="grid-column: 1 / span 2;">
+                                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
+                                    <label for="ps_ob_output" style="margin:0;">Objective Builder output:</label>
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                        <button id="psObCopyOutputBtn" type="button">Copy Output JSON</button>
+                                        <button id="psObCopyBuildBtn" type="button">Copy Build Payload</button>
+                                        <button id="psObCopyLaunchBtn" type="button">Copy Launch Payload</button>
+                                    </div>
+                                </div>
+                                <textarea id="ps_ob_output" rows="6" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="property_item">
                         <label for="ps_grid_steps">Grid Steps (default):</label>
                         <input type="number" id="ps_grid_steps" value="3" min="2" step="1">
@@ -2294,6 +2364,93 @@
                         <div><b>Evaluations:</b> <span id="psSummaryEvals">-</span></div>
                         <div><b>Objective:</b> <span id="psSummaryObjective">-</span></div>
                         <div><b>Best score:</b> <span id="psSummaryBestScore">-</span></div>
+                    </div>
+                </div>
+
+                <div id="psRunTimelineCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Run Timeline &amp; Status</div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 10px; color: #334155;">
+                        <div><b>Status:</b> <span id="psRunStatus">idle</span></div>
+                        <div><b>Action:</b> <span id="psRunAction">-</span></div>
+                        <div><b>Elapsed:</b> <span id="psRunElapsed">0.0s</span></div>
+                        <div><b>Budget used:</b> <span id="psRunBudgetUsed">-</span></div>
+                        <div><b>Success/Failure:</b> <span id="psRunSuccessFailure">-</span></div>
+                        <div><b>Last update:</b> <span id="psRunLastUpdate">-</span></div>
+                    </div>
+                    <div style="margin-top:8px; color:#334155; font-weight:600;">Timeline</div>
+                    <ul id="psRunTimelineList" style="margin:4px 0 0 18px; max-height:120px; overflow:auto; color:#334155;">
+                        <li style="color:#64748b;">No run activity yet.</li>
+                    </ul>
+                </div>
+
+                <div id="psRunReviewCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Run Review &amp; Apply</div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color: #334155;">
+                        <div><b>Run ID:</b> <span id="psReviewRunId">-</span></div>
+                        <div><b>Verification:</b> <span id="psReviewGateStatus">not verified</span></div>
+                        <div><b>Token:</b> <span id="psReviewTokenStatus">none</span></div>
+                        <div><b>Apply readiness:</b> <span id="psReviewApplyReady">blocked</span></div>
+                    </div>
+                    <div class="pr-form-grid" style="margin-top: 8px;">
+                        <div class="property_item">
+                            <label for="ps_verify_repeats">Verify Repeats:</label>
+                            <input type="number" id="ps_verify_repeats" min="1" step="1" value="3">
+                        </div>
+                        <div class="property_item">
+                            <label for="ps_verify_min_success_rate">Min Success Rate (0-1):</label>
+                            <input type="number" id="ps_verify_min_success_rate" min="0" max="1" step="0.01" value="1.0">
+                        </div>
+                        <div class="property_item">
+                            <label for="ps_verify_max_std">Max Std (optional):</label>
+                            <input type="number" id="ps_verify_max_std" min="0" step="any" placeholder="unset">
+                        </div>
+                        <div class="property_item" style="display:flex; align-items:end; gap:8px; flex-wrap:wrap;">
+                            <button id="psReviewVerifyBtn" type="button">Verify Best (Issue Token)</button>
+                            <button id="psReviewApplyBtn" type="button" class="confirm-button" disabled>Apply Best (Token Required)</button>
+                            <button id="psReviewCopyTokenBtn" type="button">Copy Token</button>
+                        </div>
+                        <div class="property_item" style="grid-column: 1 / span 2;">
+                            <label for="psReviewToken">Verification Token:</label>
+                            <input type="text" id="psReviewToken" readonly placeholder="Run Verify Best to get a token">
+                            <div id="psReviewApplyConfirmText" style="margin-top:4px; color:#64748b; font-size:12px;">Apply confirmation not armed.</div>
+                        </div>
+                        <div class="property_item" style="grid-column: 1 / span 2;">
+                            <label for="psReviewGateReasons">Gate details:</label>
+                            <textarea id="psReviewGateReasons" rows="4" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                        </div>
+                        <div class="property_item" style="grid-column: 1 / span 2; border-top:1px solid #e2e8f0; padding-top:8px; margin-top:2px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                                <label style="margin:0; font-weight:600;">Apply Audit</label>
+                                <div style="display:flex; gap:8px;">
+                                    <button id="psReviewAuditRefreshBtn" type="button">Refresh Audit</button>
+                                    <button id="psReviewRollbackBtn" type="button" class="danger-button">Rollback Selected</button>
+                                </div>
+                            </div>
+                            <div id="psReviewAuditSummary" style="margin-top:6px; color:#64748b;">No apply actions recorded yet.</div>
+                            <div id="psReviewAuditDiagnostics" style="margin-top:4px; color:#64748b; font-size:12px;">Audit diagnostics: not loaded.</div>
+                            <div style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <label for="psReviewAuditTarget" style="margin:0;">Rollback target:</label>
+                                <select id="psReviewAuditTarget" style="min-width:320px;"></select>
+                                <span id="psReviewAuditTargetHint" style="color:#64748b; font-size:12px;">Only latest unapplied entry can be rolled back safely.</span>
+                            </div>
+                            <div id="psReviewRollbackConfirmText" style="margin-top:4px; color:#64748b; font-size:12px;">Rollback confirmation not armed.</div>
+                            <div style="margin-top:6px; border:1px solid #e2e8f0; border-radius:4px; max-height:140px; overflow:auto; background:#fff;">
+                                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Time</th>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Run</th>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Status</th>
+                                            <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Audit ID</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="psReviewAuditTableBody">
+                                        <tr><td colspan="4" style="padding:6px; color:#64748b;">No apply actions recorded yet.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <textarea id="psReviewAuditDetails" rows="4" readonly style="margin-top:6px; width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                        </div>
                     </div>
                 </div>
 
@@ -2341,10 +2498,6 @@
                         <label for="ps_opt_stag">CMA-ES Stagnation Gens:</label>
                         <input type="number" id="ps_opt_stag" min="1" step="1" placeholder="12">
                     </div>
-                    <div class="property_item">
-                        <label for="ps_verify_repeats">Verify Repeats:</label>
-                        <input type="number" id="ps_verify_repeats" min="1" step="1" value="3">
-                    </div>
                 </div>
                 <div id="psRankingTableWrap">
                     <table id="psRankingTable">
@@ -2362,15 +2515,75 @@
                         </tbody>
                     </table>
                 </div>
+
+                <div id="psDecompositionCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Candidate Decomposition (Top Ranked)</div>
+                    <table id="psDecompositionTable" style="width:100%; border-collapse: collapse; font-size:12px;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Rank</th>
+                                <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Run</th>
+                                <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Score</th>
+                                <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Objective Terms</th>
+                                <th style="text-align:left; padding:4px; border-bottom:1px solid #e2e8f0;">Selection Meta</th>
+                            </tr>
+                        </thead>
+                        <tbody id="psDecompositionTableBody">
+                            <tr><td colspan="5" style="color:#64748b; padding:6px;">Run optimizer to populate decomposition.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="psCandidateCompareCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+                        <div style="font-weight: 600;">Top Candidate Compare</div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label for="psCompareTopN" style="margin:0; font-size:12px; color:#334155;">Top N:</label>
+                            <select id="psCompareTopN">
+                                <option value="2">2</option>
+                                <option value="3" selected>3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                            </select>
+                            <button id="psCompareRefreshBtn" type="button">Refresh Compare</button>
+                        </div>
+                    </div>
+                    <div id="psCompareTableWrap" style="overflow:auto; border:1px solid #e2e8f0; border-radius:4px; background:#fff;">
+                        <div style="padding:6px; color:#64748b;">Run optimizer to compare candidates.</div>
+                    </div>
+                </div>
+
+                <div id="psWhySelectedCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Why Selected</div>
+                    <div id="psWhySelectedSummary" style="color:#334155; margin-bottom:6px;">No optimizer selection yet.</div>
+                    <textarea id="psWhySelectedDetails" rows="5" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                </div>
+
+                <div id="psFailureDiagnosticsCard" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                    <div style="font-weight: 600; margin-bottom: 6px;">Failure Diagnostics</div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color:#334155; margin-bottom:6px;">
+                        <div><b>Failed runs:</b> <span id="psFailureCount">0</span></div>
+                        <div><b>Unique failure groups:</b> <span id="psFailureGroupsCount">0</span></div>
+                    </div>
+                    <div id="psFailureGroups" style="border:1px solid #e2e8f0; border-radius:4px; background:#fff; padding:6px; max-height:140px; overflow:auto; color:#334155;">
+                        No failure groups yet.
+                    </div>
+                    <div style="margin-top:6px; font-weight:600; color:#334155;">What to try next</div>
+                    <ul id="psFailureHints" style="margin:4px 0 0 18px; color:#334155;">
+                        <li style="color:#64748b;">No hints yet.</li>
+                    </ul>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="psRefreshBtn">Refresh</button>
                 <button id="psDeleteBtn">Delete</button>
                 <button id="psRunBtn">Run Study</button>
                 <button id="psRunOptimizerBtn">Run Optimizer</button>
-                <button id="psReplayBestBtn">Replay Best</button>
-                <button id="psVerifyBestBtn">Verify Best</button>
+                <button id="psStopRunBtn" class="danger-button" disabled>Stop Active Run</button>
+                <button id="psReplayBestBtn" style="display:none;" aria-hidden="true">Replay Best (Legacy)</button>
+                <button id="psVerifyBestBtn" style="display:none;" aria-hidden="true">Verify Best (Legacy)</button>
                 <button id="psDownloadResultsBtn">Download Results</button>
+                <span style="margin-left: 8px; color: #64748b; font-size: 12px;">Use <b>Run Review &amp; Apply</b> above for verify/apply.</span>
                 <button id="psCancelBtn">Close</button>
                 <button id="psSaveBtn" class="confirm-button">Save</button>
             </div>

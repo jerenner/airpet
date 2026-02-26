@@ -63,6 +63,80 @@ let isProjectChanged = false;
 let autoSaveTimer = null;
 const AUTO_SAVE_INTERVAL = 15000; // 15 seconds
 
+let parameterRegistryEditorInitialized = false;
+let paramStudyEditorInitialized = false;
+
+function _bindMenuButtonAction(buttonId, handler) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+    if (btn.dataset.ocMenuBound === '1') return;
+
+    let lastInvokeAtMs = 0;
+    const invoke = (event) => {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        const now = Date.now();
+        if (now - lastInvokeAtMs < 200) return;
+        lastInvokeAtMs = now;
+        Promise.resolve(handler()).catch((error) => {
+            console.error(`Menu action failed for #${buttonId}:`, error);
+        });
+    };
+
+    // Dropdown menus can collapse before click fires on some platforms/tooling.
+    btn.addEventListener('mousedown', invoke);
+    btn.addEventListener('click', invoke);
+    btn.dataset.ocMenuBound = '1';
+}
+
+function ensureParameterRegistryEditorInit() {
+    if (parameterRegistryEditorInitialized) return;
+    ParameterRegistryEditor.init({
+        onSave: handleParameterRegistrySave,
+        onDelete: handleParameterRegistryDelete,
+        onRefresh: handleParameterRegistryRefresh,
+    });
+    parameterRegistryEditorInitialized = true;
+}
+
+function ensureParamStudyEditorInit() {
+    if (paramStudyEditorInitialized) return;
+    ParamStudyEditor.init({
+        onSave: handleParamStudySave,
+        onDelete: handleParamStudyDelete,
+        onRun: handleParamStudyRun,
+        onRunOptimizer: handleParamStudyRunOptimizer,
+        onStopActiveRun: handleParamOptimizerStopActiveRun,
+        onReplayBest: handleParamOptimizerReplayBest,
+        onVerifyBest: handleParamOptimizerVerifyBest,
+        onGetApplyAuditHistory: handleParamOptimizerGetApplyAuditHistory,
+        onGetApplyAuditDiagnostics: handleParamOptimizerGetApplyAuditDiagnostics,
+        onRollbackLastApply: handleParamOptimizerRollbackLastApply,
+        onRefresh: handleParamStudyRefresh,
+        onObjectiveBuilderSchema: handleObjectiveBuilderSchema,
+        onObjectiveBuilderExample: handleObjectiveBuilderExample,
+        onObjectiveBuilderValidate: handleObjectiveBuilderValidate,
+        onObjectiveBuilderBuild: handleObjectiveBuilderBuild,
+        onObjectiveBuilderUpsert: handleObjectiveBuilderUpsert,
+        onObjectiveBuilderLaunch: handleObjectiveBuilderLaunch,
+    });
+    paramStudyEditorInitialized = true;
+}
+
+function bindObjectMenuLaunchers() {
+    _bindMenuButtonAction('parameterRegistryButton', async () => {
+        ensureParameterRegistryEditorInit();
+        await handleOpenParameterRegistry();
+    });
+
+    _bindMenuButtonAction('paramStudiesButton', async () => {
+        ensureParamStudyEditorInit();
+        await handleOpenParamStudies();
+    });
+}
+
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', initializeApp);
 
@@ -198,6 +272,10 @@ async function initializeApp() {
         onDownloadSimDataClicked: handleDownloadSimData
     });
 
+    // Bind object-menu launchers early so menu actions remain available
+    // even if a later initializer throws.
+    bindObjectMenuLaunchers();
+
     // Initialize the 3D scene and its controls
     SceneManager.initScene({
         onObjectSelectedIn3D: handle3DSelection,          // Callback when object clicked in 3D scene
@@ -291,21 +369,8 @@ async function initializeApp() {
         onConfirm: handleConfirmStepImport
     });
 
-    ParameterRegistryEditor.init({
-        onSave: handleParameterRegistrySave,
-        onDelete: handleParameterRegistryDelete,
-        onRefresh: handleParameterRegistryRefresh,
-    });
-
-    ParamStudyEditor.init({
-        onSave: handleParamStudySave,
-        onDelete: handleParamStudyDelete,
-        onRun: handleParamStudyRun,
-        onRunOptimizer: handleParamStudyRunOptimizer,
-        onReplayBest: handleParamOptimizerReplayBest,
-        onVerifyBest: handleParamOptimizerVerifyBest,
-        onRefresh: handleParamStudyRefresh,
-    });
+    ensureParameterRegistryEditorInit();
+    ensureParamStudyEditorInit();
 
     // Add menu listeners
     // --- Check AI service status on startup ---
@@ -325,15 +390,8 @@ async function initializeApp() {
         }
     });
 
-    const parameterRegistryButton = document.getElementById('parameterRegistryButton');
-    if (parameterRegistryButton) {
-        parameterRegistryButton.addEventListener('click', handleOpenParameterRegistry);
-    }
-
-    const paramStudiesButton = document.getElementById('paramStudiesButton');
-    if (paramStudiesButton) {
-        paramStudiesButton.addEventListener('click', handleOpenParamStudies);
-    }
+    // Re-bind safely (idempotent) after full init.
+    bindObjectMenuLaunchers();
 
     // Restore session from backend on page load
     console.log("Fetching initial project state from backend...");
@@ -2552,6 +2610,7 @@ async function handleParameterRegistryDelete(name) {
 }
 
 async function handleOpenParameterRegistry() {
+    ensureParameterRegistryEditorInit();
     try {
         const result = await APIService.getParameterRegistry();
         await ParameterRegistryEditor.show(result.parameter_registry || {});
@@ -2621,11 +2680,27 @@ async function handleParamStudyRunOptimizer(payload) {
     }
 }
 
-async function handleParamOptimizerReplayBest(runId, applyToProject = true) {
+async function handleParamOptimizerStopActiveRun(reason = 'user_requested_stop') {
+    try {
+        const result = await APIService.stopActiveParamOptimizerRun(reason);
+        if (result?.active && result?.stop_requested) {
+            UIManager.showNotification('Stop requested for active run. Current candidate will finish before termination.');
+        } else {
+            UIManager.showNotification('No active run to stop.');
+        }
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to request stop: " + error.message);
+        throw error;
+    }
+}
+
+async function handleParamOptimizerReplayBest(runId, options = {}) {
+    const opts = (options && typeof options === 'object') ? options : { applyToProject: !!options };
     UIManager.showLoading(`Replaying best candidate (${runId})...`);
     try {
-        const result = await APIService.replayParamOptimizerBest(runId, applyToProject);
-        if (applyToProject) {
+        const result = await APIService.replayParamOptimizerBest(runId, opts);
+        if (opts.applyToProject !== false) {
             syncUIWithState(result);
         }
         UIManager.showNotification('Best candidate replay completed.');
@@ -2638,10 +2713,11 @@ async function handleParamOptimizerReplayBest(runId, applyToProject = true) {
     }
 }
 
-async function handleParamOptimizerVerifyBest(runId, repeats = 3) {
+async function handleParamOptimizerVerifyBest(runId, options = {}) {
+    const opts = (options && typeof options === 'object') ? options : { repeats: options };
     UIManager.showLoading(`Verifying best candidate (${runId})...`);
     try {
-        const result = await APIService.verifyParamOptimizerBest(runId, repeats);
+        const result = await APIService.verifyParamOptimizerBest(runId, opts);
         UIManager.showNotification('Best candidate verification completed.');
         return result;
     } catch (error) {
@@ -2652,12 +2728,116 @@ async function handleParamOptimizerVerifyBest(runId, repeats = 3) {
     }
 }
 
+async function handleParamOptimizerGetApplyAuditHistory(limit = 20) {
+    try {
+        const result = await APIService.getParamOptimizerApplyAuditHistory(limit);
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to load apply audit history: " + error.message);
+        throw error;
+    }
+}
+
+async function handleParamOptimizerRollbackLastApply(auditId = null) {
+    UIManager.showLoading('Rolling back apply action...');
+    try {
+        const result = await APIService.rollbackLastParamOptimizerApply(auditId);
+        syncUIWithState(result);
+        UIManager.showNotification('Rollback completed.');
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to rollback apply action: " + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleParamOptimizerGetApplyAuditDiagnostics() {
+    try {
+        const result = await APIService.getParamOptimizerApplyAuditDiagnostics();
+        return result;
+    } catch (error) {
+        UIManager.showError("Failed to load apply audit diagnostics: " + error.message);
+        throw error;
+    }
+}
+
 async function handleOpenParamStudies() {
+    ensureParamStudyEditorInit();
     try {
         const result = await APIService.getParamStudies();
         await ParamStudyEditor.show(result.param_studies || {});
     } catch (error) {
         UIManager.showError("Failed to open param studies: " + error.message);
+    }
+}
+
+async function handleObjectiveBuilderSchema() {
+    const result = await APIService.getObjectiveBuilderSchema();
+    return result.schema || {};
+}
+
+async function handleObjectiveBuilderExample(template = 'weighted_tradeoff') {
+    const result = await APIService.getObjectiveBuilderExample(template);
+    return result.payload || {};
+}
+
+async function handleObjectiveBuilderValidate(payload) {
+    UIManager.showLoading('Validating objective builder payload...');
+    try {
+        const result = await APIService.validateObjectiveBuilder(payload);
+        return result;
+    } catch (error) {
+        UIManager.showError('Objective builder validation failed: ' + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleObjectiveBuilderBuild(payload) {
+    UIManager.showLoading('Building objective payload...');
+    try {
+        const result = await APIService.buildObjectiveBuilder(payload);
+        return result;
+    } catch (error) {
+        UIManager.showError('Objective builder build failed: ' + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleObjectiveBuilderUpsert(payload) {
+    UIManager.showLoading('Upserting objective builder study...');
+    try {
+        const result = await APIService.upsertObjectiveBuilderStudy(payload);
+        if (!result?.dry_run) {
+            UIManager.showNotification(`Objective builder study '${result?.study_name || payload?.study_name || ''}' ${result?.action || 'saved'}.`);
+        }
+        return result;
+    } catch (error) {
+        UIManager.showError('Objective builder upsert failed: ' + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleObjectiveBuilderLaunch(payload) {
+    UIManager.showLoading(payload?.dry_run ? 'Preparing objective builder launch (dry run)...' : 'Launching objective builder run...');
+    try {
+        const result = await APIService.launchObjectiveBuilder(payload);
+        if (!result?.dry_run && result?.optimizer_result) {
+            UIManager.showNotification('Objective builder launch completed.');
+        }
+        return result;
+    } catch (error) {
+        UIManager.showError('Objective builder launch failed: ' + error.message);
+        throw error;
+    } finally {
+        UIManager.hideLoading();
     }
 }
 

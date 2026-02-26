@@ -820,6 +820,10 @@ class GeometryState:
         # }
         self.optimizer_runs = {}
 
+        # Stable project scope identifier used by policy/audit systems to
+        # associate records with this project instance across save/load cycles.
+        self.project_scope_id = str(uuid.uuid4())
+
         # --- Dictionary to hold UI grouping information ---
         # Format: { 'solids': [{'name': 'MyCrystals', 'members': ['solid1_name', 'solid2_name']}], ... }
         self.ui_groups = {
@@ -875,6 +879,7 @@ class GeometryState:
             "parameter_registry": self.parameter_registry,
             "param_studies": self.param_studies,
             "optimizer_runs": self.optimizer_runs,
+            "project_scope_id": self.project_scope_id,
             "ui_groups": self.ui_groups
         }
 
@@ -930,6 +935,12 @@ class GeometryState:
             instance.optimizer_runs = optimizer_runs
         else:
             instance.optimizer_runs = {}
+
+        project_scope_id = data.get('project_scope_id')
+        if isinstance(project_scope_id, str) and project_scope_id.strip():
+            instance.project_scope_id = project_scope_id.strip()
+        else:
+            instance.project_scope_id = str(uuid.uuid4())
 
         instance.ui_groups = data.get('ui_groups', instance.ui_groups)
 

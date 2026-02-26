@@ -10,6 +10,8 @@ from scipy.spatial.transform import Rotation as R
 import shutil
 import itertools
 import random
+import time
+import threading
 
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
@@ -18,6 +20,7 @@ from .geometry_types import GeometryState, Solid, Define, Material, Element, Iso
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
+from .objective_formula import evaluate_objective_formula
 
 AUTOSAVE_VERSION_ID = "autosave"
 
@@ -49,8 +52,120 @@ class ProjectManager:
         # --- Track changed objects (for now only tracking certain solids) ---
         self.changed_object_ids = {'solids': set(), 'sources': set() } #, 'lvs': set(), 'defines': set()}
 
+        # --- Active optimization/study run control (M6 safety) ---
+        self._run_control_lock = threading.Lock()
+        self._active_run_control = None
+        self._last_run_control = None
+
     def _clear_change_tracker(self):
         self.changed_object_ids = {key: set() for key in self.changed_object_ids}
+
+    def start_managed_run(self, kind='optimizer', max_wall_time_seconds=None, metadata=None):
+        with self._run_control_lock:
+            if self._active_run_control and self._active_run_control.get('status') == 'running':
+                return None, "Another run is already active for this project."
+
+            wall = None
+            if max_wall_time_seconds is not None:
+                try:
+                    wall = max(1, int(max_wall_time_seconds))
+                except Exception:
+                    wall = None
+
+            started_at = time.time()
+            run_control = {
+                'run_control_id': f"runctl_{datetime.utcnow().strftime('%Y%m%dT%H%M%S_%f')}",
+                'kind': str(kind or 'optimizer'),
+                'status': 'running',
+                'started_at': started_at,
+                'max_wall_time_seconds': wall,
+                'deadline_at': (started_at + wall) if wall is not None else None,
+                'stop_requested': False,
+                'stop_reason': None,
+                'metadata': dict(metadata or {}),
+            }
+            self._active_run_control = run_control
+            self._last_run_control = dict(run_control)
+            return dict(run_control), None
+
+    def request_stop_managed_run(self, reason='user_requested_stop'):
+        with self._run_control_lock:
+            rc = self._active_run_control
+            if not rc or rc.get('status') != 'running':
+                return {
+                    'active': False,
+                    'stop_requested': False,
+                    'reason': 'No active run.',
+                }
+
+            if not rc.get('stop_requested'):
+                rc['stop_requested'] = True
+                rc['stop_reason'] = str(reason or 'user_requested_stop')
+                rc['stop_requested_at'] = time.time()
+
+            return {
+                'active': True,
+                'stop_requested': True,
+                'run_control': dict(rc),
+            }
+
+    def get_managed_run_status(self):
+        with self._run_control_lock:
+            active = dict(self._active_run_control) if self._active_run_control else None
+            last = dict(self._last_run_control) if self._last_run_control else None
+
+        now = time.time()
+
+        def _decorate(rec):
+            if not rec:
+                return None
+            started_at = rec.get('started_at')
+            rec['elapsed_seconds'] = (now - started_at) if isinstance(started_at, (int, float)) else None
+            deadline_at = rec.get('deadline_at')
+            rec['remaining_seconds'] = (deadline_at - now) if isinstance(deadline_at, (int, float)) else None
+            return rec
+
+        return {
+            'active': _decorate(active),
+            'last': _decorate(last),
+        }
+
+    def _should_abort_managed_run(self):
+        with self._run_control_lock:
+            rc = self._active_run_control
+            if not rc or rc.get('status') != 'running':
+                return None
+
+            if rc.get('stop_requested'):
+                return rc.get('stop_reason') or 'stopped'
+
+            deadline_at = rc.get('deadline_at')
+            if isinstance(deadline_at, (int, float)) and time.time() >= deadline_at:
+                rc['stop_requested'] = True
+                rc['stop_reason'] = 'wall_time_exceeded'
+                rc['stop_requested_at'] = time.time()
+                return 'wall_time_exceeded'
+
+        return None
+
+    def finish_managed_run(self, status='completed', details=None):
+        with self._run_control_lock:
+            rc = self._active_run_control
+            if not rc:
+                return None
+
+            final_status = str(status or 'completed')
+            if final_status == 'completed' and rc.get('stop_requested'):
+                final_status = 'stopped'
+
+            rc['status'] = final_status
+            rc['ended_at'] = time.time()
+            if isinstance(details, dict):
+                rc['details'] = dict(details)
+
+            self._last_run_control = dict(rc)
+            self._active_run_control = None
+            return dict(self._last_run_control)
 
     def _get_project_path(self):
         return os.path.join(self.projects_dir, self.project_name)
@@ -995,6 +1110,11 @@ class ProjectManager:
             'placements_count',
             'sources_count',
             'parameter_value',
+            'sim_metric',
+            'formula',
+            'silicon_slab_edep_fraction',
+            'silicon_slab_cost_norm',
+            'silicon_slab_tradeoff',
         }
         for idx, obj in enumerate(objectives):
             if not isinstance(obj, dict):
@@ -1007,6 +1127,19 @@ class ProjectManager:
                 return False, f"Objective direction '{direction}' is invalid."
             if metric == 'parameter_value' and not obj.get('parameter'):
                 return False, "Objective metric 'parameter_value' requires field 'parameter'."
+
+            if metric == 'sim_metric' and not obj.get('key'):
+                return False, "Objective metric 'sim_metric' requires field 'key'."
+
+            if metric == 'formula' and not (obj.get('expression') or obj.get('expr')):
+                return False, "Objective metric 'formula' requires field 'expression'."
+
+            if metric in {'silicon_slab_edep_fraction', 'silicon_slab_cost_norm', 'silicon_slab_tradeoff'}:
+                thickness_param = obj.get('thickness_parameter')
+                if not thickness_param:
+                    return False, f"Objective metric '{metric}' requires field 'thickness_parameter'."
+                if thickness_param not in params:
+                    return False, f"Objective metric '{metric}' thickness_parameter '{thickness_param}' must be in study parameters."
 
         return True, None
 
@@ -1122,20 +1255,64 @@ class ProjectManager:
             'placements_count': placement_count,
         }
 
+    def _compute_silicon_slab_terms(self, objective_cfg, run_record):
+        values = run_record.get('values', {}) or {}
+        thickness_param = objective_cfg.get('thickness_parameter')
+        if not thickness_param:
+            return None
+
+        try:
+            thickness_mm = float(values.get(thickness_param))
+        except (TypeError, ValueError):
+            return None
+
+        thickness_mm = max(0.0, thickness_mm)
+
+        attenuation_length_mm = float(objective_cfg.get('attenuation_length_mm', 1.5))
+        attenuation_length_mm = max(1e-9, attenuation_length_mm)
+
+        reference_thickness_mm = float(objective_cfg.get('reference_thickness_mm', 3.0))
+        reference_thickness_mm = max(1e-9, reference_thickness_mm)
+
+        w_edep = float(objective_cfg.get('w_edep', 0.8))
+        w_cost = float(objective_cfg.get('w_cost', 0.2))
+
+        edep_fraction = 1.0 - float(np.exp(-thickness_mm / attenuation_length_mm))
+        edep_fraction = max(0.0, min(1.0, edep_fraction))
+
+        cost_norm = thickness_mm / reference_thickness_mm
+        score = (w_edep * edep_fraction) - (w_cost * cost_norm)
+
+        return {
+            'thickness_mm': thickness_mm,
+            'edep_fraction': edep_fraction,
+            'cost_norm': float(cost_norm),
+            'score': float(score),
+            'w_edep': w_edep,
+            'w_cost': w_cost,
+            'attenuation_length_mm': attenuation_length_mm,
+            'reference_thickness_mm': reference_thickness_mm,
+        }
+
     def _evaluate_study_objectives(self, objectives, run_record):
         """Evaluate configured objectives from run-local metrics.
 
         Supported objective fields:
           - name (optional; defaults to metric)
-          - metric: success_flag|solids_count|logical_volumes_count|placements_count|sources_count|parameter_value
+          - metric: success_flag|solids_count|logical_volumes_count|placements_count|sources_count|parameter_value|
+                    sim_metric|formula|silicon_slab_edep_fraction|silicon_slab_cost_norm|silicon_slab_tradeoff
           - direction: maximize|minimize (metadata only for now)
           - parameter: required when metric=parameter_value
+          - key: required when metric=sim_metric
+          - expression: required when metric=formula
+          - thickness_parameter: required for silicon_slab_* metrics
         """
         if not objectives:
             return {}
 
         out = {}
         metrics = run_record.get('metrics', {}) or {}
+        sim_metrics = run_record.get('sim_metrics', {}) or {}
         success = 1.0 if run_record.get('success') else 0.0
 
         for obj in objectives:
@@ -1158,6 +1335,37 @@ class ProjectManager:
                     out[name] = float(run_record.get('values', {}).get(param_name))
                 except (TypeError, ValueError):
                     pass
+            elif metric == 'sim_metric':
+                key = obj.get('key')
+                if not key:
+                    continue
+                try:
+                    out[name] = float(sim_metrics.get(key))
+                except (TypeError, ValueError):
+                    pass
+            elif metric == 'formula':
+                expr = obj.get('expression') or obj.get('expr')
+                if not expr:
+                    continue
+                env = {}
+                env.update(metrics)
+                env.update(run_record.get('values', {}) or {})
+                env.update(sim_metrics)
+                env.update(out)
+                try:
+                    out[name] = float(evaluate_objective_formula(expr, env))
+                except Exception:
+                    continue
+            elif metric in {'silicon_slab_edep_fraction', 'silicon_slab_cost_norm', 'silicon_slab_tradeoff'}:
+                terms = self._compute_silicon_slab_terms(obj, run_record)
+                if not terms:
+                    continue
+                if metric == 'silicon_slab_edep_fraction':
+                    out[name] = float(terms['edep_fraction'])
+                elif metric == 'silicon_slab_cost_norm':
+                    out[name] = float(terms['cost_norm'])
+                else:
+                    out[name] = float(terms['score'])
 
         return out
 
@@ -1220,9 +1428,14 @@ class ProjectManager:
         original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
         runs = []
         success_count = 0
+        stop_reason = 'completed'
 
         try:
             for i, sample in enumerate(samples):
+                abort_reason = self._should_abort_managed_run()
+                if abort_reason:
+                    stop_reason = abort_reason
+                    break
                 self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
 
                 sim_options = {}
@@ -1273,12 +1486,14 @@ class ProjectManager:
             'study_name': name,
             'mode': study.get('mode'),
             'requested_runs': len(samples),
+            'evaluations_used': len(runs),
             'successful_runs': success_count,
-            'failed_runs': len(samples) - success_count,
+            'failed_runs': len(runs) - success_count,
+            'stop_reason': stop_reason,
             'runs': runs,
         }, None
 
-    def _evaluate_param_sample(self, study, sample, run_index=0):
+    def _evaluate_param_sample(self, study, sample, run_index=0, evaluator=None):
         sim_options = {}
         apply_error = None
         for param_name, value in sample.items():
@@ -1299,6 +1514,7 @@ class ProjectManager:
                 'success': False,
                 'error': apply_error,
                 'metrics': {},
+                'sim_metrics': {},
             }
             run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
             return run_record
@@ -1311,7 +1527,23 @@ class ProjectManager:
             'success': bool(ok),
             'error': err,
             'metrics': self._compute_run_metrics() if ok else {},
+            'sim_metrics': {},
         }
+
+        if run_record['success'] and callable(evaluator):
+            try:
+                sim_eval = evaluator(run_record=run_record, project_manager=self, study=study) or {}
+                sim_success = bool(sim_eval.get('success', True))
+                run_record['sim_metrics'] = dict(sim_eval.get('sim_metrics', {}) or {})
+                if sim_eval.get('simulation') is not None:
+                    run_record['simulation'] = sim_eval.get('simulation')
+                if not sim_success:
+                    run_record['success'] = False
+                    run_record['error'] = sim_eval.get('error', 'Simulation evaluator failed.')
+            except Exception as e:
+                run_record['success'] = False
+                run_record['error'] = f"Simulation evaluator exception: {e}"
+
         run_record['objectives'] = self._evaluate_study_objectives(study.get('objectives', []), run_record)
         return run_record
 
@@ -1333,13 +1565,13 @@ class ProjectManager:
     def _vector_to_sample(self, param_names, vec):
         return {param_names[i]: float(vec[i]) for i in range(len(param_names))}
 
-    def _evaluate_candidate_vector(self, study, param_names, vec, mins, maxs, run_index, objective_name, direction, penalty_weight=0.0, generation=None):
+    def _evaluate_candidate_vector(self, study, param_names, vec, mins, maxs, run_index, objective_name, direction, penalty_weight=0.0, generation=None, evaluator=None):
         clipped = np.clip(vec, mins, maxs)
         violation = vec - clipped
         boundary_penalty = penalty_weight * float(np.linalg.norm(violation))
 
         sample = self._vector_to_sample(param_names, clipped)
-        run_record = self._evaluate_param_sample(study, sample, run_index=run_index)
+        run_record = self._evaluate_param_sample(study, sample, run_index=run_index, evaluator=evaluator)
 
         raw_score = self._score_run_for_objective(run_record, objective_name, direction=direction)
         score = raw_score - boundary_penalty
@@ -1352,15 +1584,20 @@ class ProjectManager:
 
         return run_record, clipped
 
-    def _run_random_search_optimizer(self, study, param_names, registry, objective_name, direction, budget, seed):
+    def _run_random_search_optimizer(self, study, param_names, registry, objective_name, direction, budget, seed, evaluator=None):
         rng = random.Random(seed)
         mins, maxs = self._get_optimizer_bounds(param_names, registry)
 
         candidates = []
         best = None
         best_score = -float('inf')
+        stop_reason = 'budget_exhausted'
 
         for i in range(budget):
+            abort_reason = self._should_abort_managed_run()
+            if abort_reason:
+                stop_reason = abort_reason
+                break
             sample = {}
             for p in param_names:
                 entry = registry[p]
@@ -1368,7 +1605,7 @@ class ProjectManager:
                 mx = float(entry['bounds']['max'])
                 sample[p] = rng.uniform(mn, mx)
 
-            run_record = self._evaluate_param_sample(study, sample, run_index=i)
+            run_record = self._evaluate_param_sample(study, sample, run_index=i, evaluator=evaluator)
             score = self._score_run_for_objective(run_record, objective_name, direction=direction)
             run_record['optimizer_score'] = score
             run_record['optimizer_raw_score'] = score
@@ -1382,13 +1619,13 @@ class ProjectManager:
         return {
             'candidates': candidates,
             'best': best,
-            'stop_reason': 'budget_exhausted',
+            'stop_reason': stop_reason,
             'generation_stats': [],
             'step_size_history': [],
             'evaluations_used': len(candidates),
         }
 
-    def _run_cmaes_optimizer(self, study, param_names, registry, objective_name, direction, budget, seed, cmaes_config=None):
+    def _run_cmaes_optimizer(self, study, param_names, registry, objective_name, direction, budget, seed, cmaes_config=None, evaluator=None):
         cfg = cmaes_config or {}
         rng = np.random.default_rng(seed)
 
@@ -1451,9 +1688,19 @@ class ProjectManager:
         stop_reason = 'budget_exhausted'
 
         while eval_count < budget:
+            abort_reason = self._should_abort_managed_run()
+            if abort_reason:
+                stop_reason = abort_reason
+                break
+
             pop = []
             for k in range(lambda_pop):
                 if eval_count >= budget:
+                    break
+
+                abort_reason = self._should_abort_managed_run()
+                if abort_reason:
+                    stop_reason = abort_reason
                     break
                 z = rng.standard_normal(n)
                 y = B @ (D * z)
@@ -1470,6 +1717,7 @@ class ProjectManager:
                     direction=direction,
                     penalty_weight=penalty_weight,
                     generation=generation,
+                    evaluator=evaluator,
                 )
                 pop.append((run_record, clipped))
                 candidates.append(run_record)
@@ -1478,6 +1726,9 @@ class ProjectManager:
                 if run_record['optimizer_score'] > best_score:
                     best_score = run_record['optimizer_score']
                     best = run_record
+
+            if stop_reason not in {'budget_exhausted', 'empty_population', 'sigma_min_reached', 'stagnation'}:
+                break
 
             if not pop:
                 stop_reason = 'empty_population'
@@ -1558,6 +1809,447 @@ class ProjectManager:
             },
         }
 
+    def _rbf_kernel(self, x1, x2, length_scale):
+        ls2 = max(float(length_scale) ** 2, 1e-12)
+        d2 = np.sum((x1[:, None, :] - x2[None, :, :]) ** 2, axis=2)
+        return np.exp(-0.5 * d2 / ls2)
+
+    def _default_gp_length_scale(self, x):
+        if x.shape[0] <= 1:
+            return 1.0
+        d2 = np.sum((x[:, None, :] - x[None, :, :]) ** 2, axis=2)
+        d = np.sqrt(np.maximum(d2, 0.0))
+        upper = d[np.triu_indices_from(d, k=1)]
+        upper = upper[np.isfinite(upper)]
+        upper = upper[upper > 0]
+        if upper.size == 0:
+            return 1.0
+        return float(np.median(upper))
+
+    def _fit_gp_surrogate(self, x_train, y_train, noise=1e-6, length_scale=None):
+        if x_train.shape[0] < 2:
+            return None
+
+        if length_scale is None:
+            length_scale = self._default_gp_length_scale(x_train)
+
+        K = self._rbf_kernel(x_train, x_train, length_scale)
+        K = K + float(noise) * np.eye(x_train.shape[0], dtype=float)
+
+        try:
+            alpha = np.linalg.solve(K, y_train)
+        except np.linalg.LinAlgError:
+            alpha = np.linalg.lstsq(K, y_train, rcond=None)[0]
+
+        try:
+            K_inv = np.linalg.inv(K)
+        except np.linalg.LinAlgError:
+            K_inv = np.linalg.pinv(K)
+
+        return {
+            'x_train': x_train,
+            'y_train': y_train,
+            'alpha': alpha,
+            'K_inv': K_inv,
+            'length_scale': float(length_scale),
+            'noise': float(noise),
+        }
+
+    def _gp_predict_with_uncertainty(self, model, x_query):
+        if not model:
+            return np.zeros((x_query.shape[0],), dtype=float), np.ones((x_query.shape[0],), dtype=float)
+
+        x_train = model['x_train']
+        alpha = model['alpha']
+        K_inv = model['K_inv']
+        length_scale = model['length_scale']
+
+        k_q = self._rbf_kernel(x_query, x_train, length_scale)
+        mean = k_q @ alpha
+
+        # RBF prior variance at each point is 1.0
+        quad = np.sum((k_q @ K_inv) * k_q, axis=1)
+        var = np.maximum(1e-12, 1.0 - quad)
+        std = np.sqrt(var)
+        return mean, std
+
+    def _sample_random_candidate(self, param_names, registry, rng):
+        sample = {}
+        for p in param_names:
+            entry = registry[p]
+            mn = float(entry['bounds']['min'])
+            mx = float(entry['bounds']['max'])
+            sample[p] = rng.uniform(mn, mx)
+        return sample
+
+    def run_surrogate_param_optimizer(
+        self,
+        study_name,
+        budget=40,
+        seed=42,
+        objective_name=None,
+        direction=None,
+        warmup_runs=10,
+        candidate_pool_size=256,
+        exploration_beta=1.0,
+        gp_noise=1e-6,
+        evaluator=None,
+    ):
+        if not self.current_geometry_state:
+            return None, "No active project state."
+
+        studies = self.current_geometry_state.param_studies or {}
+        if study_name not in studies:
+            return None, f"Study '{study_name}' not found."
+
+        study = studies[study_name]
+        param_names = study.get('parameters', [])
+        if not param_names:
+            return None, "Study has no parameters."
+
+        registry = self.current_geometry_state.parameter_registry
+        for p in param_names:
+            if p not in registry:
+                return None, f"Parameter '{p}' missing in registry."
+
+        objectives = study.get('objectives', []) or []
+        if objective_name is None:
+            objective_name = objectives[0].get('name', objectives[0].get('metric')) if objectives else 'success_flag'
+
+        if direction is None:
+            direction = 'maximize'
+            for o in objectives:
+                nm = o.get('name', o.get('metric'))
+                if nm == objective_name:
+                    direction = o.get('direction', 'maximize')
+                    break
+
+        budget = max(1, min(int(budget), self.MAX_OPTIMIZER_BUDGET))
+        warmup_runs = max(1, int(warmup_runs))
+        candidate_pool_size = max(8, int(candidate_pool_size))
+        exploration_beta = float(exploration_beta)
+        gp_noise = float(gp_noise)
+
+        original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
+        rng = random.Random(int(seed))
+        np_rng = np.random.default_rng(int(seed))
+
+        mins, maxs = self._get_optimizer_bounds(param_names, registry)
+
+        candidates = []
+        best = None
+        best_score = -float('inf')
+        model_update_count = 0
+        stop_reason = 'budget_exhausted'
+
+        x_obs = []
+        y_obs = []
+
+        try:
+            for i in range(budget):
+                abort_reason = self._should_abort_managed_run()
+                if abort_reason:
+                    stop_reason = abort_reason
+                    break
+                self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
+
+                proposal_source = 'warmup_random'
+                pred_mean = None
+                pred_std = None
+                pred_acq = None
+
+                can_use_surrogate = i >= warmup_runs and len(y_obs) >= max(5, len(param_names) + 1)
+
+                if can_use_surrogate:
+                    x_train = np.asarray(x_obs, dtype=float)
+                    y_train = np.asarray(y_obs, dtype=float)
+                    gp_model = self._fit_gp_surrogate(x_train, y_train, noise=gp_noise)
+
+                    if gp_model is not None:
+                        model_update_count += 1
+                        pool = np.zeros((candidate_pool_size, len(param_names)), dtype=float)
+                        for j in range(candidate_pool_size):
+                            for k, p in enumerate(param_names):
+                                mn = float(registry[p]['bounds']['min'])
+                                mx = float(registry[p]['bounds']['max'])
+                                pool[j, k] = np_rng.uniform(mn, mx)
+
+                        mu, std = self._gp_predict_with_uncertainty(gp_model, pool)
+                        if direction == 'maximize':
+                            acq = mu + exploration_beta * std
+                        else:
+                            acq = (-mu) + exploration_beta * std
+
+                        best_idx = int(np.argmax(acq))
+                        vec = np.clip(pool[best_idx], mins, maxs)
+                        sample = self._vector_to_sample(param_names, vec)
+                        proposal_source = 'surrogate_ucb'
+                        pred_mean = float(mu[best_idx])
+                        pred_std = float(std[best_idx])
+                        pred_acq = float(acq[best_idx])
+                    else:
+                        sample = self._sample_random_candidate(param_names, registry, rng)
+                else:
+                    sample = self._sample_random_candidate(param_names, registry, rng)
+
+                run_record = self._evaluate_param_sample(study, sample, run_index=i, evaluator=evaluator)
+                score = self._score_run_for_objective(run_record, objective_name, direction=direction)
+
+                run_record['optimizer_score'] = score
+                run_record['optimizer_raw_score'] = score
+                run_record['optimizer_penalty'] = 0.0
+                run_record['proposal_source'] = proposal_source
+                if pred_mean is not None:
+                    run_record['surrogate_pred_mean'] = pred_mean
+                    run_record['surrogate_pred_std'] = pred_std
+                    run_record['surrogate_acquisition'] = pred_acq
+
+                candidates.append(run_record)
+
+                obj_val = run_record.get('objectives', {}).get(objective_name)
+                try:
+                    obj_float = float(obj_val)
+                    if np.isfinite(obj_float):
+                        x_obs.append([float(sample[p]) for p in param_names])
+                        y_obs.append(obj_float)
+                except (TypeError, ValueError):
+                    pass
+
+                if score > best_score:
+                    best_score = score
+                    best = run_record
+        finally:
+            self.current_geometry_state = original_state
+            self.recalculate_geometry_state()
+
+        run_id = f"opt_{datetime.utcnow().strftime('%Y%m%dT%H%M%S_%f')}"
+        summary = {
+            'run_id': run_id,
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'study_name': study_name,
+            'method': 'surrogate_gp',
+            'seed': int(seed),
+            'budget': budget,
+            'max_budget_cap': self.MAX_OPTIMIZER_BUDGET,
+            'objective': {
+                'name': objective_name,
+                'direction': direction,
+            },
+            'success_count': sum(1 for c in candidates if c.get('success')),
+            'failure_count': sum(1 for c in candidates if not c.get('success')),
+            'best_run': best,
+            'candidates': candidates,
+            'stop_reason': stop_reason,
+            'evaluations_used': len(candidates),
+            'generation_stats': [],
+            'step_size_history': [],
+            'surrogate': {
+                'type': 'gp_rbf',
+                'warmup_runs': warmup_runs,
+                'candidate_pool_size': candidate_pool_size,
+                'exploration_beta': exploration_beta,
+                'gp_noise': gp_noise,
+                'model_updates': model_update_count,
+                'training_points': len(y_obs),
+            },
+        }
+
+        self.current_geometry_state.optimizer_runs[run_id] = summary
+        self._capture_history_state(f"Ran surrogate GP optimizer on study '{study_name}'")
+        return summary, None
+
+    def run_simulation_in_loop_optimizer(
+        self,
+        study_name,
+        method='surrogate_gp',
+        budget=20,
+        seed=42,
+        objective_name=None,
+        direction=None,
+        cmaes_config=None,
+        surrogate_config=None,
+        evaluator=None,
+    ):
+        if not callable(evaluator):
+            return None, "A simulation evaluator callback is required."
+
+        method = (method or 'surrogate_gp').strip().lower()
+
+        if method == 'surrogate_gp':
+            surrogate_cfg = surrogate_config or {}
+            result, err = self.run_surrogate_param_optimizer(
+                study_name=study_name,
+                budget=budget,
+                seed=seed,
+                objective_name=objective_name,
+                direction=direction,
+                warmup_runs=surrogate_cfg.get('warmup_runs', 10),
+                candidate_pool_size=surrogate_cfg.get('candidate_pool_size', 256),
+                exploration_beta=surrogate_cfg.get('exploration_beta', 1.0),
+                gp_noise=surrogate_cfg.get('gp_noise', 1e-6),
+                evaluator=evaluator,
+            )
+        elif method in {'random_search', 'cmaes'}:
+            result, err = self.run_param_optimizer(
+                study_name=study_name,
+                method=method,
+                budget=budget,
+                seed=seed,
+                objective_name=objective_name,
+                direction=direction,
+                cmaes_config=cmaes_config,
+                evaluator=evaluator,
+            )
+        else:
+            return None, f"Unsupported simulation-in-loop method '{method}'."
+
+        if result:
+            result['simulation_in_loop'] = True
+            result['simulation_method'] = method
+        return result, err
+
+    def _extract_best_objective_value(self, optimizer_result, objective_name):
+        if not isinstance(optimizer_result, dict):
+            return None
+        best = optimizer_result.get('best_run') or {}
+        objectives = best.get('objectives', {}) if isinstance(best, dict) else {}
+        val = objectives.get(objective_name)
+        try:
+            x = float(val)
+            if np.isfinite(x):
+                return x
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    def run_optimizer_head_to_head(
+        self,
+        study_name,
+        budget=40,
+        seed=42,
+        objective_name=None,
+        direction=None,
+        classical_method='cmaes',
+        cmaes_config=None,
+        surrogate_config=None,
+        evaluator=None,
+    ):
+        surrogate_cfg = surrogate_config or {}
+
+        t0 = time.perf_counter()
+        classical_result, classical_err = self.run_param_optimizer(
+            study_name=study_name,
+            method=classical_method,
+            budget=budget,
+            seed=seed,
+            objective_name=objective_name,
+            direction=direction,
+            cmaes_config=cmaes_config,
+            evaluator=evaluator,
+        )
+        classical_elapsed_s = float(time.perf_counter() - t0)
+        if not classical_result:
+            return None, classical_err or "Classical optimizer failed."
+
+        resolved_objective = (classical_result.get('objective') or {}).get('name')
+        resolved_direction = (classical_result.get('objective') or {}).get('direction', direction or 'maximize')
+
+        t1 = time.perf_counter()
+        surrogate_result, surrogate_err = self.run_surrogate_param_optimizer(
+            study_name=study_name,
+            budget=budget,
+            seed=seed,
+            objective_name=resolved_objective,
+            direction=resolved_direction,
+            warmup_runs=surrogate_cfg.get('warmup_runs', 10),
+            candidate_pool_size=surrogate_cfg.get('candidate_pool_size', 256),
+            exploration_beta=surrogate_cfg.get('exploration_beta', 1.0),
+            gp_noise=surrogate_cfg.get('gp_noise', 1e-6),
+            evaluator=evaluator,
+        )
+        surrogate_elapsed_s = float(time.perf_counter() - t1)
+        if not surrogate_result:
+            return None, surrogate_err or "Surrogate optimizer failed."
+
+        obj_name = resolved_objective
+        direction = resolved_direction or 'maximize'
+
+        classical_best = self._extract_best_objective_value(classical_result, obj_name)
+        surrogate_best = self._extract_best_objective_value(surrogate_result, obj_name)
+
+        sign = 1.0 if direction == 'maximize' else -1.0
+        winner = 'undetermined'
+        delta_score = None
+        relative_improvement_pct = None
+
+        if classical_best is not None and surrogate_best is not None:
+            c_score = sign * classical_best
+            s_score = sign * surrogate_best
+            delta_score = float(s_score - c_score)
+
+            if abs(delta_score) < 1e-12:
+                winner = 'tie'
+            elif delta_score > 0:
+                winner = 'surrogate'
+            else:
+                winner = 'classical'
+
+            denom = abs(c_score)
+            if denom > 1e-12:
+                relative_improvement_pct = float((delta_score / denom) * 100.0)
+
+        speedup_ratio = None
+        if surrogate_elapsed_s > 1e-12:
+            speedup_ratio = float(classical_elapsed_s / surrogate_elapsed_s)
+
+        summary = {
+            'study_name': study_name,
+            'budget': int(budget),
+            'seed': int(seed),
+            'objective': {
+                'name': obj_name,
+                'direction': direction,
+            },
+            'classical': {
+                'method': classical_method,
+                'run_id': classical_result.get('run_id'),
+                'elapsed_s': classical_elapsed_s,
+                'evaluations_used': classical_result.get('evaluations_used', len(classical_result.get('candidates', []))),
+                'success_count': classical_result.get('success_count'),
+                'failure_count': classical_result.get('failure_count'),
+                'best_objective': classical_best,
+                'stop_reason': classical_result.get('stop_reason'),
+            },
+            'surrogate': {
+                'method': surrogate_result.get('method', 'surrogate_gp'),
+                'run_id': surrogate_result.get('run_id'),
+                'elapsed_s': surrogate_elapsed_s,
+                'evaluations_used': surrogate_result.get('evaluations_used', len(surrogate_result.get('candidates', []))),
+                'success_count': surrogate_result.get('success_count'),
+                'failure_count': surrogate_result.get('failure_count'),
+                'best_objective': surrogate_best,
+                'stop_reason': surrogate_result.get('stop_reason'),
+                'config': surrogate_result.get('surrogate', {}),
+            },
+            'comparison': {
+                'winner': winner,
+                'delta_score_surrogate_minus_classical': delta_score,
+                'relative_improvement_pct': relative_improvement_pct,
+                'objective_delta_raw_surrogate_minus_classical': (None if (surrogate_best is None or classical_best is None) else float(surrogate_best - classical_best)),
+                'speedup_ratio_classical_over_surrogate': speedup_ratio,
+            },
+            'run_ids': {
+                'classical': classical_result.get('run_id'),
+                'surrogate': surrogate_result.get('run_id'),
+            },
+            'details': {
+                'classical_result': classical_result,
+                'surrogate_result': surrogate_result,
+            },
+        }
+
+        return summary, None
+
     def list_optimizer_runs(self, study_name=None, limit=50):
         if not self.current_geometry_state:
             return []
@@ -1571,7 +2263,7 @@ class ProjectManager:
         runs = (self.current_geometry_state.optimizer_runs or {}) if self.current_geometry_state else {}
         return runs.get(run_id)
 
-    def run_param_optimizer(self, study_name, method='random_search', budget=20, seed=42, objective_name=None, direction=None, cmaes_config=None):
+    def run_param_optimizer(self, study_name, method='random_search', budget=20, seed=42, objective_name=None, direction=None, cmaes_config=None, evaluator=None):
         if not self.current_geometry_state:
             return None, "No active project state."
 
@@ -1617,6 +2309,7 @@ class ProjectManager:
                     direction=direction,
                     budget=budget,
                     seed=seed,
+                    evaluator=evaluator,
                 )
             else:
                 algo_result = self._run_cmaes_optimizer(
@@ -1628,6 +2321,7 @@ class ProjectManager:
                     budget=budget,
                     seed=seed,
                     cmaes_config=cmaes_config,
+                    evaluator=evaluator,
                 )
         finally:
             self.current_geometry_state = original_state
@@ -1749,8 +2443,14 @@ class ProjectManager:
         original_state = GeometryState.from_dict(self.current_geometry_state.to_dict())
 
         verification_runs = []
+        stop_reason = 'completed'
         try:
             for i in range(repeats):
+                abort_reason = self._should_abort_managed_run()
+                if abort_reason:
+                    stop_reason = abort_reason
+                    break
+
                 self.current_geometry_state = GeometryState.from_dict(original_state.to_dict())
                 rr = self._evaluate_param_sample(study, dict(best_values), run_index=i)
                 verification_runs.append(rr)
@@ -1781,9 +2481,11 @@ class ProjectManager:
         verification_record = {
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'run_id': run_id,
-            'repeats': repeats,
+            'requested_repeats': repeats,
+            'repeats': len(verification_runs),
             'objective_name': objective_name,
             'stats': stats,
+            'stop_reason': stop_reason,
             'success_count': sum(1 for r in verification_runs if r.get('success')),
             'failure_count': sum(1 for r in verification_runs if not r.get('success')),
         }
@@ -1793,6 +2495,7 @@ class ProjectManager:
             'run_id': run_id,
             'objective_name': objective_name,
             'verification_record': verification_record,
+            'stop_reason': stop_reason,
             'runs': verification_runs,
         }, None
 

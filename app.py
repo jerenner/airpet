@@ -20,6 +20,8 @@ import sys
 import shutil
 import sched
 import time
+import tempfile
+from pathlib import Path
 
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, session, send_file
@@ -39,6 +41,11 @@ from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
 from src.ai_tools import AI_GEOMETRY_TOOLS, PRIMITIVE_SOLID_PARAM_SPECS, get_project_summary, get_component_details
 from src.templates import PHYSICS_TEMPLATES
+from src.surrogate_dataset import build_surrogate_dataset_from_payloads
+from src.surrogate_experiment import run_surrogate_experiment, run_surrogate_experiment_from_path
+from src.surrogate_synthetic import generate_synthetic_surrogate_benchmark
+from src.objective_engine import extract_objective_values_from_hdf5
+from src.objective_formula import get_allowed_formula_functions
 
 from PIL import Image
 
@@ -265,6 +272,979 @@ SIMULATION_PROCESSES = {}
 SIMULATION_STATUS = {}
 LATEST_COMPLETED_JOB_ID = None
 SIMULATION_LOCK = threading.Lock()
+
+# --------------------------------------------------------------------------
+# Run policy guardrails (Phase A: safety defaults)
+RUN_POLICY_MAX_BUDGET = max(1, int(os.getenv("RUN_POLICY_MAX_BUDGET", "200")))
+RUN_POLICY_MAX_EVENTS_PER_CANDIDATE = max(1, int(os.getenv("RUN_POLICY_MAX_EVENTS_PER_CANDIDATE", "50000")))
+RUN_POLICY_MAX_THREADS = max(1, int(os.getenv("RUN_POLICY_MAX_THREADS", "8")))
+RUN_POLICY_MAX_TOTAL_EVENTS = max(1, int(os.getenv("RUN_POLICY_MAX_TOTAL_EVENTS", "2000000")))
+RUN_POLICY_MAX_WARMUP_RUNS = max(1, int(os.getenv("RUN_POLICY_MAX_WARMUP_RUNS", "100")))
+RUN_POLICY_MAX_CANDIDATE_POOL_SIZE = max(8, int(os.getenv("RUN_POLICY_MAX_CANDIDATE_POOL_SIZE", "4096")))
+RUN_POLICY_MAX_WALL_TIME_SECONDS = max(60, int(os.getenv("RUN_POLICY_MAX_WALL_TIME_SECONDS", "3600")))
+RUN_POLICY_DEFAULT_WALL_TIME_SECONDS = max(
+    60,
+    min(RUN_POLICY_MAX_WALL_TIME_SECONDS, int(os.getenv("RUN_POLICY_DEFAULT_WALL_TIME_SECONDS", "900")))
+)
+RUN_POLICY_REQUIRE_ALLOW_APPLY = os.getenv("RUN_POLICY_REQUIRE_ALLOW_APPLY", "true").strip().lower() in {"1", "true", "yes", "on"}
+RUN_POLICY_DEFAULT_APPLY_TO_PROJECT = os.getenv("RUN_POLICY_DEFAULT_APPLY_TO_PROJECT", "false").strip().lower() in {"1", "true", "yes", "on"}
+RUN_POLICY_REQUIRE_VERIFY_TOKEN = os.getenv("RUN_POLICY_REQUIRE_VERIFY_TOKEN", "true").strip().lower() in {"1", "true", "yes", "on"}
+RUN_POLICY_VERIFY_TOKEN_TTL_SECONDS = max(60, int(os.getenv("RUN_POLICY_VERIFY_TOKEN_TTL_SECONDS", "3600")))
+RUN_POLICY_VERIFY_MIN_REPEATS = max(1, int(os.getenv("RUN_POLICY_VERIFY_MIN_REPEATS", "3")))
+RUN_POLICY_VERIFY_MIN_SUCCESS_RATE = float(os.getenv("RUN_POLICY_VERIFY_MIN_SUCCESS_RATE", "1.0"))
+RUN_POLICY_VERIFY_MAX_STD_RAW = os.getenv("RUN_POLICY_VERIFY_MAX_STD", "").strip()
+RUN_POLICY_VERIFY_MAX_STD = float(RUN_POLICY_VERIFY_MAX_STD_RAW) if RUN_POLICY_VERIFY_MAX_STD_RAW else None
+
+APPLY_VERIFY_TOKENS = {}
+APPLY_VERIFY_TOKENS_LOCK = threading.Lock()
+
+APPLY_AUDIT_LOGS = {}
+APPLY_AUDIT_LOCK = threading.Lock()
+APPLY_AUDIT_MAX_ENTRIES = max(10, int(os.getenv("RUN_POLICY_APPLY_AUDIT_MAX_ENTRIES", "100")))
+APPLY_AUDIT_STORAGE_FILE = os.getenv(
+    "RUN_POLICY_APPLY_AUDIT_STORAGE_FILE",
+    os.path.join(PROJECTS_BASE_DIR, ".apply_audit_logs.json"),
+)
+
+
+def _current_user_id_for_policy():
+    return session.get('user_id') or 'local_user'
+
+
+def _project_scope_id_for_policy(pm: Optional[ProjectManager]) -> str:
+    scope_id = None
+    if pm and pm.current_geometry_state is not None:
+        scope_id = getattr(pm.current_geometry_state, 'project_scope_id', None)
+        if not scope_id:
+            scope_id = str(uuid.uuid4())
+            setattr(pm.current_geometry_state, 'project_scope_id', scope_id)
+    return str(scope_id or "default-scope")
+
+
+def _load_apply_audit_logs_from_disk() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    path = APPLY_AUDIT_STORAGE_FILE
+    if not path:
+        return {}
+
+    try:
+        if not os.path.exists(path):
+            return {}
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as exc:
+        print(f"Warning: failed to load apply audit storage '{path}': {exc}")
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    for user_id, scopes in data.items():
+        user_key = str(user_id)
+        normalized[user_key] = {}
+
+        # Back-compat with legacy shape: {user_id: [records...]}
+        if isinstance(scopes, list):
+            clean_entries = [e for e in scopes if isinstance(e, dict)]
+            if len(clean_entries) > APPLY_AUDIT_MAX_ENTRIES:
+                clean_entries = clean_entries[-APPLY_AUDIT_MAX_ENTRIES:]
+            normalized[user_key]["default-scope"] = clean_entries
+            continue
+
+        if not isinstance(scopes, dict):
+            continue
+
+        for scope_id, entries in scopes.items():
+            if not isinstance(entries, list):
+                continue
+            scope_key = str(scope_id)
+            clean_entries = [e for e in entries if isinstance(e, dict)]
+            if len(clean_entries) > APPLY_AUDIT_MAX_ENTRIES:
+                clean_entries = clean_entries[-APPLY_AUDIT_MAX_ENTRIES:]
+            normalized[user_key][scope_key] = clean_entries
+
+    return normalized
+
+
+def _persist_apply_audit_logs_locked() -> None:
+    path = APPLY_AUDIT_STORAGE_FILE
+    if not path:
+        return
+
+    try:
+        storage_dir = os.path.dirname(path)
+        if storage_dir:
+            os.makedirs(storage_dir, exist_ok=True)
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(APPLY_AUDIT_LOGS, f, indent=2, sort_keys=True)
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        print(f"Warning: failed to persist apply audit storage '{path}': {exc}")
+
+
+def _initialize_apply_audit_logs() -> None:
+    loaded = _load_apply_audit_logs_from_disk()
+    with APPLY_AUDIT_LOCK:
+        APPLY_AUDIT_LOGS.clear()
+        APPLY_AUDIT_LOGS.update(loaded)
+
+
+def _cleanup_expired_verify_tokens(user_id):
+    now = time.time()
+    with APPLY_VERIFY_TOKENS_LOCK:
+        user_tokens = APPLY_VERIFY_TOKENS.get(user_id, {})
+        stale = [tok for tok, rec in user_tokens.items() if rec.get('expires_at', 0) <= now or rec.get('used')]
+        for tok in stale:
+            user_tokens.pop(tok, None)
+        if not user_tokens and user_id in APPLY_VERIFY_TOKENS:
+            APPLY_VERIFY_TOKENS.pop(user_id, None)
+
+
+def _issue_verify_token(user_id, run_id, verification_record):
+    token = str(uuid.uuid4())
+    now = time.time()
+    expires_at = now + RUN_POLICY_VERIFY_TOKEN_TTL_SECONDS
+
+    rec = {
+        'token': token,
+        'run_id': run_id,
+        'issued_at': now,
+        'expires_at': expires_at,
+        'used': False,
+        'verification_record': verification_record,
+    }
+
+    with APPLY_VERIFY_TOKENS_LOCK:
+        user_tokens = APPLY_VERIFY_TOKENS.setdefault(user_id, {})
+        user_tokens[token] = rec
+
+    return rec
+
+
+def _consume_verify_token(user_id, run_id, token):
+    if not token:
+        return None, "verification_token is required when apply_to_project=true."
+
+    _cleanup_expired_verify_tokens(user_id)
+
+    with APPLY_VERIFY_TOKENS_LOCK:
+        user_tokens = APPLY_VERIFY_TOKENS.get(user_id, {})
+        rec = user_tokens.get(token)
+        if not rec:
+            return None, "verification_token is missing, expired, or invalid."
+        if rec.get('used'):
+            return None, "verification_token has already been used."
+        if rec.get('run_id') != run_id:
+            return None, "verification_token does not match run_id."
+        if rec.get('expires_at', 0) <= time.time():
+            user_tokens.pop(token, None)
+            return None, "verification_token has expired."
+
+        rec['used'] = True
+        rec['used_at'] = time.time()
+        return rec, None
+
+
+def _append_apply_audit_record(user_id, scope_id, record):
+    now = datetime.utcnow().isoformat() + 'Z'
+    rec = {
+        'audit_id': str(uuid.uuid4()),
+        'created_at': now,
+        'rolled_back': False,
+        **(record or {}),
+    }
+
+    user_key = str(user_id or 'local_user')
+    scope_key = str(scope_id or 'default-scope')
+
+    with APPLY_AUDIT_LOCK:
+        user_scopes = APPLY_AUDIT_LOGS.setdefault(user_key, {})
+        entries = user_scopes.setdefault(scope_key, [])
+        entries.append(rec)
+        if len(entries) > APPLY_AUDIT_MAX_ENTRIES:
+            del entries[:-APPLY_AUDIT_MAX_ENTRIES]
+        _persist_apply_audit_logs_locked()
+
+    return rec
+
+
+def _list_apply_audit_records(user_id, scope_id, limit=20):
+    lim = max(1, min(int(limit or 20), 200))
+    user_key = str(user_id or 'local_user')
+    scope_key = str(scope_id or 'default-scope')
+
+    with APPLY_AUDIT_LOCK:
+        user_scopes = APPLY_AUDIT_LOGS.get(user_key, {})
+        entries = list(user_scopes.get(scope_key, [])) if isinstance(user_scopes, dict) else []
+
+        # Back-compat fallback for legacy records loaded into default-scope.
+        if not entries and scope_key != "default-scope" and isinstance(user_scopes, dict):
+            legacy_entries = user_scopes.get("default-scope", [])
+            if isinstance(legacy_entries, list):
+                entries = list(legacy_entries)
+
+    entries = sorted(entries, key=lambda r: r.get('created_at', ''), reverse=True)
+    return entries[:lim]
+
+
+def _mark_apply_audit_rolled_back(user_id, scope_id, audit_id):
+    user_key = str(user_id or 'local_user')
+    scope_key = str(scope_id or 'default-scope')
+
+    with APPLY_AUDIT_LOCK:
+        user_scopes = APPLY_AUDIT_LOGS.get(user_key, {})
+        entries = user_scopes.get(scope_key, []) if isinstance(user_scopes, dict) else []
+        for rec in entries:
+            if rec.get('audit_id') == audit_id:
+                if rec.get('rolled_back'):
+                    return rec
+                rec['rolled_back'] = True
+                rec['rolled_back_at'] = datetime.utcnow().isoformat() + 'Z'
+                _persist_apply_audit_logs_locked()
+                return rec
+    return None
+
+
+_initialize_apply_audit_logs()
+
+
+def _run_policy_limits():
+    return {
+        "max_budget": RUN_POLICY_MAX_BUDGET,
+        "max_events_per_candidate": RUN_POLICY_MAX_EVENTS_PER_CANDIDATE,
+        "max_threads": RUN_POLICY_MAX_THREADS,
+        "max_total_events": RUN_POLICY_MAX_TOTAL_EVENTS,
+        "max_warmup_runs": RUN_POLICY_MAX_WARMUP_RUNS,
+        "max_candidate_pool_size": RUN_POLICY_MAX_CANDIDATE_POOL_SIZE,
+        "max_wall_time_seconds": RUN_POLICY_MAX_WALL_TIME_SECONDS,
+        "default_wall_time_seconds": RUN_POLICY_DEFAULT_WALL_TIME_SECONDS,
+        "require_allow_apply": RUN_POLICY_REQUIRE_ALLOW_APPLY,
+        "default_apply_to_project": RUN_POLICY_DEFAULT_APPLY_TO_PROJECT,
+        "require_verify_token": RUN_POLICY_REQUIRE_VERIFY_TOKEN,
+        "verify_token_ttl_seconds": RUN_POLICY_VERIFY_TOKEN_TTL_SECONDS,
+        "verify_min_repeats": RUN_POLICY_VERIFY_MIN_REPEATS,
+        "verify_min_success_rate": RUN_POLICY_VERIFY_MIN_SUCCESS_RATE,
+        "verify_max_std": RUN_POLICY_VERIFY_MAX_STD,
+        "apply_audit_max_entries": APPLY_AUDIT_MAX_ENTRIES,
+        "apply_audit_storage_file": APPLY_AUDIT_STORAGE_FILE,
+    }
+
+
+def _objective_builder_schema():
+    formula_functions = get_allowed_formula_functions()
+
+    return {
+        "version": "m6-objective-builder-v1",
+        "endpoints": {
+            "schema": "/api/objective_builder/schema",
+            "example": "/api/objective_builder/example?template=weighted_tradeoff",
+            "validate": "/api/objective_builder/validate",
+            "build": "/api/objective_builder/build",
+            "upsert_study": "/api/objective_builder/upsert_study",
+            "launch": "/api/objective_builder/launch",
+            "extract_objectives": "/api/objectives/extract/<version_id>/<job_id>",
+            "run_sim_loop": "/api/param_optimizer/run_simulation_in_loop",
+            "run_sim_loop_head_to_head": "/api/param_optimizer/head_to_head_simulation_in_loop",
+            "verify_best": "/api/param_optimizer/verify_best",
+            "replay_best": "/api/param_optimizer/replay_best",
+        },
+        "formula": {
+            "allowed_functions": formula_functions,
+            "notes": [
+                "Formulas may reference previously computed objective names.",
+                "Formulas may reference context variables and parameter aliases used in study objectives.",
+            ],
+            "examples": [
+                "0.8*edep_sum - 0.2*cost_norm",
+                "log(1 + max(edep_sum, 0)) - 0.1*distance_norm",
+                "clip(signal_efficiency, 0, 1) - 0.05*cost_norm",
+            ],
+        },
+        "simulation_extract_metrics": [
+            {
+                "metric": "hdf5_reduce",
+                "label": "Reduce HDF5 dataset",
+                "required_fields": ["name", "metric", "dataset_path", "reduce"],
+                "optional_fields": ["q"],
+                "reduce_options": ["sum", "mean", "max", "min", "std", "count", "count_nonzero", "fraction_nonzero", "quantile"],
+            },
+            {
+                "metric": "context_value",
+                "label": "Context value",
+                "required_fields": ["name", "metric", "key"],
+                "optional_fields": ["default"],
+            },
+            {
+                "metric": "constant",
+                "label": "Constant numeric value",
+                "required_fields": ["name", "metric", "value"],
+            },
+            {
+                "metric": "formula",
+                "label": "Formula from extracted values",
+                "required_fields": ["name", "metric", "expression"],
+                "optional_fields": ["expr"],
+            },
+        ],
+        "study_objective_metrics": [
+            {
+                "metric": "sim_metric",
+                "label": "Simulation metric from extracted map",
+                "required_fields": ["name", "metric", "key", "direction"],
+                "direction_options": ["maximize", "minimize"],
+            },
+            {
+                "metric": "parameter_value",
+                "label": "Parameter value",
+                "required_fields": ["name", "metric", "parameter", "direction"],
+                "direction_options": ["maximize", "minimize"],
+            },
+            {
+                "metric": "formula",
+                "label": "Formula objective",
+                "required_fields": ["name", "metric", "expression", "direction"],
+                "optional_fields": ["expr"],
+                "direction_options": ["maximize", "minimize"],
+            },
+        ],
+        "templates": [
+            {
+                "id": "weighted_tradeoff",
+                "label": "Weighted tradeoff (performance - cost)",
+                "extract_objectives": [
+                    {"name": "edep_sum", "metric": "hdf5_reduce", "dataset_path": "default_ntuples/Hits/Edep", "reduce": "sum"},
+                    {"name": "cost_norm", "metric": "context_value", "key": "cost_norm", "default": 0.0},
+                ],
+                "study_objectives": [
+                    {"name": "edep_sum", "metric": "sim_metric", "key": "edep_sum", "direction": "maximize"},
+                    {"name": "score", "metric": "formula", "expression": "0.8*edep_sum - 0.2*cost_norm", "direction": "maximize"},
+                ],
+            }
+        ],
+        "run_policy": _run_policy_limits(),
+    }
+
+
+def _objective_builder_example_payload(pm: Optional[ProjectManager], template_id: str = 'weighted_tradeoff'):
+    schema = _objective_builder_schema()
+    templates = schema.get('templates', []) or []
+
+    selected = None
+    for t in templates:
+        if isinstance(t, dict) and t.get('id') == template_id:
+            selected = t
+            break
+
+    if selected is None and templates:
+        selected = templates[0]
+    if selected is None:
+        selected = {
+            'id': 'weighted_tradeoff',
+            'extract_objectives': [],
+            'study_objectives': [],
+        }
+
+    study_parameters = []
+    if pm and pm.current_geometry_state:
+        registry = pm.current_geometry_state.parameter_registry or {}
+        study_parameters = sorted(registry.keys())
+
+    if not study_parameters:
+        study_parameters = ['p1']
+
+    example = {
+        'template_id': selected.get('id', template_id),
+        'study_name': f"{selected.get('id', 'objective')}_study",
+        'study_mode': 'random',
+        'study_parameters': study_parameters,
+        'study_random': {
+            'samples': 20,
+            'seed': 42,
+        },
+        'extract_objectives': list(selected.get('extract_objectives', []) or []),
+        'study_objectives': list(selected.get('study_objectives', []) or []),
+        'context': {
+            'cost_norm': 0.0,
+        },
+        'run_method': 'surrogate_gp',
+        'run_budget': 20,
+        'run_seed': 42,
+        'sim_params': {
+            'events': 1000,
+            'threads': 1,
+            'save_hits': True,
+            'save_particles': True,
+            'hit_energy_threshold': '1 eV',
+        },
+        'surrogate': {
+            'warmup_runs': 4,
+            'candidate_pool_size': 128,
+            'exploration_beta': 1.0,
+        },
+    }
+
+    return example
+
+
+def _validate_formula_expression_for_builder(expression: Any):
+    if not isinstance(expression, str) or not expression.strip():
+        return False, "Formula expression must be a non-empty string.", []
+
+    allowed_funcs = set(get_allowed_formula_functions())
+    try:
+        tree = ast.parse(expression, mode='eval')
+    except Exception as e:
+        return False, f"Invalid formula syntax: {e}", []
+
+    allowed_nodes = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Call,
+        ast.Name,
+        ast.Load,
+        ast.Constant,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Pow,
+        ast.Mod,
+        ast.UAdd,
+        ast.USub,
+    )
+
+    var_names = set()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed_nodes):
+            return False, f"Unsupported expression element '{type(node).__name__}'.", []
+
+        if isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name):
+                return False, "Only simple function names are allowed in formulas.", []
+            if node.func.id not in allowed_funcs:
+                return False, f"Function '{node.func.id}' is not allowed.", []
+            if node.keywords:
+                return False, "Keyword arguments are not allowed in formulas.", []
+
+        if isinstance(node, ast.Name):
+            if node.id not in allowed_funcs:
+                var_names.add(node.id)
+
+    return True, None, sorted(var_names)
+
+
+def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = None):
+    data = dict(payload or {})
+    errors = []
+    warnings = []
+
+    extract_objectives = data.get('extract_objectives')
+    if extract_objectives is None:
+        extract_objectives = data.get('sim_objectives', [])
+    if extract_objectives is None:
+        extract_objectives = []
+
+    study_objectives = data.get('study_objectives') or []
+    study_parameters = data.get('study_parameters') or []
+
+    if not isinstance(extract_objectives, list):
+        errors.append("extract_objectives must be a list.")
+        extract_objectives = []
+    if not isinstance(study_objectives, list):
+        errors.append("study_objectives must be a list.")
+        study_objectives = []
+    if study_parameters and not isinstance(study_parameters, list):
+        errors.append("study_parameters must be a list when provided.")
+        study_parameters = []
+
+    extract_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('simulation_extract_metrics', [])}
+    study_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('study_objective_metrics', [])}
+
+    extract_names = []
+    extract_name_set = set()
+
+    for i, obj in enumerate(extract_objectives):
+        if not isinstance(obj, dict):
+            errors.append(f"extract_objectives[{i}] must be an object.")
+            continue
+
+        name = obj.get('name')
+        metric = obj.get('metric')
+
+        if not name:
+            errors.append(f"extract_objectives[{i}] is missing required field 'name'.")
+            continue
+        if name in extract_name_set:
+            errors.append(f"Duplicate extract objective name '{name}'.")
+        extract_name_set.add(name)
+        extract_names.append(name)
+
+        if metric not in extract_metric_specs:
+            errors.append(f"extract_objectives[{i}] metric '{metric}' is not supported.")
+            continue
+
+        required = extract_metric_specs[metric].get('required_fields', [])
+        for field in required:
+            val = obj.get(field)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                errors.append(f"extract_objectives[{i}] metric '{metric}' requires field '{field}'.")
+
+        if metric == 'hdf5_reduce':
+            reduce_op = obj.get('reduce')
+            allowed_reduce = set(extract_metric_specs[metric].get('reduce_options', []))
+            if reduce_op not in allowed_reduce:
+                errors.append(f"extract_objectives[{i}] reduce='{reduce_op}' is invalid.")
+            if reduce_op == 'quantile' and obj.get('q') is None:
+                warnings.append(f"extract_objectives[{i}] uses quantile reduce without 'q'; default quantile may be used.")
+
+        if metric == 'formula':
+            expr = obj.get('expression') or obj.get('expr')
+            ok, err, vars_used = _validate_formula_expression_for_builder(expr)
+            if not ok:
+                errors.append(f"extract_objectives[{i}] formula invalid: {err}")
+            else:
+                known = set(extract_names[:-1])
+                unknown = [v for v in vars_used if v not in known]
+                if unknown:
+                    warnings.append(
+                        f"extract_objectives[{i}] formula references names not yet defined earlier in extract list: {unknown}"
+                    )
+
+    if study_objectives:
+        if not study_parameters:
+            warnings.append("study_parameters not provided; parameter reference checks are limited.")
+
+        registry_names = set()
+        if pm and pm.current_geometry_state:
+            registry_names = set((pm.current_geometry_state.parameter_registry or {}).keys())
+
+        for i, obj in enumerate(study_objectives):
+            if not isinstance(obj, dict):
+                errors.append(f"study_objectives[{i}] must be an object.")
+                continue
+
+            metric = obj.get('metric')
+            name = obj.get('name')
+            direction = obj.get('direction', 'maximize')
+
+            if not name:
+                errors.append(f"study_objectives[{i}] missing required field 'name'.")
+            if metric not in study_metric_specs:
+                errors.append(f"study_objectives[{i}] metric '{metric}' is not supported in objective builder MVP.")
+                continue
+            if direction not in {'maximize', 'minimize'}:
+                errors.append(f"study_objectives[{i}] has invalid direction '{direction}'.")
+
+            required = study_metric_specs[metric].get('required_fields', [])
+            for field in required:
+                val = obj.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    errors.append(f"study_objectives[{i}] metric '{metric}' requires field '{field}'.")
+
+            if metric == 'parameter_value':
+                pname = obj.get('parameter')
+                if pname and study_parameters and pname not in study_parameters:
+                    errors.append(f"study_objectives[{i}] parameter '{pname}' not found in study_parameters.")
+                if pname and registry_names and pname not in registry_names:
+                    warnings.append(f"study_objectives[{i}] parameter '{pname}' is not in current parameter registry.")
+
+            if metric == 'sim_metric':
+                key = obj.get('key')
+                if key and key not in extract_name_set:
+                    warnings.append(f"study_objectives[{i}] sim_metric key '{key}' not found in extract_objectives names.")
+
+            if metric == 'formula':
+                expr = obj.get('expression') or obj.get('expr')
+                ok, err, vars_used = _validate_formula_expression_for_builder(expr)
+                if not ok:
+                    errors.append(f"study_objectives[{i}] formula invalid: {err}")
+                else:
+                    known = set(extract_names)
+                    known.update(study_parameters if isinstance(study_parameters, list) else [])
+                    known.update([x.get('name') for x in study_objectives[:i] if isinstance(x, dict) and x.get('name')])
+                    unknown = [v for v in vars_used if v not in known]
+                    if unknown:
+                        warnings.append(
+                            f"study_objectives[{i}] formula references unknown names (check ordering/aliases): {unknown}"
+                        )
+
+    study_name = data.get('study_name', '__objective_builder_validation__')
+    study_mode = data.get('study_mode', 'random')
+
+    normalized = {
+        'extract_objectives': extract_objectives,
+        'study': {
+            'name': study_name,
+            'mode': study_mode,
+            'parameters': study_parameters,
+            'objectives': study_objectives,
+            'grid': data.get('study_grid', {'steps': 3}) or {'steps': 3},
+            'random': data.get('study_random', {'samples': 10, 'seed': 42}) or {'samples': 10, 'seed': 42},
+        },
+    }
+
+    return {
+        'valid': len(errors) == 0,
+        'errors': errors,
+        'warnings': warnings,
+        'normalized': normalized,
+    }
+
+
+def _build_objective_builder_payload(payload, validation):
+    data = dict(payload or {})
+    normalized = (validation or {}).get('normalized', {}) or {}
+
+    extract_objectives = list(normalized.get('extract_objectives', []) or [])
+    study = dict(normalized.get('study', {}) or {})
+    study_name = study.get('name') or data.get('study_name') or '__objective_builder_study__'
+    study_objectives = list(study.get('objectives', []) or [])
+
+    primary_obj = None
+    for candidate in study_objectives:
+        if isinstance(candidate, dict) and candidate.get('name') == 'score':
+            primary_obj = candidate
+            break
+    if primary_obj is None:
+        for candidate in study_objectives:
+            if isinstance(candidate, dict) and candidate.get('metric') == 'formula':
+                primary_obj = candidate
+                break
+    if primary_obj is None:
+        for candidate in study_objectives:
+            if isinstance(candidate, dict):
+                primary_obj = candidate
+                break
+
+    primary_name = (primary_obj or {}).get('name', 'score')
+    primary_direction = (primary_obj or {}).get('direction', 'maximize')
+
+    run_method = str(data.get('run_method', 'surrogate_gp')).strip().lower()
+    if run_method not in {'surrogate_gp', 'random_search', 'cmaes'}:
+        run_method = 'surrogate_gp'
+
+    budget = data.get('run_budget', data.get('budget', 20))
+    seed = data.get('run_seed', data.get('seed', 42))
+
+    sim_params = data.get('sim_params') or {
+        'events': 1000,
+        'threads': 1,
+        'save_hits': True,
+        'save_particles': True,
+        'hit_energy_threshold': '1 eV',
+    }
+
+    surrogate = data.get('surrogate') or {
+        'warmup_runs': 4,
+        'candidate_pool_size': 128,
+        'exploration_beta': 1.0,
+    }
+
+    cmaes = data.get('cmaes') or {
+        'population_size': 8,
+    }
+
+    build = {
+        'version': _objective_builder_schema().get('version'),
+        'study_upsert_payload': study,
+        'sim_objectives': extract_objectives,
+        'sim_context': data.get('context', {}) or {},
+        'run_sim_loop_payload': {
+            'study_name': study_name,
+            'method': run_method,
+            'budget': budget,
+            'seed': seed,
+            'objective_name': primary_name,
+            'direction': primary_direction,
+            'sim_params': sim_params,
+            'sim_objectives': extract_objectives,
+            'surrogate': surrogate,
+            'cmaes': cmaes,
+            'context': data.get('context', {}) or {},
+        },
+        'verify_payload_template': {
+            'run_id': '<optimizer_run_id>',
+            'repeats': RUN_POLICY_VERIFY_MIN_REPEATS,
+            'min_repeats': RUN_POLICY_VERIFY_MIN_REPEATS,
+            'min_success_rate': RUN_POLICY_VERIFY_MIN_SUCCESS_RATE,
+            'max_std': RUN_POLICY_VERIFY_MAX_STD,
+        },
+        'apply_payload_template': {
+            'run_id': '<optimizer_run_id>',
+            'apply_to_project': True,
+            'allow_apply': True,
+            'verification_token': '<apply_token_from_verify_best>',
+        },
+        'notes': [
+            '1) Upsert the study with study_upsert_payload.',
+            '2) Run optimization using run_sim_loop_payload.',
+            '3) Call /verify_best and obtain apply_token.',
+            '4) Apply via /replay_best with allow_apply=true and verification_token.',
+        ],
+    }
+
+    return build
+
+
+def _coerce_int(value, field_name, errors):
+    try:
+        return int(value)
+    except Exception:
+        errors.append(f"{field_name} must be an integer.")
+        return None
+
+
+def _validate_apply_policy(payload):
+    data = dict(payload or {})
+
+    apply_to_project = bool(data.get('apply_to_project', RUN_POLICY_DEFAULT_APPLY_TO_PROJECT))
+    dry_run = bool(data.get('dry_run', False))
+    allow_apply = bool(data.get('allow_apply', False))
+    verification_token = data.get('verification_token')
+
+    notes = []
+    if dry_run and apply_to_project:
+        apply_to_project = False
+        notes.append("dry_run=true forces apply_to_project=false.")
+
+    details = []
+    if apply_to_project and RUN_POLICY_REQUIRE_ALLOW_APPLY and not allow_apply:
+        details.append("apply_to_project=true requires allow_apply=true.")
+
+    if apply_to_project and RUN_POLICY_REQUIRE_VERIFY_TOKEN and not verification_token:
+        details.append("apply_to_project=true requires verification_token from a successful /verify_best call.")
+
+    if details:
+        return None, {
+            "error": "Apply policy validation failed.",
+            "details": details,
+            "policy": {
+                "require_allow_apply": RUN_POLICY_REQUIRE_ALLOW_APPLY,
+                "require_verify_token": RUN_POLICY_REQUIRE_VERIFY_TOKEN,
+                "default_apply_to_project": RUN_POLICY_DEFAULT_APPLY_TO_PROJECT,
+            },
+        }
+
+    return {
+        "apply_to_project": apply_to_project,
+        "dry_run": dry_run,
+        "allow_apply": allow_apply,
+        "verification_token": verification_token,
+        "notes": notes,
+    }, None
+
+
+def _evaluate_verification_gate(result, data):
+    verification = ((result or {}).get('verification_record') or {})
+    repeats = max(1, int(verification.get('repeats', 0) or 0))
+    success_count = int(verification.get('success_count', 0) or 0)
+    stats = verification.get('stats', {}) or {}
+    std = stats.get('std')
+    stats_count = int(stats.get('count', 0) or 0)
+
+    min_repeats = data.get('min_repeats', RUN_POLICY_VERIFY_MIN_REPEATS)
+    try:
+        min_repeats = int(min_repeats)
+    except Exception:
+        min_repeats = RUN_POLICY_VERIFY_MIN_REPEATS
+    min_repeats = max(1, min_repeats)
+
+    min_success_rate = data.get('min_success_rate', RUN_POLICY_VERIFY_MIN_SUCCESS_RATE)
+    try:
+        min_success_rate = float(min_success_rate)
+    except Exception:
+        min_success_rate = RUN_POLICY_VERIFY_MIN_SUCCESS_RATE
+    min_success_rate = max(0.0, min(1.0, min_success_rate))
+
+    max_std = data.get('max_std', RUN_POLICY_VERIFY_MAX_STD)
+    if max_std is not None:
+        try:
+            max_std = float(max_std)
+        except Exception:
+            max_std = RUN_POLICY_VERIFY_MAX_STD
+
+    success_rate = float(success_count) / float(repeats) if repeats > 0 else 0.0
+
+    passed = True
+    reasons = []
+
+    if repeats < min_repeats:
+        passed = False
+        reasons.append(f"repeats={repeats} < min_repeats={min_repeats}")
+
+    if success_rate < min_success_rate:
+        passed = False
+        reasons.append(f"success_rate={success_rate:.3f} < min_success_rate={min_success_rate:.3f}")
+
+    if stats_count < min_repeats:
+        passed = False
+        reasons.append(f"objective_stats_count={stats_count} < min_repeats={min_repeats}")
+
+    if max_std is not None:
+        if std is None:
+            passed = False
+            reasons.append("objective std is unavailable while max_std is enforced.")
+        elif float(std) > float(max_std):
+            passed = False
+            reasons.append(f"std={float(std):.6g} > max_std={float(max_std):.6g}")
+
+    return {
+        'passed': bool(passed),
+        'reasons': reasons,
+        'min_repeats': min_repeats,
+        'min_success_rate': min_success_rate,
+        'max_std': max_std,
+        'success_rate': success_rate,
+        'repeats': repeats,
+        'stats_count': stats_count,
+        'stats_std': std,
+    }
+
+
+def _validate_and_normalize_run_policy(payload, *, head_to_head=False):
+    data = dict(payload or {})
+    errors = []
+
+    budget = _coerce_int(data.get('budget', 20), 'budget', errors)
+
+    sim_params = data.get('sim_params') or {}
+    if not isinstance(sim_params, dict):
+        errors.append("sim_params must be an object/dict.")
+        sim_params = {}
+    else:
+        sim_params = dict(sim_params)
+
+    events = _coerce_int(sim_params.get('events', 1), 'sim_params.events', errors)
+    threads = _coerce_int(sim_params.get('threads', 1), 'sim_params.threads', errors)
+
+    surrogate_cfg = data.get('surrogate') or {}
+    if surrogate_cfg is None:
+        surrogate_cfg = {}
+    if not isinstance(surrogate_cfg, dict):
+        errors.append("surrogate must be an object/dict when provided.")
+        surrogate_cfg = {}
+    else:
+        surrogate_cfg = dict(surrogate_cfg)
+
+    warmup_runs = _coerce_int(surrogate_cfg.get('warmup_runs', 10), 'surrogate.warmup_runs', errors)
+    candidate_pool_size = _coerce_int(surrogate_cfg.get('candidate_pool_size', 256), 'surrogate.candidate_pool_size', errors)
+    max_wall_time_seconds = _coerce_int(
+        data.get('max_wall_time_seconds', RUN_POLICY_DEFAULT_WALL_TIME_SECONDS),
+        'max_wall_time_seconds',
+        errors,
+    )
+
+    if budget is not None and budget < 1:
+        errors.append("budget must be >= 1.")
+    if budget is not None and budget > RUN_POLICY_MAX_BUDGET:
+        errors.append(f"budget={budget} exceeds max_budget={RUN_POLICY_MAX_BUDGET}.")
+
+    if events is not None and events < 1:
+        errors.append("sim_params.events must be >= 1.")
+    if events is not None and events > RUN_POLICY_MAX_EVENTS_PER_CANDIDATE:
+        errors.append(
+            f"sim_params.events={events} exceeds max_events_per_candidate={RUN_POLICY_MAX_EVENTS_PER_CANDIDATE}."
+        )
+
+    if threads is not None and threads < 1:
+        errors.append("sim_params.threads must be >= 1.")
+    if threads is not None and threads > RUN_POLICY_MAX_THREADS:
+        errors.append(f"sim_params.threads={threads} exceeds max_threads={RUN_POLICY_MAX_THREADS}.")
+
+    if warmup_runs is not None and warmup_runs < 1:
+        errors.append("surrogate.warmup_runs must be >= 1.")
+    if warmup_runs is not None and warmup_runs > RUN_POLICY_MAX_WARMUP_RUNS:
+        errors.append(f"surrogate.warmup_runs={warmup_runs} exceeds max_warmup_runs={RUN_POLICY_MAX_WARMUP_RUNS}.")
+
+    if candidate_pool_size is not None and candidate_pool_size < 8:
+        errors.append("surrogate.candidate_pool_size must be >= 8.")
+    if candidate_pool_size is not None and candidate_pool_size > RUN_POLICY_MAX_CANDIDATE_POOL_SIZE:
+        errors.append(
+            f"surrogate.candidate_pool_size={candidate_pool_size} exceeds max_candidate_pool_size={RUN_POLICY_MAX_CANDIDATE_POOL_SIZE}."
+        )
+
+    if max_wall_time_seconds is not None and max_wall_time_seconds < 60:
+        errors.append("max_wall_time_seconds must be >= 60.")
+    if max_wall_time_seconds is not None and max_wall_time_seconds > RUN_POLICY_MAX_WALL_TIME_SECONDS:
+        errors.append(
+            f"max_wall_time_seconds={max_wall_time_seconds} exceeds max_wall_time_seconds={RUN_POLICY_MAX_WALL_TIME_SECONDS}."
+        )
+
+    if budget is not None and events is not None:
+        multiplier = 2 if head_to_head else 1
+        effective_total_events = budget * events * multiplier
+        if effective_total_events > RUN_POLICY_MAX_TOTAL_EVENTS:
+            errors.append(
+                f"effective_total_events={effective_total_events} exceeds max_total_events={RUN_POLICY_MAX_TOTAL_EVENTS}. "
+                f"(computed as budget * events * {multiplier})"
+            )
+
+    if errors:
+        return None, {
+            "error": "Run policy validation failed.",
+            "details": errors,
+            "limits": _run_policy_limits(),
+        }
+
+    data['budget'] = budget
+    sim_params['events'] = events
+    sim_params['threads'] = threads
+    data['sim_params'] = sim_params
+
+    surrogate_cfg['warmup_runs'] = warmup_runs
+    surrogate_cfg['candidate_pool_size'] = candidate_pool_size
+    data['surrogate'] = surrogate_cfg
+    data['max_wall_time_seconds'] = max_wall_time_seconds
+
+    data['_run_policy'] = {
+        "head_to_head": bool(head_to_head),
+        "budget": budget,
+        "events": events,
+        "threads": threads,
+        "effective_total_events": budget * events * (2 if head_to_head else 1),
+        "max_wall_time_seconds": max_wall_time_seconds,
+        "surrogate": {
+            "warmup_runs": warmup_runs,
+            "candidate_pool_size": candidate_pool_size,
+        },
+    }
+
+    return data, None
+
+def _start_managed_optimizer_run(pm, run_payload, *, kind, metadata=None):
+    max_wall_time_seconds = None
+    if isinstance(run_payload, dict):
+        raw = run_payload.get('max_wall_time_seconds')
+        if raw is not None:
+            try:
+                max_wall_time_seconds = int(raw)
+            except Exception:
+                max_wall_time_seconds = None
+
+    control, err = pm.start_managed_run(
+        kind=kind,
+        max_wall_time_seconds=max_wall_time_seconds,
+        metadata=(metadata or {}),
+    )
+    if not control:
+        return None, jsonify({
+            "success": False,
+            "error": err or "Another optimization run is already active.",
+            "active_run": pm.get_managed_run_status().get('active'),
+        }), 409
+
+    return control, None, None
+
+
+def _finish_managed_optimizer_run(pm, *, status='completed', details=None):
+    try:
+        pm.finish_managed_run(status=status, details=(details or {}))
+    except Exception:
+        pass
+
 
 # Track running LOR computation
 LOR_PROCESSING_STATUS = {}
@@ -944,6 +1924,117 @@ def get_simulation_metadata(version_id, job_id):
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+def _build_simulation_candidate_evaluator(
+    pm,
+    sim_params,
+    sim_objectives,
+    *,
+    context_static=None,
+    keep_candidate_runs=False,
+    candidate_runs_root=None,
+):
+    static_ctx = dict(context_static or {})
+    keep_runs = bool(keep_candidate_runs)
+    candidate_runs_root = candidate_runs_root or os.path.join(os.getcwd(), "surrogate", "simloop_runs")
+    candidate_runs_root = os.path.abspath(candidate_runs_root)
+    if keep_runs:
+        os.makedirs(candidate_runs_root, exist_ok=True)
+
+    def evaluator(*, run_record, project_manager, study):
+        job_id = str(uuid.uuid4())
+
+        with tempfile.TemporaryDirectory(prefix="simloop_") as tmp:
+            version_dir = os.path.join(tmp, "version")
+            os.makedirs(version_dir, exist_ok=True)
+
+            state_payload = json.dumps(project_manager.current_geometry_state.to_dict(), indent=2)
+            with open(os.path.join(version_dir, "version.json"), "w", encoding="utf-8") as f:
+                f.write(state_payload)
+
+            run_dir = os.path.join(version_dir, "sim_runs", job_id)
+            os.makedirs(run_dir, exist_ok=True)
+
+            try:
+                project_manager.generate_macro_file(
+                    job_id=job_id,
+                    sim_params=sim_params,
+                    build_dir=GEANT4_BUILD_DIR,
+                    run_dir=run_dir,
+                    version_dir=version_dir,
+                )
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to generate macro for candidate: {e}",
+                    "sim_metrics": {},
+                    "simulation": {
+                        "job_id": job_id,
+                    },
+                }
+
+            run_g4_simulation(job_id=job_id, run_dir=run_dir, executable_path=GEANT4_EXECUTABLE, sim_params=sim_params)
+
+            with SIMULATION_LOCK:
+                status = dict(SIMULATION_STATUS.get(job_id, {}))
+                SIMULATION_STATUS.pop(job_id, None)
+                SIMULATION_PROCESSES.pop(job_id, None)
+
+            if status.get("status") != "Completed":
+                err_lines = status.get("stderr", []) if isinstance(status.get("stderr"), list) else []
+                err_msg = err_lines[-1] if err_lines else "Simulation run failed."
+                return {
+                    "success": False,
+                    "error": err_msg,
+                    "sim_metrics": {},
+                    "simulation": {
+                        "job_id": job_id,
+                        "status": status.get("status", "Error"),
+                    },
+                }
+
+            output_path = os.path.join(run_dir, "output.hdf5")
+            if not os.path.exists(output_path):
+                return {
+                    "success": False,
+                    "error": "Simulation completed but output.hdf5 was not found.",
+                    "sim_metrics": {},
+                    "simulation": {
+                        "job_id": job_id,
+                        "status": "CompletedWithoutOutput",
+                    },
+                }
+
+            context = {}
+            context.update(static_ctx)
+            context.update(run_record.get("values", {}) or {})
+            context.update(run_record.get("metrics", {}) or {})
+
+            sim_metrics, warnings, _available = extract_objective_values_from_hdf5(
+                output_path=output_path,
+                objectives=sim_objectives,
+                context=context,
+            )
+
+            simulation_info = {
+                "job_id": job_id,
+                "status": "Completed",
+                "warnings": warnings,
+            }
+
+            if keep_runs:
+                candidate_dir = os.path.join(candidate_runs_root, f"candidate_{run_record.get('run_index', 0):04d}_{job_id}")
+                shutil.copytree(run_dir, candidate_dir, dirs_exist_ok=True)
+                simulation_info["saved_run_dir"] = candidate_dir
+
+            return {
+                "success": True,
+                "sim_metrics": sim_metrics,
+                "simulation": simulation_info,
+            }
+
+    return evaluator
+
+
 def _read_hits_columns_for_objectives(output_path):
     """Read minimal columns needed for objective extraction."""
     with h5py.File(output_path, 'r') as f:
@@ -984,6 +2075,339 @@ def _read_hits_columns_for_objectives(output_path):
         }
 
 
+@app.route('/api/objective_builder/schema', methods=['GET'])
+def objective_builder_schema_route():
+    return jsonify({
+        "success": True,
+        "schema": _objective_builder_schema(),
+    })
+
+
+@app.route('/api/objective_builder/example', methods=['GET'])
+def objective_builder_example_route():
+    pm = get_project_manager_for_session()
+    template_id = (request.args.get('template') or 'weighted_tradeoff').strip()
+
+    schema = _objective_builder_schema()
+    template_ids = [t.get('id') for t in (schema.get('templates') or []) if isinstance(t, dict) and t.get('id')]
+    if template_id and template_ids and template_id not in template_ids:
+        return jsonify({
+            "success": False,
+            "error": f"Unknown template '{template_id}'.",
+            "available_templates": template_ids,
+            "schema_version": schema.get('version'),
+        }), 400
+
+    payload = _objective_builder_example_payload(pm=pm, template_id=template_id or 'weighted_tradeoff')
+    return jsonify({
+        "success": True,
+        "payload": payload,
+        "template_id": payload.get('template_id'),
+        "schema_version": schema.get('version'),
+    })
+
+
+@app.route('/api/objective_builder/validate', methods=['POST'])
+def objective_builder_validate_route():
+    pm = get_project_manager_for_session()
+    payload = request.get_json() or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Payload must be an object/dict."}), 400
+
+    result = _validate_objective_builder_payload(payload, pm=pm)
+    return jsonify({
+        "success": True,
+        "validation": result,
+        "schema_version": _objective_builder_schema().get('version'),
+    })
+
+
+@app.route('/api/objective_builder/build', methods=['POST'])
+def objective_builder_build_route():
+    pm = get_project_manager_for_session()
+    payload = request.get_json() or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Payload must be an object/dict."}), 400
+
+    validation = _validate_objective_builder_payload(payload, pm=pm)
+    if not validation.get('valid'):
+        return jsonify({
+            "success": False,
+            "error": "Objective builder payload is invalid.",
+            "validation": validation,
+            "schema_version": _objective_builder_schema().get('version'),
+        }), 400
+
+    build = _build_objective_builder_payload(payload, validation)
+    return jsonify({
+        "success": True,
+        "build": build,
+        "validation": validation,
+        "schema_version": _objective_builder_schema().get('version'),
+    })
+
+
+@app.route('/api/objective_builder/upsert_study', methods=['POST'])
+def objective_builder_upsert_study_route():
+    pm = get_project_manager_for_session()
+    payload = request.get_json() or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Payload must be an object/dict."}), 400
+
+    dry_run = bool(payload.get('dry_run', False))
+
+    # Accept either full builder payload or direct study_upsert_payload from /build response.
+    source = 'builder_payload'
+    validation = None
+
+    if isinstance(payload.get('study_upsert_payload'), dict):
+        study_payload = dict(payload.get('study_upsert_payload') or {})
+        source = 'study_upsert_payload'
+    else:
+        validation = _validate_objective_builder_payload(payload, pm=pm)
+        if not validation.get('valid'):
+            return jsonify({
+                "success": False,
+                "error": "Objective builder payload is invalid.",
+                "validation": validation,
+                "schema_version": _objective_builder_schema().get('version'),
+            }), 400
+        study_payload = dict((validation.get('normalized') or {}).get('study') or {})
+
+    study_name = study_payload.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "Study payload must include field 'name'."}), 400
+
+    if dry_run:
+        ok, err = pm._validate_param_study(study_name, study_payload)
+        if not ok:
+            return jsonify({
+                "success": False,
+                "error": err,
+                "dry_run": True,
+                "source": source,
+            }), 400
+
+        return jsonify({
+            "success": True,
+            "dry_run": True,
+            "source": source,
+            "study_name": study_name,
+            "study_upsert_payload": study_payload,
+            "validation": validation,
+            "schema_version": _objective_builder_schema().get('version'),
+        })
+
+    existed = bool(pm.current_geometry_state and (study_name in (pm.current_geometry_state.param_studies or {})))
+    upserted, err = pm.upsert_param_study(study_name, study_payload)
+    if not upserted:
+        return jsonify({
+            "success": False,
+            "error": err,
+            "source": source,
+            "study_upsert_payload": study_payload,
+        }), 400
+
+    return jsonify({
+        "success": True,
+        "dry_run": False,
+        "source": source,
+        "action": "updated" if existed else "created",
+        "study": upserted,
+        "study_name": study_name,
+        "validation": validation,
+        "schema_version": _objective_builder_schema().get('version'),
+    })
+
+
+@app.route('/api/objective_builder/launch', methods=['POST'])
+def objective_builder_launch_route():
+    pm = get_project_manager_for_session()
+    payload = request.get_json() or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Payload must be an object/dict."}), 400
+
+    dry_run = bool(payload.get('dry_run', False))
+
+    source = 'builder_payload'
+    validation = None
+
+    build_payload = payload.get('build')
+    if isinstance(build_payload, dict):
+        source = 'build_payload'
+        build = dict(build_payload)
+    else:
+        validation = _validate_objective_builder_payload(payload, pm=pm)
+        if not validation.get('valid'):
+            return jsonify({
+                "success": False,
+                "error": "Objective builder payload is invalid.",
+                "validation": validation,
+                "schema_version": _objective_builder_schema().get('version'),
+            }), 400
+        build = _build_objective_builder_payload(payload, validation)
+
+    study_payload = dict(build.get('study_upsert_payload') or {})
+    study_name = study_payload.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "Build payload must include study_upsert_payload.name."}), 400
+
+    run_payload = dict(build.get('run_sim_loop_payload') or {})
+    run_overrides = payload.get('run_overrides') or {}
+    if run_overrides:
+        if not isinstance(run_overrides, dict):
+            return jsonify({"success": False, "error": "run_overrides must be an object/dict when provided."}), 400
+        run_payload.update(run_overrides)
+
+    run_payload['study_name'] = study_name
+    if 'sim_objectives' not in run_payload:
+        run_payload['sim_objectives'] = build.get('sim_objectives') or []
+    if 'context' not in run_payload:
+        run_payload['context'] = build.get('sim_context') or {}
+
+    sim_objectives = run_payload.get('sim_objectives') or []
+    if not isinstance(sim_objectives, list) or not sim_objectives:
+        return jsonify({"success": False, "error": "sim_objectives must be a non-empty list."}), 400
+
+    ok, err = pm._validate_param_study(study_name, study_payload)
+    if not ok:
+        return jsonify({
+            "success": False,
+            "error": err,
+            "source": source,
+            "study_upsert_payload": study_payload,
+        }), 400
+
+    existed = bool(pm.current_geometry_state and (study_name in (pm.current_geometry_state.param_studies or {})))
+
+    normalized_run, policy_error = _validate_and_normalize_run_policy(run_payload, head_to_head=False)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    run_payload = normalized_run
+
+    preflight_report = pm.run_preflight_checks()
+    preflight_summary = preflight_report.get('summary', {})
+
+    if dry_run:
+        return jsonify({
+            "success": True,
+            "dry_run": True,
+            "launched": False,
+            "source": source,
+            "study_action": "would_update" if existed else "would_create",
+            "study_name": study_name,
+            "study_upsert_payload": study_payload,
+            "run_payload": run_payload,
+            "preflight_summary": preflight_summary,
+            "validation": validation,
+            "schema_version": _objective_builder_schema().get('version'),
+        })
+
+    if not os.path.exists(GEANT4_EXECUTABLE):
+        return jsonify({
+            "success": False,
+            "error": "Geant4 executable not found. Please compile the application in 'geant4/build'.",
+        }), 500
+
+    if not preflight_summary.get('can_run', False):
+        return jsonify({
+            "success": False,
+            "error": "Preflight checks failed. Resolve errors before launching objective builder run.",
+            "preflight_report": preflight_report,
+        }), 400
+
+    upserted, err = pm.upsert_param_study(study_name, study_payload)
+    if not upserted:
+        return jsonify({
+            "success": False,
+            "error": err,
+            "source": source,
+            "study_upsert_payload": study_payload,
+        }), 400
+
+    method = (run_payload.get('method') or 'surrogate_gp').strip().lower()
+    sim_params = run_payload.get('sim_params') or {}
+
+    evaluator = _build_simulation_candidate_evaluator(
+        pm=pm,
+        sim_params=sim_params,
+        sim_objectives=sim_objectives,
+        context_static=(run_payload.get('context') or {}),
+        keep_candidate_runs=bool(run_payload.get('keep_candidate_runs', False)),
+        candidate_runs_root=run_payload.get('candidate_runs_root'),
+    )
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        run_payload,
+        kind='objective_builder_launch',
+        metadata={'study_name': study_name, 'method': method},
+    )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        if method == 'surrogate_gp':
+            result, err = pm.run_simulation_in_loop_optimizer(
+                study_name=study_name,
+                method='surrogate_gp',
+                budget=run_payload.get('budget', 20),
+                seed=run_payload.get('seed', 42),
+                objective_name=run_payload.get('objective_name'),
+                direction=run_payload.get('direction'),
+                surrogate_config=run_payload.get('surrogate') or {},
+                evaluator=evaluator,
+            )
+        elif method in {'random_search', 'cmaes'}:
+            result, err = pm.run_simulation_in_loop_optimizer(
+                study_name=study_name,
+                method=method,
+                budget=run_payload.get('budget', 20),
+                seed=run_payload.get('seed', 42),
+                objective_name=run_payload.get('objective_name'),
+                direction=run_payload.get('direction'),
+                cmaes_config=run_payload.get('cmaes'),
+                evaluator=evaluator,
+            )
+        else:
+            final_status = 'failed'
+            return jsonify({"success": False, "error": f"Unsupported method '{method}'."}), 400
+
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict) and result.get('stop_reason') in {'user_requested_stop', 'wall_time_exceeded'}:
+            final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': method,
+            'stop_reason': (result or {}).get('stop_reason') if isinstance(result, dict) else None,
+            'run_id': (result or {}).get('run_id') if isinstance(result, dict) else None,
+            'evaluations_used': (result or {}).get('evaluations_used') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
+    if not result:
+        return jsonify({"success": False, "error": err}), 400
+
+    return jsonify({
+        "success": True,
+        "dry_run": False,
+        "launched": True,
+        "source": source,
+        "study_action": "updated" if existed else "created",
+        "study_name": study_name,
+        "study": upserted,
+        "optimizer_result": result,
+        "preflight_summary": preflight_summary,
+        "run_policy": run_payload.get('_run_policy'),
+        "validation": validation,
+        "schema_version": _objective_builder_schema().get('version'),
+    })
+
+
 @app.route('/api/objectives/extract/<version_id>/<job_id>', methods=['POST'])
 def extract_objectives(version_id, job_id):
     pm = get_project_manager_for_session()
@@ -1000,55 +2424,21 @@ def extract_objectives(version_id, job_id):
         return jsonify({"success": False, "error": "objectives must be a list."}), 400
 
     try:
-        cols = _read_hits_columns_for_objectives(output_path)
-        edep = cols['Edep']
-        copy_no = cols['CopyNo']
-        particle_name_ds = cols['ParticleName']
+        context = payload.get('context', {}) or {}
+        if not isinstance(context, dict):
+            return jsonify({"success": False, "error": "context must be an object/dict when provided."}), 400
 
-        objective_values = {}
-
-        for i, obj in enumerate(objectives):
-            if not isinstance(obj, dict):
-                continue
-            metric = obj.get('metric')
-            name = obj.get('name', metric or f'objective_{i}')
-
-            if metric == 'total_hits':
-                objective_values[name] = float(len(edep))
-            elif metric == 'edep_sum':
-                objective_values[name] = float(np.sum(edep)) if len(edep) > 0 else 0.0
-            elif metric == 'edep_mean':
-                objective_values[name] = float(np.mean(edep)) if len(edep) > 0 else 0.0
-            elif metric == 'edep_max':
-                objective_values[name] = float(np.max(edep)) if len(edep) > 0 else 0.0
-            elif metric == 'unique_copyno_count':
-                objective_values[name] = float(len(np.unique(copy_no))) if len(copy_no) > 0 else 0.0
-            elif metric == 'particle_unique_count':
-                if len(particle_name_ds) == 0:
-                    objective_values[name] = 0.0
-                else:
-                    p_names = [n.decode('utf-8') if isinstance(n, bytes) else str(n) for n in particle_name_ds]
-                    objective_values[name] = float(len(set(p_names)))
-            elif metric == 'particle_fraction':
-                target_particle = (obj.get('particle') or '').strip()
-                if not target_particle or len(particle_name_ds) == 0:
-                    objective_values[name] = 0.0
-                else:
-                    p_names = np.array([n.decode('utf-8') if isinstance(n, bytes) else str(n) for n in particle_name_ds])
-                    objective_values[name] = float(np.mean(p_names == target_particle))
+        objective_values, warnings, available_metrics = extract_objective_values_from_hdf5(
+            output_path=output_path,
+            objectives=objectives,
+            context=context,
+        )
 
         return jsonify({
             "success": True,
             "objective_values": objective_values,
-            "available_metrics": [
-                "total_hits",
-                "edep_sum",
-                "edep_mean",
-                "edep_max",
-                "unique_copyno_count",
-                "particle_unique_count",
-                "particle_fraction",
-            ],
+            "warnings": warnings,
+            "available_metrics": available_metrics,
         })
     except Exception as e:
         traceback.print_exc()
@@ -2901,10 +4291,39 @@ def param_study_run_route():
     if not name:
         return jsonify({"success": False, "error": "Study name is required."}), 400
 
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=False)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='param_study',
+        metadata={'study_name': name},
+    )
+    if response is not None:
+        return response, status
+
     max_runs = data.get('max_runs')
-    result, err = pm.run_param_study(name, max_runs=max_runs)
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        result, err = pm.run_param_study(name, max_runs=max_runs)
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict) and result.get('stop_reason') in {'user_requested_stop', 'wall_time_exceeded'}:
+            final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': name,
+            'stop_reason': (result or {}).get('stop_reason') if isinstance(result, dict) else None,
+            'evaluations_used': (result or {}).get('evaluations_used') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
     if result:
-        return jsonify({"success": True, "study_result": result})
+        return jsonify({"success": True, "study_result": result, "run_policy": data.get('_run_policy')})
     return jsonify({"success": False, "error": err}), 400
 
 
@@ -2917,6 +4336,22 @@ def param_optimizer_list_route():
     return jsonify({"success": True, "optimizer_runs": runs})
 
 
+@app.route('/api/param_optimizer/active_run_status', methods=['GET'])
+def param_optimizer_active_run_status_route():
+    pm = get_project_manager_for_session()
+    status = pm.get_managed_run_status()
+    return jsonify({"success": True, **status})
+
+
+@app.route('/api/param_optimizer/stop_active_run', methods=['POST'])
+def param_optimizer_stop_active_run_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason') if isinstance(data, dict) else None
+    stop_result = pm.request_stop_managed_run(reason=reason or 'user_requested_stop')
+    return jsonify({"success": True, **stop_result})
+
+
 @app.route('/api/param_optimizer/run', methods=['POST'])
 def param_optimizer_run_route():
     pm = get_project_manager_for_session()
@@ -2926,24 +4361,506 @@ def param_optimizer_run_route():
     if not study_name:
         return jsonify({"success": False, "error": "study_name is required."}), 400
 
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=False)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+
     method = data.get('method', 'random_search')
     budget = data.get('budget', 20)
     seed = data.get('seed', 42)
     objective_name = data.get('objective_name')
     direction = data.get('direction')
 
-    result, err = pm.run_param_optimizer(
-        study_name=study_name,
-        method=method,
-        budget=budget,
-        seed=seed,
-        objective_name=objective_name,
-        direction=direction,
-        cmaes_config=data.get('cmaes'),
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='optimizer',
+        metadata={'study_name': study_name, 'method': method},
     )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        result, err = pm.run_param_optimizer(
+            study_name=study_name,
+            method=method,
+            budget=budget,
+            seed=seed,
+            objective_name=objective_name,
+            direction=direction,
+            cmaes_config=data.get('cmaes'),
+        )
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict) and result.get('stop_reason') in {'user_requested_stop', 'wall_time_exceeded'}:
+            final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': method,
+            'stop_reason': (result or {}).get('stop_reason') if isinstance(result, dict) else None,
+            'evaluations_used': (result or {}).get('evaluations_used') if isinstance(result, dict) else None,
+            'run_id': (result or {}).get('run_id') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
     if result:
-        return jsonify({"success": True, "optimizer_result": result})
+        return jsonify({"success": True, "optimizer_result": result, "run_policy": data.get('_run_policy')})
     return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/run_surrogate', methods=['POST'])
+def param_optimizer_run_surrogate_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=False)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='surrogate_optimizer',
+        metadata={'study_name': study_name, 'method': 'surrogate_gp'},
+    )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        result, err = pm.run_surrogate_param_optimizer(
+            study_name=study_name,
+            budget=data.get('budget', 40),
+            seed=data.get('seed', 42),
+            objective_name=data.get('objective_name'),
+            direction=data.get('direction'),
+            warmup_runs=(data.get('surrogate') or {}).get('warmup_runs', 10),
+            candidate_pool_size=(data.get('surrogate') or {}).get('candidate_pool_size', 256),
+            exploration_beta=(data.get('surrogate') or {}).get('exploration_beta', data.get('exploration_beta', 1.0)),
+            gp_noise=(data.get('surrogate') or {}).get('gp_noise', data.get('gp_noise', 1e-6)),
+        )
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict) and result.get('stop_reason') in {'user_requested_stop', 'wall_time_exceeded'}:
+            final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': 'surrogate_gp',
+            'stop_reason': (result or {}).get('stop_reason') if isinstance(result, dict) else None,
+            'evaluations_used': (result or {}).get('evaluations_used') if isinstance(result, dict) else None,
+            'run_id': (result or {}).get('run_id') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
+    if result:
+        return jsonify({"success": True, "optimizer_result": result, "run_policy": data.get('_run_policy')})
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/head_to_head', methods=['POST'])
+def param_optimizer_head_to_head_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=True)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='head_to_head',
+        metadata={'study_name': study_name, 'method': data.get('classical_method', 'cmaes')},
+    )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        result, err = pm.run_optimizer_head_to_head(
+            study_name=study_name,
+            budget=data.get('budget', 40),
+            seed=data.get('seed', 42),
+            objective_name=data.get('objective_name'),
+            direction=data.get('direction'),
+            classical_method=data.get('classical_method', 'cmaes'),
+            cmaes_config=data.get('cmaes'),
+            surrogate_config=data.get('surrogate') or {},
+        )
+        if err:
+            final_status = 'failed'
+        else:
+            stop_reasons = {
+                ((result.get('classical') or {}).get('stop_reason')),
+                ((result.get('surrogate') or {}).get('stop_reason')),
+            }
+            if 'user_requested_stop' in stop_reasons or 'wall_time_exceeded' in stop_reasons:
+                final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': 'head_to_head',
+            'run_ids': (result or {}).get('run_ids') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
+    if result:
+        return jsonify({"success": True, "comparison": result, "run_policy": data.get('_run_policy')})
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/run_simulation_in_loop', methods=['POST'])
+def param_optimizer_run_simulation_in_loop_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    if not os.path.exists(GEANT4_EXECUTABLE):
+        return jsonify({
+            "success": False,
+            "error": "Geant4 executable not found. Please compile the application in 'geant4/build'.",
+        }), 500
+
+    sim_objectives = data.get('sim_objectives') or []
+    if not isinstance(sim_objectives, list) or not sim_objectives:
+        return jsonify({"success": False, "error": "sim_objectives must be a non-empty list."}), 400
+
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=False)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+    sim_params = data['sim_params']
+
+    preflight_report = pm.run_preflight_checks()
+    if not preflight_report.get('summary', {}).get('can_run', False):
+        return jsonify({
+            "success": False,
+            "error": "Preflight checks failed. Resolve errors before running simulation-in-loop optimization.",
+            "preflight_report": preflight_report,
+        }), 400
+
+    method = (data.get('method') or 'surrogate_gp').strip().lower()
+
+    evaluator = _build_simulation_candidate_evaluator(
+        pm=pm,
+        sim_params=sim_params,
+        sim_objectives=sim_objectives,
+        context_static=(data.get('context') or {}),
+        keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
+        candidate_runs_root=data.get('candidate_runs_root'),
+    )
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='simulation_in_loop',
+        metadata={'study_name': study_name, 'method': method},
+    )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        if method == 'surrogate_gp':
+            result, err = pm.run_simulation_in_loop_optimizer(
+                study_name=study_name,
+                method='surrogate_gp',
+                budget=data.get('budget', 20),
+                seed=data.get('seed', 42),
+                objective_name=data.get('objective_name'),
+                direction=data.get('direction'),
+                surrogate_config=data.get('surrogate') or {},
+                evaluator=evaluator,
+            )
+        elif method in {'random_search', 'cmaes'}:
+            result, err = pm.run_simulation_in_loop_optimizer(
+                study_name=study_name,
+                method=method,
+                budget=data.get('budget', 20),
+                seed=data.get('seed', 42),
+                objective_name=data.get('objective_name'),
+                direction=data.get('direction'),
+                cmaes_config=data.get('cmaes'),
+                evaluator=evaluator,
+            )
+        else:
+            final_status = 'failed'
+            return jsonify({"success": False, "error": f"Unsupported method '{method}'."}), 400
+
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict) and result.get('stop_reason') in {'user_requested_stop', 'wall_time_exceeded'}:
+            final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': method,
+            'stop_reason': (result or {}).get('stop_reason') if isinstance(result, dict) else None,
+            'evaluations_used': (result or {}).get('evaluations_used') if isinstance(result, dict) else None,
+            'run_id': (result or {}).get('run_id') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
+    if result:
+        return jsonify({
+            "success": True,
+            "optimizer_result": result,
+            "preflight_summary": preflight_report.get('summary', {}),
+            "run_policy": data.get('_run_policy'),
+        })
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/head_to_head_simulation_in_loop', methods=['POST'])
+def param_optimizer_head_to_head_simulation_in_loop_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    study_name = data.get('study_name') or data.get('name')
+    if not study_name:
+        return jsonify({"success": False, "error": "study_name is required."}), 400
+
+    if not os.path.exists(GEANT4_EXECUTABLE):
+        return jsonify({"success": False, "error": "Geant4 executable not found."}), 500
+
+    sim_objectives = data.get('sim_objectives') or []
+    if not isinstance(sim_objectives, list) or not sim_objectives:
+        return jsonify({"success": False, "error": "sim_objectives must be a non-empty list."}), 400
+
+    normalized, policy_error = _validate_and_normalize_run_policy(data, head_to_head=True)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+    data = normalized
+    sim_params = data['sim_params']
+
+    preflight_report = pm.run_preflight_checks()
+    if not preflight_report.get('summary', {}).get('can_run', False):
+        return jsonify({
+            "success": False,
+            "error": "Preflight checks failed. Resolve errors before running simulation-in-loop optimization.",
+            "preflight_report": preflight_report,
+        }), 400
+
+    evaluator = _build_simulation_candidate_evaluator(
+        pm=pm,
+        sim_params=sim_params,
+        sim_objectives=sim_objectives,
+        context_static=(data.get('context') or {}),
+        keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
+        candidate_runs_root=data.get('candidate_runs_root'),
+    )
+
+    _, response, status = _start_managed_optimizer_run(
+        pm,
+        data,
+        kind='head_to_head_simulation_in_loop',
+        metadata={'study_name': study_name, 'method': data.get('classical_method', 'cmaes')},
+    )
+    if response is not None:
+        return response, status
+
+    final_status = 'completed'
+    result, err = None, None
+    try:
+        result, err = pm.run_optimizer_head_to_head(
+            study_name=study_name,
+            budget=data.get('budget', 20),
+            seed=data.get('seed', 42),
+            objective_name=data.get('objective_name'),
+            direction=data.get('direction'),
+            classical_method=data.get('classical_method', 'cmaes'),
+            cmaes_config=data.get('cmaes'),
+            surrogate_config=data.get('surrogate') or {},
+            evaluator=evaluator,
+        )
+
+        if err:
+            final_status = 'failed'
+        elif isinstance(result, dict):
+            stop_reasons = {
+                ((result.get('classical') or {}).get('stop_reason')),
+                ((result.get('surrogate') or {}).get('stop_reason')),
+            }
+            if 'user_requested_stop' in stop_reasons or 'wall_time_exceeded' in stop_reasons:
+                final_status = 'stopped'
+    finally:
+        details = {
+            'study_name': study_name,
+            'method': 'head_to_head_simulation_in_loop',
+            'run_ids': (result or {}).get('run_ids') if isinstance(result, dict) else None,
+        }
+        _finish_managed_optimizer_run(pm, status=final_status, details=details)
+
+    if result:
+        result['simulation_in_loop'] = True
+        return jsonify({
+            "success": True,
+            "comparison": result,
+            "preflight_summary": preflight_report.get('summary', {}),
+            "run_policy": data.get('_run_policy'),
+        })
+    return jsonify({"success": False, "error": err}), 400
+
+
+@app.route('/api/param_optimizer/apply_audit_history', methods=['GET'])
+def param_optimizer_apply_audit_history_route():
+    pm = get_project_manager_for_session()
+    user_id = _current_user_id_for_policy()
+    scope_id = _project_scope_id_for_policy(pm)
+
+    limit_raw = request.args.get('limit', 20)
+    try:
+        limit = int(limit_raw)
+    except Exception:
+        limit = 20
+
+    audits = _list_apply_audit_records(user_id, scope_id, limit=limit)
+    return jsonify({
+        "success": True,
+        "audits": audits,
+        "count": len(audits),
+        "project_scope_id": scope_id,
+    })
+
+
+@app.route('/api/param_optimizer/apply_audit_diagnostics', methods=['GET'])
+def param_optimizer_apply_audit_diagnostics_route():
+    pm = get_project_manager_for_session()
+    user_id = _current_user_id_for_policy()
+    scope_id = _project_scope_id_for_policy(pm)
+
+    user_key = str(user_id or 'local_user')
+    scope_key = str(scope_id or 'default-scope')
+
+    with APPLY_AUDIT_LOCK:
+        user_scopes = APPLY_AUDIT_LOGS.get(user_key, {})
+        if isinstance(user_scopes, dict):
+            scope_entries = user_scopes.get(scope_key, [])
+            default_entries = user_scopes.get('default-scope', [])
+            scope_count = len(scope_entries) if isinstance(scope_entries, list) else 0
+            legacy_default_count = len(default_entries) if isinstance(default_entries, list) else 0
+            user_scope_count = len(user_scopes)
+            total_user_entries = sum(len(v) for v in user_scopes.values() if isinstance(v, list))
+        else:
+            scope_count = 0
+            legacy_default_count = 0
+            user_scope_count = 0
+            total_user_entries = 0
+
+    storage_path = APPLY_AUDIT_STORAGE_FILE
+    storage_exists = bool(storage_path and os.path.exists(storage_path))
+    storage_size_bytes = os.path.getsize(storage_path) if storage_exists else 0
+
+    return jsonify({
+        "success": True,
+        "project_scope_id": scope_key,
+        "project_name": pm.project_name,
+        "user_id": user_key,
+        "scope_entry_count": scope_count,
+        "legacy_default_scope_entry_count": legacy_default_count,
+        "user_scope_count": user_scope_count,
+        "user_total_entries": total_user_entries,
+        "storage": {
+            "path": storage_path,
+            "exists": storage_exists,
+            "size_bytes": storage_size_bytes,
+            "max_entries_per_scope": APPLY_AUDIT_MAX_ENTRIES,
+        },
+    })
+
+
+@app.route('/api/param_optimizer/rollback_last_apply', methods=['POST'])
+def param_optimizer_rollback_last_apply_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    user_id = _current_user_id_for_policy()
+    scope_id = _project_scope_id_for_policy(pm)
+    audits = _list_apply_audit_records(user_id, scope_id, limit=200)
+    if not audits:
+        return jsonify({"success": False, "error": "No apply audit entries found."}), 400
+
+    audit_id = data.get('audit_id')
+    latest_unrolled = next((a for a in audits if not a.get('rolled_back')), None)
+    if latest_unrolled is None:
+        return jsonify({"success": False, "error": "No unapplied rollback entries found."}), 400
+
+    target = latest_unrolled
+    if audit_id:
+        match = next((a for a in audits if a.get('audit_id') == audit_id), None)
+        if not match:
+            return jsonify({"success": False, "error": "audit_id not found."}), 400
+        target = match
+
+    # Safety: only rollback the latest unapplied apply action.
+    if target.get('audit_id') != latest_unrolled.get('audit_id'):
+        return jsonify({
+            "success": False,
+            "error": "Only the latest unapplied apply action can be rolled back safely.",
+            "latest_unrolled_audit_id": latest_unrolled.get('audit_id'),
+        }), 400
+
+    if not pm.current_geometry_state:
+        return jsonify({"success": False, "error": "No active geometry state available to rollback."}), 400
+
+    if pm.history_index < 0 or len(pm.history or []) == 0:
+        return jsonify({"success": False, "error": "No history state available to rollback."}), 400
+
+    # Constrained safety: rollback endpoint only supports undoing the current top-of-history
+    # apply action recorded in audit. If history moved forward since apply, require manual undo.
+    expected_top_index = target.get('history_post_apply_index')
+    if expected_top_index is not None and pm.history_index != expected_top_index:
+        return jsonify({
+            "success": False,
+            "error": "Rollback blocked: current history tip does not match selected apply action. Use manual Undo to reach that state.",
+            "current_history_index": pm.history_index,
+            "expected_history_index": expected_top_index,
+        }), 400
+
+    if pm.history_index <= 0:
+        return jsonify({
+            "success": False,
+            "error": "Rollback blocked: cannot undo past initial history state.",
+            "current_history_index": pm.history_index,
+        }), 400
+
+    undo_result, err = pm.undo()
+    if not undo_result:
+        return jsonify({"success": False, "error": err or "Rollback failed."}), 400
+
+    rolled = _mark_apply_audit_rolled_back(user_id, scope_id, target.get('audit_id'))
+
+    return create_success_response(
+        pm,
+        "Rolled back last applied optimizer candidate.",
+        extra_payload={
+            "rollback_result": undo_result,
+            "rolled_back_audit": rolled,
+            "apply_audits": _list_apply_audit_records(user_id, scope_id, limit=20),
+            "project_scope_id": scope_id,
+        }
+    )
 
 
 @app.route('/api/param_optimizer/replay_best', methods=['POST'])
@@ -2954,19 +4871,86 @@ def param_optimizer_replay_best_route():
     if not run_id:
         return jsonify({"success": False, "error": "run_id is required."}), 400
 
-    apply_to_project = bool(data.get('apply_to_project', True))
+    apply_policy, policy_error = _validate_apply_policy(data)
+    if policy_error:
+        return jsonify({"success": False, **policy_error}), 400
+
+    apply_to_project = bool(apply_policy.get('apply_to_project', False))
+
+    token_record = None
+    if apply_to_project and RUN_POLICY_REQUIRE_VERIFY_TOKEN:
+        user_id = _current_user_id_for_policy()
+        token_record, token_err = _consume_verify_token(
+            user_id=user_id,
+            run_id=run_id,
+            token=apply_policy.get('verification_token'),
+        )
+        if token_err:
+            return jsonify({
+                "success": False,
+                "error": "Apply policy validation failed.",
+                "details": [token_err],
+                "policy": {
+                    "require_verify_token": RUN_POLICY_REQUIRE_VERIFY_TOKEN,
+                    "verify_token_ttl_seconds": RUN_POLICY_VERIFY_TOKEN_TTL_SECONDS,
+                },
+            }), 400
+
+    pre_apply_history_index = pm.history_index
+    pre_apply_history_size = len(pm.history or [])
+
     result, err = pm.replay_optimizer_best_candidate(run_id=run_id, apply_to_project=apply_to_project)
     if not result:
         return jsonify({"success": False, "error": err}), 400
 
     if apply_to_project:
+        user_id = _current_user_id_for_policy()
+        scope_id = _project_scope_id_for_policy(pm)
+        replay_result = result.get('replay_result', {}) if isinstance(result, dict) else {}
+        run_record = replay_result.get('run_record', {}) if isinstance(replay_result, dict) else {}
+
+        audit_record = _append_apply_audit_record(user_id, scope_id, {
+            'run_id': run_id,
+            'project_name': pm.project_name,
+            'project_scope_id': scope_id,
+            'study_name': replay_result.get('study_name'),
+            'candidate_run_index': run_record.get('run_index'),
+            'candidate_success': bool(run_record.get('success', False)),
+            'candidate_error': run_record.get('error'),
+            'candidate_values': run_record.get('values', {}),
+            'candidate_objectives': run_record.get('objectives', {}),
+            'verification': token_record.get('verification_record') if token_record else None,
+            'verification_token': {
+                'run_id': token_record.get('run_id') if token_record else None,
+                'issued_at': token_record.get('issued_at') if token_record else None,
+                'used_at': token_record.get('used_at') if token_record else None,
+                'expires_at': token_record.get('expires_at') if token_record else None,
+            } if token_record else None,
+            'history_pre_apply_index': pre_apply_history_index,
+            'history_pre_apply_size': pre_apply_history_size,
+            'history_post_apply_index': pm.history_index,
+            'history_post_apply_size': len(pm.history or []),
+        })
+
         return create_success_response(
             pm,
             f"Replayed best candidate from optimizer run '{run_id}'.",
-            extra_payload={"replay_result": result}
+            extra_payload={
+                "replay_result": result,
+                "apply_policy": apply_policy,
+                "verification_token_record": {
+                    "run_id": token_record.get('run_id') if token_record else None,
+                    "issued_at": token_record.get('issued_at') if token_record else None,
+                    "used_at": token_record.get('used_at') if token_record else None,
+                    "expires_at": token_record.get('expires_at') if token_record else None,
+                } if token_record else None,
+                "apply_audit": audit_record,
+                "apply_audits": _list_apply_audit_records(user_id, scope_id, limit=20),
+                "project_scope_id": scope_id,
+            }
         )
 
-    return jsonify({"success": True, "replay_result": result})
+    return jsonify({"success": True, "replay_result": result, "apply_policy": apply_policy})
 
 
 @app.route('/api/param_optimizer/verify_best', methods=['POST'])
@@ -2977,11 +4961,132 @@ def param_optimizer_verify_best_route():
     if not run_id:
         return jsonify({"success": False, "error": "run_id is required."}), 400
 
-    repeats = data.get('repeats', 3)
+    repeats = data.get('repeats', RUN_POLICY_VERIFY_MIN_REPEATS)
     result, err = pm.verify_optimizer_best_candidate(run_id=run_id, repeats=repeats)
-    if result:
-        return jsonify({"success": True, "verification_result": result})
-    return jsonify({"success": False, "error": err}), 400
+    if not result:
+        return jsonify({"success": False, "error": err}), 400
+
+    gate = _evaluate_verification_gate(result, data)
+
+    apply_token = None
+    apply_token_record = None
+    if gate.get('passed'):
+        user_id = _current_user_id_for_policy()
+        _cleanup_expired_verify_tokens(user_id)
+        rec = _issue_verify_token(user_id=user_id, run_id=run_id, verification_record=result.get('verification_record'))
+        apply_token = rec.get('token')
+        apply_token_record = {
+            'run_id': rec.get('run_id'),
+            'issued_at': rec.get('issued_at'),
+            'expires_at': rec.get('expires_at'),
+        }
+
+    return jsonify({
+        "success": True,
+        "verification_result": result,
+        "verification_gate": gate,
+        "apply_token": apply_token,
+        "apply_token_record": apply_token_record,
+    })
+
+
+@app.route('/api/surrogate/dataset/export', methods=['POST'])
+def surrogate_dataset_export_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json() or {}
+
+    output_root = data.get('output_root', 'surrogate/datasets')
+    dataset_name = data.get('dataset_name')
+    target_objective = data.get('target_objective')
+    val_ratio = data.get('val_ratio', 0.2)
+    split_seed = data.get('split_seed', 42)
+    only_success = bool(data.get('only_success', False))
+
+    payloads = []
+
+    include_current_optimizer_runs = bool(data.get('include_current_optimizer_runs', True))
+    if include_current_optimizer_runs:
+        optimizer_runs = {}
+        if pm.current_geometry_state:
+            optimizer_runs = pm.current_geometry_state.optimizer_runs or {}
+        payloads.append(("current_session.optimizer_runs", {"optimizer_runs": optimizer_runs}))
+
+    if isinstance(data.get('study_result'), dict):
+        payloads.append(("request.study_result", {"study_result": data.get('study_result')}))
+
+    req_optimizer_runs = data.get('optimizer_runs')
+    if isinstance(req_optimizer_runs, (dict, list)):
+        payloads.append(("request.optimizer_runs", {"optimizer_runs": req_optimizer_runs}))
+
+    if not payloads:
+        return jsonify({"success": False, "error": "No data sources provided for dataset export."}), 400
+
+    try:
+        manifest = build_surrogate_dataset_from_payloads(
+            payloads=payloads,
+            output_root=output_root,
+            dataset_name=dataset_name,
+            target_objective=target_objective,
+            val_ratio=val_ratio,
+            split_seed=split_seed,
+            only_success=only_success,
+        )
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    return jsonify({"success": True, "manifest": manifest})
+
+
+@app.route('/api/surrogate/experiment/run', methods=['POST'])
+def surrogate_experiment_run_route():
+    data = request.get_json() or {}
+
+    config_path = data.get('config_path')
+    config = data.get('config')
+
+    try:
+        if config_path:
+            report = run_surrogate_experiment_from_path(config_path)
+        else:
+            if not isinstance(config, dict):
+                return jsonify({"success": False, "error": "Provide either 'config_path' or inline 'config' object."}), 400
+            report = run_surrogate_experiment(config=config, config_dir=Path(os.getcwd()))
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    return jsonify({"success": True, "report": report})
+
+
+@app.route('/api/surrogate/synthetic/generate', methods=['POST'])
+def surrogate_synthetic_generate_route():
+    data = request.get_json() or {}
+
+    try:
+        report = generate_synthetic_surrogate_benchmark(
+            preset=data.get('preset', 'nonlinear_3d'),
+            n_runs=data.get('runs', 300),
+            seed=data.get('seed', 42),
+            noise_sigma=data.get('noise_sigma', 0.05),
+            failure_probability=data.get('failure_probability', 0.08),
+            dataset_output_root=data.get('dataset_output_root', 'surrogate/datasets'),
+            artifacts_root=data.get('artifacts_root', 'surrogate/benchmarks'),
+            dataset_name=data.get('dataset_name'),
+            target_objective=data.get('target_objective', 'score'),
+            val_ratio=data.get('val_ratio', 0.2),
+            split_seed=data.get('split_seed', 42),
+            only_success=bool(data.get('only_success', False)),
+            write_example_configs=not bool(data.get('no_example_configs', False)),
+        )
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    return jsonify({"success": True, "benchmark": report})
 
 
 @app.route('/add_solid_and_place', methods=['POST'])

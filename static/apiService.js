@@ -19,6 +19,8 @@ async function handleResponse(response) {
         // --- Custom error object ---
         const error = new Error(errorData.error || `Request failed with status ${response.status}`);
         error.type = errorData.error_type || 'generic'; // Add the error type if it exists
+        error.status = response.status;
+        error.data = errorData;
         throw error;
     }
     return response.json(); // Assumes all successful responses are JSON
@@ -324,21 +326,75 @@ export async function runParamOptimizer(payload) {
     return handleResponse(response);
 }
 
-export async function replayParamOptimizerBest(runId, applyToProject = true) {
-    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/replay_best`, {
+export async function getActiveParamOptimizerRunStatus() {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/active_run_status`);
+    return handleResponse(response);
+}
+
+export async function stopActiveParamOptimizerRun(reason = 'user_requested_stop') {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/stop_active_run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: runId, apply_to_project: applyToProject }),
+        body: JSON.stringify({ reason }),
     });
     return handleResponse(response);
 }
 
-export async function verifyParamOptimizerBest(runId, repeats = 3) {
+export async function replayParamOptimizerBest(runId, options = {}) {
+    const opts = (options && typeof options === 'object') ? options : { applyToProject: !!options };
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/replay_best`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            run_id: runId,
+            apply_to_project: opts.applyToProject !== false,
+            allow_apply: !!opts.allowApply,
+            dry_run: !!opts.dryRun,
+            verification_token: opts.verificationToken,
+        }),
+    });
+    return handleResponse(response);
+}
+
+export async function verifyParamOptimizerBest(runId, options = {}) {
+    const opts = (options && typeof options === 'object') ? options : { repeats: options };
+    const repeats = Number.isFinite(Number(opts.repeats)) ? Number(opts.repeats) : 3;
+    const payload = {
+        run_id: runId,
+        repeats,
+    };
+    if (opts.minRepeats != null) payload.min_repeats = Number(opts.minRepeats);
+    if (opts.minSuccessRate != null) payload.min_success_rate = Number(opts.minSuccessRate);
+    if (opts.maxStd != null && opts.maxStd !== '') payload.max_std = Number(opts.maxStd);
+
     const response = await fetch(`${API_BASE_URL}/api/param_optimizer/verify_best`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_id: runId, repeats }),
+        body: JSON.stringify(payload),
     });
+    return handleResponse(response);
+}
+
+export async function getParamOptimizerApplyAuditHistory(limit = 20) {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/apply_audit_history?${qs.toString()}`);
+    return handleResponse(response);
+}
+
+export async function rollbackLastParamOptimizerApply(auditId = null) {
+    const payload = {};
+    if (auditId) payload.audit_id = auditId;
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/rollback_last_apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+}
+
+export async function getParamOptimizerApplyAuditDiagnostics() {
+    const response = await fetch(`${API_BASE_URL}/api/param_optimizer/apply_audit_diagnostics`);
     return handleResponse(response);
 }
 
@@ -347,6 +403,55 @@ export async function extractObjectives(versionId, jobId, objectives) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ objectives }),
+    });
+    return handleResponse(response);
+}
+
+// --- Objective Builder API (M6) ---
+export async function getObjectiveBuilderSchema() {
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/schema`);
+    return handleResponse(response);
+}
+
+export async function getObjectiveBuilderExample(template = 'weighted_tradeoff') {
+    const qs = new URLSearchParams();
+    if (template) qs.set('template', template);
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/example${qs.toString() ? `?${qs.toString()}` : ''}`);
+    return handleResponse(response);
+}
+
+export async function validateObjectiveBuilder(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+}
+
+export async function buildObjectiveBuilder(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/build`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+}
+
+export async function upsertObjectiveBuilderStudy(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/upsert_study`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+}
+
+export async function launchObjectiveBuilder(payload) {
+    const response = await fetch(`${API_BASE_URL}/api/objective_builder/launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
     });
     return handleResponse(response);
 }
