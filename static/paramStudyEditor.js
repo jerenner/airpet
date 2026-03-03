@@ -18,7 +18,7 @@ let viewModeInput;
 let saveBtn, deleteBtn, runBtn, runOptimizerBtn, stopRunBtn, replayBestBtn, verifyBestBtn, downloadResultsBtn, refreshBtn, cancelBtn;
 let obTemplateInput, obDatasetPathInput, obCostKeyInput, obScoreExprInput, obOutput;
 let obPolicyCapsEl, obAllowedFunctionsEl, obFormulaVarsEl, obDatasetHintEl;
-let obLoadExampleBtn, obValidateBtn, obBuildBtn, obUpsertBtn, obLaunchDryRunBtn, obGuidedBtn;
+let obLoadExampleBtn, obValidateBtn, obBuildBtn, obUpsertBtn, obLaunchDryRunBtn, obLaunchRunBtn, obGuidedBtn;
 let obCopyOutputBtn, obCopyBuildBtn, obCopyLaunchBtn;
 let obStatusEl, obStageEl, obErrorsList, obWarningsList;
 
@@ -636,12 +636,64 @@ async function _handleObjectiveBuilderLaunchDryRun() {
         lastObjectiveBuilderLaunch = result || null;
         _renderObjectiveBuilderFeedback('launch_dry_run', result || {});
         _setObjectiveBuilderOutput(result || {});
-        _showNotice('Launch dry run prepared successfully.', 'success', 2800);
+        _showNotice('Launch dry run prepared (no simulations executed).', 'success', 3200);
         _setRunLifecycle('completed', 'objective_builder_launch_dry_run', 'dry_run prepared');
     } catch (error) {
         _renderObjectiveBuilderFailure('launch_dry_run', error);
         _showNotice(error.message || String(error), 'error', 7000);
         _setRunLifecycle('failed', 'objective_builder_launch_dry_run', error?.message || String(error));
+    }
+}
+
+async function _handleObjectiveBuilderLaunchRun() {
+    _setRunLifecycle('running', 'objective_builder_launch', 'Launching simulation-in-loop optimization');
+    try {
+        const payload = _objectiveBuilderPayloadFromForm();
+        payload.dry_run = false;
+        const result = await callbacks.onObjectiveBuilderLaunch(payload);
+        lastObjectiveBuilderLaunch = result || null;
+
+        _renderObjectiveBuilderFeedback('launch', result || {});
+        _setObjectiveBuilderOutput(result || {});
+
+        if (result?.optimizer_result && typeof result.optimizer_result === 'object') {
+            lastRunResult = result.optimizer_result;
+            lastVerificationResult = null;
+            _clearReviewToken();
+
+            runOutput.value = JSON.stringify(result.optimizer_result, null, 2);
+            _updateObjectiveSelector();
+
+            const objectiveName = result?.optimizer_result?.objective?.name;
+            const direction = result?.optimizer_result?.objective?.direction;
+            if (objectiveName && rankObjectiveSelect && [...rankObjectiveSelect.options].some(o => o.value === objectiveName)) {
+                rankObjectiveSelect.value = objectiveName;
+            }
+            if (direction && rankDirectionSelect) {
+                rankDirectionSelect.value = direction;
+            }
+
+            _renderRankingTable();
+            _renderOptimizerSummary();
+            await _refreshAndRender();
+
+            const evals = Number(result?.optimizer_result?.evaluations_used ?? result?.optimizer_result?.candidates?.length ?? 0);
+            const stopReason = result?.optimizer_result?.stop_reason;
+            const detail = stopReason && stopReason !== 'budget_exhausted'
+                ? `evaluations=${Number.isFinite(evals) ? evals : 'n/a'}, stop_reason=${stopReason}`
+                : `evaluations=${Number.isFinite(evals) ? evals : 'n/a'}`;
+
+            _setRunLifecycle('completed', 'objective_builder_launch', detail);
+            _showNotice('Simulation-in-loop optimization completed.', 'success', 3200);
+            return;
+        }
+
+        _setRunLifecycle('completed', 'objective_builder_launch', 'launch returned no optimizer_result payload');
+        _showNotice('Launch completed, but no optimizer result payload was returned.', 'warning', 4200);
+    } catch (error) {
+        _renderObjectiveBuilderFailure('launch', error);
+        _showNotice(error.message || String(error), 'error', 7000);
+        _setRunLifecycle('failed', 'objective_builder_launch', error?.message || String(error));
     }
 }
 
@@ -673,10 +725,10 @@ async function _handleObjectiveBuilderGuided() {
         guidedOutput.steps.launch_dry_run = launchResult;
         lastObjectiveBuilderLaunch = launchResult || null;
 
-        const out = { success: true, message: 'Guided flow completed (validate → build → dry run).', ...guidedOutput };
+        const out = { success: true, message: 'Guided prep completed (validate → build → dry run). No simulations executed.', ...guidedOutput };
         _renderObjectiveBuilderFeedback('guided_complete', out);
         _setObjectiveBuilderOutput(out);
-        _showNotice('Guided flow completed.', 'success', 2800);
+        _showNotice('Guided prep completed (no simulations executed).', 'success', 3200);
     } catch (error) {
         const failure = {
             success: false,
@@ -953,7 +1005,7 @@ function _stopRunLifecycleTimer() {
 
 function _updateStopRunButtonState() {
     if (!stopRunBtn) return;
-    const stoppableActions = new Set(['optimizer_run', 'param_study_run']);
+    const stoppableActions = new Set(['optimizer_run', 'param_study_run', 'param_study_sweep']);
     const isRunning = runLifecycleState.status === 'running' && stoppableActions.has(runLifecycleState.action);
     stopRunBtn.disabled = !isRunning || stopRunRequestPending;
     stopRunBtn.textContent = stopRunRequestPending ? 'Stopping…' : 'Stop Active Run';
@@ -1858,7 +1910,7 @@ async function _handleRun() {
     const maxRunsRaw = maxRunsInput.value.trim();
     const maxRuns = maxRunsRaw ? Number(maxRunsRaw) : null;
 
-    _setRunLifecycle('running', 'param_study_run', `study=${name}`);
+    _setRunLifecycle('running', 'param_study_sweep', `study=${name} (no simulation)`);
 
     try {
         const result = await callbacks.onRun(name, Number.isFinite(maxRuns) ? maxRuns : null);
@@ -1875,10 +1927,11 @@ async function _handleRun() {
         const detail = stopReason && stopReason !== 'completed'
             ? `runs=${runsCount}, stop_reason=${stopReason}`
             : `runs=${runsCount}`;
-        _setRunLifecycle('completed', 'param_study_run', detail);
+        _setRunLifecycle('completed', 'param_study_sweep', detail);
+        _showNotice('Parameter sweep completed (no simulation). Use Objective Builder → Run Simulation-in-Loop for physics optimization.', 'info', 4200);
     } catch (error) {
         runOutput.value = JSON.stringify(error?.data || { success: false, error: error?.message || String(error) }, null, 2);
-        _setRunLifecycle('failed', 'param_study_run', error?.message || String(error));
+        _setRunLifecycle('failed', 'param_study_sweep', error?.message || String(error));
         _showNotice(error?.message || String(error), 'error', 7000);
     }
 }
@@ -2187,6 +2240,7 @@ export function init(newCallbacks = {}) {
     obBuildBtn = document.getElementById('psObBuildBtn');
     obUpsertBtn = document.getElementById('psObUpsertBtn');
     obLaunchDryRunBtn = document.getElementById('psObLaunchDryRunBtn');
+    obLaunchRunBtn = document.getElementById('psObLaunchRunBtn');
     obGuidedBtn = document.getElementById('psObGuidedBtn');
     obCopyOutputBtn = document.getElementById('psObCopyOutputBtn');
     obCopyBuildBtn = document.getElementById('psObCopyBuildBtn');
@@ -2265,6 +2319,7 @@ export function init(newCallbacks = {}) {
     if (obBuildBtn) obBuildBtn.addEventListener('click', _handleObjectiveBuilderBuild);
     if (obUpsertBtn) obUpsertBtn.addEventListener('click', _handleObjectiveBuilderUpsert);
     if (obLaunchDryRunBtn) obLaunchDryRunBtn.addEventListener('click', _handleObjectiveBuilderLaunchDryRun);
+    if (obLaunchRunBtn) obLaunchRunBtn.addEventListener('click', _handleObjectiveBuilderLaunchRun);
     if (obGuidedBtn) obGuidedBtn.addEventListener('click', _handleObjectiveBuilderGuided);
     if (obCopyOutputBtn) obCopyOutputBtn.addEventListener('click', _handleCopyObjectiveBuilderOutput);
     if (obCopyBuildBtn) obCopyBuildBtn.addEventListener('click', _handleCopyObjectiveBuilderBuild);

@@ -2653,13 +2653,13 @@ async function handleParamStudyDelete(name) {
 }
 
 async function handleParamStudyRun(name, maxRuns = null) {
-    UIManager.showLoading(`Running param study '${name}'...`);
+    UIManager.showLoading(`Running parameter sweep (no simulation) for '${name}'...`);
     try {
         const result = await APIService.runParamStudy(name, maxRuns);
-        UIManager.showNotification(`Param study '${name}' run complete.`);
+        UIManager.showNotification(`Parameter sweep completed for '${name}' (no simulation).`);
         return result.study_result || result;
     } catch (error) {
-        UIManager.showError("Failed to run param study: " + error.message);
+        UIManager.showError("Failed to run parameter sweep: " + error.message);
         throw error;
     } finally {
         UIManager.hideLoading();
@@ -2826,11 +2826,11 @@ async function handleObjectiveBuilderUpsert(payload) {
 }
 
 async function handleObjectiveBuilderLaunch(payload) {
-    UIManager.showLoading(payload?.dry_run ? 'Preparing objective builder launch (dry run)...' : 'Launching objective builder run...');
+    UIManager.showLoading(payload?.dry_run ? 'Preparing objective builder launch (dry run)...' : 'Running simulation-in-loop optimization...');
     try {
         const result = await APIService.launchObjectiveBuilder(payload);
         if (!result?.dry_run && result?.optimizer_result) {
-            UIManager.showNotification('Objective builder launch completed.');
+            UIManager.showNotification('Simulation-in-loop optimization completed.');
         }
         return result;
     } catch (error) {

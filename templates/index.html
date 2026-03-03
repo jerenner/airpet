@@ -2321,7 +2321,11 @@
                                 <button id="psObBuildBtn" type="button" data-ps-view="advanced">Build</button>
                                 <button id="psObUpsertBtn" type="button" data-ps-view="advanced">Upsert Study</button>
                                 <button id="psObLaunchDryRunBtn" type="button" data-ps-view="advanced">Launch Dry Run</button>
-                                <button id="psObGuidedBtn" type="button" class="confirm-button">Guided: Validate → Build → Dry Run</button>
+                                <button id="psObGuidedBtn" type="button">Guided Prep: Validate → Build → Dry Run</button>
+                                <button id="psObLaunchRunBtn" type="button" class="confirm-button">Run Simulation-in-Loop</button>
+                            </div>
+                            <div class="property_item" style="grid-column: 1 / span 2; font-size:12px; color:#475569; margin-top:-2px;">
+                                <b>Note:</b> <b>Run Simulation-in-Loop</b> executes real simulation jobs. <b>Guided Prep</b> and <b>Launch Dry Run</b> only prepare/validate payloads.
                             </div>
                             <div class="property_item" style="grid-column: 1 / span 2; border:1px solid #e2e8f0; border-radius:4px; padding:8px; background:#fff;">
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 12px; font-size:12px; color:#334155;">
@@ -2484,6 +2488,7 @@
                     <div class="property_item">
                         <label for="ps_opt_method">Optimizer Method:</label>
                         <select id="ps_opt_method">
+                            <option value="surrogate_gp" selected>surrogate_gp</option>
                             <option value="random_search">random_search</option>
                             <option value="cmaes">cmaes</option>
                         </select>
@@ -2587,13 +2592,13 @@
             <div class="modal-footer">
                 <button id="psRefreshBtn">Refresh</button>
                 <button id="psDeleteBtn">Delete</button>
-                <button id="psRunBtn">Run Study</button>
+                <button id="psRunBtn" title="Runs geometry/parameter sweep only; does not launch simulation jobs.">Run Sweep (No Simulation)</button>
                 <button id="psRunOptimizerBtn" data-ps-view="advanced">Run Optimizer</button>
                 <button id="psStopRunBtn" class="danger-button" disabled>Stop Active Run</button>
                 <button id="psReplayBestBtn" style="display:none;" aria-hidden="true">Replay Best (Legacy)</button>
                 <button id="psVerifyBestBtn" style="display:none;" aria-hidden="true">Verify Best (Legacy)</button>
                 <button id="psDownloadResultsBtn">Download Results</button>
-                <span data-ps-view="advanced" style="margin-left: 8px; color: #64748b; font-size: 12px;">Use <b>Run Review &amp; Apply</b> above for verify/apply.</span>
+                <span data-ps-view="advanced" style="margin-left: 8px; color: #64748b; font-size: 12px;">Use <b>Run Review &amp; Apply</b> above for verify/apply. Use <b>Run Simulation-in-Loop</b> in Objective Builder for physics-in-loop optimization.</span>
                 <button id="psCancelBtn">Close</button>
                 <button id="psSaveBtn" class="confirm-button">Save</button>
             </div>

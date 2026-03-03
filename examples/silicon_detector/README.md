@@ -12,6 +12,7 @@ Use this file for the Param Studies/Objective Builder first-run tutorial:
 2. Go to **File → Load Geometry (JSON)...**
 3. Select `examples/silicon_detector/silicon_optimizer_starter.project.json`.
 4. Open **Param Studies** and keep **View mode = Basic** for the first run.
+5. Use **Guided Prep: Validate → Build → Dry Run**, then click **Run Simulation-in-Loop**.
 
 ### Included starter setup
 

@@ -36,7 +36,10 @@ Use the silicon slab beam monitor as the canonical first optimization example:
   - Helper: "Start simple with `edep_sum`, then add penalties for thickness/cost if needed."
 
 - **Guided button text**
-  - `Guided: Validate → Build → Dry Run`
+  - `Guided Prep: Validate → Build → Dry Run`
+
+- **Run button text (simulation-in-loop)**
+  - `Run Simulation-in-Loop`
 
 ---
 
@@ -84,13 +87,15 @@ The starter project already includes `si_first_run`. You can use it directly, or
    - Dataset path: `default_ntuples/Hits/Edep`
    - Score expression: `edep_sum`
    - Context cost key: *(blank)*
-3. Click **Guided: Validate → Build → Dry Run**.
+3. Click **Guided Prep: Validate → Build → Dry Run**.
 4. If validation is clean, click **Save**.
 
-### Step 3 — Run
-1. Click **Run Study**.
+### Step 3 — Run real simulation-in-loop optimization
+1. In Objective Builder, click **Run Simulation-in-Loop**.
 2. Wait for completion.
 3. Inspect **Last run output** and ranking table.
+
+> Note: **Run Sweep (No Simulation)** in the modal footer only evaluates geometry/parameter sweeps and does not launch Geant4 runs.
 
 ### Step 4 — Interpret quickly
 - Higher `edep_sum` = better for this first run.
