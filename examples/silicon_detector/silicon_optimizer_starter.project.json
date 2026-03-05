@@ -35,6 +35,15 @@
       "value": 0.0,
       "unit": "mm",
       "category": "geometry"
+    },
+    "src_z_mm": {
+      "id": "f9cebf0a-9f90-4c5a-90cb-6739523666b7",
+      "name": "src_z_mm",
+      "type": "constant",
+      "raw_expression": "-20.0",
+      "value": -20.0,
+      "unit": "mm",
+      "category": "source"
     }
   },
   "materials": {
@@ -264,7 +273,7 @@
       "position": {
         "x": 0,
         "y": 0,
-        "z": -20
+        "z": "src_z_mm"
       },
       "activity": 1.0,
       "confine_to_pv": null,
@@ -272,7 +281,7 @@
       "_evaluated_position": {
         "x": 0,
         "y": 0,
-        "z": -20
+        "z": -20.0
       },
       "_evaluated_rotation": {
         "x": 0,
@@ -302,10 +311,9 @@
     },
     "src_z": {
       "name": "src_z",
-      "target_type": "source",
+      "target_type": "define",
       "target_ref": {
-        "name": "src_electron",
-        "field": "position.z"
+        "name": "src_z_mm"
       },
       "bounds": {
         "min": -50.0,

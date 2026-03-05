@@ -36,6 +36,7 @@ let callbacks = {
     onDelete: async (_name) => { },
     onRun: async (_name, _maxRuns) => ({}),
     onRunOptimizer: async (_payload) => ({}),
+    onGetActiveRunStatus: async () => ({ active: null, last: null }),
     onStopActiveRun: async (_reason) => ({ active: false, stop_requested: false }),
     onReplayBest: async (_runId, _options) => ({}),
     onVerifyBest: async (_runId, _options) => ({}),
@@ -75,11 +76,16 @@ let rollbackConfirmTimer = null;
 let runLifecycleState = {
     status: 'idle',
     action: '-',
+    actionDetail: '',
     startedAtMs: null,
     endedAtMs: null,
     lastUpdateMs: null,
+    liveProgress: null,
 };
 let runLifecycleTimer = null;
+let runStatusPollTimer = null;
+let runStatusPollPending = false;
+let lastRunProgressSignature = '';
 let runTimelineEvents = [];
 let stopRunRequestPending = false;
 
@@ -889,6 +895,14 @@ function _formatElapsedSeconds(ms) {
 }
 
 function _computeRunBudgetSummary() {
+    const live = runLifecycleState?.liveProgress;
+    if (live && runLifecycleState.status === 'running') {
+        const used = Number(live.evaluations_completed);
+        const total = Number(live.total_evaluations);
+        if (Number.isFinite(used) && Number.isFinite(total) && total > 0) return `${used}/${total}`;
+        if (Number.isFinite(used)) return String(used);
+    }
+
     if (!lastRunResult || typeof lastRunResult !== 'object') return '-';
 
     if (Array.isArray(lastRunResult.candidates)) {
@@ -909,6 +923,13 @@ function _computeRunBudgetSummary() {
 }
 
 function _computeRunSuccessFailureSummary() {
+    const live = runLifecycleState?.liveProgress;
+    if (live && runLifecycleState.status === 'running') {
+        const s = Number(live.success_count);
+        const f = Number(live.failure_count);
+        if (Number.isFinite(s) || Number.isFinite(f)) return `${Number.isFinite(s) ? s : 0}/${Number.isFinite(f) ? f : 0}`;
+    }
+
     if (!lastRunResult || typeof lastRunResult !== 'object') return '-';
 
     if (Number.isFinite(Number(lastRunResult.success_count)) || Number.isFinite(Number(lastRunResult.failure_count))) {
@@ -958,7 +979,11 @@ function _renderRunTimelineCard() {
                 : '#64748b';
     runStatusEl.style.fontWeight = '700';
 
-    if (runActionEl) runActionEl.textContent = runLifecycleState.action || '-';
+    if (runActionEl) {
+        const action = runLifecycleState.action || '-';
+        const detail = runLifecycleState.actionDetail ? ` — ${runLifecycleState.actionDetail}` : '';
+        runActionEl.textContent = `${action}${detail}`;
+    }
     if (runElapsedEl) runElapsedEl.textContent = _formatElapsedSeconds(elapsedMs);
     if (runBudgetUsedEl) runBudgetUsedEl.textContent = _computeRunBudgetSummary();
     if (runSuccessFailureEl) runSuccessFailureEl.textContent = _computeRunSuccessFailureSummary();
@@ -1003,9 +1028,114 @@ function _stopRunLifecycleTimer() {
     }
 }
 
+function _progressSignature(progress) {
+    if (!progress || typeof progress !== 'object') return '';
+    return JSON.stringify({
+        i: Number(progress.current_run_index ?? -1),
+        used: Number(progress.evaluations_completed ?? -1),
+        total: Number(progress.total_evaluations ?? -1),
+        s: Number(progress.success_count ?? -1),
+        f: Number(progress.failure_count ?? -1),
+        phase: String(progress.phase || ''),
+    });
+}
+
+function _applyActiveRunStatus(statusPayload) {
+    const active = statusPayload?.active;
+    if (!active || typeof active !== 'object') return;
+
+    const progress = active.progress && typeof active.progress === 'object'
+        ? active.progress
+        : null;
+
+    if (!progress) return;
+
+    runLifecycleState.liveProgress = progress;
+    runLifecycleState.lastUpdateMs = Date.now();
+
+    const currentIdx = Number(progress.current_run_index);
+    const completed = Number(progress.evaluations_completed);
+    const total = Number(progress.total_evaluations);
+    const phase = String(progress.phase || '').trim();
+
+    const bits = [];
+    if (Number.isFinite(currentIdx) && Number.isFinite(total) && total > 0) bits.push(`candidate ${currentIdx + 1}/${total}`);
+    else if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) bits.push(`${completed}/${total}`);
+    else if (Number.isFinite(completed)) bits.push(`completed ${completed}`);
+
+    const startMs = Number(runLifecycleState.startedAtMs);
+    if (Number.isFinite(startMs) && Number.isFinite(completed) && completed > 0 && Number.isFinite(total) && total > completed) {
+        const elapsedSec = Math.max(0, (Date.now() - startMs) / 1000.0);
+        const etaSec = (elapsedSec / completed) * (total - completed);
+        if (Number.isFinite(etaSec) && etaSec >= 0) {
+            bits.push(`ETA ~${_formatElapsedSeconds(etaSec * 1000)}`);
+        }
+    }
+
+    if (phase) bits.push(phase);
+
+    const values = progress.current_values && typeof progress.current_values === 'object'
+        ? Object.entries(progress.current_values)
+            .slice(0, 3)
+            .map(([k, v]) => `${k}=${_formatMaybeNumber(v, 4)}`)
+            .join(', ')
+        : '';
+    if (values) bits.push(values);
+
+    runLifecycleState.actionDetail = bits.join(' · ');
+
+    const signature = _progressSignature(progress);
+    if (signature && signature !== lastRunProgressSignature) {
+        lastRunProgressSignature = signature;
+        runTimelineEvents.push({
+            timeMs: Date.now(),
+            status: 'running',
+            action: runLifecycleState.action || 'run',
+            details: runLifecycleState.actionDetail || (progress.message || ''),
+        });
+        if (runTimelineEvents.length > 50) {
+            runTimelineEvents = runTimelineEvents.slice(-50);
+        }
+    }
+
+    _renderRunTimelineCard();
+}
+
+async function _pollActiveRunStatus() {
+    if (runStatusPollPending) return;
+    if (runLifecycleState.status !== 'running') return;
+    if (typeof callbacks.onGetActiveRunStatus !== 'function') return;
+
+    runStatusPollPending = true;
+    try {
+        const payload = await callbacks.onGetActiveRunStatus();
+        _applyActiveRunStatus(payload || {});
+    } catch (_err) {
+        // best-effort status polling; ignore transient failures
+    } finally {
+        runStatusPollPending = false;
+    }
+}
+
+function _startRunStatusPoller() {
+    if (runStatusPollTimer) return;
+    runStatusPollTimer = setInterval(() => {
+        _pollActiveRunStatus();
+    }, 1000);
+    _pollActiveRunStatus();
+}
+
+function _stopRunStatusPoller() {
+    if (runStatusPollTimer) {
+        clearInterval(runStatusPollTimer);
+        runStatusPollTimer = null;
+    }
+    runStatusPollPending = false;
+}
+
 function _updateStopRunButtonState() {
     if (!stopRunBtn) return;
-    const stoppableActions = new Set(['optimizer_run', 'param_study_run', 'param_study_sweep']);
+    const stoppableActions = new Set(['optimizer_run', 'param_study_run', 'param_study_sweep', 'objective_builder_launch']);
     const isRunning = runLifecycleState.status === 'running' && stoppableActions.has(runLifecycleState.action);
     stopRunBtn.disabled = !isRunning || stopRunRequestPending;
     stopRunBtn.textContent = stopRunRequestPending ? 'Stopping…' : 'Stop Active Run';
@@ -1016,10 +1146,14 @@ function _setRunLifecycle(status, action, details = '') {
     if (status === 'running') {
         runLifecycleState.startedAtMs = now;
         runLifecycleState.endedAtMs = null;
+        runLifecycleState.liveProgress = null;
+        runLifecycleState.actionDetail = '';
+        lastRunProgressSignature = '';
     }
     if (status === 'completed' || status === 'failed') {
         if (!runLifecycleState.startedAtMs) runLifecycleState.startedAtMs = now;
         runLifecycleState.endedAtMs = now;
+        runLifecycleState.actionDetail = details || '';
     }
 
     runLifecycleState.status = status;
@@ -1037,8 +1171,13 @@ function _setRunLifecycle(status, action, details = '') {
         runTimelineEvents = runTimelineEvents.slice(-50);
     }
 
-    if (status === 'running') _startRunLifecycleTimer();
-    else _stopRunLifecycleTimer();
+    if (status === 'running') {
+        _startRunLifecycleTimer();
+        _startRunStatusPoller();
+    } else {
+        _stopRunLifecycleTimer();
+        _stopRunStatusPoller();
+    }
 
     _updateStopRunButtonState();
     _renderRunTimelineCard();
@@ -2352,13 +2491,17 @@ export async function show(initialStudies = {}) {
     runLifecycleState = {
         status: 'idle',
         action: '-',
+        actionDetail: '',
         startedAtMs: null,
         endedAtMs: null,
         lastUpdateMs: Date.now(),
+        liveProgress: null,
     };
     runTimelineEvents = [];
     stopRunRequestPending = false;
+    lastRunProgressSignature = '';
     _stopRunLifecycleTimer();
+    _stopRunStatusPoller();
 
     _setForm();
     if (viewModeInput) viewModeInput.value = 'basic';
@@ -2387,6 +2530,7 @@ export function hide() {
         noticeTimer = null;
     }
     _stopRunLifecycleTimer();
+    _stopRunStatusPoller();
     _stopTokenExpiryTimer();
     stopRunRequestPending = false;
     _updateStopRunButtonState();

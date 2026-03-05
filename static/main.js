@@ -108,6 +108,7 @@ function ensureParamStudyEditorInit() {
         onDelete: handleParamStudyDelete,
         onRun: handleParamStudyRun,
         onRunOptimizer: handleParamStudyRunOptimizer,
+        onGetActiveRunStatus: handleParamOptimizerGetActiveRunStatus,
         onStopActiveRun: handleParamOptimizerStopActiveRun,
         onReplayBest: handleParamOptimizerReplayBest,
         onVerifyBest: handleParamOptimizerVerifyBest,
@@ -2680,6 +2681,14 @@ async function handleParamStudyRunOptimizer(payload) {
     }
 }
 
+async function handleParamOptimizerGetActiveRunStatus() {
+    try {
+        return await APIService.getActiveParamOptimizerRunStatus();
+    } catch (error) {
+        throw error;
+    }
+}
+
 async function handleParamOptimizerStopActiveRun(reason = 'user_requested_stop') {
     try {
         const result = await APIService.stopActiveParamOptimizerRun(reason);
@@ -2826,7 +2835,10 @@ async function handleObjectiveBuilderUpsert(payload) {
 }
 
 async function handleObjectiveBuilderLaunch(payload) {
-    UIManager.showLoading(payload?.dry_run ? 'Preparing objective builder launch (dry run)...' : 'Running simulation-in-loop optimization...');
+    const isDryRun = !!payload?.dry_run;
+    if (isDryRun) {
+        UIManager.showLoading('Preparing objective builder launch (dry run)...');
+    }
     try {
         const result = await APIService.launchObjectiveBuilder(payload);
         if (!result?.dry_run && result?.optimizer_result) {
@@ -2837,7 +2849,7 @@ async function handleObjectiveBuilderLaunch(payload) {
         UIManager.showError('Objective builder launch failed: ' + error.message);
         throw error;
     } finally {
-        UIManager.hideLoading();
+        if (isDryRun) UIManager.hideLoading();
     }
 }
 

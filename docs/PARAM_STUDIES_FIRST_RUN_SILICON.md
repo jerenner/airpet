@@ -47,6 +47,10 @@ Use the silicon slab beam monitor as the canonical first optimization example:
 
 Use this minimal 2-parameter setup for the first tutorial run:
 
+Implementation mapping in the starter asset:
+- `si_thickness` → define target `si_thickness_mm`
+- `src_z` → define target `src_z_mm` (used by source `src_electron.position.z`)
+
 | Parameter | Meaning | Min | Max | Default | Notes |
 |---|---|---:|---:|---:|---|
 | `si_thickness` | Silicon slab thickness (mm) | 0.05 | 6.0 | 1.5 | Controls interaction depth and material usage |
@@ -91,7 +95,7 @@ The starter project already includes `si_first_run`. You can use it directly, or
 4. If validation is clean, click **Save**.
 
 ### Step 3 — Run real simulation-in-loop optimization
-1. In Objective Builder, click **Run Simulation-in-Loop**.
+1. In the modal footer, click **Run Simulation-in-Loop**.
 2. Wait for completion.
 3. Inspect **Last run output** and ranking table.
 
