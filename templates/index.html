@@ -1270,6 +1270,24 @@
             align-items: center;
         }
 
+        #paramStudiesModal .modal-footer {
+            justify-content: flex-start;
+            align-items: stretch;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        #paramStudiesModal .modal-footer .ps-footer-btn {
+            min-height: 34px;
+            min-width: 190px;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            padding: 0 10px;
+        }
+
         .quick-add-options {
             font-size: 13px;
         }
@@ -2344,7 +2362,7 @@
                                 <div style="font-size:12px; color:#334155;"><b>Warnings</b></div>
                                 <ul id="psObWarnings" style="margin:4px 0 0 18px; color:#92400e; font-size:12px;"><li style="color:#64748b;">none</li></ul>
                             </div>
-                            <div class="property_item" style="grid-column: 1 / span 2;">
+                            <div class="property_item" style="grid-column: 1 / span 2;" data-ps-view="advanced">
                                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px;">
                                     <label for="ps_ob_output" style="margin:0;">Objective Builder output:</label>
                                     <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -2475,7 +2493,7 @@
                     </div>
                 </div>
 
-                <div class="property_item" style="margin-top: 10px;">
+                <div class="property_item" style="margin-top: 10px;" data-ps-view="advanced">
                     <label for="ps_run_output">Last run output:</label>
                     <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
                 </div>
@@ -2597,19 +2615,25 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="psRefreshBtn">Refresh</button>
-                <button id="psDeleteBtn">Delete</button>
-                <button id="psRunBtn" title="Runs geometry/parameter sweep only; does not launch simulation jobs.">Run Sweep (No Simulation)</button>
-                <button id="psObLaunchRunBtn" class="confirm-button">Run Simulation-in-Loop</button>
-                <button id="psApplySelectedBtn" title="Apply selected ranked parameter set to current geometry/source defines.">Update Geometry from Selected Row</button>
-                <button id="psRunOptimizerBtn" data-ps-view="advanced">Run Optimizer</button>
-                <button id="psStopRunBtn" class="danger-button" disabled>Stop Active Run</button>
-                <button id="psReplayBestBtn" style="display:none;" aria-hidden="true">Replay Best (Legacy)</button>
-                <button id="psVerifyBestBtn" style="display:none;" aria-hidden="true">Verify Best (Legacy)</button>
-                <button id="psDownloadResultsBtn">Download Results</button>
-                <span data-ps-view="advanced" style="margin-left: 8px; color: #64748b; font-size: 12px;">Use <b>Run Review &amp; Apply</b> above for verify/apply. Use <b>Run Simulation-in-Loop</b> in Objective Builder for physics-in-loop optimization.</span>
-                <button id="psCancelBtn">Close</button>
-                <button id="psSaveBtn" class="confirm-button">Save</button>
+                <button id="psRefreshBtn" class="ps-footer-btn">Refresh</button>
+                <button id="psDeleteBtn" class="ps-footer-btn">Delete</button>
+                <button id="psRunBtn" class="ps-footer-btn" title="Runs geometry/parameter sweep only; does not launch simulation jobs.">Run Sweep (No Simulation)</button>
+                <button id="psObLaunchRunBtn" class="ps-footer-btn confirm-button">Run Simulation-in-Loop</button>
+                <button id="psApplySelectedBtn" class="ps-footer-btn" title="Apply selected ranked parameter set to current geometry/source defines.">Update Geometry from Selected Row</button>
+                <button id="psRunOptimizerBtn" class="ps-footer-btn" data-ps-view="advanced">Run Optimizer</button>
+                <button id="psStopRunBtn" class="ps-footer-btn danger-button" disabled>Stop Active Run</button>
+                <button id="psReplayBestBtn" class="ps-footer-btn" style="display:none;" aria-hidden="true">Replay Best (Legacy)</button>
+                <button id="psVerifyBestBtn" class="ps-footer-btn" style="display:none;" aria-hidden="true">Verify Best (Legacy)</button>
+                <button id="psDownloadResultsBtn" class="ps-footer-btn">Download Results</button>
+                <button id="psCancelBtn" class="ps-footer-btn">Close</button>
+                <button id="psSaveBtn" class="ps-footer-btn confirm-button">Save</button>
+                <span data-ps-view="advanced" style="flex-basis:100%; color: #64748b; font-size: 12px;">Use <b>Run Review &amp; Apply</b> above for verify/apply. Use <b>Run Simulation-in-Loop</b> in Objective Builder for physics-in-loop optimization.</span>
+                <div id="psQuickStatusWrap" style="flex-basis:100%; margin-top:2px;">
+                    <div id="psQuickStatus" style="font-size:12px; color:#475569; margin-bottom:4px;">Idle. Select a study and run when ready.</div>
+                    <div style="height:8px; background:#e2e8f0; border-radius:4px; overflow:hidden;">
+                        <div id="psQuickStatusBar" style="height:100%; width:0%; background:#0ea5e9; transition:width 180ms ease;"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

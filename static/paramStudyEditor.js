@@ -14,6 +14,7 @@ let reviewAuditTargetSelect, reviewAuditTargetHintEl, reviewAuditTableBody, revi
 let reviewApplyConfirmTextEl, reviewRollbackConfirmTextEl;
 let verifyMinSuccessRateInput, verifyMaxStdInput;
 let noticeEl;
+let quickStatusEl, quickStatusBarEl;
 let viewModeInput;
 let saveBtn, deleteBtn, runBtn, runOptimizerBtn, stopRunBtn, replayBestBtn, verifyBestBtn, applySelectedBtn, downloadResultsBtn, refreshBtn, cancelBtn;
 let obTemplateInput, obDatasetPathInput, obCostKeyInput, obScoreExprInput, obOutput;
@@ -59,6 +60,7 @@ let activeName = null;
 let currentStudies = {};
 let currentParameterRegistry = {};
 let selectedRankedRun = null;
+let restoredSelectedRunIndex = null;
 let lastRunResult = null;
 let lastVerificationResult = null;
 let currentApplyToken = null;
@@ -944,6 +946,15 @@ function _extractRunsFromLastResult() {
     return [];
 }
 
+function _restoreSelectedRankedRun() {
+    if (restoredSelectedRunIndex == null) return;
+    const idx = Number(restoredSelectedRunIndex);
+    const runs = _extractRunsFromLastResult();
+    const hit = runs.find(r => Number(r?.run_index) === idx);
+    selectedRankedRun = hit ? { run: hit } : null;
+    restoredSelectedRunIndex = null;
+}
+
 function _getOptimizerRunIdFromLastResult() {
     if (!lastRunResult) return null;
     if (typeof lastRunResult.run_id === 'string' && lastRunResult.run_id.length > 0) {
@@ -1147,6 +1158,42 @@ function _renderRunTimelineCard() {
     if (runBudgetUsedEl) runBudgetUsedEl.textContent = _computeRunBudgetSummary();
     if (runSuccessFailureEl) runSuccessFailureEl.textContent = _computeRunSuccessFailureSummary();
     if (runLastUpdateEl) runLastUpdateEl.textContent = _formatClockTime(runLifecycleState.lastUpdateMs);
+
+    if (quickStatusEl) {
+        const action = runLifecycleState.action || 'idle';
+        const detail = runLifecycleState.actionDetail || '';
+        if (runLifecycleState.status === 'running') {
+            quickStatusEl.textContent = `Running · ${action}${detail ? ` — ${detail}` : ''}`;
+            quickStatusEl.style.color = '#0369a1';
+        } else if (runLifecycleState.status === 'completed') {
+            quickStatusEl.textContent = `Completed · ${action}${detail ? ` — ${detail}` : ''}`;
+            quickStatusEl.style.color = '#15803d';
+        } else if (runLifecycleState.status === 'failed') {
+            quickStatusEl.textContent = `Failed · ${action}${detail ? ` — ${detail}` : ''}`;
+            quickStatusEl.style.color = '#b91c1c';
+        } else {
+            quickStatusEl.textContent = 'Idle. Select a study and run when ready.';
+            quickStatusEl.style.color = '#475569';
+        }
+    }
+
+    if (quickStatusBarEl) {
+        let pct = 0;
+        const lp = runLifecycleState.liveProgress;
+        const used = Number(lp?.evaluations_completed);
+        const total = Number(lp?.total_evaluations);
+        if (Number.isFinite(used) && Number.isFinite(total) && total > 0) {
+            pct = Math.max(0, Math.min(100, (used / total) * 100));
+        } else if (runLifecycleState.status === 'completed') {
+            pct = 100;
+        }
+        quickStatusBarEl.style.width = `${pct.toFixed(1)}%`;
+        quickStatusBarEl.style.background = runLifecycleState.status === 'failed'
+            ? '#ef4444'
+            : runLifecycleState.status === 'completed'
+                ? '#22c55e'
+                : '#0ea5e9';
+    }
 
     if (runTimelineListEl) {
         runTimelineListEl.innerHTML = '';
@@ -2522,6 +2569,8 @@ export function init(newCallbacks = {}) {
 
     modal = document.getElementById('paramStudiesModal');
     noticeEl = document.getElementById('psNotice');
+    quickStatusEl = document.getElementById('psQuickStatus');
+    quickStatusBarEl = document.getElementById('psQuickStatusBar');
     viewModeInput = document.getElementById('ps_view_mode');
     tableBody = document.getElementById('paramStudiesTableBody');
 
@@ -2763,6 +2812,8 @@ function _restoreModalState(state) {
     runLifecycleState = state.runLifecycleState || runLifecycleState;
     runTimelineEvents = Array.isArray(state.runTimelineEvents) ? state.runTimelineEvents : [];
     activeLaunchRunControlId = state.activeLaunchRunControlId || null;
+    restoredSelectedRunIndex = state.selectedRankedRunIndex;
+    selectedRankedRun = null;
 
     if (runOutput) runOutput.value = state.runOutput || '';
     if (obOutput) obOutput.value = state.obOutput || '';
@@ -2781,6 +2832,7 @@ export async function show(initialStudies = {}) {
     if (!restored) {
         activeName = null;
         selectedRankedRun = null;
+        restoredSelectedRunIndex = null;
         lastRunResult = null;
         lastVerificationResult = null;
         _clearReviewToken();
@@ -2817,6 +2869,7 @@ export async function show(initialStudies = {}) {
     _renderApplyAuditPanel();
     _renderTable(initialStudies);
     _updateObjectiveSelector();
+    _restoreSelectedRankedRun();
     _renderRankingTable();
     _renderOptimizerSummary();
     _renderRunTimelineCard();
