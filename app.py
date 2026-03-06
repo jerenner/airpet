@@ -5739,7 +5739,10 @@ AI_TOOL_ARG_ALIASES = {
         "stream": "log_source",
         "include_entries": "include_log_entries",
         "with_entries": "include_log_entries",
-        "structured_logs": "include_log_entries"
+        "structured_logs": "include_log_entries",
+        "max_logs": "max_lines",
+        "line_limit": "max_lines",
+        "limit": "max_lines"
     },
     "manage_particle_source": {
         "id": "source_id",
@@ -6641,6 +6644,15 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": "Argument 'tail_lines' must be an integer."}
             tail_lines = max(0, tail_lines)
 
+            max_lines = None
+            if args.get('max_lines') is not None:
+                try:
+                    max_lines = int(args.get('max_lines'))
+                except Exception:
+                    return {"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}
+                if max_lines < 0:
+                    return {"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}
+
             with SIMULATION_LOCK:
                 status = SIMULATION_STATUS.get(job_id)
                 if not status:
@@ -6687,9 +6699,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                             })
 
                     total_lines = len(selected_entries)
-
-                    response["log_total_lines"] = total_lines
-                    response["next_since"] = total_lines
+                    cursor = 0
 
                     if since is not None:
                         cursor = min(since, total_lines)
@@ -6699,11 +6709,27 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     else:
                         log_entries = []
 
+                    if max_lines is not None and len(log_entries) > max_lines:
+                        if since is not None:
+                            log_entries = log_entries[:max_lines]
+                        else:
+                            log_entries = log_entries[-max_lines:] if max_lines > 0 else []
+
                     log_lines = [
                         entry["line"] if entry["source"] == "stdout" else f"stderr: {entry['line']}"
                         for entry in log_entries
                     ]
 
+                    if since is not None:
+                        next_since = cursor + len(log_entries)
+                        has_more_logs = next_since < total_lines
+                    else:
+                        next_since = total_lines
+                        has_more_logs = total_lines > len(log_entries)
+
+                    response["log_total_lines"] = total_lines
+                    response["next_since"] = next_since
+                    response["has_more_logs"] = has_more_logs
                     response["log_lines"] = log_lines
                     response["returned_lines"] = len(log_lines)
                     if include_log_entries:

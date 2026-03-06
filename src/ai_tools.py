@@ -554,6 +554,7 @@ AI_GEOMETRY_TOOLS = [
                 "include_log_summary": {"type": "boolean", "description": "Whether to include compact log diagnostics (line counts + latest lines, default: true)."},
                 "include_log_entries": {"type": "boolean", "description": "Whether to include structured log entries with source and cursor fields for reliable incremental parsing (default: false)."},
                 "tail_lines": {"type": "integer", "description": "How many lines from the end of the requested log stream to return when 'since' is not provided."},
+                "max_lines": {"type": "integer", "description": "Maximum number of log lines to return. With 'since', this enables chunked pagination; response.next_since advances by the returned count."},
                 "since": {"type": "integer", "description": "Return log lines starting from this line index (0-based)."},
                 "log_source": {
                     "type": "string",

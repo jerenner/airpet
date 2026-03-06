@@ -250,6 +250,72 @@ def test_ai_tool_get_simulation_status_tail_lines(pm):
     assert res["returned_lines"] == 2
 
 
+def test_ai_tool_get_simulation_status_supports_max_lines_pagination(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-max-lines"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 20,
+            "total_events": 100,
+            "stdout": ["line-0", "line-1", "line-2"],
+            "stderr": ["err-0"],
+        }
+
+    res_page_1 = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "since": 1,
+        "max_lines": 2,
+        "include_log_entries": True,
+    })
+
+    assert res_page_1["success"], res_page_1
+    assert res_page_1["log_lines"] == ["line-1", "line-2"]
+    assert res_page_1["next_since"] == 3
+    assert res_page_1["has_more_logs"] is True
+    assert res_page_1["log_entries"] == [
+        {"cursor": 1, "source": "stdout", "line": "line-1"},
+        {"cursor": 2, "source": "stdout", "line": "line-2"},
+    ]
+
+    res_page_2 = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "since": res_page_1["next_since"],
+        "max_lines": 2,
+    })
+
+    assert res_page_2["success"], res_page_2
+    assert res_page_2["log_lines"] == ["stderr: err-0"]
+    assert res_page_2["next_since"] == 4
+    assert res_page_2["has_more_logs"] is False
+
+
+def test_ai_tool_get_simulation_status_limit_alias_maps_to_max_lines(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-max-lines-alias"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 2,
+            "total_events": 10,
+            "stdout": ["line-a", "line-b", "line-c"],
+            "stderr": [],
+        }
+
+    res = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "since": 0,
+        "limit": 1,
+    })
+
+    assert res["success"], res
+    assert res["log_lines"] == ["line-a"]
+    assert res["next_since"] == 1
+    assert res["has_more_logs"] is True
+
+
 def test_ai_tool_get_simulation_status_log_source_filter(pm):
     from app import SIMULATION_STATUS, SIMULATION_LOCK
 
