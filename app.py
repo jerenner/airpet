@@ -5732,6 +5732,8 @@ AI_TOOL_ARG_ALIASES = {
         "from_line": "since",
         "tail": "tail_lines",
         "include_output": "include_logs",
+        "summary": "include_log_summary",
+        "include_summary": "include_log_summary",
         "logs": "log_source",
         "log_stream": "log_source",
         "stream": "log_source"
@@ -5790,7 +5792,7 @@ AI_TOOL_DEFAULTS = {
         "ring_spacing": "0"
     },
     "run_simulation": {"events": 1000, "threads": 1},
-    "get_simulation_status": {"include_logs": True, "tail_lines": 20, "log_source": "both"},
+    "get_simulation_status": {"include_logs": True, "include_log_summary": True, "tail_lines": 20, "log_source": "both"},
     "manage_ui_group": {"item_ids": []},
     "manage_particle_source": {
         "name": "gps_source",
@@ -6620,6 +6622,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return default
 
             include_logs = _coerce_bool(args.get('include_logs'), default=True)
+            include_log_summary = _coerce_bool(args.get('include_log_summary'), default=True)
 
             since = None
             if args.get('since') is not None:
@@ -6639,6 +6642,10 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 if not status:
                     return {"success": False, "error": "Job ID not found."}
 
+                stdout_lines = list(status.get("stdout") or [])
+                stderr_raw = list(status.get("stderr") or [])
+                stderr_lines = [f"stderr: {line}" for line in stderr_raw]
+
                 response = {
                     "success": True,
                     "status": status["status"],
@@ -6646,9 +6653,16 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     "total": status["total_events"]
                 }
 
+                if include_log_summary:
+                    response["log_summary"] = {
+                        "stdout_lines": len(stdout_lines),
+                        "stderr_lines": len(stderr_raw),
+                        "has_errors": len(stderr_raw) > 0,
+                        "latest_stdout": stdout_lines[-1] if stdout_lines else None,
+                        "latest_stderr": stderr_raw[-1] if stderr_raw else None,
+                    }
+
                 if include_logs:
-                    stdout_lines = list(status.get("stdout") or [])
-                    stderr_lines = [f"stderr: {line}" for line in list(status.get("stderr") or [])]
                     log_source = (str(args.get("log_source", "both")) or "both").strip().lower()
                     if log_source not in {"stdout", "stderr", "both"}:
                         log_source = "both"

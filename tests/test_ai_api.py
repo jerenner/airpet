@@ -283,6 +283,59 @@ def test_ai_tool_get_simulation_status_log_source_filter(pm):
     assert res_stdout["log_lines"] == ["line-x", "line-y"]
     assert res_stdout["log_total_lines"] == 2
 
+
+def test_ai_tool_get_simulation_status_includes_log_summary_without_logs(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-summary-1"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 7,
+            "total_events": 50,
+            "stdout": ["boot", "step-1"],
+            "stderr": ["warn-1"],
+        }
+
+    res = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "include_logs": False,
+    })
+
+    assert res["success"], res
+    assert "log_lines" not in res
+    assert res["log_summary"] == {
+        "stdout_lines": 2,
+        "stderr_lines": 1,
+        "has_errors": True,
+        "latest_stdout": "step-1",
+        "latest_stderr": "warn-1",
+    }
+
+
+def test_ai_tool_get_simulation_status_can_disable_log_summary(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-summary-2"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 1,
+            "total_events": 10,
+            "stdout": ["line-only"],
+            "stderr": [],
+        }
+
+    res = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "include_logs": False,
+        "include_log_summary": False,
+    })
+
+    assert res["success"], res
+    assert "log_summary" not in res
+
+
 def test_ai_analysis_summary(pm):
     # Mocking h5py File
     with patch('h5py.File') as MockFile:
