@@ -1,3 +1,5 @@
+import pytest
+
 from app import app, SIMULATION_LOCK, SIMULATION_STATUS
 
 
@@ -143,5 +145,37 @@ def test_simulation_status_api_supports_comma_separated_contains_any_terms():
             {"cursor": 0, "source": "stdout", "line": "warning: drift"},
             {"cursor": 1, "source": "stderr", "line": "fatal: overflow"},
         ]
+    finally:
+        _clear_sim_status(job_id)
+
+
+@pytest.mark.parametrize(
+    "query_arg, query_value",
+    [
+        ("since", "-1"),
+        ("tail_lines", "1.5"),
+        ("max_lines", "abc"),
+    ],
+)
+def test_simulation_status_api_rejects_invalid_nonnegative_integer_args(query_arg, query_value):
+    app.config["TESTING"] = True
+    job_id = "api-sim-invalid-args"
+    _set_sim_status(
+        job_id,
+        progress=1,
+        total_events=10,
+        stdout=["line-0"],
+        stderr=[],
+    )
+
+    try:
+        with app.test_client() as client:
+            resp = client.get(f"/api/simulation/status/{job_id}?{query_arg}={query_value}")
+
+        assert resp.status_code == 400
+        payload = resp.get_json()
+        assert payload["success"] is False
+        assert query_arg in payload["error"]
+        assert "integer >= 0" in payload["error"]
     finally:
         _clear_sim_status(job_id)

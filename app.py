@@ -1943,6 +1943,15 @@ def _parse_nonnegative_int_arg(value: Any, *, arg_name: str) -> tuple[Optional[i
     if value is None:
         return None, None
 
+    # Keep validation strict and deterministic across HTTP (string args) and
+    # AI tool calls (native JSON types): bools and non-integral floats should
+    # not silently coerce to integers.
+    if isinstance(value, bool):
+        return None, f"Argument '{arg_name}' must be an integer >= 0."
+
+    if isinstance(value, float) and not value.is_integer():
+        return None, f"Argument '{arg_name}' must be an integer >= 0."
+
     try:
         parsed = int(value)
     except Exception:

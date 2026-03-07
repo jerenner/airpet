@@ -857,3 +857,38 @@ def test_ai_tool_create_boolean_invalid_recipe_returns_repair_hint(pm):
 
     assert not res['success']
     assert "expected recipe format" in res['error'].lower() or "must start" in res['error'].lower()
+
+
+@pytest.mark.parametrize(
+    "arg_name,arg_value",
+    [
+        ("since", -1),
+        ("tail_lines", 2.5),
+        ("max_lines", True),
+    ],
+)
+def test_ai_tool_get_simulation_status_rejects_invalid_nonnegative_integer_args(pm, arg_name, arg_value):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-invalid-args"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 5,
+            "total_events": 10,
+            "stdout": ["line-0"],
+            "stderr": [],
+        }
+
+    try:
+        res = dispatch_ai_tool(pm, "get_simulation_status", {
+            "job_id": job_id,
+            arg_name: arg_value,
+        })
+
+        assert not res["success"]
+        assert arg_name in res["error"]
+        assert "integer >= 0" in res["error"]
+    finally:
+        with SIMULATION_LOCK:
+            SIMULATION_STATUS.pop(job_id, None)
