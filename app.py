@@ -1939,6 +1939,99 @@ def _normalize_log_contains_any_terms(raw_terms: Any, *, split_commas: bool = Fa
     return normalized_terms
 
 
+def _parse_nonnegative_int_arg(value: Any, *, arg_name: str) -> tuple[Optional[int], Optional[str]]:
+    if value is None:
+        return None, None
+
+    try:
+        parsed = int(value)
+    except Exception:
+        return None, f"Argument '{arg_name}' must be an integer >= 0."
+
+    if parsed < 0:
+        return None, f"Argument '{arg_name}' must be an integer >= 0."
+
+    return parsed, None
+
+
+def _parse_simulation_status_log_options(
+    *,
+    get_value,
+    has_key,
+    get_list=None,
+    include_log_summary_default: bool,
+    include_log_entries_default: bool,
+    tail_lines_default: Optional[int],
+    apply_legacy_since_default: bool,
+    split_commas_for_contains_any: bool,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    include_logs = _coerce_bool(get_value('include_logs'), default=True)
+    include_log_summary = _coerce_bool(get_value('include_log_summary'), default=include_log_summary_default)
+    include_log_entries = _coerce_bool(get_value('include_log_entries'), default=include_log_entries_default)
+
+    since = None
+    has_since = bool(has_key('since'))
+    if has_since:
+        since, err = _parse_nonnegative_int_arg(get_value('since'), arg_name='since')
+        if err:
+            return None, err
+
+    has_tail_lines = bool(has_key('tail_lines'))
+    if has_tail_lines:
+        tail_lines, err = _parse_nonnegative_int_arg(get_value('tail_lines'), arg_name='tail_lines')
+        if err:
+            return None, err
+    else:
+        tail_lines = tail_lines_default
+
+    if apply_legacy_since_default and since is None and not has_tail_lines:
+        since = 0
+
+    max_lines = None
+    if get_value('max_lines') is not None:
+        max_lines, err = _parse_nonnegative_int_arg(get_value('max_lines'), arg_name='max_lines')
+        if err:
+            return None, err
+
+    log_source = _normalize_sim_log_source(get_value('log_source', 'both'))
+
+    log_contains = _normalize_log_contains_term(get_value('log_contains'))
+    if log_contains is None:
+        log_contains = _normalize_log_contains_term(get_value('contains'))
+
+    raw_contains_any = None
+    if get_list is not None:
+        raw_contains_any = get_list('log_contains_any')
+        if not raw_contains_any:
+            raw_contains_any = get_list('search_any')
+        if not raw_contains_any:
+            raw_contains_any = get_list('contains_any')
+
+    if raw_contains_any in (None, []):
+        raw_contains_any = get_value('log_contains_any')
+    if raw_contains_any in (None, []):
+        raw_contains_any = get_value('search_any')
+    if raw_contains_any in (None, []):
+        raw_contains_any = get_value('contains_any')
+
+    log_contains_any_terms = _normalize_log_contains_any_terms(
+        raw_contains_any,
+        split_commas=split_commas_for_contains_any,
+    )
+
+    return {
+        'include_logs': include_logs,
+        'include_log_summary': include_log_summary,
+        'include_log_entries': include_log_entries,
+        'since': since,
+        'tail_lines': tail_lines,
+        'max_lines': max_lines,
+        'log_source': log_source,
+        'log_contains': log_contains,
+        'log_contains_any_terms': log_contains_any_terms,
+    }, None
+
+
 def _build_simulation_log_payload(
     stdout_lines: List[Any],
     stderr_lines: List[Any],
@@ -2036,54 +2129,28 @@ def _build_simulation_log_payload(
 
 @app.route('/api/simulation/status/<job_id>', methods=['GET'])
 def get_simulation_status(job_id):
-    include_logs = _coerce_bool(request.args.get('include_logs'), default=True)
-    include_log_summary = _coerce_bool(request.args.get('include_log_summary'), default=False)
-    include_log_entries = _coerce_bool(request.args.get('include_log_entries'), default=False)
-
-    # Backward-compatible by default: when no explicit cursor/tail is provided,
-    # return from cursor 0 (legacy behavior).
-    since = None
-    if 'since' in request.args:
-        try:
-            since = max(0, int(request.args.get('since', 0)))
-        except Exception:
-            return jsonify({"success": False, "error": "Argument 'since' must be an integer >= 0."}), 400
-
-    tail_lines = None
-    if 'tail_lines' in request.args:
-        try:
-            tail_lines = max(0, int(request.args.get('tail_lines', 0)))
-        except Exception:
-            return jsonify({"success": False, "error": "Argument 'tail_lines' must be an integer >= 0."}), 400
-
-    if since is None and tail_lines is None:
-        since = 0
-
-    max_lines = None
-    if request.args.get('max_lines') is not None:
-        try:
-            max_lines = int(request.args.get('max_lines'))
-        except Exception:
-            return jsonify({"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}), 400
-        if max_lines < 0:
-            return jsonify({"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}), 400
-
-    log_source = _normalize_sim_log_source(request.args.get('log_source', 'both'))
-
-    log_contains = _normalize_log_contains_term(
-        request.args.get('log_contains', request.args.get('contains'))
+    parsed_opts, err = _parse_simulation_status_log_options(
+        get_value=request.args.get,
+        has_key=lambda key: key in request.args,
+        get_list=request.args.getlist,
+        include_log_summary_default=False,
+        include_log_entries_default=False,
+        tail_lines_default=None,
+        apply_legacy_since_default=True,
+        split_commas_for_contains_any=True,
     )
+    if err:
+        return jsonify({"success": False, "error": err}), 400
 
-    raw_contains_any = request.args.getlist('log_contains_any')
-    if not raw_contains_any:
-        raw_contains_any = request.args.getlist('search_any')
-    if not raw_contains_any:
-        if request.args.get('log_contains_any') is not None:
-            raw_contains_any = [request.args.get('log_contains_any')]
-        elif request.args.get('search_any') is not None:
-            raw_contains_any = [request.args.get('search_any')]
-
-    log_contains_any_terms = _normalize_log_contains_any_terms(raw_contains_any, split_commas=True)
+    include_logs = parsed_opts['include_logs']
+    include_log_summary = parsed_opts['include_log_summary']
+    include_log_entries = parsed_opts['include_log_entries']
+    since = parsed_opts['since']
+    tail_lines = parsed_opts['tail_lines']
+    max_lines = parsed_opts['max_lines']
+    log_source = parsed_opts['log_source']
+    log_contains = parsed_opts['log_contains']
+    log_contains_any_terms = parsed_opts['log_contains_any_terms']
 
     with SIMULATION_LOCK:
         status = SIMULATION_STATUS.get(job_id)
@@ -6821,36 +6888,27 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         elif tool_name == "get_simulation_status":
             job_id = args['job_id']
 
-            include_logs = _coerce_bool(args.get('include_logs'), default=True)
-            include_log_summary = _coerce_bool(args.get('include_log_summary'), default=True)
-            include_log_entries = _coerce_bool(args.get('include_log_entries'), default=False)
+            parsed_opts, err = _parse_simulation_status_log_options(
+                get_value=args.get,
+                has_key=lambda key: key in args,
+                include_log_summary_default=True,
+                include_log_entries_default=False,
+                tail_lines_default=20,
+                apply_legacy_since_default=False,
+                split_commas_for_contains_any=True,
+            )
+            if err:
+                return {"success": False, "error": err}
 
-            log_contains = _normalize_log_contains_term(args.get('log_contains'))
-
-            raw_contains_any = args.get('log_contains_any')
-            log_contains_any_terms = _normalize_log_contains_any_terms(raw_contains_any)
-
-            since = None
-            if args.get('since') is not None:
-                try:
-                    since = max(0, int(args.get('since')))
-                except Exception:
-                    return {"success": False, "error": "Argument 'since' must be an integer >= 0."}
-
-            try:
-                tail_lines = int(args.get('tail_lines', 20))
-            except Exception:
-                return {"success": False, "error": "Argument 'tail_lines' must be an integer."}
-            tail_lines = max(0, tail_lines)
-
-            max_lines = None
-            if args.get('max_lines') is not None:
-                try:
-                    max_lines = int(args.get('max_lines'))
-                except Exception:
-                    return {"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}
-                if max_lines < 0:
-                    return {"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}
+            include_logs = parsed_opts['include_logs']
+            include_log_summary = parsed_opts['include_log_summary']
+            include_log_entries = parsed_opts['include_log_entries']
+            since = parsed_opts['since']
+            tail_lines = parsed_opts['tail_lines']
+            max_lines = parsed_opts['max_lines']
+            log_source = parsed_opts['log_source']
+            log_contains = parsed_opts['log_contains']
+            log_contains_any_terms = parsed_opts['log_contains_any_terms']
 
             with SIMULATION_LOCK:
                 status = SIMULATION_STATUS.get(job_id)
@@ -6872,7 +6930,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     include_logs=include_logs,
                     include_log_summary=include_log_summary,
                     include_log_entries=include_log_entries,
-                    log_source=_normalize_sim_log_source(args.get("log_source", "both")),
+                    log_source=log_source,
                     log_contains=log_contains,
                     log_contains_any_terms=log_contains_any_terms,
                     since=since,

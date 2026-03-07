@@ -108,3 +108,40 @@ def test_simulation_status_api_supports_filter_aliases_and_pagination():
         ]
     finally:
         _clear_sim_status(job_id)
+
+
+def test_simulation_status_api_supports_comma_separated_contains_any_terms():
+    app.config["TESTING"] = True
+    job_id = "api-sim-filtered-csv"
+    _set_sim_status(
+        job_id,
+        progress=10,
+        total_events=100,
+        stdout=["init", "warning: drift", "done"],
+        stderr=["fatal: overflow", "note: ignored"],
+    )
+
+    try:
+        with app.test_client() as client:
+            resp = client.get(
+                f"/api/simulation/status/{job_id}"
+                "?since=0"
+                "&log_contains_any=warn,fatal"
+                "&include_log_entries=true"
+            )
+
+        assert resp.status_code == 200
+        payload = resp.get_json()
+        assert payload["success"] is True
+
+        status = payload["status"]
+        assert status["new_stdout"] == ["warning: drift", "stderr: fatal: overflow"]
+        assert status["log_total_lines"] == 2
+        assert status["next_since"] == 2
+        assert status["has_more_logs"] is False
+        assert status["log_entries"] == [
+            {"cursor": 0, "source": "stdout", "line": "warning: drift"},
+            {"cursor": 1, "source": "stderr", "line": "fatal: overflow"},
+        ]
+    finally:
+        _clear_sim_status(job_id)

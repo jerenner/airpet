@@ -409,6 +409,36 @@ def test_ai_tool_get_simulation_status_log_contains_any_filter(pm):
     ]
 
 
+def test_ai_tool_get_simulation_status_log_contains_any_filter_supports_comma_separated_string(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-log-contains-any-csv"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 90,
+            "total_events": 100,
+            "stdout": ["init", "warning: drift", "done"],
+            "stderr": ["fatal: overflow", "note: ignored"],
+        }
+
+    res = dispatch_ai_tool(pm, "get_simulation_status", {
+        "job_id": job_id,
+        "log_contains_any": "WARN, fatal",
+        "include_logs": True,
+        "include_log_entries": True,
+    })
+
+    assert res["success"], res
+    assert res["log_lines"] == ["warning: drift", "stderr: fatal: overflow"]
+    assert res["log_total_lines"] == 2
+    assert res["next_since"] == 2
+    assert res["log_entries"] == [
+        {"cursor": 0, "source": "stdout", "line": "warning: drift"},
+        {"cursor": 1, "source": "stderr", "line": "fatal: overflow"},
+    ]
+
+
 def test_simulation_status_http_and_ai_share_log_payload_shape(pm):
     from app import SIMULATION_STATUS, SIMULATION_LOCK
 
