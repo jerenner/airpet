@@ -497,6 +497,62 @@ def test_simulation_status_http_and_ai_share_log_payload_shape(pm):
             SIMULATION_STATUS.pop(job_id, None)
 
 
+def test_simulation_status_http_and_ai_share_boundary_pagination_semantics(pm):
+    from app import SIMULATION_STATUS, SIMULATION_LOCK
+
+    job_id = "sim-http-ai-boundary-parity"
+    with SIMULATION_LOCK:
+        SIMULATION_STATUS[job_id] = {
+            "status": "Running",
+            "progress": 77,
+            "total_events": 200,
+            "stdout": ["line-0", "line-1", "line-2"],
+            "stderr": ["err-0"],
+        }
+
+    cases = [
+        {
+            "ai_args": {"since": 999, "include_log_entries": True},
+            "http_query": "?since=999&include_log_entries=true",
+        },
+        {
+            "ai_args": {"since": 1, "max_lines": 0, "include_log_entries": True},
+            "http_query": "?since=1&max_lines=0&include_log_entries=true",
+        },
+    ]
+
+    try:
+        with flask_app.test_client() as client:
+            for case in cases:
+                ai_res = dispatch_ai_tool(pm, "get_simulation_status", {
+                    "job_id": job_id,
+                    **case["ai_args"],
+                })
+                http_res = client.get(f"/api/simulation/status/{job_id}{case['http_query']}")
+
+                assert ai_res["success"], ai_res
+                assert http_res.status_code == 200
+
+                http_status = http_res.get_json()["status"]
+
+                for key in [
+                    "log_total_lines",
+                    "next_since",
+                    "has_more_logs",
+                    "log_lines",
+                    "returned_lines",
+                    "log_entries",
+                ]:
+                    assert http_status[key] == ai_res[key]
+
+                # HTTP route keeps legacy polling keys while matching AI payload content.
+                assert http_status["new_stdout"] == ai_res["log_lines"]
+                assert http_status["total_lines"] == ai_res["log_total_lines"]
+    finally:
+        with SIMULATION_LOCK:
+            SIMULATION_STATUS.pop(job_id, None)
+
+
 def test_ai_tool_get_simulation_status_include_log_entries(pm):
     from app import SIMULATION_STATUS, SIMULATION_LOCK
 

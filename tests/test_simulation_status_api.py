@@ -149,6 +149,77 @@ def test_simulation_status_api_supports_comma_separated_contains_any_terms():
         _clear_sim_status(job_id)
 
 
+def test_simulation_status_api_since_beyond_total_lines_returns_empty_page():
+    app.config["TESTING"] = True
+    job_id = "api-sim-since-beyond-total"
+    _set_sim_status(
+        job_id,
+        progress=80,
+        total_events=100,
+        stdout=["line-0", "line-1"],
+        stderr=["err-0"],
+    )
+
+    try:
+        with app.test_client() as client:
+            resp = client.get(
+                f"/api/simulation/status/{job_id}"
+                "?since=999"
+                "&include_log_entries=true"
+            )
+
+        assert resp.status_code == 200
+        payload = resp.get_json()
+        assert payload["success"] is True
+
+        status = payload["status"]
+        assert status["new_stdout"] == []
+        assert status["total_lines"] == 3
+        assert status["log_total_lines"] == 3
+        assert status["returned_lines"] == 0
+        assert status["next_since"] == 3
+        assert status["has_more_logs"] is False
+        assert status["log_entries"] == []
+    finally:
+        _clear_sim_status(job_id)
+
+
+def test_simulation_status_api_max_lines_zero_keeps_cursor_position_for_since_pagination():
+    app.config["TESTING"] = True
+    job_id = "api-sim-max-lines-zero"
+    _set_sim_status(
+        job_id,
+        progress=90,
+        total_events=100,
+        stdout=["line-0", "line-1", "line-2"],
+        stderr=[],
+    )
+
+    try:
+        with app.test_client() as client:
+            resp = client.get(
+                f"/api/simulation/status/{job_id}"
+                "?since=1"
+                "&max_lines=0"
+                "&include_log_entries=true"
+            )
+
+        assert resp.status_code == 200
+        payload = resp.get_json()
+        assert payload["success"] is True
+
+        status = payload["status"]
+        assert status["new_stdout"] == []
+        assert status["total_lines"] == 3
+        assert status["log_total_lines"] == 3
+        assert status["returned_lines"] == 0
+        assert status["next_since"] == 1
+        assert status["has_more_logs"] is True
+        assert status["log_entries"] == []
+    finally:
+        _clear_sim_status(job_id)
+
+
 @pytest.mark.parametrize(
     "query_arg, query_value",
     [
