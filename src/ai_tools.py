@@ -557,6 +557,11 @@ AI_GEOMETRY_TOOLS = [
                 "max_lines": {"type": "integer", "description": "Maximum number of log lines to return. With 'since', this enables chunked pagination; response.next_since advances by the returned count."},
                 "since": {"type": "integer", "description": "Return log lines starting from this line index (0-based)."},
                 "log_contains": {"type": "string", "description": "Optional case-insensitive substring filter applied before pagination. Useful for pulling only warnings/errors or keyword-matched lines."},
+                "log_contains_any": {
+                    "type": ["array", "string"],
+                    "items": {"type": "string"},
+                    "description": "Optional case-insensitive OR filter. Keep lines containing at least one provided substring (e.g. ['warn', 'error']). Combines with log_contains when both are present."
+                },
                 "log_source": {
                     "type": "string",
                     "enum": ["stdout", "stderr", "both"],
