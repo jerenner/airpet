@@ -1888,27 +1888,170 @@ def run_simulation():
 @app.route('/api/simulation/status/<job_id>', methods=['GET'])
 def get_simulation_status(job_id):
 
-    # Get the line number from which the client wants updates
-    last_line_seen = request.args.get('since', 0, type=int)
+    def _coerce_bool(value: Any, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"1", "true", "yes", "y", "on"}:
+                return True
+            if v in {"0", "false", "no", "n", "off"}:
+                return False
+        return default
+
+    include_logs = _coerce_bool(request.args.get('include_logs'), default=True)
+    include_log_summary = _coerce_bool(request.args.get('include_log_summary'), default=False)
+    include_log_entries = _coerce_bool(request.args.get('include_log_entries'), default=False)
+
+    # Backward-compatible by default: when no explicit cursor/tail is provided,
+    # return from cursor 0 (legacy behavior).
+    since = None
+    if 'since' in request.args:
+        try:
+            since = max(0, int(request.args.get('since', 0)))
+        except Exception:
+            return jsonify({"success": False, "error": "Argument 'since' must be an integer >= 0."}), 400
+
+    tail_lines = None
+    if 'tail_lines' in request.args:
+        try:
+            tail_lines = max(0, int(request.args.get('tail_lines', 0)))
+        except Exception:
+            return jsonify({"success": False, "error": "Argument 'tail_lines' must be an integer >= 0."}), 400
+
+    if since is None and tail_lines is None:
+        since = 0
+
+    max_lines = None
+    if request.args.get('max_lines') is not None:
+        try:
+            max_lines = int(request.args.get('max_lines'))
+        except Exception:
+            return jsonify({"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}), 400
+        if max_lines < 0:
+            return jsonify({"success": False, "error": "Argument 'max_lines' must be an integer >= 0."}), 400
+
+    log_source = (str(request.args.get('log_source', 'both')) or 'both').strip().lower()
+    if log_source not in {"stdout", "stderr", "both"}:
+        log_source = "both"
+
+    log_contains = request.args.get('log_contains', request.args.get('contains'))
+    if log_contains is not None:
+        log_contains = str(log_contains).strip().lower()
+        if log_contains == "":
+            log_contains = None
+
+    raw_contains_any = request.args.getlist('log_contains_any')
+    if not raw_contains_any:
+        raw_contains_any = request.args.getlist('search_any')
+    if not raw_contains_any:
+        if request.args.get('log_contains_any') is not None:
+            raw_contains_any = [request.args.get('log_contains_any')]
+        elif request.args.get('search_any') is not None:
+            raw_contains_any = [request.args.get('search_any')]
+
+    log_contains_any_terms = None
+    if raw_contains_any:
+        normalized_terms = []
+        for term in raw_contains_any:
+            for part in str(term).split(','):
+                norm = part.strip().lower()
+                if norm and norm not in normalized_terms:
+                    normalized_terms.append(norm)
+        if normalized_terms:
+            log_contains_any_terms = normalized_terms
 
     with SIMULATION_LOCK:
         status = SIMULATION_STATUS.get(job_id)
         if not status:
             return jsonify({"success": False, "error": "Job ID not found."}), 404
-        
-        # Create a copy to send back to the user
+
+        stdout_lines = list(status.get('stdout') or [])
+        stderr_raw = list(status.get('stderr') or [])
+
         status_copy = {
             "status": status["status"],
             "progress": status["progress"],
-            "total_events": status["total_events"]
+            "total_events": status["total_events"],
         }
 
-        # Get only the new lines from stdout and stderr
-        all_lines = status['stdout'] + [f"stderr: {line}" for line in status['stderr']]
-        new_lines = all_lines[last_line_seen:]
-        
-        status_copy['new_stdout'] = new_lines
-        status_copy['total_lines'] = len(all_lines)
+        if include_log_summary:
+            status_copy["log_summary"] = {
+                "stdout_lines": len(stdout_lines),
+                "stderr_lines": len(stderr_raw),
+                "has_errors": len(stderr_raw) > 0,
+                "latest_stdout": stdout_lines[-1] if stdout_lines else None,
+                "latest_stderr": stderr_raw[-1] if stderr_raw else None,
+            }
+
+        if include_logs:
+            selected_entries = []
+
+            def _append_log_line(source: str, line: Any) -> None:
+                text_line = str(line)
+                text_line_lower = text_line.lower()
+                if log_contains is not None and log_contains not in text_line_lower:
+                    return
+                if log_contains_any_terms is not None and not any(term in text_line_lower for term in log_contains_any_terms):
+                    return
+                selected_entries.append({
+                    "cursor": len(selected_entries),
+                    "source": source,
+                    "line": text_line,
+                })
+
+            if log_source in {"stdout", "both"}:
+                for line in stdout_lines:
+                    _append_log_line("stdout", line)
+            if log_source in {"stderr", "both"}:
+                for line in stderr_raw:
+                    _append_log_line("stderr", line)
+
+            total_lines = len(selected_entries)
+            cursor = 0
+
+            if since is not None:
+                cursor = min(since, total_lines)
+                log_entries = selected_entries[cursor:]
+            elif tail_lines and tail_lines > 0:
+                log_entries = selected_entries[-tail_lines:]
+            else:
+                log_entries = []
+
+            if max_lines is not None and len(log_entries) > max_lines:
+                if since is not None:
+                    log_entries = log_entries[:max_lines]
+                else:
+                    log_entries = log_entries[-max_lines:] if max_lines > 0 else []
+
+            log_lines = [
+                entry["line"] if entry["source"] == "stdout" else f"stderr: {entry['line']}"
+                for entry in log_entries
+            ]
+
+            if since is not None:
+                next_since = cursor + len(log_entries)
+                has_more_logs = next_since < total_lines
+            else:
+                next_since = total_lines
+                has_more_logs = total_lines > len(log_entries)
+
+            # Legacy fields used by the browser UI polling path.
+            status_copy['new_stdout'] = log_lines
+            status_copy['total_lines'] = total_lines
+
+            # Extended diagnostics fields.
+            status_copy['log_total_lines'] = total_lines
+            status_copy['next_since'] = next_since
+            status_copy['has_more_logs'] = has_more_logs
+            status_copy['log_lines'] = log_lines
+            status_copy['returned_lines'] = len(log_lines)
+            if include_log_entries:
+                status_copy['log_entries'] = log_entries
 
         return jsonify({"success": True, "status": status_copy})
 
