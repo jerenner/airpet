@@ -5745,7 +5745,10 @@ AI_TOOL_ARG_ALIASES = {
         "limit": "max_lines",
         "contains": "log_contains",
         "filter": "log_contains",
-        "search": "log_contains"
+        "search": "log_contains",
+        "contains_any": "log_contains_any",
+        "search_any": "log_contains_any",
+        "filter_any": "log_contains_any"
     },
     "manage_particle_source": {
         "id": "source_id",
@@ -6642,6 +6645,21 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 else:
                     log_contains = log_contains.lower()
 
+            log_contains_any_terms = None
+            raw_contains_any = args.get('log_contains_any')
+            if raw_contains_any is not None:
+                if isinstance(raw_contains_any, (list, tuple, set)):
+                    raw_terms = list(raw_contains_any)
+                else:
+                    raw_terms = [raw_contains_any]
+                normalized_terms = []
+                for term in raw_terms:
+                    norm = str(term).strip().lower()
+                    if norm and norm not in normalized_terms:
+                        normalized_terms.append(norm)
+                if normalized_terms:
+                    log_contains_any_terms = normalized_terms
+
             since = None
             if args.get('since') is not None:
                 try:
@@ -6697,7 +6715,10 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
                     def _append_log_line(source: str, line: Any) -> None:
                         text_line = str(line)
-                        if log_contains is not None and log_contains not in text_line.lower():
+                        text_line_lower = text_line.lower()
+                        if log_contains is not None and log_contains not in text_line_lower:
+                            return
+                        if log_contains_any_terms is not None and not any(term in text_line_lower for term in log_contains_any_terms):
                             return
                         selected_entries.append({
                             "cursor": len(selected_entries),
