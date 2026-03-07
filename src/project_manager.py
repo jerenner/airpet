@@ -1,5 +1,6 @@
 # src/project_manager.py
 import json
+import hashlib
 import math
 import tempfile
 import os
@@ -5240,21 +5241,58 @@ class ProjectManager:
             issue['hint'] = hint
         report['issues'].append(issue)
 
+    def _preflight_issue_signature(self, issue):
+        refs = issue.get('object_refs', [])
+        if not isinstance(refs, list):
+            refs = [refs]
+
+        return {
+            'severity': str(issue.get('severity', 'info')),
+            'code': str(issue.get('code', 'unknown')),
+            'message': str(issue.get('message', '')),
+            'object_refs': [str(ref) for ref in refs],
+            'hint': str(issue['hint']) if issue.get('hint') is not None else None,
+        }
+
     def _preflight_finalize(self, report):
         severity_counts = {'error': 0, 'warning': 0, 'info': 0}
         code_counts = {}
+        signatures = []
+
         for issue in report['issues']:
             sev = issue.get('severity', 'info')
             severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
             code = issue.get('code', 'unknown')
             code_counts[code] = code_counts.get(code, 0) + 1
+            signatures.append(self._preflight_issue_signature(issue))
+
+        sorted_signatures = sorted(
+            signatures,
+            key=lambda item: (
+                item.get('severity', 'info'),
+                item.get('code', 'unknown'),
+                item.get('message', ''),
+                tuple(item.get('object_refs', [])),
+                item.get('hint') or '',
+            ),
+        )
+
+        fingerprint_payload = json.dumps(
+            sorted_signatures,
+            sort_keys=True,
+            separators=(',', ':'),
+        ).encode('utf-8')
+        issue_fingerprint = hashlib.sha256(fingerprint_payload).hexdigest()
 
         report['summary'] = {
             'errors': severity_counts.get('error', 0),
             'warnings': severity_counts.get('warning', 0),
             'infos': severity_counts.get('info', 0),
             'can_run': severity_counts.get('error', 0) == 0,
-            'counts_by_code': code_counts,
+            'counts_by_code': dict(sorted(code_counts.items())),
+            'issue_count': len(report['issues']),
+            'issue_fingerprint': issue_fingerprint,
         }
         return report
 

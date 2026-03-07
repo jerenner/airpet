@@ -87,3 +87,50 @@ def test_preflight_route_returns_report():
         assert data['success'] is True
         assert 'preflight_report' in data
         assert 'summary' in data['preflight_report']
+
+
+def test_preflight_summary_includes_deterministic_metadata():
+    pm = _make_pm()
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'CustomMissingMaterial'
+    pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+
+    report = pm.run_preflight_checks()
+    summary = report['summary']
+
+    assert summary['issue_count'] == len(report['issues'])
+    assert isinstance(summary['issue_fingerprint'], str)
+    assert len(summary['issue_fingerprint']) == 64
+
+    keys = list(summary['counts_by_code'].keys())
+    assert keys == sorted(keys)
+
+
+def test_preflight_issue_fingerprint_is_order_independent():
+    pm = _make_pm()
+
+    report_a = {
+        'issues': [
+            {
+                'severity': 'warning',
+                'code': 'tiny_dimension',
+                'message': 'tiny',
+                'object_refs': ['box_solid'],
+            },
+            {
+                'severity': 'error',
+                'code': 'unknown_material_reference',
+                'message': 'unknown material',
+                'object_refs': ['box_LV', 'MissingMat'],
+                'hint': 'Use a valid material',
+            },
+        ]
+    }
+
+    report_b = {
+        'issues': list(reversed(report_a['issues']))
+    }
+
+    fingerprint_a = pm._preflight_finalize(report_a)['summary']['issue_fingerprint']
+    fingerprint_b = pm._preflight_finalize(report_b)['summary']['issue_fingerprint']
+
+    assert fingerprint_a == fingerprint_b
