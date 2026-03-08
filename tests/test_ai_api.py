@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import MagicMock, patch
 from flask import jsonify, session
@@ -283,6 +284,29 @@ def test_ai_tool_compare_latest_preflight_versions_uses_latest_two_saved_version
     assert res["candidate_version_id"] == candidate_version_id
     assert res["comparison"]["added_issue_codes"] == ["possible_overlap_aabb"]
     assert res["selection"]["strategy"] == "latest_two_saved_versions"
+
+
+def test_ai_tool_compare_autosave_preflight_vs_latest_saved(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_project"
+
+    baseline_version_id, _ = pm.save_project_version('manual_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_latest_saved", {})
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
+    assert res["selection"]["strategy"] == "latest_autosave_vs_latest_saved"
 
 
 def test_ai_simulation_tools(pm):

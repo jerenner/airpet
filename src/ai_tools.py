@@ -594,6 +594,19 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "compare_autosave_preflight_vs_latest_saved",
+        "description": "Compare deterministic preflight summaries for the latest autosave version against the latest manually saved version.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "project_name": {
+                    "type": "string",
+                    "description": "Optional project name. Defaults to the currently active project."
+                }
+            }
+        }
+    },
+    {
         "name": "run_simulation",
         "description": "Start a Geant4 simulation run to test the current geometry.",
         "parameters": {
