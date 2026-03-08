@@ -1663,6 +1663,58 @@ def compare_preflight_summaries(baseline_summary: Any, candidate_summary: Any) -
     }
 
 
+def _resolve_saved_version_json_path(pm: ProjectManager, project_name: str, version_id: Any) -> tuple[str, str]:
+    project_name_norm = str(project_name or '').strip()
+    if not project_name_norm:
+        raise ValueError("project_name is required to compare saved versions.")
+
+    version_id_norm = str(version_id or '').strip()
+    if not version_id_norm:
+        raise ValueError("version_id must be a non-empty string.")
+
+    versions_root = os.path.realpath(os.path.join(pm.projects_dir, project_name_norm, 'versions'))
+    candidate_path = os.path.realpath(os.path.join(versions_root, version_id_norm, 'version.json'))
+
+    if not (candidate_path == versions_root or candidate_path.startswith(versions_root + os.sep)):
+        raise ValueError(f"Invalid version_id '{version_id_norm}'.")
+
+    if not os.path.exists(candidate_path):
+        raise FileNotFoundError(f"Version '{version_id_norm}' not found for project '{project_name_norm}'.")
+
+    return version_id_norm, candidate_path
+
+
+def _run_preflight_for_saved_version_json(version_json_path: str) -> Dict[str, Any]:
+    with open(version_json_path, 'r') as handle:
+        version_json = handle.read()
+
+    version_pm = ProjectManager(ExpressionEvaluator())
+    version_pm.load_project_from_json_string(version_json)
+    return version_pm.run_preflight_checks()
+
+
+def compare_preflight_versions(pm: ProjectManager, baseline_version_id: Any, candidate_version_id: Any, project_name: Optional[str] = None) -> Dict[str, Any]:
+    """Run preflight checks on two saved versions and compare their deterministic summaries."""
+    project_name_norm = str(project_name or pm.project_name or '').strip()
+
+    baseline_id, baseline_path = _resolve_saved_version_json_path(pm, project_name_norm, baseline_version_id)
+    candidate_id, candidate_path = _resolve_saved_version_json_path(pm, project_name_norm, candidate_version_id)
+
+    baseline_report = _run_preflight_for_saved_version_json(baseline_path)
+    candidate_report = _run_preflight_for_saved_version_json(candidate_path)
+
+    comparison = compare_preflight_summaries(baseline_report, candidate_report)
+
+    return {
+        'project_name': project_name_norm,
+        'baseline_version_id': baseline_id,
+        'candidate_version_id': candidate_id,
+        'baseline_report': baseline_report,
+        'candidate_report': candidate_report,
+        'comparison': comparison,
+    }
+
+
 @app.route('/api/preflight/check', methods=['POST'])
 def preflight_check_route():
     pm = get_project_manager_for_session()
@@ -1702,6 +1754,47 @@ def preflight_compare_summaries_route():
     return jsonify({
         "success": True,
         "comparison": comparison,
+    })
+
+
+@app.route('/api/preflight/compare_versions', methods=['POST'])
+def preflight_compare_versions_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+
+    baseline_version_id = (
+        data.get('baseline_version_id')
+        if data.get('baseline_version_id') is not None
+        else data.get('baseline_version')
+    )
+    candidate_version_id = (
+        data.get('candidate_version_id')
+        if data.get('candidate_version_id') is not None
+        else data.get('candidate_version')
+    )
+    project_name = data.get('project_name') or pm.project_name
+
+    if baseline_version_id is None or candidate_version_id is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required fields: baseline_version_id and candidate_version_id.",
+        }), 400
+
+    try:
+        result = compare_preflight_versions(
+            pm,
+            baseline_version_id=baseline_version_id,
+            candidate_version_id=candidate_version_id,
+            project_name=project_name,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
     })
 
 
@@ -6222,6 +6315,17 @@ AI_TOOL_ARG_ALIASES = {
         "after_summary": "candidate_summary",
         "new_summary": "candidate_summary"
     },
+    "compare_preflight_versions": {
+        "baseline": "baseline_version_id",
+        "baseline_version": "baseline_version_id",
+        "before_version": "baseline_version_id",
+        "base_version": "baseline_version_id",
+        "candidate": "candidate_version_id",
+        "candidate_version": "candidate_version_id",
+        "after_version": "candidate_version_id",
+        "new_version": "candidate_version_id",
+        "project": "project_name"
+    },
     "manage_particle_source": {
         "id": "source_id",
         "source": "source_id",
@@ -7075,6 +7179,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             return {
                 "success": True,
                 "comparison": comparison,
+            }
+
+        elif tool_name == "compare_preflight_versions":
+            try:
+                result = compare_preflight_versions(
+                    pm,
+                    baseline_version_id=args.get("baseline_version_id"),
+                    candidate_version_id=args.get("candidate_version_id"),
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
             }
 
         elif tool_name == "run_simulation":

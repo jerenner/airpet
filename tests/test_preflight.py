@@ -1,6 +1,7 @@
+import tempfile
 from unittest.mock import patch
 
-from app import app, compare_preflight_summaries
+from app import app, compare_preflight_summaries, compare_preflight_versions
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
 
@@ -201,3 +202,78 @@ def test_preflight_compare_summaries_route_accepts_report_wrappers():
     comparison = data['comparison']
     assert comparison['resolved_issue_codes'] == ['unknown_material_reference']
     assert comparison['status']['improved_can_run'] is True
+
+
+def test_compare_preflight_versions_runs_checks_for_two_saved_versions():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_compare_project'
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        baseline_version_id, _ = pm.save_project_version('baseline_preflight')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'G4_Galactic'
+        pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+        pm.recalculate_geometry_state()
+        candidate_version_id, _ = pm.save_project_version('candidate_preflight')
+
+        result = compare_preflight_versions(pm, baseline_version_id, candidate_version_id)
+
+    assert result['baseline_version_id'] == baseline_version_id
+    assert result['candidate_version_id'] == candidate_version_id
+    assert result['comparison']['resolved_issue_codes'] == ['unknown_material_reference']
+    assert result['comparison']['added_issue_codes'] == ['tiny_dimension']
+    assert result['comparison']['status']['improved_can_run'] is True
+
+
+def test_preflight_compare_versions_route_returns_comparison_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_project'
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        baseline_version_id, _ = pm.save_project_version('baseline_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'G4_Galactic'
+        pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+        pm.recalculate_geometry_state()
+        candidate_version_id, _ = pm.save_project_version('candidate_route')
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_versions', json={
+                'baseline_version_id': baseline_version_id,
+                'candidate_version_id': candidate_version_id,
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['comparison']['resolved_issue_codes'] == ['unknown_material_reference']
+    assert data['comparison']['added_issue_codes'] == ['tiny_dimension']
+
+
+def test_preflight_compare_versions_route_returns_404_for_missing_version():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_missing_version'
+
+        _, _ = pm.save_project_version('existing_version')
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_versions', json={
+                'baseline_version_id': 'does_not_exist',
+                'candidate_version_id': 'also_missing',
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 404
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'not found' in data['error']
