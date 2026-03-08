@@ -1788,6 +1788,34 @@ def compare_autosave_preflight_vs_latest_saved(pm: ProjectManager, project_name:
     return result
 
 
+def compare_autosave_preflight_vs_saved_version(pm: ProjectManager, saved_version_id: Any, project_name: Optional[str] = None) -> Dict[str, Any]:
+    """Compare autosave preflight checks against a specific manually saved project version."""
+    project_name_norm = str(project_name or pm.project_name or '').strip()
+    if not project_name_norm:
+        raise ValueError("project_name is required to compare autosave with a saved version.")
+
+    saved_version_id_norm = str(saved_version_id or '').strip()
+    if not saved_version_id_norm:
+        raise ValueError("saved_version_id is required to compare autosave preflight checks.")
+    if saved_version_id_norm == AUTOSAVE_VERSION_ID:
+        raise ValueError("saved_version_id must refer to a manually saved version, not 'autosave'.")
+
+    result = compare_preflight_versions(
+        pm,
+        baseline_version_id=saved_version_id_norm,
+        candidate_version_id=AUTOSAVE_VERSION_ID,
+        project_name=project_name_norm,
+    )
+
+    result['selection'] = {
+        'strategy': 'latest_autosave_vs_selected_saved_version',
+        'selected_version_ids': [AUTOSAVE_VERSION_ID, result['baseline_version_id']],
+        'saved_version_id': result['baseline_version_id'],
+        'total_saved_versions': len(_list_saved_version_ids(pm, project_name_norm)),
+    }
+    return result
+
+
 @app.route('/api/preflight/check', methods=['POST'])
 def preflight_check_route():
     pm = get_project_manager_for_session()
@@ -1898,6 +1926,43 @@ def preflight_compare_autosave_vs_latest_saved_route():
 
     try:
         result = compare_autosave_preflight_vs_latest_saved(pm, project_name=project_name)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/compare_autosave_vs_saved_version', methods=['POST'])
+def preflight_compare_autosave_vs_saved_version_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    saved_version_id = (
+        data.get('saved_version_id')
+        if data.get('saved_version_id') is not None
+        else data.get('saved_version')
+    )
+    if saved_version_id is None:
+        saved_version_id = data.get('version_id')
+
+    if saved_version_id is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required field: saved_version_id (or saved_version/version_id).",
+        }), 400
+
+    try:
+        result = compare_autosave_preflight_vs_saved_version(
+            pm,
+            saved_version_id=saved_version_id,
+            project_name=project_name,
+        )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except FileNotFoundError as exc:
@@ -6443,6 +6508,13 @@ AI_TOOL_ARG_ALIASES = {
     "compare_autosave_preflight_vs_latest_saved": {
         "project": "project_name"
     },
+    "compare_autosave_preflight_vs_saved_version": {
+        "project": "project_name",
+        "saved_version": "saved_version_id",
+        "version": "saved_version_id",
+        "version_id": "saved_version_id",
+        "baseline_version": "saved_version_id"
+    },
     "manage_particle_source": {
         "id": "source_id",
         "source": "source_id",
@@ -7332,6 +7404,21 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             try:
                 result = compare_autosave_preflight_vs_latest_saved(
                     pm,
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "compare_autosave_preflight_vs_saved_version":
+            try:
+                result = compare_autosave_preflight_vs_saved_version(
+                    pm,
+                    saved_version_id=args.get("saved_version_id"),
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
