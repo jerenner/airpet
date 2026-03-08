@@ -533,6 +533,14 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "run_preflight_checks",
+        "description": "Run deterministic geometry preflight validation and return issue diagnostics plus summary metadata.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "run_simulation",
         "description": "Start a Geant4 simulation run to test the current geometry.",
         "parameters": {

@@ -6862,6 +6862,14 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": True, "message": f"All {len(to_delete)} instances of ring '{ring_name}' deleted."}
             return {"success": False, "error": res}
 
+        elif tool_name == "run_preflight_checks":
+            report = pm.run_preflight_checks()
+            return {
+                "success": True,
+                "preflight_report": report,
+                "preflight_summary": report.get("summary", {}),
+            }
+
         elif tool_name == "run_simulation":
             job_id = str(uuid.uuid4())
             try:

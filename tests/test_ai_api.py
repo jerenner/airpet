@@ -179,6 +179,21 @@ def test_project_summary_context_string(pm):
     assert "Materials: G4_Galactic, Lead" in summary
     assert "TestLV(TestSolid)" in summary
 
+def test_ai_tool_run_preflight_checks_returns_report_and_summary(pm):
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+
+    res = dispatch_ai_tool(pm, "run_preflight_checks", {})
+
+    assert res['success'] is True
+    assert 'preflight_report' in res
+    assert 'preflight_summary' in res
+    summary = res['preflight_summary']
+    assert summary['can_run'] is False
+    assert summary['issue_count'] == len(res['preflight_report']['issues'])
+    assert 'issue_fingerprint' in summary
+    assert len(summary['issue_fingerprint']) == 64
+
+
 def test_ai_simulation_tools(pm):
     # Setup for simulation
     with patch('threading.Thread') as MockThread, \
