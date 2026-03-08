@@ -1511,6 +1511,158 @@ def set_active_source_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+def _extract_preflight_summary(payload: Any) -> Optional[Dict[str, Any]]:
+    """Accept either a summary dict or wrappers containing one and return a normalized summary."""
+    if not isinstance(payload, dict):
+        return None
+
+    if isinstance(payload.get('summary'), dict):
+        return payload.get('summary')
+
+    if isinstance(payload.get('preflight_summary'), dict):
+        return payload.get('preflight_summary')
+
+    if isinstance(payload.get('preflight_report'), dict) and isinstance(payload['preflight_report'].get('summary'), dict):
+        return payload['preflight_report']['summary']
+
+    return payload
+
+
+def compare_preflight_summaries(baseline_summary: Any, candidate_summary: Any) -> Dict[str, Any]:
+    """Compare two preflight summaries and report deterministic code-level deltas."""
+
+    def _as_summary(summary_like: Any) -> Dict[str, Any]:
+        summary = _extract_preflight_summary(summary_like)
+        if not isinstance(summary, dict):
+            raise ValueError("Preflight summaries must be objects/dicts.")
+        return summary
+
+    def _as_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            low = value.strip().lower()
+            if low in ('true', '1', 'yes', 'on'):
+                return True
+            if low in ('false', '0', 'no', 'off'):
+                return False
+        return default
+
+    def _as_int(value: Any, default: int = 0) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(float(value.strip()))
+            except Exception:
+                return default
+        return default
+
+    def _normalize_counts(summary: Dict[str, Any]) -> Dict[str, int]:
+        raw = summary.get('counts_by_code')
+        if not isinstance(raw, dict):
+            return {}
+
+        normalized = {}
+        for code, count in raw.items():
+            code_str = str(code)
+            count_int = _as_int(count, default=0)
+            if count_int < 0:
+                count_int = 0
+            normalized[code_str] = count_int
+
+        return dict(sorted(normalized.items()))
+
+    baseline = _as_summary(baseline_summary)
+    candidate = _as_summary(candidate_summary)
+
+    baseline_counts = _normalize_counts(baseline)
+    candidate_counts = _normalize_counts(candidate)
+
+    all_codes = sorted(set(baseline_counts.keys()) | set(candidate_counts.keys()))
+
+    counts_delta_by_code = {}
+    added_counts_by_code = {}
+    resolved_counts_by_code = {}
+    increased_counts_by_code = {}
+    reduced_counts_by_code = {}
+    unchanged_counts_by_code = {}
+
+    added_issue_codes = []
+    resolved_issue_codes = []
+
+    for code in all_codes:
+        base_count = baseline_counts.get(code, 0)
+        cand_count = candidate_counts.get(code, 0)
+        delta = cand_count - base_count
+        if delta != 0:
+            counts_delta_by_code[code] = delta
+        else:
+            unchanged_counts_by_code[code] = cand_count
+
+        if base_count == 0 and cand_count > 0:
+            added_issue_codes.append(code)
+            added_counts_by_code[code] = cand_count
+        elif base_count > 0 and cand_count == 0:
+            resolved_issue_codes.append(code)
+            resolved_counts_by_code[code] = base_count
+        elif delta > 0:
+            increased_counts_by_code[code] = delta
+        elif delta < 0:
+            reduced_counts_by_code[code] = abs(delta)
+
+    baseline_can_run = _as_bool(baseline.get('can_run'), default=False)
+    candidate_can_run = _as_bool(candidate.get('can_run'), default=False)
+
+    baseline_issue_count = _as_int(baseline.get('issue_count'), default=sum(baseline_counts.values()))
+    candidate_issue_count = _as_int(candidate.get('issue_count'), default=sum(candidate_counts.values()))
+
+    baseline_fingerprint = baseline.get('issue_fingerprint')
+    candidate_fingerprint = candidate.get('issue_fingerprint')
+
+    return {
+        'baseline': {
+            'can_run': baseline_can_run,
+            'issue_count': baseline_issue_count,
+            'counts_by_code': baseline_counts,
+            'issue_fingerprint': baseline_fingerprint,
+        },
+        'candidate': {
+            'can_run': candidate_can_run,
+            'issue_count': candidate_issue_count,
+            'counts_by_code': candidate_counts,
+            'issue_fingerprint': candidate_fingerprint,
+        },
+        'status': {
+            'can_run_changed': baseline_can_run != candidate_can_run,
+            'regressed_can_run': baseline_can_run and not candidate_can_run,
+            'improved_can_run': (not baseline_can_run) and candidate_can_run,
+            'fingerprint_changed': (
+                isinstance(baseline_fingerprint, str)
+                and isinstance(candidate_fingerprint, str)
+                and baseline_fingerprint != candidate_fingerprint
+            ),
+        },
+        'issue_count_delta': candidate_issue_count - baseline_issue_count,
+        'added_issue_total': sum(added_counts_by_code.values()),
+        'resolved_issue_total': sum(resolved_counts_by_code.values()),
+        'increased_issue_total': sum(increased_counts_by_code.values()),
+        'reduced_issue_total': sum(reduced_counts_by_code.values()),
+        'added_issue_codes': sorted(added_issue_codes),
+        'resolved_issue_codes': sorted(resolved_issue_codes),
+        'increased_issue_codes': sorted(increased_counts_by_code.keys()),
+        'reduced_issue_codes': sorted(reduced_counts_by_code.keys()),
+        'unchanged_issue_codes': sorted(unchanged_counts_by_code.keys()),
+        'added_counts_by_code': added_counts_by_code,
+        'resolved_counts_by_code': resolved_counts_by_code,
+        'increased_counts_by_code': increased_counts_by_code,
+        'reduced_counts_by_code': reduced_counts_by_code,
+        'counts_delta_by_code': counts_delta_by_code,
+    }
+
+
 @app.route('/api/preflight/check', methods=['POST'])
 def preflight_check_route():
     pm = get_project_manager_for_session()
@@ -1519,6 +1671,39 @@ def preflight_check_route():
         "success": True,
         "preflight_report": report,
     })
+
+
+@app.route('/api/preflight/compare_summaries', methods=['POST'])
+def preflight_compare_summaries_route():
+    data = request.get_json(silent=True) or {}
+
+    baseline_input = (
+        data.get('baseline_summary')
+        if data.get('baseline_summary') is not None
+        else data.get('baseline_report')
+    )
+    candidate_input = (
+        data.get('candidate_summary')
+        if data.get('candidate_summary') is not None
+        else data.get('candidate_report')
+    )
+
+    if baseline_input is None or candidate_input is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required fields: baseline_summary and candidate_summary (or baseline_report/candidate_report).",
+        }), 400
+
+    try:
+        comparison = compare_preflight_summaries(baseline_input, candidate_input)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    return jsonify({
+        "success": True,
+        "comparison": comparison,
+    })
+
 
 @app.route('/api/simulation/run', methods=['POST'])
 def run_simulation():
@@ -6029,6 +6214,14 @@ AI_TOOL_ARG_ALIASES = {
         "search_any": "log_contains_any",
         "filter_any": "log_contains_any"
     },
+    "compare_preflight_summaries": {
+        "baseline": "baseline_summary",
+        "before_summary": "baseline_summary",
+        "base_summary": "baseline_summary",
+        "candidate": "candidate_summary",
+        "after_summary": "candidate_summary",
+        "new_summary": "candidate_summary"
+    },
     "manage_particle_source": {
         "id": "source_id",
         "source": "source_id",
@@ -6868,6 +7061,20 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 "success": True,
                 "preflight_report": report,
                 "preflight_summary": report.get("summary", {}),
+            }
+
+        elif tool_name == "compare_preflight_summaries":
+            try:
+                comparison = compare_preflight_summaries(
+                    args.get("baseline_summary"),
+                    args.get("candidate_summary"),
+                )
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                "comparison": comparison,
             }
 
         elif tool_name == "run_simulation":

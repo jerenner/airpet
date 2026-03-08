@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app import app
+from app import app, compare_preflight_summaries
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
 
@@ -134,3 +134,70 @@ def test_preflight_issue_fingerprint_is_order_independent():
     fingerprint_b = pm._preflight_finalize(report_b)['summary']['issue_fingerprint']
 
     assert fingerprint_a == fingerprint_b
+
+
+
+def test_compare_preflight_summaries_tracks_added_and_resolved_codes():
+    baseline_summary = {
+        'can_run': False,
+        'issue_count': 4,
+        'counts_by_code': {
+            'tiny_dimension': 3,
+            'unknown_material_reference': 1,
+        },
+        'issue_fingerprint': 'a' * 64,
+    }
+    candidate_summary = {
+        'can_run': True,
+        'issue_count': 5,
+        'counts_by_code': {
+            'tiny_dimension': 1,
+            'possible_overlap_aabb': 4,
+        },
+        'issue_fingerprint': 'b' * 64,
+    }
+
+    comparison = compare_preflight_summaries(baseline_summary, candidate_summary)
+
+    assert comparison['issue_count_delta'] == 1
+    assert comparison['added_issue_codes'] == ['possible_overlap_aabb']
+    assert comparison['resolved_issue_codes'] == ['unknown_material_reference']
+    assert comparison['added_counts_by_code']['possible_overlap_aabb'] == 4
+    assert comparison['resolved_counts_by_code']['unknown_material_reference'] == 1
+    assert comparison['reduced_counts_by_code']['tiny_dimension'] == 2
+    assert comparison['status']['improved_can_run'] is True
+    assert comparison['status']['regressed_can_run'] is False
+    assert comparison['status']['fingerprint_changed'] is True
+
+
+
+def test_preflight_compare_summaries_route_accepts_report_wrappers():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        payload = {
+            'baseline_report': {
+                'summary': {
+                    'can_run': False,
+                    'issue_count': 1,
+                    'counts_by_code': {'unknown_material_reference': 1},
+                    'issue_fingerprint': '1' * 64,
+                }
+            },
+            'candidate_report': {
+                'summary': {
+                    'can_run': True,
+                    'issue_count': 0,
+                    'counts_by_code': {},
+                    'issue_fingerprint': '2' * 64,
+                }
+            },
+        }
+
+        resp = client.post('/api/preflight/compare_summaries', json=payload)
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    comparison = data['comparison']
+    assert comparison['resolved_issue_codes'] == ['unknown_material_reference']
+    assert comparison['status']['improved_can_run'] is True

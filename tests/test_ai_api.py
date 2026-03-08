@@ -194,6 +194,39 @@ def test_ai_tool_run_preflight_checks_returns_report_and_summary(pm):
     assert len(summary['issue_fingerprint']) == 64
 
 
+def test_ai_tool_compare_preflight_summaries_returns_code_deltas(pm):
+    baseline = {
+        "can_run": False,
+        "issue_count": 2,
+        "counts_by_code": {
+            "unknown_material_reference": 1,
+            "tiny_dimension": 1,
+        },
+        "issue_fingerprint": "a" * 64,
+    }
+    candidate = {
+        "can_run": True,
+        "issue_count": 3,
+        "counts_by_code": {
+            "tiny_dimension": 2,
+            "possible_overlap_aabb": 1,
+        },
+        "issue_fingerprint": "b" * 64,
+    }
+
+    res = dispatch_ai_tool(pm, "compare_preflight_summaries", {
+        "before_summary": baseline,
+        "after_summary": candidate,
+    })
+
+    assert res["success"] is True
+    comparison = res["comparison"]
+    assert comparison["added_issue_codes"] == ["possible_overlap_aabb"]
+    assert comparison["resolved_issue_codes"] == ["unknown_material_reference"]
+    assert comparison["increased_issue_codes"] == ["tiny_dimension"]
+    assert comparison["status"]["improved_can_run"] is True
+
+
 def test_ai_simulation_tools(pm):
     # Setup for simulation
     with patch('threading.Thread') as MockThread, \
