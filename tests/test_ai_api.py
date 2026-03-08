@@ -309,6 +309,35 @@ def test_ai_tool_compare_autosave_preflight_vs_latest_saved(pm, tmp_path):
     assert res["selection"]["strategy"] == "latest_autosave_vs_latest_saved"
 
 
+def test_ai_tool_compare_autosave_preflight_vs_saved_version(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_selected_project"
+
+    requested_saved_version_id, _ = pm.save_project_version('manual_selected_ai')
+
+    pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+    pm.recalculate_geometry_state()
+    pm.save_project_version('manual_latest_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_saved_version", {
+        "saved_version": requested_saved_version_id,
+    })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == requested_saved_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert "unknown_material_reference" in res["comparison"]["added_issue_codes"]
+    assert res["selection"]["strategy"] == "latest_autosave_vs_selected_saved_version"
+
+
 def test_ai_simulation_tools(pm):
     # Setup for simulation
     with patch('threading.Thread') as MockThread, \
