@@ -541,6 +541,24 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "compare_preflight_summaries",
+        "description": "Compare two preflight summaries and highlight added/resolved issue codes with deterministic deltas.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "baseline_summary": {
+                    "type": "object",
+                    "description": "Reference preflight summary (usually from an earlier version/run)."
+                },
+                "candidate_summary": {
+                    "type": "object",
+                    "description": "New preflight summary to compare against baseline."
+                }
+            },
+            "required": ["baseline_summary", "candidate_summary"]
+        }
+    },
+    {
         "name": "run_simulation",
         "description": "Start a Geant4 simulation run to test the current geometry.",
         "parameters": {
