@@ -559,6 +559,28 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "compare_preflight_versions",
+        "description": "Run deterministic preflight checks on two saved project versions and compare their summaries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "baseline_version_id": {
+                    "type": "string",
+                    "description": "Reference version id to use as baseline."
+                },
+                "candidate_version_id": {
+                    "type": "string",
+                    "description": "Version id to evaluate as candidate."
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Optional project name. Defaults to the currently active project."
+                }
+            },
+            "required": ["baseline_version_id", "candidate_version_id"]
+        }
+    },
+    {
         "name": "run_simulation",
         "description": "Start a Geant4 simulation run to test the current geometry.",
         "parameters": {

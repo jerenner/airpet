@@ -227,6 +227,32 @@ def test_ai_tool_compare_preflight_summaries_returns_code_deltas(pm):
     assert comparison["status"]["improved_can_run"] is True
 
 
+def test_ai_tool_compare_preflight_versions_runs_saved_version_checks(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_project"
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    baseline_version_id, _ = pm.save_project_version('baseline_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'G4_Galactic'
+    pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+    pm.recalculate_geometry_state()
+    candidate_version_id, _ = pm.save_project_version('candidate_ai')
+
+    res = dispatch_ai_tool(pm, "compare_preflight_versions", {
+        "before_version": baseline_version_id,
+        "after_version": candidate_version_id,
+    })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_version_id
+    assert res["candidate_version_id"] == candidate_version_id
+    comparison = res["comparison"]
+    assert comparison["resolved_issue_codes"] == ["unknown_material_reference"]
+    assert comparison["added_issue_codes"] == ["tiny_dimension"]
+    assert comparison["status"]["improved_can_run"] is True
+
+
 def test_ai_simulation_tools(pm):
     # Setup for simulation
     with patch('threading.Thread') as MockThread, \
