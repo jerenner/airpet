@@ -389,6 +389,51 @@ def test_ai_tool_compare_autosave_preflight_vs_snapshot_version_rejects_non_snap
     assert "autosave snapshot" in res["error"]
 
 
+def test_ai_tool_compare_autosave_preflight_vs_latest_snapshot(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_latest_snapshot_project"
+
+    pm.save_project_version('autosave_snapshot_old_ai')
+    latest_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_new_ai')
+    pm.save_project_version('manual_latest_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_latest_snapshot", {})
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == latest_snapshot_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert res["selection"]["strategy"] == "latest_autosave_vs_latest_autosave_snapshot"
+    assert res["selection"]["total_snapshot_versions"] == 2
+
+
+def test_ai_tool_compare_autosave_preflight_vs_latest_snapshot_requires_snapshot_version(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_latest_snapshot_missing"
+
+    pm.save_project_version('manual_only_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_latest_snapshot", {})
+
+    assert res["success"] is False
+    assert "at least one saved autosave snapshot version" in res["error"]
+
+
 def test_ai_tool_list_preflight_versions_supports_aliases(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_preflight_versions_project"
