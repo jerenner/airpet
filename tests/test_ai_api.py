@@ -434,6 +434,45 @@ def test_ai_tool_compare_autosave_preflight_vs_latest_snapshot_requires_snapshot
     assert "at least one saved autosave snapshot version" in res["error"]
 
 
+def test_ai_tool_compare_autosave_snapshot_preflight_versions(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_snapshot_versions_project"
+
+    baseline_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_baseline_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    candidate_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_candidate_ai')
+
+    res = dispatch_ai_tool(pm, "compare_autosave_snapshot_preflight_versions", {
+        "baseline_version": baseline_snapshot_version_id,
+        "candidate_snapshot_version": candidate_snapshot_version_id,
+    })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_snapshot_version_id
+    assert res["candidate_version_id"] == candidate_snapshot_version_id
+    assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
+    assert res["selection"]["strategy"] == "selected_autosave_snapshot_versions"
+
+
+def test_ai_tool_compare_autosave_snapshot_preflight_versions_rejects_non_snapshot(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_snapshot_versions_invalid"
+
+    baseline_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_baseline_ai')
+    manual_version_id, _ = pm.save_project_version('manual_candidate_ai')
+
+    res = dispatch_ai_tool(pm, "compare_autosave_snapshot_preflight_versions", {
+        "baseline_snapshot_version_id": baseline_snapshot_version_id,
+        "candidate_snapshot_version_id": manual_version_id,
+    })
+
+    assert res["success"] is False
+    assert "candidate_snapshot_version_id" in res["error"]
+    assert "autosave snapshot" in res["error"]
+
+
 def test_ai_tool_list_preflight_versions_supports_aliases(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_preflight_versions_project"

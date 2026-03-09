@@ -1904,6 +1904,62 @@ def compare_autosave_preflight_vs_latest_snapshot(pm: ProjectManager, project_na
     return result
 
 
+def compare_autosave_snapshot_preflight_versions(
+    pm: ProjectManager,
+    baseline_snapshot_version_id: Any,
+    candidate_snapshot_version_id: Any,
+    project_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compare deterministic preflight checks between two saved autosave snapshot versions."""
+    project_name_norm = str(project_name or pm.project_name or '').strip()
+    if not project_name_norm:
+        raise ValueError("project_name is required to compare autosave snapshot versions.")
+
+    baseline_snapshot_version_id_norm = str(baseline_snapshot_version_id or '').strip()
+    candidate_snapshot_version_id_norm = str(candidate_snapshot_version_id or '').strip()
+
+    if not baseline_snapshot_version_id_norm:
+        raise ValueError("baseline_snapshot_version_id is required to compare autosave snapshot versions.")
+    if not candidate_snapshot_version_id_norm:
+        raise ValueError("candidate_snapshot_version_id is required to compare autosave snapshot versions.")
+
+    if baseline_snapshot_version_id_norm == candidate_snapshot_version_id_norm:
+        raise ValueError("baseline_snapshot_version_id and candidate_snapshot_version_id must be different snapshot versions.")
+
+    for field_name, version_id in (
+        ("baseline_snapshot_version_id", baseline_snapshot_version_id_norm),
+        ("candidate_snapshot_version_id", candidate_snapshot_version_id_norm),
+    ):
+        if version_id == AUTOSAVE_VERSION_ID:
+            raise ValueError(f"{field_name} must refer to a saved autosave snapshot, not 'autosave'.")
+        if not _is_autosave_snapshot_version_id(version_id):
+            raise ValueError(
+                f"{field_name} must refer to a saved autosave snapshot version (see list_preflight_versions metadata)."
+            )
+
+    result = compare_preflight_versions(
+        pm,
+        baseline_version_id=baseline_snapshot_version_id_norm,
+        candidate_version_id=candidate_snapshot_version_id_norm,
+        project_name=project_name_norm,
+    )
+
+    snapshot_version_ids = [
+        version_id
+        for version_id in _list_saved_version_ids(pm, project_name_norm)
+        if _is_autosave_snapshot_version_id(version_id)
+    ]
+
+    result['selection'] = {
+        'strategy': 'selected_autosave_snapshot_versions',
+        'selected_version_ids': [result['candidate_version_id'], result['baseline_version_id']],
+        'baseline_snapshot_version_id': result['baseline_version_id'],
+        'candidate_snapshot_version_id': result['candidate_version_id'],
+        'total_snapshot_versions': len(snapshot_version_ids),
+    }
+    return result
+
+
 def _parse_optional_nonnegative_limit(value: Any) -> Optional[int]:
     if value is None:
         return None
@@ -2210,6 +2266,62 @@ def preflight_compare_autosave_vs_latest_snapshot_route():
     try:
         result = compare_autosave_preflight_vs_latest_snapshot(
             pm,
+            project_name=project_name,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/compare_snapshot_versions', methods=['POST'])
+def preflight_compare_snapshot_versions_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    baseline_snapshot_version_id = (
+        data.get('baseline_snapshot_version_id')
+        if data.get('baseline_snapshot_version_id') is not None
+        else data.get('baseline_snapshot_version')
+    )
+    if baseline_snapshot_version_id is None:
+        baseline_snapshot_version_id = data.get('baseline_version_id')
+    if baseline_snapshot_version_id is None:
+        baseline_snapshot_version_id = data.get('baseline_version')
+
+    candidate_snapshot_version_id = (
+        data.get('candidate_snapshot_version_id')
+        if data.get('candidate_snapshot_version_id') is not None
+        else data.get('candidate_snapshot_version')
+    )
+    if candidate_snapshot_version_id is None:
+        candidate_snapshot_version_id = data.get('candidate_version_id')
+    if candidate_snapshot_version_id is None:
+        candidate_snapshot_version_id = data.get('candidate_version')
+
+    missing_fields = []
+    if baseline_snapshot_version_id is None:
+        missing_fields.append('baseline_snapshot_version_id (or baseline_snapshot_version/baseline_version_id/baseline_version)')
+    if candidate_snapshot_version_id is None:
+        missing_fields.append('candidate_snapshot_version_id (or candidate_snapshot_version/candidate_version_id/candidate_version)')
+
+    if missing_fields:
+        return jsonify({
+            "success": False,
+            "error": f"Missing required field(s): {', '.join(missing_fields)}.",
+        }), 400
+
+    try:
+        result = compare_autosave_snapshot_preflight_versions(
+            pm,
+            baseline_snapshot_version_id=baseline_snapshot_version_id,
+            candidate_snapshot_version_id=candidate_snapshot_version_id,
             project_name=project_name,
         )
     except ValueError as exc:
@@ -6801,6 +6913,17 @@ AI_TOOL_ARG_ALIASES = {
     "compare_autosave_preflight_vs_latest_snapshot": {
         "project": "project_name"
     },
+    "compare_autosave_snapshot_preflight_versions": {
+        "project": "project_name",
+        "baseline": "baseline_snapshot_version_id",
+        "baseline_version": "baseline_snapshot_version_id",
+        "baseline_version_id": "baseline_snapshot_version_id",
+        "baseline_snapshot_version": "baseline_snapshot_version_id",
+        "candidate": "candidate_snapshot_version_id",
+        "candidate_version": "candidate_snapshot_version_id",
+        "candidate_version_id": "candidate_snapshot_version_id",
+        "candidate_snapshot_version": "candidate_snapshot_version_id"
+    },
     "list_preflight_versions": {
         "project": "project_name",
         "max_versions": "limit",
@@ -7740,6 +7863,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             try:
                 result = compare_autosave_preflight_vs_latest_snapshot(
                     pm,
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "compare_autosave_snapshot_preflight_versions":
+            try:
+                result = compare_autosave_snapshot_preflight_versions(
+                    pm,
+                    baseline_snapshot_version_id=args.get("baseline_snapshot_version_id"),
+                    candidate_snapshot_version_id=args.get("candidate_snapshot_version_id"),
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
