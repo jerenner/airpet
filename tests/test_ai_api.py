@@ -473,6 +473,38 @@ def test_ai_tool_compare_autosave_snapshot_preflight_versions_rejects_non_snapsh
     assert "autosave snapshot" in res["error"]
 
 
+def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_latest_snapshot_versions_project"
+
+    pm.save_project_version('autosave_snapshot_old_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    latest_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_new_ai')
+
+    res = dispatch_ai_tool(pm, "compare_latest_autosave_snapshot_preflight_versions", {
+        "project": pm.project_name,
+    })
+
+    assert res["success"] is True
+    assert res["candidate_version_id"] == latest_snapshot_version_id
+    assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
+    assert res["selection"]["strategy"] == "latest_two_autosave_snapshot_versions"
+
+
+def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions_requires_two_snapshots(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_latest_snapshot_versions_missing"
+
+    pm.save_project_version('autosave_snapshot_only_ai')
+
+    res = dispatch_ai_tool(pm, "compare_latest_autosave_snapshot_preflight_versions", {})
+
+    assert res["success"] is False
+    assert "at least two saved autosave snapshot versions" in res["error"]
+
+
 def test_ai_tool_list_preflight_versions_supports_aliases(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_preflight_versions_project"

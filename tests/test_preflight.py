@@ -9,6 +9,7 @@ from app import (
     compare_autosave_preflight_vs_saved_version,
     compare_autosave_preflight_vs_snapshot_version,
     compare_autosave_snapshot_preflight_versions,
+    compare_latest_autosave_snapshot_preflight_versions,
     compare_latest_preflight_versions,
     compare_preflight_summaries,
     compare_preflight_versions,
@@ -540,6 +541,44 @@ def test_compare_autosave_snapshot_preflight_versions_rejects_non_snapshot_versi
             assert 'autosave snapshot' in str(exc)
 
 
+def test_compare_latest_autosave_snapshot_preflight_versions_uses_latest_two_snapshots():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_latest_snapshot_versions_project'
+
+        pm.save_project_version('autosave_snapshot_old')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+        latest_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_new')
+
+        result = compare_latest_autosave_snapshot_preflight_versions(pm)
+
+    assert result['baseline_version_id'] != result['candidate_version_id']
+    assert result['candidate_version_id'] == latest_snapshot_version_id
+    assert result['comparison']['added_issue_codes'] == ['unknown_material_reference']
+    assert result['selection']['strategy'] == 'latest_two_autosave_snapshot_versions'
+    assert result['selection']['total_snapshot_versions'] == 2
+
+
+def test_compare_latest_autosave_snapshot_preflight_versions_requires_two_snapshots():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_latest_snapshot_versions_missing'
+
+        pm.save_project_version('autosave_snapshot_only')
+
+        try:
+            compare_latest_autosave_snapshot_preflight_versions(pm)
+            assert False, 'Expected compare_latest_autosave_snapshot_preflight_versions to require at least two snapshot versions.'
+        except ValueError as exc:
+            assert 'at least two saved autosave snapshot versions' in str(exc)
+
+
 def test_list_preflight_versions_returns_autosave_and_saved_metadata():
     pm = _make_pm()
 
@@ -977,6 +1016,52 @@ def test_preflight_compare_snapshot_versions_route_requires_both_snapshot_ids():
     data = resp.get_json()
     assert data['success'] is False
     assert 'candidate_snapshot_version_id' in data['error']
+
+
+def test_preflight_compare_latest_snapshot_versions_route_returns_comparison_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_latest_snapshot_versions_project'
+
+        pm.save_project_version('autosave_snapshot_old_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+        latest_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_new_route')
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_latest_snapshot_versions', json={
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['candidate_version_id'] == latest_snapshot_version_id
+    assert data['comparison']['added_issue_codes'] == ['unknown_material_reference']
+    assert data['selection']['strategy'] == 'latest_two_autosave_snapshot_versions'
+
+
+def test_preflight_compare_latest_snapshot_versions_route_requires_two_snapshots():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_latest_snapshot_versions_missing'
+
+        pm.save_project_version('autosave_snapshot_only_route')
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_latest_snapshot_versions', json={
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'at least two saved autosave snapshot versions' in data['error']
 
 
 def test_preflight_compare_versions_route_returns_404_for_missing_version():
