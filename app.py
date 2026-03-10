@@ -1966,6 +1966,53 @@ def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
     return result
 
 
+def list_manual_saved_versions_for_simulation_run(
+    pm: ProjectManager,
+    simulation_run_id: Any,
+    project_name: Optional[str] = None,
+    limit: Any = None,
+) -> Dict[str, Any]:
+    """List newest-first manual non-snapshot versions that contain a specific simulation run id, with deterministic index metadata."""
+    project_name_norm = str(project_name or pm.project_name or '').strip()
+    if not project_name_norm:
+        raise ValueError("project_name is required to list simulation-linked manual saved versions.")
+
+    simulation_run_id_norm = _normalize_simulation_run_id(simulation_run_id)
+    limit_norm = _parse_optional_nonnegative_limit(limit)
+
+    version_ids = _list_saved_version_ids(pm, project_name_norm)
+    manual_version_ids = _list_saved_non_snapshot_version_ids(pm, project_name_norm)
+
+    versions_root = os.path.realpath(os.path.join(pm.projects_dir, project_name_norm, 'versions'))
+    matching_manual_version_ids = [
+        version_id
+        for version_id in manual_version_ids
+        if os.path.isdir(os.path.join(versions_root, version_id, 'sim_runs', simulation_run_id_norm))
+    ]
+
+    matching_versions = [
+        {
+            'manual_saved_index': index,
+            'version_id': version_id,
+        }
+        for index, version_id in enumerate(matching_manual_version_ids)
+    ]
+
+    if limit_norm is not None:
+        matching_versions = matching_versions[:limit_norm]
+
+    return {
+        'project_name': project_name_norm,
+        'simulation_run_id': simulation_run_id_norm,
+        'total_saved_versions': len(version_ids),
+        'total_snapshot_versions': len(version_ids) - len(manual_version_ids),
+        'total_manual_saved_versions': len(manual_version_ids),
+        'total_matching_manual_saved_versions': len(matching_manual_version_ids),
+        'returned_matching_manual_saved_versions': len(matching_versions),
+        'matching_manual_saved_versions': matching_versions,
+    }
+
+
 def compare_autosave_preflight_vs_saved_version(pm: ProjectManager, saved_version_id: Any, project_name: Optional[str] = None) -> Dict[str, Any]:
     """Compare autosave preflight checks against a specific manually saved project version."""
     project_name_norm = str(project_name or pm.project_name or '').strip()
@@ -2566,6 +2613,48 @@ def preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route():
         return jsonify({"success": False, "error": str(exc)}), 400
     except FileNotFoundError as exc:
         return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/list_manual_saved_versions_for_simulation_run', methods=['POST'])
+def preflight_list_manual_saved_versions_for_simulation_run_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    simulation_run_id = (
+        data.get('simulation_run_id')
+        if data.get('simulation_run_id') is not None
+        else data.get('run_id')
+    )
+    if simulation_run_id is None:
+        simulation_run_id = data.get('job_id')
+
+    if simulation_run_id is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+        }), 400
+
+    limit = data.get('limit')
+    if limit is None:
+        limit = data.get('max_versions')
+    if limit is None:
+        limit = data.get('count')
+
+    try:
+        result = list_manual_saved_versions_for_simulation_run(
+            pm,
+            simulation_run_id=simulation_run_id,
+            project_name=project_name,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
 
     return jsonify({
         "success": True,
@@ -7356,6 +7445,14 @@ AI_TOOL_ARG_ALIASES = {
         "index": "manual_saved_index",
         "previous_manual_saved_index": "manual_saved_index"
     },
+    "list_manual_saved_versions_for_simulation_run": {
+        "project": "project_name",
+        "run_id": "simulation_run_id",
+        "job_id": "simulation_run_id",
+        "simulation_job_id": "simulation_run_id",
+        "max_versions": "limit",
+        "count": "limit"
+    },
     "compare_autosave_preflight_vs_saved_version": {
         "project": "project_name",
         "saved_version": "saved_version_id",
@@ -8350,6 +8447,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "list_manual_saved_versions_for_simulation_run":
+            try:
+                result = list_manual_saved_versions_for_simulation_run(
+                    pm,
+                    simulation_run_id=args.get("simulation_run_id"),
+                    project_name=args.get("project_name"),
+                    limit=args.get("limit"),
+                )
+            except ValueError as exc:
                 return {"success": False, "error": str(exc)}
 
             return {

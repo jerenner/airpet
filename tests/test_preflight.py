@@ -18,6 +18,7 @@ from app import (
     compare_latest_preflight_versions,
     compare_preflight_summaries,
     compare_preflight_versions,
+    list_manual_saved_versions_for_simulation_run,
     list_preflight_versions,
 )
 from src.project_manager import ProjectManager
@@ -593,6 +594,74 @@ def test_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_rej
             assert 'simulation_run_id' in str(exc)
 
 
+def test_list_manual_saved_versions_for_simulation_run_returns_newest_first_indexed_matches():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_list_manual_saved_for_run_project'
+
+        simulation_run_id = 'job_list_run_match'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_list_oldest')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('autosave_snapshot_list_ignored')
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_list_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('manual_list_non_match')
+
+        result = list_manual_saved_versions_for_simulation_run(
+            pm,
+            simulation_run_id=simulation_run_id,
+        )
+
+    matching_sorted = sorted(
+        [oldest_matching_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+
+    assert result['project_name'] == 'preflight_list_manual_saved_for_run_project'
+    assert result['simulation_run_id'] == simulation_run_id
+    assert result['total_snapshot_versions'] == 1
+    assert result['total_manual_saved_versions'] == 3
+    assert result['total_matching_manual_saved_versions'] == 2
+    assert result['returned_matching_manual_saved_versions'] == 2
+    assert [entry['version_id'] for entry in result['matching_manual_saved_versions']] == matching_sorted
+    assert [entry['manual_saved_index'] for entry in result['matching_manual_saved_versions']] == [0, 1]
+
+
+def test_list_manual_saved_versions_for_simulation_run_applies_limit():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_list_manual_saved_for_run_limit'
+
+        simulation_run_id = 'job_list_run_limit'
+
+        old_match_id, _ = pm.save_project_version('manual_list_limit_old')
+        os.makedirs(os.path.join(pm._get_version_dir(old_match_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        latest_match_id, _ = pm.save_project_version('manual_list_limit_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_match_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        result = list_manual_saved_versions_for_simulation_run(
+            pm,
+            simulation_run_id=simulation_run_id,
+            limit=1,
+        )
+
+    expected_latest = sorted([old_match_id, latest_match_id], reverse=True)[0]
+
+    assert result['total_matching_manual_saved_versions'] == 2
+    assert result['returned_matching_manual_saved_versions'] == 1
+    assert result['matching_manual_saved_versions'][0]['manual_saved_index'] == 0
+    assert result['matching_manual_saved_versions'][0]['version_id'] == expected_latest
+
+
 def test_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_matching_manual_version():
     pm = _make_pm()
 
@@ -987,6 +1056,59 @@ def test_preflight_list_versions_route_rejects_negative_limit():
         with patch('app.get_project_manager_for_session', return_value=pm):
             resp = client.post('/api/preflight/list_versions', json={
                 'project_name': pm.project_name,
+                'limit': -1,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'limit' in data['error']
+
+
+def test_preflight_list_manual_saved_versions_for_simulation_run_route_returns_indexed_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_list_manual_saved_for_run_project'
+
+        simulation_run_id = 'job_route_list_match'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_route_list_old')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_route_list_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/list_manual_saved_versions_for_simulation_run', json={
+                'project_name': pm.project_name,
+                'job_id': simulation_run_id,
+                'count': 1,
+            })
+
+    expected_latest = sorted([oldest_matching_version_id, latest_matching_version_id], reverse=True)[0]
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['simulation_run_id'] == simulation_run_id
+    assert data['total_matching_manual_saved_versions'] == 2
+    assert data['returned_matching_manual_saved_versions'] == 1
+    assert data['matching_manual_saved_versions'][0]['manual_saved_index'] == 0
+    assert data['matching_manual_saved_versions'][0]['version_id'] == expected_latest
+
+
+def test_preflight_list_manual_saved_versions_for_simulation_run_route_rejects_invalid_limit():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        pm.project_name = 'route_list_manual_saved_for_run_invalid_limit'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/list_manual_saved_versions_for_simulation_run', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': 'job_route_invalid_limit',
                 'limit': -1,
             })
 

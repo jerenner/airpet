@@ -677,6 +677,28 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "list_manual_saved_versions_for_simulation_run",
+        "description": "List manually saved non-snapshot versions that contain a specific simulation run id, sorted newest-first with deterministic manual_saved_index metadata.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "simulation_run_id": {
+                    "type": "string",
+                    "description": "Simulation run id (job id) used to filter matching manually saved non-snapshot versions."
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Optional project name. Defaults to the currently active project."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of matching versions to return."
+                }
+            },
+            "required": ["simulation_run_id"]
+        }
+    },
+    {
         "name": "compare_autosave_preflight_vs_saved_version",
         "description": "Compare deterministic preflight summaries for the latest autosave version against a specific manually saved version.",
         "parameters": {

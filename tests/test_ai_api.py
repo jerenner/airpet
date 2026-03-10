@@ -789,6 +789,47 @@ def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions_requires_tw
     assert "at least two saved autosave snapshot versions" in res["error"]
 
 
+def test_ai_tool_list_manual_saved_versions_for_simulation_run_supports_aliases(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_list_manual_saved_for_run_project"
+
+    simulation_run_id = "job_ai_list_match"
+
+    oldest_matching_version_id, _ = pm.save_project_version('manual_ai_list_old')
+    os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    latest_matching_version_id, _ = pm.save_project_version('manual_ai_list_latest')
+    os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    res = dispatch_ai_tool(pm, "list_manual_saved_versions_for_simulation_run", {
+        "project": pm.project_name,
+        "job_id": simulation_run_id,
+        "count": 1,
+    })
+
+    expected_latest = sorted([oldest_matching_version_id, latest_matching_version_id], reverse=True)[0]
+
+    assert res["success"] is True
+    assert res["simulation_run_id"] == simulation_run_id
+    assert res["total_matching_manual_saved_versions"] == 2
+    assert res["returned_matching_manual_saved_versions"] == 1
+    assert res["matching_manual_saved_versions"][0]["manual_saved_index"] == 0
+    assert res["matching_manual_saved_versions"][0]["version_id"] == expected_latest
+
+
+def test_ai_tool_list_manual_saved_versions_for_simulation_run_rejects_invalid_limit(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_list_manual_saved_for_run_invalid_limit"
+
+    res = dispatch_ai_tool(pm, "list_manual_saved_versions_for_simulation_run", {
+        "simulation_run_id": "job_ai_list_invalid_limit",
+        "limit": -1,
+    })
+
+    assert res["success"] is False
+    assert "limit" in res["error"]
+
+
 def test_ai_tool_list_preflight_versions_supports_aliases(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_preflight_versions_project"
