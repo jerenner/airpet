@@ -2013,6 +2013,81 @@ def list_manual_saved_versions_for_simulation_run(
     }
 
 
+def compare_manual_preflight_versions_for_simulation_run_indices(
+    pm: ProjectManager,
+    simulation_run_id: Any,
+    baseline_manual_saved_index: Any = 1,
+    candidate_manual_saved_index: Any = 0,
+    project_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compare two manual non-snapshot versions selected by N-back indices within one simulation run id."""
+    project_name_norm = str(project_name or pm.project_name or '').strip()
+    if not project_name_norm:
+        raise ValueError("project_name is required to compare simulation-linked manual saved versions.")
+
+    simulation_run_id_norm = _normalize_simulation_run_id(simulation_run_id)
+    baseline_manual_saved_index_norm = _normalize_manual_saved_index(baseline_manual_saved_index)
+    candidate_manual_saved_index_norm = _normalize_manual_saved_index(candidate_manual_saved_index)
+
+    if baseline_manual_saved_index_norm == candidate_manual_saved_index_norm:
+        raise ValueError("baseline_manual_saved_index and candidate_manual_saved_index must be different.")
+
+    version_ids = _list_saved_version_ids(pm, project_name_norm)
+    manual_version_ids = _list_saved_non_snapshot_version_ids(pm, project_name_norm)
+
+    versions_root = os.path.realpath(os.path.join(pm.projects_dir, project_name_norm, 'versions'))
+    matching_manual_version_ids = [
+        version_id
+        for version_id in manual_version_ids
+        if os.path.isdir(os.path.join(versions_root, version_id, 'sim_runs', simulation_run_id_norm))
+    ]
+
+    if len(matching_manual_version_ids) < 2:
+        raise ValueError(
+            f"Need at least two manually saved non-snapshot versions for project '{project_name_norm}' "
+            f"that contain simulation_run_id '{simulation_run_id_norm}' to compare manual preflight checks."
+        )
+
+    total_matching = len(matching_manual_version_ids)
+    if baseline_manual_saved_index_norm >= total_matching:
+        raise ValueError(
+            f"baseline_manual_saved_index={baseline_manual_saved_index_norm} is out of range for simulation_run_id "
+            f"'{simulation_run_id_norm}' in project '{project_name_norm}' "
+            f"(available matching manual saved versions: {total_matching})."
+        )
+
+    if candidate_manual_saved_index_norm >= total_matching:
+        raise ValueError(
+            f"candidate_manual_saved_index={candidate_manual_saved_index_norm} is out of range for simulation_run_id "
+            f"'{simulation_run_id_norm}' in project '{project_name_norm}' "
+            f"(available matching manual saved versions: {total_matching})."
+        )
+
+    baseline_version_id = matching_manual_version_ids[baseline_manual_saved_index_norm]
+    candidate_version_id = matching_manual_version_ids[candidate_manual_saved_index_norm]
+
+    result = compare_preflight_versions(
+        pm,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id=candidate_version_id,
+        project_name=project_name_norm,
+    )
+
+    result['selection'] = {
+        'strategy': 'manual_saved_versions_for_simulation_run_indices',
+        'simulation_run_id': simulation_run_id_norm,
+        'baseline_manual_saved_index': baseline_manual_saved_index_norm,
+        'candidate_manual_saved_index': candidate_manual_saved_index_norm,
+        'selected_version_ids': [result['baseline_version_id'], result['candidate_version_id']],
+        'matching_manual_saved_version_ids': matching_manual_version_ids,
+        'total_matching_manual_saved_versions': total_matching,
+        'total_saved_versions': len(version_ids),
+        'total_snapshot_versions': len(version_ids) - len(manual_version_ids),
+        'total_manual_saved_versions': len(manual_version_ids),
+    }
+    return result
+
+
 def compare_autosave_preflight_vs_saved_version(pm: ProjectManager, saved_version_id: Any, project_name: Optional[str] = None) -> Dict[str, Any]:
     """Compare autosave preflight checks against a specific manually saved project version."""
     project_name_norm = str(project_name or pm.project_name or '').strip()
@@ -2655,6 +2730,65 @@ def preflight_list_manual_saved_versions_for_simulation_run_route():
         )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/compare_manual_saved_versions_for_simulation_run_indices', methods=['POST'])
+def preflight_compare_manual_saved_versions_for_simulation_run_indices_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    simulation_run_id = (
+        data.get('simulation_run_id')
+        if data.get('simulation_run_id') is not None
+        else data.get('run_id')
+    )
+    if simulation_run_id is None:
+        simulation_run_id = data.get('job_id')
+
+    if simulation_run_id is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+        }), 400
+
+    baseline_manual_saved_index = (
+        data.get('baseline_manual_saved_index')
+        if data.get('baseline_manual_saved_index') is not None
+        else data.get('baseline_manual_saved_n_back')
+    )
+    if baseline_manual_saved_index is None:
+        baseline_manual_saved_index = data.get('baseline_n_back')
+    if baseline_manual_saved_index is None:
+        baseline_manual_saved_index = data.get('baseline_index')
+
+    candidate_manual_saved_index = (
+        data.get('candidate_manual_saved_index')
+        if data.get('candidate_manual_saved_index') is not None
+        else data.get('candidate_manual_saved_n_back')
+    )
+    if candidate_manual_saved_index is None:
+        candidate_manual_saved_index = data.get('candidate_n_back')
+    if candidate_manual_saved_index is None:
+        candidate_manual_saved_index = data.get('candidate_index')
+
+    try:
+        result = compare_manual_preflight_versions_for_simulation_run_indices(
+            pm,
+            simulation_run_id=simulation_run_id,
+            baseline_manual_saved_index=baseline_manual_saved_index,
+            candidate_manual_saved_index=candidate_manual_saved_index,
+            project_name=project_name,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
 
     return jsonify({
         "success": True,
@@ -7453,6 +7587,18 @@ AI_TOOL_ARG_ALIASES = {
         "max_versions": "limit",
         "count": "limit"
     },
+    "compare_manual_preflight_versions_for_simulation_run_indices": {
+        "project": "project_name",
+        "run_id": "simulation_run_id",
+        "job_id": "simulation_run_id",
+        "simulation_job_id": "simulation_run_id",
+        "baseline_manual_saved_n_back": "baseline_manual_saved_index",
+        "baseline_n_back": "baseline_manual_saved_index",
+        "baseline_index": "baseline_manual_saved_index",
+        "candidate_manual_saved_n_back": "candidate_manual_saved_index",
+        "candidate_n_back": "candidate_manual_saved_index",
+        "candidate_index": "candidate_manual_saved_index"
+    },
     "compare_autosave_preflight_vs_saved_version": {
         "project": "project_name",
         "saved_version": "saved_version_id",
@@ -8463,6 +8609,23 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     limit=args.get("limit"),
                 )
             except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "compare_manual_preflight_versions_for_simulation_run_indices":
+            try:
+                result = compare_manual_preflight_versions_for_simulation_run_indices(
+                    pm,
+                    simulation_run_id=args.get("simulation_run_id"),
+                    baseline_manual_saved_index=args.get("baseline_manual_saved_index"),
+                    candidate_manual_saved_index=args.get("candidate_manual_saved_index"),
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
                 return {"success": False, "error": str(exc)}
 
             return {

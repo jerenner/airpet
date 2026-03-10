@@ -18,6 +18,7 @@ from app import (
     compare_latest_preflight_versions,
     compare_preflight_summaries,
     compare_preflight_versions,
+    compare_manual_preflight_versions_for_simulation_run_indices,
     list_manual_saved_versions_for_simulation_run,
     list_preflight_versions,
 )
@@ -691,6 +692,79 @@ def test_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_
             assert 'No manually saved non-snapshot versions' in str(exc)
 
 
+def test_compare_manual_preflight_versions_for_simulation_run_indices_selects_requested_matching_versions():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_compare_manual_for_run_indices_project'
+
+        simulation_run_id = 'job_manual_compare_indices'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_compare_oldest')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+        pm.recalculate_geometry_state()
+        target_baseline_version_id, _ = pm.save_project_version('manual_compare_baseline_target')
+        os.makedirs(os.path.join(pm._get_version_dir(target_baseline_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+        latest_matching_version_id, _ = pm.save_project_version('manual_compare_candidate_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('manual_compare_non_match')
+
+        result = compare_manual_preflight_versions_for_simulation_run_indices(
+            pm,
+            simulation_run_id=simulation_run_id,
+            baseline_manual_saved_index=1,
+            candidate_manual_saved_index=0,
+        )
+
+    matching_sorted = sorted(
+        [oldest_matching_version_id, target_baseline_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+
+    assert result['baseline_version_id'] == matching_sorted[1]
+    assert result['candidate_version_id'] == matching_sorted[0]
+    assert isinstance(result['comparison']['counts_delta_by_code'], dict)
+    assert result['selection']['strategy'] == 'manual_saved_versions_for_simulation_run_indices'
+    assert result['selection']['simulation_run_id'] == simulation_run_id
+    assert result['selection']['baseline_manual_saved_index'] == 1
+    assert result['selection']['candidate_manual_saved_index'] == 0
+    assert result['selection']['matching_manual_saved_version_ids'] == matching_sorted
+
+
+def test_compare_manual_preflight_versions_for_simulation_run_indices_rejects_same_indices():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_compare_manual_for_run_indices_same_index'
+
+        simulation_run_id = 'job_manual_compare_same_index'
+
+        old_matching_version_id, _ = pm.save_project_version('manual_compare_same_old')
+        os.makedirs(os.path.join(pm._get_version_dir(old_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_compare_same_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        try:
+            compare_manual_preflight_versions_for_simulation_run_indices(
+                pm,
+                simulation_run_id=simulation_run_id,
+                baseline_manual_saved_index=0,
+                candidate_manual_saved_index=0,
+            )
+            assert False, 'Expected compare_manual_preflight_versions_for_simulation_run_indices to reject identical indices.'
+        except ValueError as exc:
+            assert 'must be different' in str(exc)
+
+
 def test_compare_autosave_preflight_vs_saved_version_uses_requested_saved_baseline():
     pm = _make_pm()
 
@@ -1116,6 +1190,80 @@ def test_preflight_list_manual_saved_versions_for_simulation_run_route_rejects_i
     data = resp.get_json()
     assert data['success'] is False
     assert 'limit' in data['error']
+
+
+def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_returns_comparison_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_manual_for_run_indices_project'
+
+        simulation_run_id = 'job_route_manual_compare'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_route_compare_oldest')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+        pm.recalculate_geometry_state()
+        target_baseline_version_id, _ = pm.save_project_version('manual_route_compare_baseline_target')
+        os.makedirs(os.path.join(pm._get_version_dir(target_baseline_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+        latest_matching_version_id, _ = pm.save_project_version('manual_route_compare_candidate_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_manual_saved_versions_for_simulation_run_indices', json={
+                'project_name': pm.project_name,
+                'run_id': simulation_run_id,
+                'baseline_n_back': 1,
+                'candidate_n_back': 0,
+            })
+
+    matching_sorted = sorted(
+        [oldest_matching_version_id, target_baseline_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == matching_sorted[1]
+    assert data['candidate_version_id'] == matching_sorted[0]
+    assert data['selection']['strategy'] == 'manual_saved_versions_for_simulation_run_indices'
+    assert data['selection']['baseline_manual_saved_index'] == 1
+    assert data['selection']['candidate_manual_saved_index'] == 0
+
+
+def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_rejects_identical_indices():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_manual_for_run_indices_same_index'
+
+        simulation_run_id = 'job_route_manual_compare_same_index'
+
+        old_matching_version_id, _ = pm.save_project_version('manual_route_compare_same_old')
+        os.makedirs(os.path.join(pm._get_version_dir(old_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_route_compare_same_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_manual_saved_versions_for_simulation_run_indices', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': simulation_run_id,
+                'baseline_manual_saved_index': 0,
+                'candidate_manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'must be different' in data['error']
 
 
 def test_preflight_compare_versions_route_returns_comparison_payload():

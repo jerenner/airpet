@@ -830,6 +830,67 @@ def test_ai_tool_list_manual_saved_versions_for_simulation_run_rejects_invalid_l
     assert "limit" in res["error"]
 
 
+def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_supports_aliases(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_manual_for_run_indices_project"
+
+    simulation_run_id = "job_ai_manual_compare"
+
+    oldest_matching_version_id, _ = pm.save_project_version('manual_ai_compare_oldest')
+    os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+    pm.recalculate_geometry_state()
+    target_baseline_version_id, _ = pm.save_project_version('manual_ai_compare_baseline_target')
+    os.makedirs(os.path.join(pm._get_version_dir(target_baseline_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    latest_matching_version_id, _ = pm.save_project_version('manual_ai_compare_candidate_latest')
+    os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    res = dispatch_ai_tool(pm, "compare_manual_preflight_versions_for_simulation_run_indices", {
+        "project": pm.project_name,
+        "job_id": simulation_run_id,
+        "baseline_n_back": 1,
+        "candidate_n_back": 0,
+    })
+
+    matching_sorted = sorted(
+        [oldest_matching_version_id, target_baseline_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == matching_sorted[1]
+    assert res["candidate_version_id"] == matching_sorted[0]
+    assert res["selection"]["strategy"] == "manual_saved_versions_for_simulation_run_indices"
+    assert res["selection"]["baseline_manual_saved_index"] == 1
+    assert res["selection"]["candidate_manual_saved_index"] == 0
+
+
+def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_rejects_identical_indices(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_manual_for_run_indices_same_index"
+
+    simulation_run_id = "job_ai_manual_compare_same_index"
+
+    old_matching_version_id, _ = pm.save_project_version('manual_ai_compare_same_old')
+    os.makedirs(os.path.join(pm._get_version_dir(old_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    latest_matching_version_id, _ = pm.save_project_version('manual_ai_compare_same_latest')
+    os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    res = dispatch_ai_tool(pm, "compare_manual_preflight_versions_for_simulation_run_indices", {
+        "simulation_run_id": simulation_run_id,
+        "baseline_manual_saved_index": 0,
+        "candidate_manual_saved_index": 0,
+    })
+
+    assert res["success"] is False
+    assert "must be different" in res["error"]
+
+
 def test_ai_tool_list_preflight_versions_supports_aliases(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_preflight_versions_project"
