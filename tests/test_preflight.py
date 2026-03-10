@@ -6,6 +6,7 @@ from app import (
     app,
     compare_autosave_preflight_vs_latest_saved,
     compare_autosave_preflight_vs_latest_snapshot,
+    compare_autosave_preflight_vs_manual_saved_for_simulation_run,
     compare_autosave_preflight_vs_manual_saved_index,
     compare_autosave_preflight_vs_previous_manual_saved,
     compare_autosave_preflight_vs_previous_snapshot,
@@ -453,6 +454,86 @@ def test_compare_autosave_preflight_vs_manual_saved_index_rejects_out_of_range_i
             assert False, 'Expected compare_autosave_preflight_vs_manual_saved_index to reject out-of-range index.'
         except ValueError as exc:
             assert 'out of range' in str(exc)
+
+
+
+def test_compare_autosave_preflight_vs_manual_saved_for_simulation_run_selects_latest_matching_manual_version():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_autosave_manual_saved_for_run_project'
+
+        simulation_run_id = 'job_abc123'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_run_match_oldest')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('autosave_snapshot_run_match')
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_run_match_latest')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('manual_without_run_match')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        result = compare_autosave_preflight_vs_manual_saved_for_simulation_run(
+            pm,
+            simulation_run_id=simulation_run_id,
+        )
+
+    expected_latest_matching_id = sorted(
+        [oldest_matching_version_id, latest_matching_version_id],
+        reverse=True,
+    )[0]
+
+    assert result['baseline_version_id'] == expected_latest_matching_id
+    assert result['candidate_version_id'] == 'autosave'
+    assert 'unknown_material_reference' in result['comparison']['added_issue_codes']
+    assert result['selection']['strategy'] == 'latest_autosave_vs_manual_saved_for_simulation_run'
+    assert result['selection']['simulation_run_id'] == simulation_run_id
+    assert result['selection']['selected_manual_saved_version_id'] == expected_latest_matching_id
+    assert result['selection']['matching_manual_saved_version_ids'] == sorted(
+        [oldest_matching_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+    assert result['selection']['total_matching_manual_saved_versions'] == 2
+
+
+def test_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_matching_manual_version():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_autosave_manual_saved_for_run_missing'
+
+        manual_version_id, _ = pm.save_project_version('manual_other_run')
+        os.makedirs(os.path.join(pm._get_version_dir(manual_version_id), 'sim_runs', 'different_job'), exist_ok=True)
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        try:
+            compare_autosave_preflight_vs_manual_saved_for_simulation_run(
+                pm,
+                simulation_run_id='missing_job',
+            )
+            assert False, 'Expected compare_autosave_preflight_vs_manual_saved_for_simulation_run to require a matching run id.'
+        except ValueError as exc:
+            assert 'simulation_run_id' in str(exc)
+            assert 'No manually saved non-snapshot versions' in str(exc)
 
 
 def test_compare_autosave_preflight_vs_saved_version_uses_requested_saved_baseline():
@@ -1092,6 +1173,85 @@ def test_preflight_compare_autosave_vs_manual_saved_index_route_rejects_invalid_
     data = resp.get_json()
     assert data['success'] is False
     assert 'out of range' in data['error']
+
+
+
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_returns_comparison_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_project'
+
+        simulation_run_id = 'job_route_match'
+
+        oldest_matching_version_id, _ = pm.save_project_version('manual_run_old_route')
+        os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('autosave_snapshot_route')
+
+        latest_matching_version_id, _ = pm.save_project_version('manual_run_latest_route')
+        os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        pm.save_project_version('manual_without_run_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run', json={
+                'project_name': pm.project_name,
+                'run_id': simulation_run_id,
+            })
+
+    expected_latest_matching_id = sorted(
+        [oldest_matching_version_id, latest_matching_version_id],
+        reverse=True,
+    )[0]
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == expected_latest_matching_id
+    assert data['candidate_version_id'] == 'autosave'
+    assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_for_simulation_run'
+    assert data['selection']['simulation_run_id'] == simulation_run_id
+
+
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_requires_matching_manual_version():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_missing'
+
+        manual_version_id, _ = pm.save_project_version('manual_other_run_route')
+        os.makedirs(os.path.join(pm._get_version_dir(manual_version_id), 'sim_runs', 'other_job_route'), exist_ok=True)
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': 'missing_route_job',
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'simulation_run_id' in data['error']
+    assert 'No manually saved non-snapshot versions' in data['error']
 
 
 def test_preflight_compare_autosave_vs_saved_version_route_returns_comparison_payload():
