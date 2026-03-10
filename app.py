@@ -1887,17 +1887,19 @@ def _normalize_simulation_run_id(simulation_run_id: Any) -> str:
     return simulation_run_id_norm
 
 
-def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
+def compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
     pm: ProjectManager,
     simulation_run_id: Any,
+    manual_saved_index: Any = 0,
     project_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Compare autosave preflight checks against the latest manual non-snapshot version that contains a given simulation run id."""
+    """Compare autosave preflight checks against an N-back manual non-snapshot version matching a simulation run id."""
     project_name_norm = str(project_name or pm.project_name or '').strip()
     if not project_name_norm:
         raise ValueError("project_name is required to compare autosave against simulation-linked manual saves.")
 
     simulation_run_id_norm = _normalize_simulation_run_id(simulation_run_id)
+    manual_saved_index_norm = _normalize_manual_saved_index(manual_saved_index)
 
     version_ids = _list_saved_version_ids(pm, project_name_norm)
     manual_version_ids = _list_saved_non_snapshot_version_ids(pm, project_name_norm)
@@ -1918,7 +1920,13 @@ def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
             f"No manually saved non-snapshot versions for project '{project_name_norm}' contain simulation_run_id '{simulation_run_id_norm}'."
         )
 
-    selected_manual_saved_version_id = matching_manual_version_ids[0]
+    if manual_saved_index_norm >= len(matching_manual_version_ids):
+        raise ValueError(
+            f"manual_saved_index={manual_saved_index_norm} is out of range for simulation_run_id '{simulation_run_id_norm}' "
+            f"in project '{project_name_norm}' (available matching manual saved versions: {len(matching_manual_version_ids)})."
+        )
+
+    selected_manual_saved_version_id = matching_manual_version_ids[manual_saved_index_norm]
 
     result = compare_preflight_versions(
         pm,
@@ -1928,9 +1936,10 @@ def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
     )
 
     result['selection'] = {
-        'strategy': 'latest_autosave_vs_manual_saved_for_simulation_run',
+        'strategy': 'latest_autosave_vs_manual_saved_for_simulation_run_index',
         'selected_version_ids': [AUTOSAVE_VERSION_ID, result['baseline_version_id']],
         'simulation_run_id': simulation_run_id_norm,
+        'manual_saved_index': manual_saved_index_norm,
         'selected_manual_saved_version_id': result['baseline_version_id'],
         'matching_manual_saved_version_ids': matching_manual_version_ids,
         'total_matching_manual_saved_versions': len(matching_manual_version_ids),
@@ -1938,6 +1947,22 @@ def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
         'total_snapshot_versions': len(version_ids) - len(manual_version_ids),
         'total_manual_saved_versions': len(manual_version_ids),
     }
+    return result
+
+
+def compare_autosave_preflight_vs_manual_saved_for_simulation_run(
+    pm: ProjectManager,
+    simulation_run_id: Any,
+    project_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compare autosave preflight checks against the latest manual non-snapshot version that contains a given simulation run id."""
+    result = compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
+        pm,
+        simulation_run_id=simulation_run_id,
+        manual_saved_index=0,
+        project_name=project_name,
+    )
+    result['selection']['strategy'] = 'latest_autosave_vs_manual_saved_for_simulation_run'
     return result
 
 
@@ -2489,6 +2514,52 @@ def preflight_compare_autosave_vs_manual_saved_for_simulation_run_route():
         result = compare_autosave_preflight_vs_manual_saved_for_simulation_run(
             pm,
             simulation_run_id=simulation_run_id,
+            project_name=project_name,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index', methods=['POST'])
+def preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    simulation_run_id = (
+        data.get('simulation_run_id')
+        if data.get('simulation_run_id') is not None
+        else data.get('run_id')
+    )
+    if simulation_run_id is None:
+        simulation_run_id = data.get('job_id')
+
+    if simulation_run_id is None:
+        return jsonify({
+            "success": False,
+            "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+        }), 400
+
+    manual_saved_index = (
+        data.get('manual_saved_index')
+        if data.get('manual_saved_index') is not None
+        else data.get('manual_saved_n_back')
+    )
+    if manual_saved_index is None:
+        manual_saved_index = data.get('n_back')
+
+    try:
+        result = compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
+            pm,
+            simulation_run_id=simulation_run_id,
+            manual_saved_index=manual_saved_index,
             project_name=project_name,
         )
     except ValueError as exc:
@@ -7275,6 +7346,16 @@ AI_TOOL_ARG_ALIASES = {
         "job_id": "simulation_run_id",
         "simulation_job_id": "simulation_run_id"
     },
+    "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index": {
+        "project": "project_name",
+        "run_id": "simulation_run_id",
+        "job_id": "simulation_run_id",
+        "simulation_job_id": "simulation_run_id",
+        "manual_saved_n_back": "manual_saved_index",
+        "n_back": "manual_saved_index",
+        "index": "manual_saved_index",
+        "previous_manual_saved_index": "manual_saved_index"
+    },
     "compare_autosave_preflight_vs_saved_version": {
         "project": "project_name",
         "saved_version": "saved_version_id",
@@ -8250,6 +8331,22 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 result = compare_autosave_preflight_vs_manual_saved_for_simulation_run(
                     pm,
                     simulation_run_id=args.get("simulation_run_id"),
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index":
+            try:
+                result = compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
+                    pm,
+                    simulation_run_id=args.get("simulation_run_id"),
+                    manual_saved_index=args.get("manual_saved_index"),
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:

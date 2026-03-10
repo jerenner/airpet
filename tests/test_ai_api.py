@@ -451,6 +451,77 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run(p
     assert res["selection"]["simulation_run_id"] == simulation_run_id
 
 
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_index_project"
+
+    simulation_run_id = "job_ai_index_match"
+
+    oldest_matching_version_id, _ = pm.save_project_version('manual_run_index_old_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    target_matching_version_id, _ = pm.save_project_version('manual_run_index_target_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(target_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    pm.save_project_version('autosave_snapshot_index_ai')
+
+    latest_matching_version_id, _ = pm.save_project_version('manual_run_index_latest_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(latest_matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index", {
+        "project": pm.project_name,
+        "job_id": simulation_run_id,
+        "n_back": 1,
+    })
+
+    matching_sorted = sorted(
+        [oldest_matching_version_id, target_matching_version_id, latest_matching_version_id],
+        reverse=True,
+    )
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == matching_sorted[1]
+    assert res["candidate_version_id"] == "autosave"
+    assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_for_simulation_run_index"
+    assert res["selection"]["simulation_run_id"] == simulation_run_id
+    assert res["selection"]["manual_saved_index"] == 1
+
+
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_rejects_out_of_range(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_index_invalid"
+
+    simulation_run_id = "job_ai_index_invalid"
+
+    matching_version_id, _ = pm.save_project_version('manual_run_index_only_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(matching_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index", {
+        "simulation_run_id": simulation_run_id,
+        "manual_saved_index": 2,
+    })
+
+    assert res["success"] is False
+    assert "out of range" in res["error"]
+    assert "simulation_run_id" in res["error"]
+
+
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_match(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_manual_saved_for_run_missing"

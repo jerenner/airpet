@@ -655,6 +655,28 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+        "description": "Compare deterministic preflight summaries for the latest autosave version against an N-back manually saved non-snapshot version matching a specific simulation run id (0 = latest matching manual save).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "simulation_run_id": {
+                    "type": "string",
+                    "description": "Simulation run id (job id) that must exist under the baseline version's sim_runs directory."
+                },
+                "manual_saved_index": {
+                    "type": "integer",
+                    "description": "Non-negative N-back index into matching manually saved non-snapshot versions sorted newest-first (default: 0)."
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Optional project name. Defaults to the currently active project."
+                }
+            },
+            "required": ["simulation_run_id"]
+        }
+    },
+    {
         "name": "compare_autosave_preflight_vs_saved_version",
         "description": "Compare deterministic preflight summaries for the latest autosave version against a specific manually saved version.",
         "parameters": {
