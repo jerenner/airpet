@@ -52,6 +52,50 @@ def test_preflight_detects_unknown_material_reference():
     assert report['summary']['can_run'] is False
 
 
+def test_preflight_detects_missing_world_volume_reference():
+    pm = _make_pm()
+    pm.current_geometry_state.world_volume_ref = ''
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'missing_world_volume_reference' in codes
+    assert report['summary']['can_run'] is False
+
+
+def test_preflight_detects_unknown_world_volume_reference():
+    pm = _make_pm()
+    pm.current_geometry_state.world_volume_ref = 'MissingWorldLV'
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'unknown_world_volume_reference' in codes
+    assert report['summary']['can_run'] is False
+
+
+def test_preflight_detects_unknown_placement_volume_reference():
+    pm = _make_pm()
+    pm.current_geometry_state.logical_volumes['World'].content[0].volume_ref = 'MissingPlacedRef'
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'unknown_placement_volume_reference' in codes
+    assert report['summary']['can_run'] is False
+
+
+def test_preflight_detects_world_volume_referenced_as_child():
+    pm = _make_pm()
+    pm.current_geometry_state.logical_volumes['World'].content[0].volume_ref = 'World'
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'world_volume_referenced_as_child' in codes
+    assert report['summary']['can_run'] is False
+
+
 def test_preflight_flags_tiny_dimensions_warning():
     pm = _make_pm()
     pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'

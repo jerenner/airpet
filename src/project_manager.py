@@ -5390,7 +5390,110 @@ class ProjectManager:
 
         state = self.current_geometry_state
 
-        # 1) Missing references and material checks.
+        # 1) Root/world and placement reference integrity checks.
+        world_volume_ref = str(state.world_volume_ref or '').strip()
+        if not world_volume_ref:
+            self._preflight_add_issue(
+                report,
+                'error',
+                'missing_world_volume_reference',
+                'Project is missing world_volume_ref.',
+                hint='Set a valid world volume before running simulation.',
+            )
+        elif world_volume_ref not in state.logical_volumes:
+            self._preflight_add_issue(
+                report,
+                'error',
+                'unknown_world_volume_reference',
+                f"World volume '{world_volume_ref}' was not found in logical volumes.",
+                object_refs=[world_volume_ref],
+                hint='Set world_volume_ref to an existing logical volume.',
+            )
+
+        for parent_lv in state.logical_volumes.values():
+            if parent_lv.content_type != 'physvol' or not parent_lv.content:
+                continue
+
+            for pv in parent_lv.content:
+                placed_ref = str(getattr(pv, 'volume_ref', '') or '').strip()
+                if not placed_ref:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'missing_placement_volume_reference',
+                        f"Placement '{pv.name}' in parent LV '{parent_lv.name}' has no volume_ref.",
+                        object_refs=[pv.id, parent_lv.name],
+                        hint='Set this placement to reference a logical volume or assembly.',
+                    )
+                    continue
+
+                if placed_ref not in state.logical_volumes and placed_ref not in state.assemblies:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'unknown_placement_volume_reference',
+                        (
+                            f"Placement '{pv.name}' in parent LV '{parent_lv.name}' references missing volume "
+                            f"or assembly '{placed_ref}'."
+                        ),
+                        object_refs=[pv.id, parent_lv.name, placed_ref],
+                        hint='Update or remove the stale placement reference.',
+                    )
+
+                if world_volume_ref and placed_ref == world_volume_ref:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'world_volume_referenced_as_child',
+                        (
+                            f"Placement '{pv.name}' in parent LV '{parent_lv.name}' references the world volume "
+                            f"'{world_volume_ref}' as a child."
+                        ),
+                        object_refs=[pv.id, parent_lv.name, world_volume_ref],
+                        hint='World volume must be the root and should not be placed under another volume.',
+                    )
+
+        for asm in state.assemblies.values():
+            for pv in asm.placements:
+                placed_ref = str(getattr(pv, 'volume_ref', '') or '').strip()
+                if not placed_ref:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'missing_placement_volume_reference',
+                        f"Assembly placement '{pv.name}' in assembly '{asm.name}' has no volume_ref.",
+                        object_refs=[pv.id, asm.name],
+                        hint='Set this assembly placement to reference a logical volume or assembly.',
+                    )
+                    continue
+
+                if placed_ref not in state.logical_volumes and placed_ref not in state.assemblies:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'unknown_placement_volume_reference',
+                        (
+                            f"Assembly placement '{pv.name}' in assembly '{asm.name}' references missing volume "
+                            f"or assembly '{placed_ref}'."
+                        ),
+                        object_refs=[pv.id, asm.name, placed_ref],
+                        hint='Update or remove the stale assembly placement reference.',
+                    )
+
+                if world_volume_ref and placed_ref == world_volume_ref:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'world_volume_referenced_as_child',
+                        (
+                            f"Assembly placement '{pv.name}' in assembly '{asm.name}' references the world volume "
+                            f"'{world_volume_ref}' as a child."
+                        ),
+                        object_refs=[pv.id, asm.name, world_volume_ref],
+                        hint='World volume must be the root and should not be nested in assemblies.',
+                    )
+
+        # 2) Missing references and material checks.
         for lv in state.logical_volumes.values():
             if not lv.solid_ref or lv.solid_ref not in state.solids:
                 self._preflight_add_issue(
@@ -5422,7 +5525,7 @@ class ProjectManager:
                     hint='Create this material or switch to a known/NIST material.',
                 )
 
-        # 2) Solid geometry sanity checks.
+        # 3) Solid geometry sanity checks.
         tiny_threshold_mm = 1e-3  # 1 micron in mm units
         for solid in state.solids.values():
             p = solid._evaluated_parameters or {}
@@ -5499,7 +5602,7 @@ class ProjectManager:
                         hint='Check CAD import quality; this may indicate degenerate geometry.',
                     )
 
-        # 3) Approximate sibling overlap checks (AABB heuristic).
+        # 4) Approximate sibling overlap checks (AABB heuristic).
         placement_groups = []
         for lv in state.logical_volumes.values():
             if lv.content_type == 'physvol' and lv.content:
