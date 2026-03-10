@@ -5599,7 +5599,228 @@ class ProjectManager:
                         hint='World volume must be the root and should not be nested in assemblies.',
                     )
 
-        # 2) Placement hierarchy cycle checks (LV <-> LV/ASM and ASM <-> LV/ASM).
+        # 2) Procedural placement reference and bounds checks.
+        valid_division_axes = {'kxaxis', 'kyaxis', 'kzaxis', 'x', 'y', 'z', 'krho', 'kphi', 'rho', 'phi'}
+        division_axis_to_box_dim = {
+            'kxaxis': 'x',
+            'kyaxis': 'y',
+            'kzaxis': 'z',
+            'x': 'x',
+            'y': 'y',
+            'z': 'z',
+        }
+
+        for parent_lv in state.logical_volumes.values():
+            if parent_lv.content_type not in ['replica', 'division', 'parameterised']:
+                continue
+
+            proc = parent_lv.content
+            if not proc:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'missing_procedural_placement_definition',
+                    (
+                        f"LogicalVolume '{parent_lv.name}' is marked as procedural type "
+                        f"'{parent_lv.content_type}' but has no content definition."
+                    ),
+                    object_refs=[parent_lv.name],
+                    hint='Recreate this procedural placement definition or switch the LV back to physvol content.',
+                )
+                continue
+
+            placed_ref = str(getattr(proc, 'volume_ref', '') or '').strip()
+            proc_name = str(getattr(proc, 'name', parent_lv.name) or parent_lv.name)
+
+            if not placed_ref:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'missing_procedural_volume_reference',
+                    (
+                        f"Procedural placement '{proc_name}' in LV '{parent_lv.name}' has no volume_ref."
+                    ),
+                    object_refs=[parent_lv.name],
+                    hint='Set this procedural placement to reference an existing logical volume.',
+                )
+            elif placed_ref not in state.logical_volumes:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'unknown_procedural_volume_reference',
+                    (
+                        f"Procedural placement '{proc_name}' in LV '{parent_lv.name}' references missing "
+                        f"logical volume '{placed_ref}'."
+                    ),
+                    object_refs=[parent_lv.name, placed_ref],
+                    hint='Update or remove the stale procedural volume reference.',
+                )
+
+            if world_volume_ref and placed_ref == world_volume_ref:
+                self._preflight_add_issue(
+                    report,
+                    'error',
+                    'world_volume_referenced_as_child',
+                    (
+                        f"Procedural placement '{proc_name}' in LV '{parent_lv.name}' references the world volume "
+                        f"'{world_volume_ref}' as a child."
+                    ),
+                    object_refs=[parent_lv.name, world_volume_ref],
+                    hint='World volume must be the root and cannot be used as a procedural child target.',
+                )
+
+            if parent_lv.content_type == 'replica':
+                replica_count = getattr(proc, '_evaluated_number', np.nan)
+                replica_width = getattr(proc, '_evaluated_width', np.nan)
+
+                if not np.isfinite(replica_count) or int(replica_count) <= 0:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_replica_instance_count',
+                        (
+                            f"Replica placement '{proc_name}' in LV '{parent_lv.name}' has invalid evaluated "
+                            f"number={replica_count}."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Replica number must evaluate to an integer > 0.',
+                    )
+
+                if not np.isfinite(replica_width) or float(replica_width) <= 0:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_replica_width',
+                        (
+                            f"Replica placement '{proc_name}' in LV '{parent_lv.name}' has invalid evaluated "
+                            f"width={replica_width}."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Replica width must evaluate to a positive finite value.',
+                    )
+
+                direction = getattr(proc, 'direction', {}) or {}
+                try:
+                    axis_vec = np.array([
+                        float(direction.get('x', np.nan)),
+                        float(direction.get('y', np.nan)),
+                        float(direction.get('z', np.nan)),
+                    ])
+                except Exception:
+                    axis_vec = np.array([np.nan, np.nan, np.nan])
+
+                if not np.all(np.isfinite(axis_vec)) or float(np.linalg.norm(axis_vec)) <= 0.0:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_replica_direction',
+                        (
+                            f"Replica placement '{proc_name}' in LV '{parent_lv.name}' has invalid direction "
+                            f"vector {direction}."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Replica direction must be a non-zero finite vector.',
+                    )
+
+            elif parent_lv.content_type == 'division':
+                axis = str(getattr(proc, 'axis', '') or '').strip().lower()
+                if axis not in valid_division_axes:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_division_axis',
+                        (
+                            f"Division placement '{proc_name}' in LV '{parent_lv.name}' has unsupported axis "
+                            f"'{getattr(proc, 'axis', '')}'."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Use one of: kXAxis, kYAxis, kZAxis (or x/y/z aliases).',
+                    )
+
+                division_number = getattr(proc, '_evaluated_number', np.nan)
+                division_width = getattr(proc, '_evaluated_width', np.nan)
+
+                has_positive_number = np.isfinite(division_number) and float(division_number) > 0
+                has_positive_width = np.isfinite(division_width) and float(division_width) > 0
+
+                if not has_positive_number and not has_positive_width:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_division_partition_bounds',
+                        (
+                            f"Division placement '{proc_name}' in LV '{parent_lv.name}' has invalid evaluated "
+                            f"number={division_number} and width={division_width}."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Division must evaluate to a positive number of slices and/or positive width.',
+                    )
+
+                if has_positive_number:
+                    axis_key = division_axis_to_box_dim.get(axis)
+                    mother_solid = state.solids.get(parent_lv.solid_ref)
+                    if axis_key and mother_solid and mother_solid.type == 'box':
+                        mother_params = mother_solid._evaluated_parameters or {}
+                        mother_extent = float(mother_params.get(axis_key, np.nan))
+                        division_offset = getattr(proc, '_evaluated_offset', np.nan)
+
+                        if np.isfinite(mother_extent) and np.isfinite(division_offset):
+                            derived_slice_width = (mother_extent - (2.0 * float(division_offset))) / float(division_number)
+                            if derived_slice_width <= 0:
+                                self._preflight_add_issue(
+                                    report,
+                                    'error',
+                                    'invalid_division_slice_width',
+                                    (
+                                        f"Division placement '{proc_name}' in LV '{parent_lv.name}' yields non-positive "
+                                        f"slice width {derived_slice_width} mm from mother extent {mother_extent} mm "
+                                        f"and offset {division_offset} mm."
+                                    ),
+                                    object_refs=[parent_lv.name],
+                                    hint='Reduce division offset or increase mother extent/number settings.',
+                                )
+
+            elif parent_lv.content_type == 'parameterised':
+                ncopies = getattr(proc, '_evaluated_ncopies', np.nan)
+                if not np.isfinite(ncopies) or int(ncopies) <= 0:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'invalid_parameterised_ncopies',
+                        (
+                            f"Parameterised placement '{proc_name}' in LV '{parent_lv.name}' has invalid evaluated "
+                            f"ncopies={ncopies}."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Set ncopies to an integer > 0.',
+                    )
+
+                parameter_sets = getattr(proc, 'parameters', None) or []
+                if not parameter_sets:
+                    self._preflight_add_issue(
+                        report,
+                        'error',
+                        'missing_parameterised_parameters',
+                        (
+                            f"Parameterised placement '{proc_name}' in LV '{parent_lv.name}' has no parameter sets."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Add at least one parameter block for the parameterised placement.',
+                    )
+                elif np.isfinite(ncopies) and int(ncopies) > 0 and len(parameter_sets) != int(ncopies):
+                    self._preflight_add_issue(
+                        report,
+                        'warning',
+                        'parameterised_parameter_count_mismatch',
+                        (
+                            f"Parameterised placement '{proc_name}' in LV '{parent_lv.name}' has ncopies={int(ncopies)} "
+                            f"but defines {len(parameter_sets)} parameter sets."
+                        ),
+                        object_refs=[parent_lv.name],
+                        hint='Align ncopies with the number of provided parameter sets for deterministic behavior.',
+                    )
+
+        # 3) Placement hierarchy cycle checks (LV <-> LV/ASM and ASM <-> LV/ASM).
         hierarchy_cycles, hierarchy_cycles_truncated = self._find_preflight_hierarchy_cycles(state)
         for cycle_path in hierarchy_cycles:
             cycle_str = ' -> '.join(cycle_path)
@@ -5620,7 +5841,7 @@ class ProjectManager:
                 f'Cycle reporting truncated after {len(hierarchy_cycles)} findings.',
             )
 
-        # 3) Missing references and material checks.
+        # 4) Missing references and material checks.
         for lv in state.logical_volumes.values():
             if not lv.solid_ref or lv.solid_ref not in state.solids:
                 self._preflight_add_issue(
@@ -5652,7 +5873,7 @@ class ProjectManager:
                     hint='Create this material or switch to a known/NIST material.',
                 )
 
-        # 4) Solid geometry sanity checks.
+        # 5) Solid geometry sanity checks.
         tiny_threshold_mm = 1e-3  # 1 micron in mm units
         for solid in state.solids.values():
             p = solid._evaluated_parameters or {}
@@ -5729,7 +5950,7 @@ class ProjectManager:
                         hint='Check CAD import quality; this may indicate degenerate geometry.',
                     )
 
-        # 5) Approximate sibling overlap checks (AABB heuristic).
+        # 6) Approximate sibling overlap checks (AABB heuristic).
         placement_groups = []
         for lv in state.logical_volumes.values():
             if lv.content_type == 'physvol' and lv.content:

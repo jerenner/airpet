@@ -6,6 +6,17 @@
 
 ## Recently Completed
 
+- **Preflight guards for procedural placements (replica/division/parameterised)** (2026-03-10)
+  - Added procedural preflight validation in `ProjectManager.run_preflight_checks()` for logical volumes using non-`physvol` content.
+  - New checks include:
+    - missing/unknown procedural `volume_ref`
+    - world volume incorrectly used as a procedural child target
+    - replica bounds sanity (`number`, `width`, non-zero direction)
+    - division sanity (supported axis, partition bounds, derived slice width positivity for box mothers)
+    - parameterised sanity (`ncopies` and parameter-block presence/count mismatch warning)
+  - Added regression tests in `tests/test_preflight.py` for replica/division/parameterised invalid procedural configurations.
+  - Why: catches stale procedural references and broken procedural bounds earlier, improving deterministic diagnostics before simulation/export.
+
 - **Preflight version selection diagnostics: ordering + source metadata** (2026-03-10)
   - Added explicit ordering metadata across preflight version compare/list responses, including selection ordering basis for:
     - latest manual saved comparisons
@@ -43,9 +54,9 @@
 
 ## Next Candidates
 
-1. **Preflight check for procedural volume references (replica/division/parameterised)**
-   - Validate referenced target volumes exist and bounds are sane before simulation.
-   - Impact: medium (catches stale references outside plain `physvol`).
+1. **Include procedural-container edges in placement hierarchy cycle detection**
+   - Extend preflight cycle graph construction so replica/division/parameterised child references participate in cycle discovery (not only `physvol` + assembly placements).
+   - Impact: high (prevents recursive topology loops from escaping cycle diagnostics when introduced through procedural containers).
 
 2. **Selection metadata consistency coverage across all preflight compare routes**
    - Add route-level regression checks to ensure `selection.ordering_basis` and source metadata remain stable across every compare endpoint variant.

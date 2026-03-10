@@ -24,6 +24,7 @@ from app import (
 )
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
+from src.geometry_types import DivisionVolume, ParamVolume, ReplicaVolume
 
 
 def _make_pm():
@@ -174,6 +175,81 @@ def test_preflight_detects_lv_assembly_placement_cycle():
     assert any(f"LV:{loop_lv['name']}" in issue['message'] for issue in cycle_issues)
     assert any(f"ASM:{loop_asm['name']}" in issue['message'] for issue in cycle_issues)
     assert report['summary']['can_run'] is False
+
+
+def test_preflight_detects_unknown_procedural_reference_and_invalid_replica_bounds():
+    pm = _make_pm()
+
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'replica'
+    container_lv.content = ReplicaVolume(
+        name='bad_replica',
+        volume_ref='MissingReplicaTarget',
+        number='0',
+        direction={'x': '0', 'y': '0', 'z': '0'},
+        width='0',
+        offset='0',
+    )
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'unknown_procedural_volume_reference' in codes
+    assert 'invalid_replica_instance_count' in codes
+    assert 'invalid_replica_width' in codes
+    assert 'invalid_replica_direction' in codes
+    assert report['summary']['can_run'] is False
+
+
+
+def test_preflight_detects_invalid_division_axis_and_partition_bounds():
+    pm = _make_pm()
+
+    child_lv, err = pm.add_logical_volume('division_child_lv', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'division'
+    container_lv.content = DivisionVolume(
+        name='bad_division',
+        volume_ref=child_lv['name'],
+        axis='kBadAxis',
+        number='0',
+        width='0',
+        offset='0',
+        unit='mm',
+    )
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'invalid_division_axis' in codes
+    assert 'invalid_division_partition_bounds' in codes
+    assert report['summary']['can_run'] is False
+
+
+
+def test_preflight_detects_invalid_parameterised_ncopies_and_missing_parameters():
+    pm = _make_pm()
+
+    child_lv, err = pm.add_logical_volume('parameterised_child_lv', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'parameterised'
+    container_lv.content = ParamVolume(
+        name='bad_param',
+        volume_ref=child_lv['name'],
+        ncopies='0',
+    )
+
+    report = pm.run_preflight_checks()
+
+    codes = [i['code'] for i in report['issues']]
+    assert 'invalid_parameterised_ncopies' in codes
+    assert 'missing_parameterised_parameters' in codes
+    assert report['summary']['can_run'] is False
+
 
 
 def test_preflight_flags_tiny_dimensions_warning():
