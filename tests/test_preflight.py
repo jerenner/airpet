@@ -96,6 +96,86 @@ def test_preflight_detects_world_volume_referenced_as_child():
     assert report['summary']['can_run'] is False
 
 
+def test_preflight_detects_logical_volume_placement_cycle():
+    pm = _make_pm()
+
+    loop_a, err = pm.add_logical_volume('loop_a_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+    loop_b, err = pm.add_logical_volume('loop_b_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        loop_a['name'],
+        'loop_a_to_b',
+        loop_b['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        loop_b['name'],
+        'loop_b_to_a',
+        loop_a['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    report = pm.run_preflight_checks()
+
+    cycle_issues = [i for i in report['issues'] if i['code'] == 'placement_hierarchy_cycle']
+    assert cycle_issues
+    assert any(f"LV:{loop_a['name']}" in issue['message'] for issue in cycle_issues)
+    assert any(f"LV:{loop_b['name']}" in issue['message'] for issue in cycle_issues)
+    assert report['summary']['can_run'] is False
+
+
+def test_preflight_detects_lv_assembly_placement_cycle():
+    pm = _make_pm()
+
+    loop_lv, err = pm.add_logical_volume('loop_lv', 'box_solid', 'G4_Galactic')
+    assert err is None
+    loop_asm, err = pm.add_assembly('loop_asm', [])
+    assert err is None
+
+    ok, err = pm.update_assembly(
+        loop_asm['name'],
+        [
+            {
+                'name': 'loop_asm_to_lv',
+                'volume_ref': loop_lv['name'],
+                'parent_lv_name': loop_asm['name'],
+                'position': {'x': '0', 'y': '0', 'z': '0'},
+                'rotation': {'x': '0', 'y': '0', 'z': '0'},
+                'scale': {'x': '1', 'y': '1', 'z': '1'},
+            }
+        ],
+    )
+    assert ok is True
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        loop_lv['name'],
+        'loop_lv_to_asm',
+        loop_asm['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    report = pm.run_preflight_checks()
+
+    cycle_issues = [i for i in report['issues'] if i['code'] == 'placement_hierarchy_cycle']
+    assert cycle_issues
+    assert any(f"LV:{loop_lv['name']}" in issue['message'] for issue in cycle_issues)
+    assert any(f"ASM:{loop_asm['name']}" in issue['message'] for issue in cycle_issues)
+    assert report['summary']['can_run'] is False
+
+
 def test_preflight_flags_tiny_dimensions_warning():
     pm = _make_pm()
     pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'

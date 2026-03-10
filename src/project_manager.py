@@ -5365,6 +5365,112 @@ class ProjectManager:
             return 0.0
         return float(overlap[0] * overlap[1] * overlap[2])
 
+    def _build_preflight_hierarchy_adjacency(self, state):
+        adjacency = {}
+
+        for lv_name in sorted(state.logical_volumes.keys()):
+            adjacency[f"LV:{lv_name}"] = []
+        for asm_name in sorted(state.assemblies.keys()):
+            adjacency[f"ASM:{asm_name}"] = []
+
+        for parent_lv in state.logical_volumes.values():
+            if parent_lv.content_type != 'physvol' or not parent_lv.content:
+                continue
+
+            parent_node = f"LV:{parent_lv.name}"
+            for pv in parent_lv.content:
+                placed_ref = str(getattr(pv, 'volume_ref', '') or '').strip()
+                if placed_ref in state.logical_volumes:
+                    adjacency[parent_node].append(f"LV:{placed_ref}")
+                elif placed_ref in state.assemblies:
+                    adjacency[parent_node].append(f"ASM:{placed_ref}")
+
+        for asm in state.assemblies.values():
+            parent_node = f"ASM:{asm.name}"
+            for pv in asm.placements:
+                placed_ref = str(getattr(pv, 'volume_ref', '') or '').strip()
+                if placed_ref in state.logical_volumes:
+                    adjacency[parent_node].append(f"LV:{placed_ref}")
+                elif placed_ref in state.assemblies:
+                    adjacency[parent_node].append(f"ASM:{placed_ref}")
+
+        for node_name, child_nodes in adjacency.items():
+            adjacency[node_name] = sorted(set(child_nodes))
+
+        return adjacency
+
+    def _normalize_preflight_cycle_signature(self, cycle_nodes):
+        if not cycle_nodes:
+            return tuple()
+
+        if len(cycle_nodes) > 1 and cycle_nodes[0] == cycle_nodes[-1]:
+            core = list(cycle_nodes[:-1])
+        else:
+            core = list(cycle_nodes)
+
+        if len(core) <= 1:
+            return tuple(core)
+
+        rotations = [
+            tuple(core[idx:] + core[:idx])
+            for idx in range(len(core))
+        ]
+        return min(rotations)
+
+    def _find_preflight_hierarchy_cycles(self, state, max_cycles=20):
+        adjacency = self._build_preflight_hierarchy_adjacency(state)
+        visited = set()
+        active_index = {}
+        active_stack = []
+
+        cycles = []
+        seen_signatures = set()
+        truncated = False
+
+        def _record_cycle(cycle_path):
+            nonlocal truncated
+            signature = self._normalize_preflight_cycle_signature(cycle_path)
+            if signature in seen_signatures:
+                return False
+
+            seen_signatures.add(signature)
+            cycles.append(cycle_path)
+            if len(cycles) >= max_cycles:
+                truncated = True
+                return True
+            return False
+
+        def _dfs(node_name):
+            visited.add(node_name)
+            active_index[node_name] = len(active_stack)
+            active_stack.append(node_name)
+
+            for child_name in adjacency.get(node_name, []):
+                if child_name in active_index:
+                    cycle_start_idx = active_index[child_name]
+                    cycle_path = active_stack[cycle_start_idx:] + [child_name]
+                    if _record_cycle(cycle_path):
+                        return True
+                    continue
+
+                if child_name in visited:
+                    continue
+
+                if _dfs(child_name):
+                    return True
+
+            active_stack.pop()
+            active_index.pop(node_name, None)
+            return False
+
+        for node_name in sorted(adjacency.keys()):
+            if node_name in visited:
+                continue
+            if _dfs(node_name):
+                break
+
+        return cycles, truncated
+
     def run_preflight_checks(self):
         """Runs lightweight geometry preflight checks prior to simulation."""
         report = {
@@ -5493,7 +5599,28 @@ class ProjectManager:
                         hint='World volume must be the root and should not be nested in assemblies.',
                     )
 
-        # 2) Missing references and material checks.
+        # 2) Placement hierarchy cycle checks (LV <-> LV/ASM and ASM <-> LV/ASM).
+        hierarchy_cycles, hierarchy_cycles_truncated = self._find_preflight_hierarchy_cycles(state)
+        for cycle_path in hierarchy_cycles:
+            cycle_str = ' -> '.join(cycle_path)
+            self._preflight_add_issue(
+                report,
+                'error',
+                'placement_hierarchy_cycle',
+                f'Placement hierarchy contains a recursive cycle: {cycle_str}.',
+                object_refs=cycle_path[:-1],
+                hint='Break recursive placement loops so the hierarchy becomes acyclic.',
+            )
+
+        if hierarchy_cycles_truncated:
+            self._preflight_add_issue(
+                report,
+                'info',
+                'placement_hierarchy_cycle_report_truncated',
+                f'Cycle reporting truncated after {len(hierarchy_cycles)} findings.',
+            )
+
+        # 3) Missing references and material checks.
         for lv in state.logical_volumes.values():
             if not lv.solid_ref or lv.solid_ref not in state.solids:
                 self._preflight_add_issue(
@@ -5525,7 +5652,7 @@ class ProjectManager:
                     hint='Create this material or switch to a known/NIST material.',
                 )
 
-        # 3) Solid geometry sanity checks.
+        # 4) Solid geometry sanity checks.
         tiny_threshold_mm = 1e-3  # 1 micron in mm units
         for solid in state.solids.values():
             p = solid._evaluated_parameters or {}
@@ -5602,7 +5729,7 @@ class ProjectManager:
                         hint='Check CAD import quality; this may indicate degenerate geometry.',
                     )
 
-        # 4) Approximate sibling overlap checks (AABB heuristic).
+        # 5) Approximate sibling overlap checks (AABB heuristic).
         placement_groups = []
         for lv in state.logical_volumes.values():
             if lv.content_type == 'physvol' and lv.content:
