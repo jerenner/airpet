@@ -354,6 +354,61 @@ def test_ai_tool_compare_autosave_preflight_vs_previous_manual_saved_requires_no
     assert "manually saved non-snapshot version" in res["error"]
 
 
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_index_project"
+
+    oldest_manual_version_id, _ = pm.save_project_version('manual_oldest_ai')
+    target_manual_version_id, _ = pm.save_project_version('manual_target_ai')
+    pm.save_project_version('autosave_snapshot_latest_ai')
+    latest_manual_version_id, _ = pm.save_project_version('manual_latest_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_index", {
+        "project": pm.project_name,
+        "n_back": 1,
+    })
+
+    manual_sorted = sorted(
+        [oldest_manual_version_id, target_manual_version_id, latest_manual_version_id],
+        reverse=True,
+    )
+    assert res["success"] is True
+    assert res["baseline_version_id"] == manual_sorted[1]
+    assert res["candidate_version_id"] == "autosave"
+    assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_index"
+    assert res["selection"]["manual_saved_index"] == 1
+
+
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index_rejects_out_of_range_index(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_index_invalid"
+
+    pm.save_project_version('manual_only_ai')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_index", {
+        "manual_saved_index": 5,
+    })
+
+    assert res["success"] is False
+    assert "out of range" in res["error"]
+
+
 def test_ai_tool_compare_autosave_preflight_vs_saved_version(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_selected_project"

@@ -1797,11 +1797,43 @@ def _list_saved_non_snapshot_version_ids(pm: ProjectManager, project_name: str) 
     ]
 
 
-def compare_autosave_preflight_vs_previous_manual_saved(pm: ProjectManager, project_name: Optional[str] = None) -> Dict[str, Any]:
-    """Compare autosave preflight checks against the latest non-snapshot manually saved project version."""
+def _normalize_manual_saved_index(manual_saved_index: Any) -> int:
+    """Parse and validate non-negative manual saved index selectors (N-back)."""
+    if manual_saved_index is None:
+        return 0
+
+    if isinstance(manual_saved_index, bool):
+        raise ValueError("manual_saved_index must be a non-negative integer.")
+
+    if isinstance(manual_saved_index, int):
+        index = manual_saved_index
+    elif isinstance(manual_saved_index, str):
+        value = manual_saved_index.strip()
+        if not value:
+            raise ValueError("manual_saved_index must be a non-negative integer.")
+        try:
+            index = int(value)
+        except ValueError as exc:
+            raise ValueError("manual_saved_index must be a non-negative integer.") from exc
+    else:
+        raise ValueError("manual_saved_index must be a non-negative integer.")
+
+    if index < 0:
+        raise ValueError("manual_saved_index must be a non-negative integer.")
+    return index
+
+
+def compare_autosave_preflight_vs_manual_saved_index(
+    pm: ProjectManager,
+    manual_saved_index: Any = 0,
+    project_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compare autosave preflight checks against an N-back non-snapshot manual saved version."""
     project_name_norm = str(project_name or pm.project_name or '').strip()
     if not project_name_norm:
-        raise ValueError("project_name is required to compare autosave with the previous manual saved version.")
+        raise ValueError("project_name is required to compare autosave with a manual saved version index.")
+
+    manual_saved_index_norm = _normalize_manual_saved_index(manual_saved_index)
 
     version_ids = _list_saved_version_ids(pm, project_name_norm)
     manual_version_ids = _list_saved_non_snapshot_version_ids(pm, project_name_norm)
@@ -1809,24 +1841,42 @@ def compare_autosave_preflight_vs_previous_manual_saved(pm: ProjectManager, proj
         raise ValueError(
             f"Need at least one manually saved non-snapshot version for project '{project_name_norm}' to compare autosave preflight checks."
         )
+    if manual_saved_index_norm >= len(manual_version_ids):
+        raise ValueError(
+            f"manual_saved_index={manual_saved_index_norm} is out of range for project '{project_name_norm}' "
+            f"(available manual saved versions: {len(manual_version_ids)})."
+        )
 
-    previous_manual_saved_version_id = manual_version_ids[0]
+    selected_manual_saved_version_id = manual_version_ids[manual_saved_index_norm]
 
     result = compare_preflight_versions(
         pm,
-        baseline_version_id=previous_manual_saved_version_id,
+        baseline_version_id=selected_manual_saved_version_id,
         candidate_version_id=AUTOSAVE_VERSION_ID,
         project_name=project_name_norm,
     )
 
     result['selection'] = {
-        'strategy': 'latest_autosave_vs_previous_manual_saved',
+        'strategy': 'latest_autosave_vs_manual_saved_index',
         'selected_version_ids': [AUTOSAVE_VERSION_ID, result['baseline_version_id']],
-        'previous_manual_saved_version_id': result['baseline_version_id'],
+        'manual_saved_index': manual_saved_index_norm,
+        'selected_manual_saved_version_id': result['baseline_version_id'],
         'total_saved_versions': len(version_ids),
         'total_snapshot_versions': len(version_ids) - len(manual_version_ids),
         'total_manual_saved_versions': len(manual_version_ids),
     }
+    return result
+
+
+def compare_autosave_preflight_vs_previous_manual_saved(pm: ProjectManager, project_name: Optional[str] = None) -> Dict[str, Any]:
+    """Compare autosave preflight checks against the latest non-snapshot manually saved project version."""
+    result = compare_autosave_preflight_vs_manual_saved_index(
+        pm,
+        manual_saved_index=0,
+        project_name=project_name,
+    )
+    result['selection']['strategy'] = 'latest_autosave_vs_previous_manual_saved'
+    result['selection']['previous_manual_saved_version_id'] = result['baseline_version_id']
     return result
 
 
@@ -2310,6 +2360,37 @@ def preflight_compare_autosave_vs_previous_manual_saved_route():
     try:
         result = compare_autosave_preflight_vs_previous_manual_saved(
             pm,
+            project_name=project_name,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 404
+
+    return jsonify({
+        "success": True,
+        **result,
+    })
+
+
+@app.route('/api/preflight/compare_autosave_vs_manual_saved_index', methods=['POST'])
+def preflight_compare_autosave_vs_manual_saved_index_route():
+    pm = get_project_manager_for_session()
+    data = request.get_json(silent=True) or {}
+    project_name = data.get('project_name') or pm.project_name
+
+    manual_saved_index = (
+        data.get('manual_saved_index')
+        if data.get('manual_saved_index') is not None
+        else data.get('manual_saved_n_back')
+    )
+    if manual_saved_index is None:
+        manual_saved_index = data.get('n_back')
+
+    try:
+        result = compare_autosave_preflight_vs_manual_saved_index(
+            pm,
+            manual_saved_index=manual_saved_index,
             project_name=project_name,
         )
     except ValueError as exc:
@@ -7083,6 +7164,13 @@ AI_TOOL_ARG_ALIASES = {
     "compare_autosave_preflight_vs_previous_manual_saved": {
         "project": "project_name"
     },
+    "compare_autosave_preflight_vs_manual_saved_index": {
+        "project": "project_name",
+        "manual_saved_n_back": "manual_saved_index",
+        "n_back": "manual_saved_index",
+        "index": "manual_saved_index",
+        "previous_manual_saved_index": "manual_saved_index"
+    },
     "compare_autosave_preflight_vs_saved_version": {
         "project": "project_name",
         "saved_version": "saved_version_id",
@@ -8028,6 +8116,21 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             try:
                 result = compare_autosave_preflight_vs_previous_manual_saved(
                     pm,
+                    project_name=args.get("project_name"),
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {
+                "success": True,
+                **result,
+            }
+
+        elif tool_name == "compare_autosave_preflight_vs_manual_saved_index":
+            try:
+                result = compare_autosave_preflight_vs_manual_saved_index(
+                    pm,
+                    manual_saved_index=args.get("manual_saved_index"),
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:

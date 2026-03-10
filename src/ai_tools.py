@@ -620,6 +620,23 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "compare_autosave_preflight_vs_manual_saved_index",
+        "description": "Compare deterministic preflight summaries for the latest autosave version against an N-back manually saved non-snapshot version (0 = latest manual save, 1 = previous, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "manual_saved_index": {
+                    "type": "integer",
+                    "description": "Non-negative N-back index into manually saved non-snapshot versions sorted newest-first (default: 0)."
+                },
+                "project_name": {
+                    "type": "string",
+                    "description": "Optional project name. Defaults to the currently active project."
+                }
+            }
+        }
+    },
+    {
         "name": "compare_autosave_preflight_vs_saved_version",
         "description": "Compare deterministic preflight summaries for the latest autosave version against a specific manually saved version.",
         "parameters": {

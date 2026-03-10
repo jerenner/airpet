@@ -6,6 +6,7 @@ from app import (
     app,
     compare_autosave_preflight_vs_latest_saved,
     compare_autosave_preflight_vs_latest_snapshot,
+    compare_autosave_preflight_vs_manual_saved_index,
     compare_autosave_preflight_vs_previous_manual_saved,
     compare_autosave_preflight_vs_previous_snapshot,
     compare_autosave_preflight_vs_saved_version,
@@ -392,6 +393,66 @@ def test_compare_autosave_preflight_vs_previous_manual_saved_requires_non_snapsh
             assert False, 'Expected compare_autosave_preflight_vs_previous_manual_saved to require a non-snapshot saved version.'
         except ValueError as exc:
             assert 'manually saved non-snapshot version' in str(exc)
+
+
+def test_compare_autosave_preflight_vs_manual_saved_index_selects_n_back_manual_version():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_autosave_manual_saved_index_project'
+
+        oldest_manual_version_id, _ = pm.save_project_version('manual_oldest')
+        target_manual_version_id, _ = pm.save_project_version('manual_target_n1')
+        pm.save_project_version('autosave_snapshot_latest')
+        latest_manual_version_id, _ = pm.save_project_version('manual_latest')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        result = compare_autosave_preflight_vs_manual_saved_index(pm, manual_saved_index=1)
+
+    manual_sorted = sorted(
+        [oldest_manual_version_id, target_manual_version_id, latest_manual_version_id],
+        reverse=True,
+    )
+    assert result['baseline_version_id'] == manual_sorted[1]
+    assert result['candidate_version_id'] == 'autosave'
+    assert 'unknown_material_reference' in result['comparison']['added_issue_codes']
+    assert result['selection']['strategy'] == 'latest_autosave_vs_manual_saved_index'
+    assert result['selection']['manual_saved_index'] == 1
+    assert result['selection']['selected_manual_saved_version_id'] == manual_sorted[1]
+    assert result['selection']['total_snapshot_versions'] == 1
+    assert result['selection']['total_manual_saved_versions'] == 3
+
+
+def test_compare_autosave_preflight_vs_manual_saved_index_rejects_out_of_range_index():
+    pm = _make_pm()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_autosave_manual_saved_index_out_of_range'
+
+        pm.save_project_version('manual_only')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        try:
+            compare_autosave_preflight_vs_manual_saved_index(pm, manual_saved_index=1)
+            assert False, 'Expected compare_autosave_preflight_vs_manual_saved_index to reject out-of-range index.'
+        except ValueError as exc:
+            assert 'out of range' in str(exc)
 
 
 def test_compare_autosave_preflight_vs_saved_version_uses_requested_saved_baseline():
@@ -963,6 +1024,74 @@ def test_preflight_compare_autosave_vs_previous_manual_saved_route_requires_non_
     data = resp.get_json()
     assert data['success'] is False
     assert 'manually saved non-snapshot version' in data['error']
+
+
+def test_preflight_compare_autosave_vs_manual_saved_index_route_returns_comparison_payload():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_index_project'
+
+        oldest_manual_version_id, _ = pm.save_project_version('manual_oldest_route')
+        target_manual_version_id, _ = pm.save_project_version('manual_target_route')
+        pm.save_project_version('autosave_snapshot_latest_route')
+        latest_manual_version_id, _ = pm.save_project_version('manual_latest_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_index', json={
+                'project_name': pm.project_name,
+                'n_back': 1,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    manual_sorted = sorted(
+        [oldest_manual_version_id, target_manual_version_id, latest_manual_version_id],
+        reverse=True,
+    )
+    assert data['success'] is True
+    assert data['baseline_version_id'] == manual_sorted[1]
+    assert data['candidate_version_id'] == 'autosave'
+    assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_index'
+    assert data['selection']['manual_saved_index'] == 1
+
+
+def test_preflight_compare_autosave_vs_manual_saved_index_route_rejects_invalid_index():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_index_invalid'
+
+        pm.save_project_version('manual_only_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_index', json={
+                'project_name': pm.project_name,
+                'manual_saved_index': 9,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data['success'] is False
+    assert 'out of range' in data['error']
 
 
 def test_preflight_compare_autosave_vs_saved_version_route_returns_comparison_payload():
