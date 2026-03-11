@@ -399,6 +399,32 @@ def _assert_compare_route_error_payload_excludes_success_metadata(data):
         assert field_name not in data
 
 
+def _assert_preflight_list_route_error_payload_excludes_success_metadata(data):
+    assert data['success'] is False
+    assert isinstance(data.get('error'), str)
+
+    for field_name in (
+        'project_name',
+        'simulation_run_id',
+        'ordering_basis',
+        'manual_saved_ordering_basis',
+        'versions_root',
+        'versions_root_exists',
+        'total_versions',
+        'returned_versions',
+        'has_autosave',
+        'versions',
+        'ordered_manual_saved_version_ids',
+        'total_saved_versions',
+        'total_snapshot_versions',
+        'total_manual_saved_versions',
+        'total_matching_manual_saved_versions',
+        'returned_matching_manual_saved_versions',
+        'matching_manual_saved_versions',
+    ):
+        assert field_name not in data
+
+
 def test_find_preflight_hierarchy_cycles_respects_max_cycles_cap_deterministically():
     pm = _make_pm()
     loop_a, loop_b, loop_c = _build_multi_cycle_lv_triangle(pm)
@@ -1625,8 +1651,23 @@ def test_preflight_list_versions_route_rejects_negative_limit():
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_preflight_list_route_error_payload_excludes_success_metadata(data)
     assert 'limit' in data['error']
+
+
+def test_preflight_list_versions_route_rejects_missing_project_name_without_success_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        pm.project_name = ''
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/list_versions', json={})
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_preflight_list_route_error_payload_excludes_success_metadata(data)
+    assert 'project_name' in data['error']
 
 
 def test_preflight_list_manual_saved_versions_for_simulation_run_route_returns_indexed_payload():
@@ -1681,8 +1722,25 @@ def test_preflight_list_manual_saved_versions_for_simulation_run_route_rejects_i
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_preflight_list_route_error_payload_excludes_success_metadata(data)
     assert 'limit' in data['error']
+
+
+def test_preflight_list_manual_saved_versions_for_simulation_run_route_requires_simulation_run_id_without_success_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        pm.project_name = 'route_list_manual_saved_for_run_missing_selector'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/list_manual_saved_versions_for_simulation_run', json={
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_preflight_list_route_error_payload_excludes_success_metadata(data)
+    assert 'simulation_run_id' in data['error']
 
 
 def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_returns_comparison_payload():

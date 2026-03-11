@@ -103,6 +103,32 @@ def _assert_compare_ai_error_payload_excludes_success_metadata(data):
         assert field_name not in data
 
 
+def _assert_preflight_list_ai_error_payload_excludes_success_metadata(data):
+    assert data['success'] is False
+    assert isinstance(data.get('error'), str)
+
+    for field_name in (
+        'project_name',
+        'simulation_run_id',
+        'ordering_basis',
+        'manual_saved_ordering_basis',
+        'versions_root',
+        'versions_root_exists',
+        'total_versions',
+        'returned_versions',
+        'has_autosave',
+        'versions',
+        'ordered_manual_saved_version_ids',
+        'total_saved_versions',
+        'total_snapshot_versions',
+        'total_manual_saved_versions',
+        'total_matching_manual_saved_versions',
+        'returned_matching_manual_saved_versions',
+        'matching_manual_saved_versions',
+    ):
+        assert field_name not in data
+
+
 def test_ai_tool_manage_define(pm):
     # Test creation
     res = dispatch_ai_tool(pm, "manage_define", {
@@ -1334,8 +1360,20 @@ def test_ai_tool_list_manual_saved_versions_for_simulation_run_rejects_invalid_l
         "limit": -1,
     })
 
-    assert res["success"] is False
+    _assert_preflight_list_ai_error_payload_excludes_success_metadata(res)
     assert "limit" in res["error"]
+
+
+def test_ai_tool_list_manual_saved_versions_for_simulation_run_requires_simulation_run_id_without_success_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_list_manual_saved_for_run_missing_selector"
+
+    res = dispatch_ai_tool(pm, "list_manual_saved_versions_for_simulation_run", {
+        "project_name": pm.project_name,
+    })
+
+    _assert_preflight_list_ai_error_payload_excludes_success_metadata(res)
+    assert "simulation_run_id" in res["error"]
 
 
 def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_supports_aliases(pm, tmp_path):
@@ -1482,6 +1520,29 @@ def test_ai_tool_list_preflight_versions_can_exclude_autosave(pm, tmp_path):
     assert res["success"] is True
     assert res["has_autosave"] is False
     assert all(not entry["is_autosave"] for entry in res["versions"])
+
+
+def test_ai_tool_list_preflight_versions_rejects_invalid_limit_without_success_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_preflight_versions_invalid_limit"
+
+    res = dispatch_ai_tool(pm, "list_preflight_versions", {
+        "project_name": pm.project_name,
+        "limit": -1,
+    })
+
+    _assert_preflight_list_ai_error_payload_excludes_success_metadata(res)
+    assert "limit" in res["error"]
+
+
+def test_ai_tool_list_preflight_versions_rejects_missing_project_name_without_success_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = ""
+
+    res = dispatch_ai_tool(pm, "list_preflight_versions", {})
+
+    _assert_preflight_list_ai_error_payload_excludes_success_metadata(res)
+    assert "project_name" in res["error"]
 
 
 def test_ai_simulation_tools(pm):
