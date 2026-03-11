@@ -957,6 +957,28 @@ def test_ai_tool_compare_autosave_preflight_vs_saved_version_requires_saved_vers
     assert "saved_version_id" in res["error"]
 
 
+def test_ai_tool_compare_autosave_preflight_vs_saved_version_returns_not_found_for_unknown_saved_version(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_selected_missing_version"
+
+    pm.save_project_version("manual_existing_ai")
+
+    pm.current_geometry_state.logical_volumes["box_LV"].material_ref = "MissingMat"
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir("autosave")
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, "version.json"), "w") as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_saved_version", {
+        "saved_version_id": "missing_manual_ai_version",
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "not found" in res["error"].lower()
+
+
 def test_ai_tool_compare_autosave_preflight_vs_snapshot_version(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_snapshot_project"
@@ -1000,6 +1022,28 @@ def test_ai_tool_compare_autosave_preflight_vs_snapshot_version_requires_snapsho
 
     _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "autosave_snapshot_version_id" in res["error"]
+
+
+def test_ai_tool_compare_autosave_preflight_vs_snapshot_version_returns_not_found_for_unknown_snapshot_version(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_snapshot_missing_version"
+
+    pm.save_project_version("autosave_snapshot_existing_ai")
+
+    pm.current_geometry_state.logical_volumes["box_LV"].material_ref = "MissingMat"
+    pm.recalculate_geometry_state()
+
+    autosave_dir = pm._get_version_dir("autosave")
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, "version.json"), "w") as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_snapshot_version", {
+        "autosave_snapshot_version_id": "20990101_autosave_snapshot_missing_ai",
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "not found" in res["error"].lower()
 
 
 def test_ai_tool_compare_autosave_preflight_vs_snapshot_version_rejects_non_snapshot_version(pm, tmp_path):
@@ -1198,6 +1242,21 @@ def test_ai_tool_compare_autosave_snapshot_preflight_versions_rejects_non_snapsh
     assert res["success"] is False
     assert "candidate_snapshot_version_id" in res["error"]
     assert "autosave snapshot" in res["error"]
+
+
+def test_ai_tool_compare_autosave_snapshot_preflight_versions_returns_not_found_for_unknown_snapshot_version(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_snapshot_versions_missing_version"
+
+    baseline_snapshot_version_id, _ = pm.save_project_version("autosave_snapshot_baseline_ai")
+
+    res = dispatch_ai_tool(pm, "compare_autosave_snapshot_preflight_versions", {
+        "baseline_snapshot_version_id": baseline_snapshot_version_id,
+        "candidate_snapshot_version_id": "20990101_autosave_snapshot_missing_ai",
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "not found" in res["error"].lower()
 
 
 def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions(pm, tmp_path):

@@ -6,6 +6,17 @@
 
 ## Recently Completed
 
+- **Compare-failure 404 envelope matrix for explicit selectors (route + AI wrappers)** (2026-03-11)
+  - Added deterministic 404 regression coverage for explicit compare selector paths so stale user-supplied ids keep clean failure envelopes (no success-only compare metadata):
+    - Route: `POST /api/preflight/compare_autosave_vs_saved_version` with unknown `saved_version_id`
+    - Route: `POST /api/preflight/compare_autosave_vs_snapshot_version` with unknown snapshot id
+    - Route: `POST /api/preflight/compare_snapshot_versions` with unknown snapshot candidate id
+    - AI wrapper: `compare_autosave_preflight_vs_saved_version` with unknown `saved_version_id`
+    - AI wrapper: `compare_autosave_preflight_vs_snapshot_version` with unknown snapshot id
+    - AI wrapper: `compare_autosave_snapshot_preflight_versions` with unknown snapshot candidate id
+  - Reused existing compare error-envelope assertion helpers to lock payload contract (`success/error` only, excluding `comparison`, `selection`, `ordering_metadata`, `version_sources`, and reports) on all new 404 paths.
+  - Why: strengthens deterministic client branching for stale-id failures across explicit selector surfaces used by both HTTP clients and AI tooling.
+
 - **Run/manual compare-selector failure-envelope metadata contract coverage (route + AI wrappers)** (2026-03-11)
   - Extended regression assertions so remaining run/manual compare failure paths explicitly keep `success/error` envelopes while excluding success-only compare metadata (`comparison`, `selection`, `ordering_metadata`, `version_sources`, version ids/reports).
   - Added/strengthened route-level negative-path contract assertions for:
@@ -226,10 +237,10 @@
    - Add table-driven tests that compare key payload fields (`selection`, `ordering_metadata`, `version_sources`, and error envelopes) between HTTP routes and `dispatch_ai_tool` wrappers for the same scenarios.
    - Impact: medium (prevents contract drift between human/API and AI tool entry points).
 
-2. **Compare-failure 404 envelope matrix for explicit selectors (route + AI wrappers)**
-   - Add deterministic not-found/invalid-id regressions for explicit selector paths (saved/snapshot/version-id variants) and assert failure envelopes continue to exclude compare-success metadata.
-   - Impact: medium (hardens deterministic client handling for stale or user-supplied ids).
-
-3. **Negative-path envelope consistency for preflight list/discovery selectors**
+2. **Negative-path envelope consistency for preflight list/discovery selectors**
    - Add contract assertions for `list_preflight_versions` and `list_manual_saved_versions_for_simulation_run` failure paths (missing required aliases, invalid limits, bad run selectors) so list endpoints share the same clean error-envelope guarantees as compare endpoints.
    - Impact: medium (extends deterministic error contracts beyond compare surfaces).
+
+3. **Run/manual compare selector stale-id 404 coverage**
+   - Add explicit stale-id regressions for run-linked/manual-index compare selector routes and AI wrappers where version lookups occur after selector expansion, ensuring `success/error` envelopes remain metadata-clean on not-found paths.
+   - Impact: medium (completes deterministic stale-id handling coverage across simulation-run keyed compare surfaces).

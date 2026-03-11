@@ -2597,6 +2597,35 @@ def test_preflight_compare_autosave_vs_saved_version_route_requires_saved_versio
     assert 'saved_version_id' in data['error']
 
 
+def test_preflight_compare_autosave_vs_saved_version_route_returns_404_for_unknown_saved_version():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_selected_missing_version'
+
+        pm.save_project_version('manual_existing_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_saved_version', json={
+                'project_name': pm.project_name,
+                'saved_version_id': 'missing_manual_route_version',
+            })
+
+    assert resp.status_code == 404
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'not found' in data['error'].lower()
+
+
 def test_preflight_compare_autosave_vs_snapshot_version_route_returns_comparison_payload():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
@@ -2656,6 +2685,35 @@ def test_preflight_compare_autosave_vs_snapshot_version_route_requires_snapshot_
     data = resp.get_json()
     _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'autosave_snapshot_version_id' in data['error']
+
+
+def test_preflight_compare_autosave_vs_snapshot_version_route_returns_404_for_unknown_snapshot_version():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_snapshot_missing_version'
+
+        pm.save_project_version('autosave_snapshot_manual_existing_route')
+
+        pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+        pm.recalculate_geometry_state()
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_snapshot_version', json={
+                'project_name': pm.project_name,
+                'autosave_snapshot_version_id': '20990101_autosave_snapshot_missing_route',
+            })
+
+    assert resp.status_code == 404
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'not found' in data['error'].lower()
 
 
 def test_preflight_compare_autosave_vs_latest_snapshot_route_returns_comparison_payload():
@@ -2877,6 +2935,28 @@ def test_preflight_compare_snapshot_versions_route_requires_both_snapshot_ids():
     data = resp.get_json()
     _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'candidate_snapshot_version_id' in data['error']
+
+
+def test_preflight_compare_snapshot_versions_route_returns_404_for_unknown_snapshot_version():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_snapshot_versions_missing_version'
+
+        baseline_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_baseline_route')
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_snapshot_versions', json={
+                'project_name': pm.project_name,
+                'baseline_snapshot_version_id': baseline_snapshot_version_id,
+                'candidate_snapshot_version_id': '20990101_autosave_snapshot_missing_route',
+            })
+
+    assert resp.status_code == 404
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'not found' in data['error'].lower()
 
 
 def test_preflight_compare_latest_snapshot_versions_route_returns_comparison_payload():
