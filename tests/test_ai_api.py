@@ -60,6 +60,32 @@ def _assert_single_cycle_truncation_issue(issues):
     }
 
 
+def _assert_compare_ai_selection_and_source_metadata(
+    data,
+    *,
+    baseline_version_id,
+    candidate_version_id,
+    selection_ordering_basis=None,
+):
+    assert data['ordering_metadata']['ordering_basis'] == 'explicit_version_ids'
+
+    baseline_source = data['version_sources']['baseline']
+    candidate_source = data['version_sources']['candidate']
+
+    assert baseline_source['version_id'] == baseline_version_id
+    assert candidate_source['version_id'] == candidate_version_id
+
+    for source in (baseline_source, candidate_source):
+        assert source['version_json_exists'] is True
+        assert source['version_json_mtime_utc'] is not None
+        assert source['source_path_checks']['versions_root_exists'] is True
+        assert source['source_path_checks']['version_dir_within_versions_root'] is True
+        assert source['source_path_checks']['version_json_within_versions_root'] is True
+
+    if selection_ordering_basis is not None:
+        assert data['selection']['ordering_basis'] == selection_ordering_basis
+
+
 def test_ai_tool_manage_define(pm):
     # Test creation
     res = dispatch_ai_tool(pm, "manage_define", {
@@ -299,6 +325,11 @@ def test_ai_tool_compare_preflight_versions_runs_saved_version_checks(pm, tmp_pa
     assert comparison["resolved_issue_codes"] == ["unknown_material_reference"]
     assert comparison["added_issue_codes"] == ["tiny_dimension"]
     assert comparison["status"]["improved_can_run"] is True
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id=candidate_version_id,
+    )
 
 
 def test_ai_tool_compare_preflight_versions_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -358,6 +389,12 @@ def test_ai_tool_compare_latest_preflight_versions_uses_latest_two_saved_version
     assert res["candidate_version_id"] == candidate_version_id
     assert res["comparison"]["added_issue_codes"] == ["possible_overlap_aabb"]
     assert res["selection"]["strategy"] == "latest_two_saved_versions"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id=candidate_version_id,
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_latest_saved(pm, tmp_path):
@@ -381,6 +418,12 @@ def test_ai_tool_compare_autosave_preflight_vs_latest_saved(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
     assert res["selection"]["strategy"] == "latest_autosave_vs_latest_saved"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_latest_saved_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -433,6 +476,12 @@ def test_ai_tool_compare_autosave_preflight_vs_previous_manual_saved(pm, tmp_pat
     assert res["baseline_version_id"] == previous_manual_saved_version_id
     assert res["candidate_version_id"] == "autosave"
     assert res["selection"]["strategy"] == "latest_autosave_vs_previous_manual_saved"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=previous_manual_saved_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_previous_manual_saved_requires_non_snapshot_saved_version(pm, tmp_path):
@@ -486,6 +535,12 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_index"
     assert res["selection"]["manual_saved_index"] == 1
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=manual_sorted[1],
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -580,6 +635,12 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run(p
     assert res["candidate_version_id"] == "autosave"
     assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_for_simulation_run"
     assert res["selection"]["simulation_run_id"] == simulation_run_id
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=expected_latest_matching_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -658,6 +719,12 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_i
     assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_for_simulation_run_index"
     assert res["selection"]["simulation_run_id"] == simulation_run_id
     assert res["selection"]["manual_saved_index"] == 1
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=matching_sorted[1],
+        candidate_version_id='autosave',
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -773,6 +840,12 @@ def test_ai_tool_compare_autosave_preflight_vs_saved_version(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert "unknown_material_reference" in res["comparison"]["added_issue_codes"]
     assert res["selection"]["strategy"] == "latest_autosave_vs_selected_saved_version"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=requested_saved_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='explicit_saved_version_id',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_snapshot_version(pm, tmp_path):
@@ -802,6 +875,12 @@ def test_ai_tool_compare_autosave_preflight_vs_snapshot_version(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert "unknown_material_reference" in res["comparison"]["added_issue_codes"]
     assert res["selection"]["strategy"] == "latest_autosave_vs_selected_autosave_snapshot"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=requested_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='explicit_autosave_snapshot_version_id',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_snapshot_version_rejects_non_snapshot_version(pm, tmp_path):
@@ -849,6 +928,12 @@ def test_ai_tool_compare_autosave_preflight_vs_latest_snapshot(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert res["selection"]["strategy"] == "latest_autosave_vs_latest_autosave_snapshot"
     assert res["selection"]["total_snapshot_versions"] == 2
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=latest_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_latest_snapshot_requires_snapshot_version(pm, tmp_path):
@@ -896,6 +981,12 @@ def test_ai_tool_compare_autosave_preflight_vs_previous_snapshot(pm, tmp_path):
     assert res["candidate_version_id"] == "autosave"
     assert "unknown_material_reference" in res["comparison"]["added_issue_codes"]
     assert res["selection"]["strategy"] == "latest_autosave_vs_previous_autosave_snapshot"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=previous_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_ai_tool_compare_autosave_preflight_vs_previous_snapshot_requires_two_snapshots(pm, tmp_path):
@@ -938,6 +1029,12 @@ def test_ai_tool_compare_autosave_snapshot_preflight_versions(pm, tmp_path):
     assert res["candidate_version_id"] == candidate_snapshot_version_id
     assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
     assert res["selection"]["strategy"] == "selected_autosave_snapshot_versions"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=baseline_snapshot_version_id,
+        candidate_version_id=candidate_snapshot_version_id,
+        selection_ordering_basis='explicit_autosave_snapshot_version_ids',
+    )
 
 
 def test_ai_tool_compare_autosave_snapshot_preflight_versions_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -988,7 +1085,7 @@ def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions(pm, tmp_pat
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_latest_snapshot_versions_project"
 
-    pm.save_project_version('autosave_snapshot_old_ai')
+    baseline_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_old_ai')
 
     pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
     pm.recalculate_geometry_state()
@@ -1002,6 +1099,12 @@ def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions(pm, tmp_pat
     assert res["candidate_version_id"] == latest_snapshot_version_id
     assert res["comparison"]["added_issue_codes"] == ["unknown_material_reference"]
     assert res["selection"]["strategy"] == "latest_two_autosave_snapshot_versions"
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=baseline_snapshot_version_id,
+        candidate_version_id=latest_snapshot_version_id,
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_ai_tool_compare_latest_autosave_snapshot_preflight_versions_requires_two_snapshots(pm, tmp_path):
@@ -1094,6 +1197,12 @@ def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_su
     assert res["selection"]["strategy"] == "manual_saved_versions_for_simulation_run_indices"
     assert res["selection"]["baseline_manual_saved_index"] == 1
     assert res["selection"]["candidate_manual_saved_index"] == 0
+    _assert_compare_ai_selection_and_source_metadata(
+        res,
+        baseline_version_id=matching_sorted[1],
+        candidate_version_id=matching_sorted[0],
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_preserves_cycle_truncation_metadata(pm, tmp_path):

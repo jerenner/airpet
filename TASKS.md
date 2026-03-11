@@ -6,6 +6,28 @@
 
 ## Recently Completed
 
+- **AI compare-wrapper selection/source metadata contract coverage across preflight compare tools** (2026-03-11)
+  - Added shared helper `_assert_compare_ai_selection_and_source_metadata(...)` in `tests/test_ai_api.py` to lock AI compare-response metadata contract:
+    - `ordering_metadata.ordering_basis == "explicit_version_ids"`
+    - `version_sources.{baseline,candidate}` id/path/mtime + within-root checks
+    - optional `selection.ordering_basis` checks per wrapper strategy
+  - Extended AI-dispatch compare success tests to assert deterministic metadata contracts for:
+    - `compare_preflight_versions`
+    - `compare_latest_preflight_versions`
+    - `compare_autosave_preflight_vs_latest_saved`
+    - `compare_autosave_preflight_vs_previous_manual_saved`
+    - `compare_autosave_preflight_vs_manual_saved_index`
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run`
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index`
+    - `compare_manual_preflight_versions_for_simulation_run_indices`
+    - `compare_autosave_preflight_vs_saved_version`
+    - `compare_autosave_preflight_vs_snapshot_version`
+    - `compare_autosave_preflight_vs_latest_snapshot`
+    - `compare_autosave_preflight_vs_previous_snapshot`
+    - `compare_autosave_snapshot_preflight_versions`
+    - `compare_latest_autosave_snapshot_preflight_versions`
+  - Why: keeps AI wrapper contracts aligned with route-level deterministic diagnostics expectations used by automation.
+
 - **Route-level selection/source metadata contract coverage across preflight compare endpoints** (2026-03-11)
   - Added shared assertion helper `_assert_compare_route_selection_and_source_metadata(...)` in `tests/test_preflight.py` to lock compare-response metadata contract:
     - `ordering_metadata.ordering_basis == "explicit_version_ids"`
@@ -151,10 +173,10 @@
 
 ## Next Candidates
 
-1. **Selection/source metadata consistency coverage across AI compare wrappers**
-   - Add AI-dispatch regression checks mirroring route assertions for `selection.ordering_basis`, `ordering_metadata.ordering_basis`, and `version_sources` path/mtime checks across compare wrapper variants.
-   - Impact: medium (keeps AI + route deterministic diagnostics contracts aligned).
-
-2. **Negative-path metadata contract checks for compare endpoints**
+1. **Negative-path metadata contract checks for compare endpoints + AI wrappers**
    - Add focused regression coverage ensuring metadata fields are absent/present consistently on 400/404 compare failures (invalid ids, missing aliases, out-of-range indices), so clients can branch reliably.
    - Impact: medium (hardens deterministic client behavior under failure modes).
+
+2. **Response-shape parity checks between route and AI compare surfaces (success + failure)**
+   - Add table-driven tests that compare key payload fields (`selection`, `ordering_metadata`, `version_sources`, and error envelopes) between HTTP routes and `dispatch_ai_tool` wrappers for the same scenarios.
+   - Impact: medium (prevents contract drift between human/API and AI tool entry points).
