@@ -382,6 +382,23 @@ def _assert_compare_route_selection_and_source_metadata(
         assert data['selection']['ordering_basis'] == selection_ordering_basis
 
 
+def _assert_compare_route_error_payload_excludes_success_metadata(data):
+    assert data['success'] is False
+    assert isinstance(data.get('error'), str)
+
+    for field_name in (
+        'baseline_version_id',
+        'candidate_version_id',
+        'baseline_report',
+        'candidate_report',
+        'comparison',
+        'selection',
+        'ordering_metadata',
+        'version_sources',
+    ):
+        assert field_name not in data
+
+
 def test_find_preflight_hierarchy_cycles_respects_max_cycles_cap_deterministically():
     pm = _make_pm()
     loop_a, loop_b, loop_c = _build_multi_cycle_lv_triangle(pm)
@@ -1821,6 +1838,25 @@ def test_preflight_compare_versions_route_returns_comparison_payload():
     )
 
 
+def test_preflight_compare_versions_route_rejects_missing_version_ids_without_success_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_project_missing_version_ids'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_versions', json={
+                'project_name': pm.project_name,
+                'baseline_version_id': 'only_baseline_provided',
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'Missing required fields' in data['error']
+
+
 def test_preflight_compare_versions_route_preserves_cycle_truncation_metadata():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
@@ -2180,7 +2216,7 @@ def test_preflight_compare_autosave_vs_manual_saved_index_route_rejects_invalid_
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'out of range' in data['error']
 
 
@@ -2853,5 +2889,5 @@ def test_preflight_compare_versions_route_returns_404_for_missing_version():
 
     assert resp.status_code == 404
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'not found' in data['error']

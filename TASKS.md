@@ -6,6 +6,18 @@
 
 ## Recently Completed
 
+- **Negative-path compare metadata contract checks (route + AI wrappers, representative 400/404 paths)** (2026-03-11)
+  - Added shared helpers to lock error-envelope shape on compare failures:
+    - `tests/test_preflight.py`: `_assert_compare_route_error_payload_excludes_success_metadata(...)`
+    - `tests/test_ai_api.py`: `_assert_compare_ai_error_payload_excludes_success_metadata(...)`
+  - Added/updated regression tests to assert compare failure responses keep `success/error` while excluding success-only metadata fields (`comparison`, `selection`, `ordering_metadata`, `version_sources`, version ids/reports):
+    - Route: missing required compare-version id (`POST /api/preflight/compare_versions`, 400)
+    - Route: invalid manual saved index (`POST /api/preflight/compare_autosave_vs_manual_saved_index`, 400)
+    - Route: missing saved versions (`POST /api/preflight/compare_versions`, 404)
+    - AI wrapper: missing saved versions (`compare_preflight_versions`)
+    - AI wrapper: invalid manual saved index (`compare_autosave_preflight_vs_manual_saved_index`)
+  - Why: gives deterministic client branching guarantees in common compare failure modes and prevents accidental leakage of partial success metadata on errors.
+
 - **AI compare-wrapper selection/source metadata contract coverage across preflight compare tools** (2026-03-11)
   - Added shared helper `_assert_compare_ai_selection_and_source_metadata(...)` in `tests/test_ai_api.py` to lock AI compare-response metadata contract:
     - `ordering_metadata.ordering_basis == "explicit_version_ids"`
@@ -173,10 +185,10 @@
 
 ## Next Candidates
 
-1. **Negative-path metadata contract checks for compare endpoints + AI wrappers**
-   - Add focused regression coverage ensuring metadata fields are absent/present consistently on 400/404 compare failures (invalid ids, missing aliases, out-of-range indices), so clients can branch reliably.
-   - Impact: medium (hardens deterministic client behavior under failure modes).
-
-2. **Response-shape parity checks between route and AI compare surfaces (success + failure)**
+1. **Response-shape parity checks between route and AI compare surfaces (success + failure)**
    - Add table-driven tests that compare key payload fields (`selection`, `ordering_metadata`, `version_sources`, and error envelopes) between HTTP routes and `dispatch_ai_tool` wrappers for the same scenarios.
    - Impact: medium (prevents contract drift between human/API and AI tool entry points).
+
+2. **Expand negative-path metadata checks across the remaining compare selectors**
+   - Extend the new error-envelope contract assertions to additional compare endpoints/wrappers (simulation-run selectors, snapshot selectors, alias-missing paths) to complete matrix coverage.
+   - Impact: medium (broadens deterministic failure contracts across the full compare surface).

@@ -86,6 +86,23 @@ def _assert_compare_ai_selection_and_source_metadata(
         assert data['selection']['ordering_basis'] == selection_ordering_basis
 
 
+def _assert_compare_ai_error_payload_excludes_success_metadata(data):
+    assert data['success'] is False
+    assert isinstance(data.get('error'), str)
+
+    for field_name in (
+        'baseline_version_id',
+        'candidate_version_id',
+        'baseline_report',
+        'candidate_report',
+        'comparison',
+        'selection',
+        'ordering_metadata',
+        'version_sources',
+    ):
+        assert field_name not in data
+
+
 def test_ai_tool_manage_define(pm):
     # Test creation
     res = dispatch_ai_tool(pm, "manage_define", {
@@ -330,6 +347,21 @@ def test_ai_tool_compare_preflight_versions_runs_saved_version_checks(pm, tmp_pa
         baseline_version_id=baseline_version_id,
         candidate_version_id=candidate_version_id,
     )
+
+
+def test_ai_tool_compare_preflight_versions_rejects_missing_versions_without_success_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_missing_versions"
+
+    pm.save_project_version('existing_version_ai')
+
+    res = dispatch_ai_tool(pm, "compare_preflight_versions", {
+        "baseline_version_id": "does_not_exist",
+        "candidate_version_id": "also_missing",
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "not found" in res["error"]
 
 
 def test_ai_tool_compare_preflight_versions_preserves_cycle_truncation_metadata(pm, tmp_path):
@@ -591,7 +623,7 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index_rejects_out_of
         "manual_saved_index": 5,
     })
 
-    assert res["success"] is False
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "out of range" in res["error"]
 
 
