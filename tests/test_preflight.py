@@ -356,6 +356,32 @@ def _assert_single_cycle_truncation_issue(issues):
     }
 
 
+def _assert_compare_route_selection_and_source_metadata(
+    data,
+    *,
+    baseline_version_id,
+    candidate_version_id,
+    selection_ordering_basis=None,
+):
+    assert data['ordering_metadata']['ordering_basis'] == 'explicit_version_ids'
+
+    baseline_source = data['version_sources']['baseline']
+    candidate_source = data['version_sources']['candidate']
+
+    assert baseline_source['version_id'] == baseline_version_id
+    assert candidate_source['version_id'] == candidate_version_id
+
+    for source in (baseline_source, candidate_source):
+        assert source['version_json_exists'] is True
+        assert source['version_json_mtime_utc'] is not None
+        assert source['source_path_checks']['versions_root_exists'] is True
+        assert source['source_path_checks']['version_dir_within_versions_root'] is True
+        assert source['source_path_checks']['version_json_within_versions_root'] is True
+
+    if selection_ordering_basis is not None:
+        assert data['selection']['ordering_basis'] == selection_ordering_basis
+
+
 def test_find_preflight_hierarchy_cycles_respects_max_cycles_cap_deterministically():
     pm = _make_pm()
     loop_a, loop_b, loop_c = _build_multi_cycle_lv_triangle(pm)
@@ -1685,6 +1711,12 @@ def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_rout
     assert data['selection']['strategy'] == 'manual_saved_versions_for_simulation_run_indices'
     assert data['selection']['baseline_manual_saved_index'] == 1
     assert data['selection']['candidate_manual_saved_index'] == 0
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=matching_sorted[1],
+        candidate_version_id=matching_sorted[0],
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_preserves_cycle_truncation_metadata():
@@ -1782,6 +1814,11 @@ def test_preflight_compare_versions_route_returns_comparison_payload():
     assert data['success'] is True
     assert data['comparison']['resolved_issue_codes'] == ['unknown_material_reference']
     assert data['comparison']['added_issue_codes'] == ['tiny_dimension']
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id=candidate_version_id,
+    )
 
 
 def test_preflight_compare_versions_route_preserves_cycle_truncation_metadata():
@@ -1854,6 +1891,12 @@ def test_preflight_compare_latest_versions_route_returns_comparison_payload():
     assert data['baseline_version_id'] == baseline_version_id
     assert data['candidate_version_id'] == candidate_version_id
     assert data['comparison']['added_issue_codes'] == ['possible_overlap_aabb']
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id=candidate_version_id,
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_latest_versions_route_requires_two_versions():
@@ -1904,6 +1947,12 @@ def test_preflight_compare_autosave_vs_latest_saved_route_returns_comparison_pay
     assert data['baseline_version_id'] == baseline_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert data['comparison']['added_issue_codes'] == ['unknown_material_reference']
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=baseline_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_autosave_vs_latest_saved_route_preserves_cycle_truncation_metadata():
@@ -1989,6 +2038,12 @@ def test_preflight_compare_autosave_vs_previous_manual_saved_route_returns_compa
     assert data['baseline_version_id'] == previous_manual_saved_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert data['selection']['strategy'] == 'latest_autosave_vs_previous_manual_saved'
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=previous_manual_saved_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_autosave_vs_previous_manual_saved_route_requires_non_snapshot_saved_version():
@@ -2056,6 +2111,12 @@ def test_preflight_compare_autosave_vs_manual_saved_index_route_returns_comparis
     assert data['candidate_version_id'] == 'autosave'
     assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_index'
     assert data['selection']['manual_saved_index'] == 1
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=manual_sorted[1],
+        candidate_version_id='autosave',
+        selection_ordering_basis='manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_autosave_vs_manual_saved_index_route_preserves_cycle_truncation_metadata():
@@ -2169,6 +2230,12 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_ret
     assert data['candidate_version_id'] == 'autosave'
     assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_for_simulation_run'
     assert data['selection']['simulation_run_id'] == simulation_run_id
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=expected_latest_matching_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_preserves_cycle_truncation_metadata():
@@ -2259,6 +2326,12 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_rou
     assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_for_simulation_run_index'
     assert data['selection']['simulation_run_id'] == simulation_run_id
     assert data['selection']['manual_saved_index'] == 1
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=matching_sorted[1],
+        candidate_version_id='autosave',
+        selection_ordering_basis='matching_manual_saved_versions_sorted_desc_lexicographic',
+    )
 
 
 def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route_preserves_cycle_truncation_metadata():
@@ -2400,6 +2473,12 @@ def test_preflight_compare_autosave_vs_saved_version_route_returns_comparison_pa
     assert data['baseline_version_id'] == requested_saved_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert 'unknown_material_reference' in data['comparison']['added_issue_codes']
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=requested_saved_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='explicit_saved_version_id',
+    )
 
 
 def test_preflight_compare_autosave_vs_saved_version_route_requires_saved_version_id():
@@ -2455,6 +2534,12 @@ def test_preflight_compare_autosave_vs_snapshot_version_route_returns_comparison
     assert data['baseline_version_id'] == requested_snapshot_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert 'unknown_material_reference' in data['comparison']['added_issue_codes']
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=requested_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='explicit_autosave_snapshot_version_id',
+    )
 
 
 def test_preflight_compare_autosave_vs_snapshot_version_route_requires_snapshot_id():
@@ -2507,6 +2592,12 @@ def test_preflight_compare_autosave_vs_latest_snapshot_route_returns_comparison_
     assert data['baseline_version_id'] == latest_snapshot_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert data['selection']['strategy'] == 'latest_autosave_vs_latest_autosave_snapshot'
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=latest_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_preflight_compare_autosave_vs_latest_snapshot_route_requires_snapshot_version():
@@ -2567,6 +2658,12 @@ def test_preflight_compare_autosave_vs_previous_snapshot_route_returns_compariso
     assert data['baseline_version_id'] == previous_snapshot_version_id
     assert data['candidate_version_id'] == 'autosave'
     assert data['selection']['strategy'] == 'latest_autosave_vs_previous_autosave_snapshot'
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=previous_snapshot_version_id,
+        candidate_version_id='autosave',
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_preflight_compare_autosave_vs_previous_snapshot_route_requires_two_snapshots():
@@ -2624,6 +2721,12 @@ def test_preflight_compare_snapshot_versions_route_returns_comparison_payload():
     assert data['candidate_version_id'] == candidate_snapshot_version_id
     assert data['comparison']['added_issue_codes'] == ['unknown_material_reference']
     assert data['selection']['strategy'] == 'selected_autosave_snapshot_versions'
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=baseline_snapshot_version_id,
+        candidate_version_id=candidate_snapshot_version_id,
+        selection_ordering_basis='explicit_autosave_snapshot_version_ids',
+    )
 
 
 def test_preflight_compare_snapshot_versions_route_preserves_cycle_truncation_metadata():
@@ -2687,7 +2790,7 @@ def test_preflight_compare_latest_snapshot_versions_route_returns_comparison_pay
         pm.projects_dir = tmpdir
         pm.project_name = 'route_compare_latest_snapshot_versions_project'
 
-        pm.save_project_version('autosave_snapshot_old_route')
+        oldest_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_old_route')
 
         pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
         pm.recalculate_geometry_state()
@@ -2704,6 +2807,12 @@ def test_preflight_compare_latest_snapshot_versions_route_returns_comparison_pay
     assert data['candidate_version_id'] == latest_snapshot_version_id
     assert data['comparison']['added_issue_codes'] == ['unknown_material_reference']
     assert data['selection']['strategy'] == 'latest_two_autosave_snapshot_versions'
+    _assert_compare_route_selection_and_source_metadata(
+        data,
+        baseline_version_id=oldest_snapshot_version_id,
+        candidate_version_id=latest_snapshot_version_id,
+        selection_ordering_basis='autosave_snapshot_versions_sorted_by_mtime_then_version_id_desc',
+    )
 
 
 def test_preflight_compare_latest_snapshot_versions_route_requires_two_snapshots():

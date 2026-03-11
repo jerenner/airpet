@@ -6,6 +6,28 @@
 
 ## Recently Completed
 
+- **Route-level selection/source metadata contract coverage across preflight compare endpoints** (2026-03-11)
+  - Added shared assertion helper `_assert_compare_route_selection_and_source_metadata(...)` in `tests/test_preflight.py` to lock compare-response metadata contract:
+    - `ordering_metadata.ordering_basis == "explicit_version_ids"`
+    - `version_sources.{baseline,candidate}` id/path/mtime + within-root checks
+    - optional `selection.ordering_basis` checks per endpoint strategy
+  - Extended all route-level `*_returns_comparison_payload` compare endpoint tests to assert deterministic metadata contracts for:
+    - `compare_versions`
+    - `compare_latest_versions`
+    - `compare_autosave_vs_latest_saved`
+    - `compare_autosave_vs_previous_manual_saved`
+    - `compare_autosave_vs_manual_saved_index`
+    - `compare_autosave_vs_manual_saved_for_simulation_run`
+    - `compare_autosave_vs_manual_saved_for_simulation_run_index`
+    - `compare_manual_saved_versions_for_simulation_run_indices`
+    - `compare_autosave_vs_saved_version`
+    - `compare_autosave_vs_snapshot_version`
+    - `compare_autosave_vs_latest_snapshot`
+    - `compare_autosave_vs_previous_snapshot`
+    - `compare_snapshot_versions`
+    - `compare_latest_snapshot_versions`
+  - Why: prevents silent drift in reproducibility/debug metadata across endpoint variants that AI agents and deterministic workflows depend on.
+
 - **Cycle-truncation metadata preservation coverage for run-linked/manual-index compare wrappers (route + AI)** (2026-03-11)
   - Added AI-dispatch regression tests in `tests/test_ai_api.py` for:
     - `compare_autosave_preflight_vs_manual_saved_index`
@@ -129,10 +151,10 @@
 
 ## Next Candidates
 
-1. **Selection metadata consistency coverage across all preflight compare routes**
-   - Add route-level regression checks to ensure `selection.ordering_basis` and source metadata remain stable across every compare endpoint variant.
-   - Impact: medium (prevents drift/regression in reproducibility diagnostics contract).
-
-2. **Selection metadata consistency coverage across AI compare wrappers**
-   - Add AI-dispatch regression checks mirroring route assertions for `selection.ordering_basis` and source metadata, especially alias-heavy run/manual-index wrappers.
+1. **Selection/source metadata consistency coverage across AI compare wrappers**
+   - Add AI-dispatch regression checks mirroring route assertions for `selection.ordering_basis`, `ordering_metadata.ordering_basis`, and `version_sources` path/mtime checks across compare wrapper variants.
    - Impact: medium (keeps AI + route deterministic diagnostics contracts aligned).
+
+2. **Negative-path metadata contract checks for compare endpoints**
+   - Add focused regression coverage ensuring metadata fields are absent/present consistently on 400/404 compare failures (invalid ids, missing aliases, out-of-range indices), so clients can branch reliably.
+   - Impact: medium (hardens deterministic client behavior under failure modes).
