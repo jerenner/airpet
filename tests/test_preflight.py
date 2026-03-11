@@ -1800,7 +1800,7 @@ def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_rout
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'must be different' in data['error']
 
 
@@ -1951,7 +1951,7 @@ def test_preflight_compare_latest_versions_route_requires_two_versions():
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'at least two saved versions' in data['error']
 
 
@@ -2041,7 +2041,7 @@ def test_preflight_compare_autosave_vs_latest_saved_route_requires_autosave():
 
     assert resp.status_code == 404
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'autosave' in data['error']
 
 
@@ -2106,7 +2106,7 @@ def test_preflight_compare_autosave_vs_previous_manual_saved_route_requires_non_
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'manually saved non-snapshot version' in data['error']
 
 
@@ -2440,9 +2440,69 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_rou
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'out of range' in data['error']
     assert 'simulation_run_id' in data['error']
+
+
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_requires_simulation_run_id():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_requires_id'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run', json={
+                'project_name': pm.project_name,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'Missing required field: simulation_run_id' in data['error']
+
+
+
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route_requires_simulation_run_id():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_index_requires_id'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index', json={
+                'project_name': pm.project_name,
+                'manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'Missing required field: simulation_run_id' in data['error']
+
+
+
+def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_requires_simulation_run_id():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_manual_for_run_indices_requires_id'
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/compare_manual_saved_versions_for_simulation_run_indices', json={
+                'project_name': pm.project_name,
+                'baseline_manual_saved_index': 1,
+                'candidate_manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 400
+    data = resp.get_json()
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
+    assert 'Missing required field: simulation_run_id' in data['error']
+
 
 
 def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_requires_matching_manual_version():
@@ -2471,7 +2531,7 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_req
 
     assert resp.status_code == 400
     data = resp.get_json()
-    assert data['success'] is False
+    _assert_compare_route_error_payload_excludes_success_metadata(data)
     assert 'simulation_run_id' in data['error']
     assert 'No manually saved non-snapshot versions' in data['error']
 

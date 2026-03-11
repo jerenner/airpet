@@ -6,6 +6,26 @@
 
 ## Recently Completed
 
+- **Run/manual compare-selector failure-envelope metadata contract coverage (route + AI wrappers)** (2026-03-11)
+  - Extended regression assertions so remaining run/manual compare failure paths explicitly keep `success/error` envelopes while excluding success-only compare metadata (`comparison`, `selection`, `ordering_metadata`, `version_sources`, version ids/reports).
+  - Added/strengthened route-level negative-path contract assertions for:
+    - `POST /api/preflight/compare_latest_versions` (fewer than two saved versions)
+    - `POST /api/preflight/compare_autosave_vs_latest_saved` (missing autosave)
+    - `POST /api/preflight/compare_autosave_vs_previous_manual_saved` (no non-snapshot manual baseline)
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run` (missing matching run/manual baseline)
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index` (out-of-range index)
+    - `POST /api/preflight/compare_manual_saved_versions_for_simulation_run_indices` (identical baseline/candidate indices)
+    - required-field failures for missing `simulation_run_id` on run-linked compare routes.
+  - Added/strengthened AI-wrapper negative-path contract assertions for:
+    - `compare_latest_preflight_versions` (fewer than two saved versions)
+    - `compare_autosave_preflight_vs_latest_saved` (missing autosave)
+    - `compare_autosave_preflight_vs_previous_manual_saved` (no non-snapshot manual baseline)
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run` (missing matching run/manual baseline)
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index` (out-of-range index)
+    - `compare_manual_preflight_versions_for_simulation_run_indices` (identical indices)
+    - required-argument failures for missing `simulation_run_id` on run-linked compare wrappers.
+  - Why: closes the remaining medium-impact error-envelope contract gaps across run/manual compare selectors used by deterministic debugging and AI automation flows.
+
 - **Snapshot/selected-compare failure-envelope metadata contract coverage (route + AI wrappers)** (2026-03-11)
   - Extended regression assertions so representative snapshot/selected compare failures explicitly exclude success-only compare metadata fields (`comparison`, `selection`, `ordering_metadata`, `version_sources`, version ids/reports) while preserving `success/error` envelopes.
   - Route-level negative-path contract assertions now cover:
@@ -206,6 +226,10 @@
    - Add table-driven tests that compare key payload fields (`selection`, `ordering_metadata`, `version_sources`, and error envelopes) between HTTP routes and `dispatch_ai_tool` wrappers for the same scenarios.
    - Impact: medium (prevents contract drift between human/API and AI tool entry points).
 
-2. **Expand negative-path metadata checks across the remaining run/manual compare selectors**
-   - Extend error-envelope contract assertions to remaining compare endpoint/wrapper failures (simulation-run selectors, index/alias-required-field paths, and additional 404 variants) to complete matrix coverage.
-   - Impact: medium (broadens deterministic failure contracts across the full compare surface).
+2. **Compare-failure 404 envelope matrix for explicit selectors (route + AI wrappers)**
+   - Add deterministic not-found/invalid-id regressions for explicit selector paths (saved/snapshot/version-id variants) and assert failure envelopes continue to exclude compare-success metadata.
+   - Impact: medium (hardens deterministic client handling for stale or user-supplied ids).
+
+3. **Negative-path envelope consistency for preflight list/discovery selectors**
+   - Add contract assertions for `list_preflight_versions` and `list_manual_saved_versions_for_simulation_run` failure paths (missing required aliases, invalid limits, bad run selectors) so list endpoints share the same clean error-envelope guarantees as compare endpoints.
+   - Impact: medium (extends deterministic error contracts beyond compare surfaces).

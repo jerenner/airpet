@@ -429,6 +429,19 @@ def test_ai_tool_compare_latest_preflight_versions_uses_latest_two_saved_version
     )
 
 
+def test_ai_tool_compare_latest_preflight_versions_requires_two_saved_versions(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_latest_missing"
+
+    pm.save_project_version('only_one_ai')
+
+    res = dispatch_ai_tool(pm, "compare_latest_preflight_versions", {})
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "at least two saved versions" in res["error"]
+
+
+
 def test_ai_tool_compare_autosave_preflight_vs_latest_saved(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_project"
@@ -485,6 +498,19 @@ def test_ai_tool_compare_autosave_preflight_vs_latest_saved_preserves_cycle_trun
     _assert_single_cycle_truncation_issue(res['candidate_report']['issues'])
 
 
+def test_ai_tool_compare_autosave_preflight_vs_latest_saved_requires_autosave(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_missing"
+
+    pm.save_project_version('manual_only_ai')
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_latest_saved", {})
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "autosave" in res["error"]
+
+
+
 def test_ai_tool_compare_autosave_preflight_vs_previous_manual_saved(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_previous_manual_saved_project"
@@ -532,7 +558,7 @@ def test_ai_tool_compare_autosave_preflight_vs_previous_manual_saved_requires_no
 
     res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_previous_manual_saved", {})
 
-    assert res["success"] is False
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "manually saved non-snapshot version" in res["error"]
 
 
@@ -816,9 +842,50 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_i
         "manual_saved_index": 2,
     })
 
-    assert res["success"] is False
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "out of range" in res["error"]
     assert "simulation_run_id" in res["error"]
+
+
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_simulation_run_id(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_requires_id"
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run", {})
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "missing required argument" in res["error"].lower()
+    assert "simulation_run_id" in res["error"]
+
+
+
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_requires_simulation_run_id(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_index_requires_id"
+
+    res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index", {
+        "manual_saved_index": 0,
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "missing required argument" in res["error"].lower()
+    assert "simulation_run_id" in res["error"]
+
+
+
+def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_requires_simulation_run_id(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_manual_for_run_indices_requires_id"
+
+    res = dispatch_ai_tool(pm, "compare_manual_preflight_versions_for_simulation_run_indices", {
+        "baseline_manual_saved_index": 1,
+        "candidate_manual_saved_index": 0,
+    })
+
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
+    assert "missing required argument" in res["error"].lower()
+    assert "simulation_run_id" in res["error"]
+
 
 
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_match(pm, tmp_path):
@@ -840,7 +907,7 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_r
         "simulation_run_id": "missing_ai_job",
     })
 
-    assert res["success"] is False
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "simulation_run_id" in res["error"]
     assert "No manually saved non-snapshot versions" in res["error"]
 
@@ -1308,7 +1375,7 @@ def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_re
         "candidate_manual_saved_index": 0,
     })
 
-    assert res["success"] is False
+    _assert_compare_ai_error_payload_excludes_success_metadata(res)
     assert "must be different" in res["error"]
 
 
