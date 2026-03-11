@@ -488,6 +488,36 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index(pm, tmp_path):
     assert res["selection"]["manual_saved_index"] == 1
 
 
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index_preserves_cycle_truncation_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_index_truncation"
+
+    baseline_manual_version_id, _ = pm.save_project_version('manual_baseline_ai')
+    _build_multi_cycle_lv_triangle(pm)
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+    with patch.object(
+        ProjectManager,
+        '_find_preflight_hierarchy_cycles',
+        autospec=True,
+        side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+    ):
+        res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_index", {
+            "manual_saved_index": 0,
+        })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_manual_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert "placement_hierarchy_cycle_report_truncated" in res["comparison"]["added_issue_codes"]
+    _assert_single_cycle_truncation_issue(res['candidate_report']['issues'])
+
+
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_index_rejects_out_of_range_index(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_manual_saved_index_invalid"
@@ -552,6 +582,40 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run(p
     assert res["selection"]["simulation_run_id"] == simulation_run_id
 
 
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_preserves_cycle_truncation_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_truncation"
+
+    simulation_run_id = "job_ai_match_truncation"
+
+    baseline_manual_version_id, _ = pm.save_project_version('manual_run_baseline_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(baseline_manual_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    _build_multi_cycle_lv_triangle(pm)
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+    with patch.object(
+        ProjectManager,
+        '_find_preflight_hierarchy_cycles',
+        autospec=True,
+        side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+    ):
+        res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run", {
+            "simulation_run_id": simulation_run_id,
+        })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_manual_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert "placement_hierarchy_cycle_report_truncated" in res["comparison"]["added_issue_codes"]
+    _assert_single_cycle_truncation_issue(res['candidate_report']['issues'])
+
+
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_compare_autosave_manual_saved_for_run_index_project"
@@ -594,6 +658,41 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_i
     assert res["selection"]["strategy"] == "latest_autosave_vs_manual_saved_for_simulation_run_index"
     assert res["selection"]["simulation_run_id"] == simulation_run_id
     assert res["selection"]["manual_saved_index"] == 1
+
+
+def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_preserves_cycle_truncation_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_autosave_manual_saved_for_run_index_truncation"
+
+    simulation_run_id = "job_ai_index_match_truncation"
+
+    baseline_manual_version_id, _ = pm.save_project_version('manual_run_index_baseline_ai')
+    os.makedirs(os.path.join(pm._get_version_dir(baseline_manual_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    _build_multi_cycle_lv_triangle(pm)
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+    with patch.object(
+        ProjectManager,
+        '_find_preflight_hierarchy_cycles',
+        autospec=True,
+        side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+    ):
+        res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index", {
+            "simulation_run_id": simulation_run_id,
+            "manual_saved_index": 0,
+        })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_manual_version_id
+    assert res["candidate_version_id"] == "autosave"
+    assert "placement_hierarchy_cycle_report_truncated" in res["comparison"]["added_issue_codes"]
+    _assert_single_cycle_truncation_issue(res['candidate_report']['issues'])
 
 
 def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_rejects_out_of_range(pm, tmp_path):
@@ -995,6 +1094,39 @@ def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_su
     assert res["selection"]["strategy"] == "manual_saved_versions_for_simulation_run_indices"
     assert res["selection"]["baseline_manual_saved_index"] == 1
     assert res["selection"]["candidate_manual_saved_index"] == 0
+
+
+def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_preserves_cycle_truncation_metadata(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_compare_manual_for_run_indices_truncation"
+
+    simulation_run_id = "job_ai_manual_compare_truncation"
+
+    baseline_version_id, _ = pm.save_project_version('manual_ai_compare_baseline_truncation')
+    os.makedirs(os.path.join(pm._get_version_dir(baseline_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    _build_multi_cycle_lv_triangle(pm)
+    candidate_version_id, _ = pm.save_project_version('manual_ai_compare_candidate_truncation')
+    os.makedirs(os.path.join(pm._get_version_dir(candidate_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+    original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+    with patch.object(
+        ProjectManager,
+        '_find_preflight_hierarchy_cycles',
+        autospec=True,
+        side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+    ):
+        res = dispatch_ai_tool(pm, "compare_manual_preflight_versions_for_simulation_run_indices", {
+            "simulation_run_id": simulation_run_id,
+            "baseline_manual_saved_index": 1,
+            "candidate_manual_saved_index": 0,
+        })
+
+    assert res["success"] is True
+    assert res["baseline_version_id"] == baseline_version_id
+    assert res["candidate_version_id"] == candidate_version_id
+    assert "placement_hierarchy_cycle_report_truncated" in res["comparison"]["added_issue_codes"]
+    _assert_single_cycle_truncation_issue(res['candidate_report']['issues'])
 
 
 def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_rejects_identical_indices(pm, tmp_path):

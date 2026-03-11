@@ -6,6 +6,22 @@
 
 ## Recently Completed
 
+- **Cycle-truncation metadata preservation coverage for run-linked/manual-index compare wrappers (route + AI)** (2026-03-11)
+  - Added AI-dispatch regression tests in `tests/test_ai_api.py` for:
+    - `compare_autosave_preflight_vs_manual_saved_index`
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run`
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index`
+    - `compare_manual_preflight_versions_for_simulation_run_indices`
+    locking preservation of `placement_hierarchy_cycle_report_truncated` diagnostics through run-linked/manual-index compare selectors.
+  - Added route-level regression tests in `tests/test_preflight.py` for:
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_index`
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run`
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index`
+    - `POST /api/preflight/compare_manual_saved_versions_for_simulation_run_indices`
+    ensuring truncation issue message + metadata (`max_cycles`, `reported_cycles`, `truncated`) are preserved in candidate reports and compare deltas.
+  - Forced deterministic truncation behavior in all new tests by patching `_find_preflight_hierarchy_cycles(..., max_cycles=1)`.
+  - Why: completes medium-impact contract protection for deterministic compare entry points keyed by manual indices and simulation-run linkage.
+
 - **Cycle-truncation metadata preservation coverage for explicit compare surfaces (route + AI)** (2026-03-11)
   - Added shared truncation-assert helpers in `tests/test_preflight.py` and `tests/test_ai_api.py` to lock exact truncation diagnostics contract:
     - code `placement_hierarchy_cycle_report_truncated`
@@ -117,6 +133,6 @@
    - Add route-level regression checks to ensure `selection.ordering_basis` and source metadata remain stable across every compare endpoint variant.
    - Impact: medium (prevents drift/regression in reproducibility diagnostics contract).
 
-2. **Expand cycle-truncation metadata preservation coverage across run-linked/manual-index compare wrappers**
-   - Add regression checks for simulation-run/manual-index surfaces (`compare_manual_preflight_versions_for_simulation_run_indices`, `compare_autosave_preflight_vs_manual_saved_index`, and run-id selectors) so truncation diagnostics remain stable on index-driven compare entry points.
-   - Impact: medium (completes contract protection for deterministic compare selectors not yet covered).
+2. **Selection metadata consistency coverage across AI compare wrappers**
+   - Add AI-dispatch regression checks mirroring route assertions for `selection.ordering_basis` and source metadata, especially alias-heavy run/manual-index wrappers.
+   - Impact: medium (keeps AI + route deterministic diagnostics contracts aligned).

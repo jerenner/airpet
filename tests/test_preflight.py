@@ -1687,6 +1687,45 @@ def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_rout
     assert data['selection']['candidate_manual_saved_index'] == 0
 
 
+def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_preserves_cycle_truncation_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_manual_for_run_indices_truncation'
+
+        simulation_run_id = 'job_route_manual_compare_truncation'
+
+        baseline_version_id, _ = pm.save_project_version('manual_route_compare_baseline_truncation')
+        os.makedirs(os.path.join(pm._get_version_dir(baseline_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        _build_multi_cycle_lv_triangle(pm)
+        candidate_version_id, _ = pm.save_project_version('manual_route_compare_candidate_truncation')
+        os.makedirs(os.path.join(pm._get_version_dir(candidate_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+        with patch('app.get_project_manager_for_session', return_value=pm), patch.object(
+            ProjectManager,
+            '_find_preflight_hierarchy_cycles',
+            autospec=True,
+            side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+        ):
+            resp = client.post('/api/preflight/compare_manual_saved_versions_for_simulation_run_indices', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': simulation_run_id,
+                'baseline_manual_saved_index': 1,
+                'candidate_manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == baseline_version_id
+    assert data['candidate_version_id'] == candidate_version_id
+    assert 'placement_hierarchy_cycle_report_truncated' in data['comparison']['added_issue_codes']
+    _assert_single_cycle_truncation_issue(data['candidate_report']['issues'])
+
+
 def test_preflight_compare_manual_saved_versions_for_simulation_run_indices_route_rejects_identical_indices():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
@@ -2019,6 +2058,42 @@ def test_preflight_compare_autosave_vs_manual_saved_index_route_returns_comparis
     assert data['selection']['manual_saved_index'] == 1
 
 
+def test_preflight_compare_autosave_vs_manual_saved_index_route_preserves_cycle_truncation_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_index_truncation'
+
+        baseline_manual_version_id, _ = pm.save_project_version('manual_baseline_route')
+        _build_multi_cycle_lv_triangle(pm)
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+        with patch('app.get_project_manager_for_session', return_value=pm), patch.object(
+            ProjectManager,
+            '_find_preflight_hierarchy_cycles',
+            autospec=True,
+            side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+        ):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_index', json={
+                'project_name': pm.project_name,
+                'manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == baseline_manual_version_id
+    assert data['candidate_version_id'] == 'autosave'
+    assert 'placement_hierarchy_cycle_report_truncated' in data['comparison']['added_issue_codes']
+    _assert_single_cycle_truncation_issue(data['candidate_report']['issues'])
+
+
 def test_preflight_compare_autosave_vs_manual_saved_index_route_rejects_invalid_index():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
@@ -2096,6 +2171,46 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_ret
     assert data['selection']['simulation_run_id'] == simulation_run_id
 
 
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_route_preserves_cycle_truncation_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_truncation'
+
+        simulation_run_id = 'job_route_match_truncation'
+
+        baseline_manual_version_id, _ = pm.save_project_version('manual_run_baseline_route')
+        os.makedirs(os.path.join(pm._get_version_dir(baseline_manual_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        _build_multi_cycle_lv_triangle(pm)
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+        with patch('app.get_project_manager_for_session', return_value=pm), patch.object(
+            ProjectManager,
+            '_find_preflight_hierarchy_cycles',
+            autospec=True,
+            side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+        ):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': simulation_run_id,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == baseline_manual_version_id
+    assert data['candidate_version_id'] == 'autosave'
+    assert 'placement_hierarchy_cycle_report_truncated' in data['comparison']['added_issue_codes']
+    _assert_single_cycle_truncation_issue(data['candidate_report']['issues'])
+
+
 def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route_returns_comparison_payload():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
@@ -2144,6 +2259,47 @@ def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_rou
     assert data['selection']['strategy'] == 'latest_autosave_vs_manual_saved_for_simulation_run_index'
     assert data['selection']['simulation_run_id'] == simulation_run_id
     assert data['selection']['manual_saved_index'] == 1
+
+
+def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route_preserves_cycle_truncation_metadata():
+    app.config['TESTING'] = True
+    with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'route_compare_autosave_manual_saved_for_run_index_truncation'
+
+        simulation_run_id = 'job_route_index_match_truncation'
+
+        baseline_manual_version_id, _ = pm.save_project_version('manual_run_index_baseline_route')
+        os.makedirs(os.path.join(pm._get_version_dir(baseline_manual_version_id), 'sim_runs', simulation_run_id), exist_ok=True)
+
+        _build_multi_cycle_lv_triangle(pm)
+
+        autosave_dir = pm._get_version_dir('autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+            handle.write(pm.save_project_to_json_string())
+
+        original_find_cycles = ProjectManager._find_preflight_hierarchy_cycles
+        with patch('app.get_project_manager_for_session', return_value=pm), patch.object(
+            ProjectManager,
+            '_find_preflight_hierarchy_cycles',
+            autospec=True,
+            side_effect=lambda self, state, max_cycles=20: original_find_cycles(self, state, max_cycles=1),
+        ):
+            resp = client.post('/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index', json={
+                'project_name': pm.project_name,
+                'simulation_run_id': simulation_run_id,
+                'manual_saved_index': 0,
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['success'] is True
+    assert data['baseline_version_id'] == baseline_manual_version_id
+    assert data['candidate_version_id'] == 'autosave'
+    assert 'placement_hierarchy_cycle_report_truncated' in data['comparison']['added_issue_codes']
+    _assert_single_cycle_truncation_issue(data['candidate_report']['issues'])
 
 
 def test_preflight_compare_autosave_vs_manual_saved_for_simulation_run_index_route_rejects_invalid_index():
