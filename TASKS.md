@@ -6,6 +6,17 @@
 
 ## Recently Completed
 
+- **Explicit `compare_versions` missing/stale-id failure parity matrix (route + AI wrapper)** (2026-03-12)
+  - Added `_seed_preflight_compare_versions_error_parity_fixture(...)` in `tests/test_ai_api.py` to create deterministic saved-version fixtures for explicit compare failure-path coverage.
+  - Added `test_preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes` with table-driven route-vs-AI parity checks for:
+    - missing baseline id (400)
+    - missing candidate id (400)
+    - stale baseline id with mixed aliases (404)
+    - stale candidate id with mixed aliases (404)
+  - Hardened `dispatch_ai_tool(..., "compare_preflight_versions", ...)` contract alignment in `app.py` by returning the same required-field message as the route when explicit baseline/candidate ids are absent.
+  - Updated `_validate_tool_args(...)` to defer `compare_preflight_versions` baseline/candidate missing-field handling to dispatcher-level route-aligned validation.
+  - Why: closes a medium-high deterministic failure-contract drift gap for explicit saved-version compare workflows used by HTTP clients and AI automation.
+
 - **Cross-surface topology/reference corpus-transition compare parity (`compare_versions` route ↔ AI wrapper)** (2026-03-12)
   - Added reusable topology/reference corpus seed helpers in `tests/test_ai_api.py` for transition-matrix fixtures:
     - `_seed_preflight_corpus_missing_world_volume_reference(...)`
@@ -364,6 +375,6 @@
    - Add end-to-end regression coverage that starts from `list_manual_saved_versions_for_simulation_run` and feeds returned indices/ids into compare selectors, asserting deterministic behavior under mixed valid/stale artifacts.
    - Impact: medium-high (protects real workflow chaining that human + AI tools use in practice).
 
-3. **Explicit `compare_versions` stale-id/error envelope parity matrix (route + AI wrappers)**
-   - Extend route-vs-AI parity coverage for `compare_versions` negative paths (missing baseline/candidate ids, stale baseline id, stale candidate id, mixed alias forms) and lock status-aware metadata-clean error envelopes.
-   - Impact: medium-high (completes deterministic failure-contract confidence for explicit saved-version compare flows).
+3. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
+   - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
+   - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).

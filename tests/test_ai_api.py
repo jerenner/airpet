@@ -169,6 +169,22 @@ def _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path):
     }
 
 
+def _seed_preflight_compare_versions_error_parity_fixture(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_compare_versions_error_parity_project"
+
+    baseline_version_id, _ = pm.save_project_version('manual_ai_route_compare_versions_baseline')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    candidate_version_id, _ = pm.save_project_version('manual_ai_route_compare_versions_candidate')
+
+    return {
+        'baseline_version_id': baseline_version_id,
+        'candidate_version_id': candidate_version_id,
+    }
+
+
 def _seed_preflight_run_selector_stale_version_fixture(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_parity_stale_selector_project"
@@ -1841,6 +1857,92 @@ def test_preflight_list_manual_saved_versions_for_simulation_run_route_and_ai_wr
     assert older_entry["manual_saved_index"] == ordered_ids.index(fixture["oldest_matching_version_id"])
     assert older_entry["has_version_json"] is True
     assert older_entry["version_json_mtime_utc"] is not None
+
+
+def test_preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes(pm, tmp_path):
+    fixture = _seed_preflight_compare_versions_error_parity_fixture(pm, tmp_path)
+
+    missing_baseline_version_id = "20990101_missing_compare_versions_baseline_for_route_ai_parity"
+    missing_candidate_version_id = "20990101_missing_compare_versions_candidate_for_route_ai_parity"
+
+    cases = [
+        {
+            "name": "missing_baseline_version_id",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "candidate_version": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "after_version": fixture["candidate_version_id"],
+            },
+            "expected_status": 400,
+            "error_substring": "missing required fields",
+        },
+        {
+            "name": "missing_candidate_version_id",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version": fixture["baseline_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "before_version": fixture["baseline_version_id"],
+            },
+            "expected_status": 400,
+            "error_substring": "missing required fields",
+        },
+        {
+            "name": "stale_baseline_version_id",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version": missing_baseline_version_id,
+                "candidate_version_id": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project_name": pm.project_name,
+                "baseline": missing_baseline_version_id,
+                "candidate": fixture["candidate_version_id"],
+            },
+            "expected_status": 404,
+            "error_substring": "not found",
+            "missing_version_id": missing_baseline_version_id,
+        },
+        {
+            "name": "stale_candidate_version_id",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": fixture["baseline_version_id"],
+                "candidate_version": missing_candidate_version_id,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "before_version": fixture["baseline_version_id"],
+                "new_version": missing_candidate_version_id,
+            },
+            "expected_status": 404,
+            "error_substring": "not found",
+            "missing_version_id": missing_candidate_version_id,
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            "/api/preflight/compare_versions",
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, "compare_preflight_versions", case["ai_args"])
+
+        assert status_code == case["expected_status"], case["name"]
+        assert route_data == ai_data, case["name"]
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+        assert case["error_substring"] in route_data["error"].lower(), case["name"]
+
+        missing_version_id = case.get("missing_version_id")
+        if missing_version_id is not None:
+            assert missing_version_id in route_data["error"], case["name"]
+
 
 
 def test_preflight_compare_versions_route_and_ai_wrappers_share_topology_reference_corpus_transition_matrix_payloads(pm, tmp_path):

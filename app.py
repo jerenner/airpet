@@ -8184,7 +8184,14 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         if req not in args or args[req] is None or args[req] == ""
     ]
     if missing:
-        return f"Tool '{tool_name}' missing required argument(s): {', '.join(missing)}."
+        # Keep compare_preflight_versions missing-field behavior aligned with the
+        # route contract: dispatcher returns a single shared required-field
+        # message when either explicit version id is absent.
+        if not (
+            tool_name == "compare_preflight_versions"
+            and set(missing).issubset({"baseline_version_id", "candidate_version_id"})
+        ):
+            return f"Tool '{tool_name}' missing required argument(s): {', '.join(missing)}."
 
     properties = schema.get("properties", {})
     for key, prop_schema in properties.items():
@@ -8585,11 +8592,20 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_preflight_versions":
+            baseline_version_id = args.get("baseline_version_id")
+            candidate_version_id = args.get("candidate_version_id")
+
+            if baseline_version_id is None or candidate_version_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required fields: baseline_version_id and candidate_version_id.",
+                }
+
             try:
                 result = compare_preflight_versions(
                     pm,
-                    baseline_version_id=args.get("baseline_version_id"),
-                    candidate_version_id=args.get("candidate_version_id"),
+                    baseline_version_id=baseline_version_id,
+                    candidate_version_id=candidate_version_id,
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
