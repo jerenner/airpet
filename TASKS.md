@@ -6,6 +6,17 @@
 
 ## Recently Completed
 
+- **Run-linked selector `list → compare` reproducibility matrix with mixed stale artifacts (route + AI wrappers)** (2026-03-12)
+  - Added `test_preflight_run_selector_list_to_compare_workflow_route_and_ai_is_reproducible_with_mixed_stale_artifacts` in `tests/test_ai_api.py`.
+  - New end-to-end workflow coverage starts from `list_manual_saved_versions_for_simulation_run` and feeds returned `manual_saved_index`/`version_id` values into compare selectors across route and AI tool surfaces.
+  - Locked deterministic parity for mixed valid/stale run-linked artifacts:
+    - stale list-selected index in `compare_autosave_vs_manual_saved_for_simulation_run_index` (404 parity)
+    - stale list-selected candidate in `compare_manual_saved_versions_for_simulation_run_indices` (404 parity)
+    - stale list-selected explicit id in `compare_versions` (404 parity)
+    - valid list-selected index success path in `compare_autosave_vs_manual_saved_for_simulation_run_index` (200 parity + selection/source metadata contract)
+  - Added replay determinism assertions on a fresh `ProjectManager` instance for both the list payload and successful list-selected compare payload.
+  - Why: protects the real human/AI chaining workflow (`discover selector candidates → compare`) against stale-artifact drift while preserving deterministic route↔AI contracts.
+
 - **Explicit `compare_versions` missing/stale-id failure parity matrix (route + AI wrapper)** (2026-03-12)
   - Added `_seed_preflight_compare_versions_error_parity_fixture(...)` in `tests/test_ai_api.py` to create deterministic saved-version fixtures for explicit compare failure-path coverage.
   - Added `test_preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes` with table-driven route-vs-AI parity checks for:
@@ -371,10 +382,10 @@
    - Add route-vs-AI parity checks that intentionally exercise malformed selector aliases (e.g., conflicting/missing snapshot/saved fields) to lock equivalent validation messaging and metadata-clean error envelopes.
    - Impact: medium (hardens deterministic client/agent branching for invalid-input recovery paths).
 
-2. **Run-linked compare selector discovery preflight (`list → compare`) reproducibility fixture**
-   - Add end-to-end regression coverage that starts from `list_manual_saved_versions_for_simulation_run` and feeds returned indices/ids into compare selectors, asserting deterministic behavior under mixed valid/stale artifacts.
-   - Impact: medium-high (protects real workflow chaining that human + AI tools use in practice).
-
-3. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
+2. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
    - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).
+
+3. **Route-level list-discovery chaining for global selectors (`list_preflight_versions → compare_*`)**
+   - Add deterministic workflow tests that consume `list_preflight_versions` output (autosave/manual/snapshot ids) to drive explicit compare selector endpoints and assert stable selection/source metadata plus stale-id recovery envelopes.
+   - Impact: medium-high (extends workflow-level reproducibility beyond run-linked selectors).

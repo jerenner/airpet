@@ -1859,6 +1859,179 @@ def test_preflight_list_manual_saved_versions_for_simulation_run_route_and_ai_wr
     assert older_entry["version_json_mtime_utc"] is not None
 
 
+def test_preflight_run_selector_list_to_compare_workflow_route_and_ai_is_reproducible_with_mixed_stale_artifacts(pm, tmp_path):
+    fixture = _seed_preflight_run_selector_stale_version_fixture(pm, tmp_path)
+
+    list_status_code, list_route_data = _call_preflight_route_with_pm(
+        pm,
+        "/api/preflight/list_manual_saved_versions_for_simulation_run",
+        {
+            "project_name": pm.project_name,
+            "job_id": fixture["simulation_run_id"],
+        },
+    )
+    list_ai_data = dispatch_ai_tool(pm, "list_manual_saved_versions_for_simulation_run", {
+        "project": pm.project_name,
+        "run_id": fixture["simulation_run_id"],
+    })
+
+    assert list_status_code == 200
+    assert list_route_data == list_ai_data
+    assert list_route_data["success"] is True
+    assert list_route_data["total_matching_manual_saved_versions"] == 2
+    assert list_route_data["returned_matching_manual_saved_versions"] == 2
+
+    matching_versions = list_route_data["matching_manual_saved_versions"]
+    stale_entry = next(entry for entry in matching_versions if entry["has_version_json"] is False)
+    valid_entry = next(entry for entry in matching_versions if entry["has_version_json"] is True)
+
+    workflow_cases = [
+        {
+            "name": "autosave_vs_run_index_stale_entry",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "run_id": fixture["simulation_run_id"],
+                "n_back": stale_entry["manual_saved_index"],
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project": pm.project_name,
+                "job_id": fixture["simulation_run_id"],
+                "index": stale_entry["manual_saved_index"],
+            },
+            "expected_status": 404,
+            "expect_error_version_id": stale_entry["version_id"],
+        },
+        {
+            "name": "manual_run_indices_with_stale_candidate",
+            "route": "/api/preflight/compare_manual_saved_versions_for_simulation_run_indices",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": fixture["simulation_run_id"],
+                "baseline_n_back": valid_entry["manual_saved_index"],
+                "candidate_n_back": stale_entry["manual_saved_index"],
+            },
+            "tool": "compare_manual_preflight_versions_for_simulation_run_indices",
+            "ai_args": {
+                "project": pm.project_name,
+                "run_id": fixture["simulation_run_id"],
+                "baseline_index": valid_entry["manual_saved_index"],
+                "candidate_index": stale_entry["manual_saved_index"],
+            },
+            "expected_status": 404,
+            "expect_error_version_id": stale_entry["version_id"],
+        },
+        {
+            "name": "explicit_compare_with_stale_id_from_list",
+            "route": "/api/preflight/compare_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version": valid_entry["version_id"],
+                "candidate_version_id": stale_entry["version_id"],
+            },
+            "tool": "compare_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "before_version": valid_entry["version_id"],
+                "new_version": stale_entry["version_id"],
+            },
+            "expected_status": 404,
+            "expect_error_version_id": stale_entry["version_id"],
+        },
+        {
+            "name": "autosave_vs_run_index_valid_entry",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": fixture["simulation_run_id"],
+                "manual_saved_index": valid_entry["manual_saved_index"],
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project_name": pm.project_name,
+                "simulation_run_id": fixture["simulation_run_id"],
+                "manual_saved_n_back": valid_entry["manual_saved_index"],
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": valid_entry["version_id"],
+            "expected_candidate_version_id": "autosave",
+            "expected_selection_ordering_basis": "matching_manual_saved_versions_sorted_desc_lexicographic",
+        },
+    ]
+
+    successful_case_response = None
+    successful_case = None
+
+    for case in workflow_cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == case["expected_status"], case["name"]
+        assert route_data == ai_data, case["name"]
+
+        if case["expected_status"] == 200:
+            assert route_data["success"] is True, case["name"]
+            assert route_data["baseline_version_id"] == case["expected_baseline_version_id"], case["name"]
+            assert route_data["candidate_version_id"] == case["expected_candidate_version_id"], case["name"]
+            _assert_compare_ai_selection_and_source_metadata(
+                route_data,
+                baseline_version_id=case["expected_baseline_version_id"],
+                candidate_version_id=case["expected_candidate_version_id"],
+                selection_ordering_basis=case["expected_selection_ordering_basis"],
+            )
+            successful_case_response = route_data
+            successful_case = case
+        else:
+            _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+            assert "not found" in route_data["error"].lower(), case["name"]
+            assert case["expect_error_version_id"] in route_data["error"], case["name"]
+
+    assert successful_case_response is not None
+    assert successful_case is not None
+
+    replay_pm = ProjectManager(ExpressionEvaluator())
+    replay_pm.create_empty_project()
+    replay_pm.projects_dir = pm.projects_dir
+    replay_pm.project_name = pm.project_name
+
+    replay_list_status_code, replay_list_route_data = _call_preflight_route_with_pm(
+        replay_pm,
+        "/api/preflight/list_manual_saved_versions_for_simulation_run",
+        {
+            "project_name": replay_pm.project_name,
+            "run_id": fixture["simulation_run_id"],
+        },
+    )
+    replay_list_ai_data = dispatch_ai_tool(replay_pm, "list_manual_saved_versions_for_simulation_run", {
+        "project_name": replay_pm.project_name,
+        "job_id": fixture["simulation_run_id"],
+    })
+
+    assert replay_list_status_code == 200
+    assert replay_list_route_data == list_route_data
+    assert replay_list_ai_data == list_route_data
+
+    replay_success_status_code, replay_success_route_data = _call_preflight_route_with_pm(
+        replay_pm,
+        successful_case["route"],
+        successful_case["route_payload"],
+    )
+    replay_success_ai_data = dispatch_ai_tool(
+        replay_pm,
+        successful_case["tool"],
+        successful_case["ai_args"],
+    )
+
+    assert replay_success_status_code == 200
+    assert replay_success_route_data == successful_case_response
+    assert replay_success_ai_data == successful_case_response
+
+
 def test_preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes(pm, tmp_path):
     fixture = _seed_preflight_compare_versions_error_parity_fixture(pm, tmp_path)
 
