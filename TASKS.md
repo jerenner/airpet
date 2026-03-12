@@ -6,6 +6,22 @@
 
 ## Recently Completed
 
+- **Geant4-oriented preflight confidence: topology/reference issue corpus signatures locked for deterministic baselines** (2026-03-12)
+  - Added reusable corpus fixture seed helpers in `tests/test_preflight.py` for high-impact preflight failure families:
+    - missing/unknown world reference fixtures
+    - missing procedural-definition fixture
+    - stale/invalid replica fixture (reference + bounds)
+    - invalid division-axis/partition fixture
+    - recursive LV cycle fixture
+  - Added `_sorted_preflight_issue_signatures(...)` helper to normalize full issue-signature assertions (severity/code/message/object refs/hint/metadata) with deterministic ordering.
+  - Added `test_preflight_topology_reference_issue_corpus_signatures_are_deterministic` with a table-driven corpus matrix that locks, per fixture:
+    - `summary.counts_by_code`
+    - `summary.issue_count`
+    - exact `summary.issue_fingerprint`
+    - full sorted issue-signature payloads
+  - Added replay checks on fresh project-manager instances for each corpus case to ensure cross-run determinism (not just same-instance stability).
+  - Why: establishes a reproducible preflight diagnostics baseline for topology/reference failure modes most likely to affect Geant4 geometry reliability and deterministic debugging workflows.
+
 - **Run-linked list stale-version metadata parity (route + AI) and explicit `has_version_json` diagnostics** (2026-03-12)
   - Extended `list_manual_saved_versions_for_simulation_run(...)` in `app.py` to include `has_version_json` for each returned match, aligning list output with existing version-source diagnostics used elsewhere in preflight selectors.
   - Added regression test `test_list_manual_saved_versions_for_simulation_run_preserves_stale_version_json_metadata` in `tests/test_preflight.py` to lock behavior when a run-matching manual version directory exists but `version.json` has been deleted:
@@ -314,6 +330,6 @@
    - Add end-to-end regression coverage that starts from `list_manual_saved_versions_for_simulation_run` and feeds returned indices/ids into compare selectors, asserting deterministic behavior under mixed valid/stale artifacts.
    - Impact: medium-high (protects real workflow chaining that human + AI tools use in practice).
 
-3. **Geant4-oriented preflight confidence lane: topology/reference issue corpus fixture set**
-   - Add curated fixture matrix for high-impact topology/reference failures (world refs, procedural bounds, recursive loops) with deterministic expected issue signatures.
-   - Impact: high (moves toward stronger Geant4 compatibility confidence and reproducible diagnostics baselines).
+3. **Topology/reference corpus surfaced through version-compare workflows (`check → save → compare`)**
+   - Add regression fixtures that persist selected corpus failures as saved versions and assert compare outputs (`added_issue_codes`, `resolved_issue_codes`, fingerprints) remain deterministic when transitioning between failure families.
+   - Impact: high (extends deterministic Geant4-confidence baselines from raw preflight checks into reproducible compare/debug workflows used by humans and AI agents).

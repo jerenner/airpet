@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from unittest.mock import patch
@@ -32,6 +33,274 @@ def _make_pm():
     pm = ProjectManager(evaluator)
     pm.create_empty_project()
     return pm
+
+
+def _sorted_preflight_issue_signatures(pm, issues):
+    signatures = [pm._preflight_issue_signature(issue) for issue in issues]
+    return sorted(
+        signatures,
+        key=lambda item: (
+            item.get('severity', 'info'),
+            item.get('code', 'unknown'),
+            item.get('message', ''),
+            tuple(item.get('object_refs', [])),
+            item.get('hint') or '',
+            json.dumps(item.get('metadata'), sort_keys=True, separators=(',', ':'), default=str),
+        ),
+    )
+
+
+def _seed_preflight_corpus_missing_world_volume_reference(pm):
+    pm.current_geometry_state.world_volume_ref = ''
+
+
+def _seed_preflight_corpus_unknown_world_volume_reference(pm):
+    pm.current_geometry_state.world_volume_ref = 'MissingWorldLV'
+
+
+def _seed_preflight_corpus_missing_procedural_definition(pm):
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'replica'
+    container_lv.content = None
+
+
+def _seed_preflight_corpus_bad_replica_reference_and_bounds(pm):
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'replica'
+    container_lv.content = ReplicaVolume(
+        name='bad_replica',
+        volume_ref='MissingReplicaTarget',
+        number='0',
+        direction={'x': '0', 'y': '0', 'z': '0'},
+        width='0',
+        offset='0',
+    )
+
+
+def _seed_preflight_corpus_bad_division_axis_and_bounds(pm):
+    child_lv, err = pm.add_logical_volume('division_child_lv', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    container_lv = pm.current_geometry_state.logical_volumes['box_LV']
+    container_lv.content_type = 'division'
+    container_lv.content = DivisionVolume(
+        name='bad_division',
+        volume_ref=child_lv['name'],
+        axis='kBadAxis',
+        number='0',
+        width='0',
+        offset='0',
+        unit='mm',
+    )
+
+
+def _seed_preflight_corpus_logical_volume_cycle(pm):
+    loop_a, err = pm.add_logical_volume('loop_a_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+    loop_b, err = pm.add_logical_volume('loop_b_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        loop_a['name'],
+        'loop_a_to_b',
+        loop_b['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        loop_b['name'],
+        'loop_b_to_a',
+        loop_a['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+
+def test_preflight_topology_reference_issue_corpus_signatures_are_deterministic():
+    cases = [
+        {
+            'name': 'missing_world_volume_reference',
+            'seed': _seed_preflight_corpus_missing_world_volume_reference,
+            'expected_counts_by_code': {'missing_world_volume_reference': 1},
+            'expected_issue_fingerprint': 'e200719a2748b5a1257d7834478313d603069b4af59e02d1591b63198e9ad655',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'missing_world_volume_reference',
+                    'message': 'Project is missing world_volume_ref.',
+                    'object_refs': [],
+                    'hint': 'Set a valid world volume before running simulation.',
+                    'metadata': None,
+                }
+            ],
+        },
+        {
+            'name': 'unknown_world_volume_reference',
+            'seed': _seed_preflight_corpus_unknown_world_volume_reference,
+            'expected_counts_by_code': {'unknown_world_volume_reference': 1},
+            'expected_issue_fingerprint': '4e1d1b9ae63ee52a7b0a79ab3eef17e34c2cbad316e97a07b2bc677af946943e',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'unknown_world_volume_reference',
+                    'message': "World volume 'MissingWorldLV' was not found in logical volumes.",
+                    'object_refs': ['MissingWorldLV'],
+                    'hint': 'Set world_volume_ref to an existing logical volume.',
+                    'metadata': None,
+                }
+            ],
+        },
+        {
+            'name': 'missing_procedural_placement_definition',
+            'seed': _seed_preflight_corpus_missing_procedural_definition,
+            'expected_counts_by_code': {'missing_procedural_placement_definition': 1},
+            'expected_issue_fingerprint': '54c6d49737ca9d4cfbea4c1adc42a937b20cc572b44feccadbe2b065d947f435',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'missing_procedural_placement_definition',
+                    'message': (
+                        "LogicalVolume 'box_LV' is marked as procedural type 'replica' "
+                        'but has no content definition.'
+                    ),
+                    'object_refs': ['box_LV'],
+                    'hint': (
+                        'Recreate this procedural placement definition or switch the LV back to '
+                        'physvol content.'
+                    ),
+                    'metadata': None,
+                }
+            ],
+        },
+        {
+            'name': 'replica_reference_and_bounds',
+            'seed': _seed_preflight_corpus_bad_replica_reference_and_bounds,
+            'expected_counts_by_code': {
+                'invalid_replica_direction': 1,
+                'invalid_replica_instance_count': 1,
+                'invalid_replica_width': 1,
+                'unknown_procedural_volume_reference': 1,
+            },
+            'expected_issue_fingerprint': '77e2b23966d15dedfd239104c5c0f9ded7f2097d26cc5553c337f9b1e102e9b5',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'invalid_replica_direction',
+                    'message': (
+                        "Replica placement 'bad_replica' in LV 'box_LV' has invalid direction "
+                        "vector {'x': '0', 'y': '0', 'z': '0'}."
+                    ),
+                    'object_refs': ['box_LV'],
+                    'hint': 'Replica direction must be a non-zero finite vector.',
+                    'metadata': None,
+                },
+                {
+                    'severity': 'error',
+                    'code': 'invalid_replica_instance_count',
+                    'message': "Replica placement 'bad_replica' in LV 'box_LV' has invalid evaluated number=0.",
+                    'object_refs': ['box_LV'],
+                    'hint': 'Replica number must evaluate to an integer > 0.',
+                    'metadata': None,
+                },
+                {
+                    'severity': 'error',
+                    'code': 'invalid_replica_width',
+                    'message': "Replica placement 'bad_replica' in LV 'box_LV' has invalid evaluated width=0.0.",
+                    'object_refs': ['box_LV'],
+                    'hint': 'Replica width must evaluate to a positive finite value.',
+                    'metadata': None,
+                },
+                {
+                    'severity': 'error',
+                    'code': 'unknown_procedural_volume_reference',
+                    'message': (
+                        "Procedural placement 'bad_replica' in LV 'box_LV' references missing "
+                        "logical volume 'MissingReplicaTarget'."
+                    ),
+                    'object_refs': ['box_LV', 'MissingReplicaTarget'],
+                    'hint': 'Update or remove the stale procedural volume reference.',
+                    'metadata': None,
+                },
+            ],
+        },
+        {
+            'name': 'division_axis_and_partition_bounds',
+            'seed': _seed_preflight_corpus_bad_division_axis_and_bounds,
+            'expected_counts_by_code': {
+                'invalid_division_axis': 1,
+                'invalid_division_partition_bounds': 1,
+            },
+            'expected_issue_fingerprint': 'f5eb06213fb26a40c39308753c6a740665cd651994d73642dc440a9ca9ba6094',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'invalid_division_axis',
+                    'message': "Division placement 'bad_division' in LV 'box_LV' has unsupported axis 'kBadAxis'.",
+                    'object_refs': ['box_LV'],
+                    'hint': 'Use one of: kXAxis, kYAxis, kZAxis (or x/y/z aliases).',
+                    'metadata': None,
+                },
+                {
+                    'severity': 'error',
+                    'code': 'invalid_division_partition_bounds',
+                    'message': (
+                        "Division placement 'bad_division' in LV 'box_LV' has invalid evaluated "
+                        'number=0 and width=0.0.'
+                    ),
+                    'object_refs': ['box_LV'],
+                    'hint': 'Division must evaluate to a positive number of slices and/or positive width.',
+                    'metadata': None,
+                },
+            ],
+        },
+        {
+            'name': 'placement_hierarchy_cycle_lv_loop',
+            'seed': _seed_preflight_corpus_logical_volume_cycle,
+            'expected_counts_by_code': {'placement_hierarchy_cycle': 1},
+            'expected_issue_fingerprint': '7401a86ee10d69b29b204e78a22a34ca7f8d481297c02193615ea33cb7e3d7d3',
+            'expected_signatures': [
+                {
+                    'severity': 'error',
+                    'code': 'placement_hierarchy_cycle',
+                    'message': (
+                        'Placement hierarchy contains a recursive cycle: '
+                        'LV:loop_a_LV -> LV:loop_b_LV -> LV:loop_a_LV.'
+                    ),
+                    'object_refs': ['LV:loop_a_LV', 'LV:loop_b_LV'],
+                    'hint': 'Break recursive placement loops so the hierarchy becomes acyclic.',
+                    'metadata': None,
+                }
+            ],
+        },
+    ]
+
+    for case in cases:
+        pm = _make_pm()
+        case['seed'](pm)
+
+        report = pm.run_preflight_checks()
+        summary = report['summary']
+
+        assert summary['can_run'] is False, case['name']
+        assert summary['counts_by_code'] == case['expected_counts_by_code'], case['name']
+        assert summary['issue_count'] == len(case['expected_signatures']), case['name']
+        assert summary['issue_fingerprint'] == case['expected_issue_fingerprint'], case['name']
+
+        signatures = _sorted_preflight_issue_signatures(pm, report['issues'])
+        assert signatures == case['expected_signatures'], case['name']
+
+        replay_pm = _make_pm()
+        case['seed'](replay_pm)
+        replay_report = replay_pm.run_preflight_checks()
+
+        replay_signatures = _sorted_preflight_issue_signatures(replay_pm, replay_report['issues'])
+        assert replay_signatures == case['expected_signatures'], case['name']
+        assert replay_report['summary']['issue_fingerprint'] == case['expected_issue_fingerprint'], case['name']
 
 
 def test_preflight_default_project_can_run():
