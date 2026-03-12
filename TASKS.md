@@ -6,6 +6,20 @@
 
 ## Recently Completed
 
+- **Route/AI preflight compare parity matrix coverage (table-driven success + failure contracts)** (2026-03-12)
+  - Added shared route/fixture helpers in `tests/test_ai_api.py`:
+    - `_call_preflight_route_with_pm(...)`
+    - `_seed_preflight_compare_route_ai_parity_fixture(...)`
+  - Added table-driven success parity regression test to lock full payload equivalence between HTTP routes and `dispatch_ai_tool` wrappers for representative compare selectors:
+    - `POST /api/preflight/compare_latest_versions` ↔ `compare_latest_preflight_versions`
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index` ↔ `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index`
+    - `POST /api/preflight/compare_manual_saved_versions_for_simulation_run_indices` ↔ `compare_manual_preflight_versions_for_simulation_run_indices`
+  - Added table-driven failure parity regression test to lock status-aware error-envelope equivalence (metadata-clean `success/error` only) for representative 400/404 compare failures:
+    - unknown selected saved version (404)
+    - out-of-range run-linked manual index (400)
+    - identical run-linked baseline/candidate indices (400)
+  - Why: prevents drift between HTTP and AI compare surfaces so deterministic client branching and AI automation get the same response contract for both success and failure paths.
+
 - **Negative-path envelope consistency for preflight list/discovery selectors (route + AI wrappers)** (2026-03-11)
   - Added shared list-failure envelope assertion helpers to lock clean `success/error` contracts:
     - `tests/test_preflight.py`: `_assert_preflight_list_route_error_payload_excludes_success_metadata(...)`
@@ -249,14 +263,14 @@
 
 ## Next Candidates
 
-1. **Response-shape parity checks between route and AI compare surfaces (success + failure)**
-   - Add table-driven tests that compare key payload fields (`selection`, `ordering_metadata`, `version_sources`, and error envelopes) between HTTP routes and `dispatch_ai_tool` wrappers for the same scenarios.
-   - Impact: medium (prevents contract drift between human/API and AI tool entry points).
-
-2. **Run/manual compare selector stale-id 404 coverage**
+1. **Run/manual compare selector stale-id 404 coverage**
    - Add explicit stale-id regressions for run-linked/manual-index compare selector routes and AI wrappers where version lookups occur after selector expansion, ensuring `success/error` envelopes remain metadata-clean on not-found paths.
    - Impact: medium (completes deterministic stale-id handling coverage across simulation-run keyed compare surfaces).
 
-3. **Route/AI parity checks for preflight list/discovery success payloads**
+2. **Route/AI parity checks for preflight list/discovery success payloads**
    - Add table-driven assertions that route and AI list surfaces (`list_preflight_versions`, `list_manual_saved_versions_for_simulation_run`) expose matching ordering/source metadata and counts for identical fixtures.
    - Impact: medium (guards deterministic selector UX for both API and AI automation paths).
+
+3. **Expand compare parity matrix to remaining snapshot/explicit selector surfaces**
+   - Extend new route-vs-AI parity loops to include snapshot-specific compare selectors (`compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`, `compare_latest_snapshot_versions`) and representative stale-id/not-enough-versions failures.
+   - Impact: medium (locks consistency for the remaining deterministic compare entry points used by snapshot-heavy workflows).
