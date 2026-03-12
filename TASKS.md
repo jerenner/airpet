@@ -6,6 +6,20 @@
 
 ## Recently Completed
 
+- **Topology/reference corpus compare-workflow determinism matrix (`check → save → compare`)** (2026-03-12)
+  - Added `_save_seeded_preflight_corpus_version(...)` in `tests/test_preflight.py` to persist seeded topology/reference corpus states as concrete saved versions.
+  - Added `test_compare_preflight_versions_topology_reference_corpus_transition_matrix_is_deterministic` to lock deterministic compare behavior across high-signal failure-family transitions:
+    - missing world reference → unknown world reference
+    - replica reference/bounds failures → division axis/partition failures
+    - division axis/partition failures → placement hierarchy LV cycle
+  - Locked, per transition:
+    - baseline/candidate issue fingerprints
+    - `added_issue_codes` / `resolved_issue_codes`
+    - `counts_delta_by_code` + `issue_count_delta`
+    - compare status contract (`fingerprint_changed` with stable `can_run` flags)
+    - version-source metadata (`ordering_metadata` + source-path checks) and replay determinism on fresh `ProjectManager` instances.
+  - Why: extends preflight corpus confidence from standalone `run_preflight_checks()` baselines into the persisted version-compare workflow human and AI debugging paths actually use.
+
 - **Geant4-oriented preflight confidence: topology/reference issue corpus signatures locked for deterministic baselines** (2026-03-12)
   - Added reusable corpus fixture seed helpers in `tests/test_preflight.py` for high-impact preflight failure families:
     - missing/unknown world reference fixtures
@@ -330,6 +344,6 @@
    - Add end-to-end regression coverage that starts from `list_manual_saved_versions_for_simulation_run` and feeds returned indices/ids into compare selectors, asserting deterministic behavior under mixed valid/stale artifacts.
    - Impact: medium-high (protects real workflow chaining that human + AI tools use in practice).
 
-3. **Topology/reference corpus surfaced through version-compare workflows (`check → save → compare`)**
-   - Add regression fixtures that persist selected corpus failures as saved versions and assert compare outputs (`added_issue_codes`, `resolved_issue_codes`, fingerprints) remain deterministic when transitioning between failure families.
-   - Impact: high (extends deterministic Geant4-confidence baselines from raw preflight checks into reproducible compare/debug workflows used by humans and AI agents).
+3. **Cross-surface corpus-transition compare parity (route + AI wrappers)**
+   - Mirror the new topology/reference transition matrix through `POST /api/preflight/compare_versions` and AI compare wrappers so HTTP and AI tooling keep identical deterministic contracts (including clean error envelopes) for the same saved-version transitions.
+   - Impact: medium-high (prevents route/AI drift now that core compare-transition determinism is locked).

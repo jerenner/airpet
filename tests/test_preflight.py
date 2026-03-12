@@ -303,6 +303,117 @@ def test_preflight_topology_reference_issue_corpus_signatures_are_deterministic(
         assert replay_report['summary']['issue_fingerprint'] == case['expected_issue_fingerprint'], case['name']
 
 
+def _save_seeded_preflight_corpus_version(pm, *, seed, description):
+    pm.create_empty_project()
+    seed(pm)
+    version_id, message = pm.save_project_version(description)
+    assert isinstance(version_id, str) and version_id
+    assert isinstance(message, str) and message
+    return version_id
+
+
+def test_compare_preflight_versions_topology_reference_corpus_transition_matrix_is_deterministic():
+    cases = [
+        {
+            'name': 'missing_world_to_unknown_world',
+            'baseline_seed': _seed_preflight_corpus_missing_world_volume_reference,
+            'candidate_seed': _seed_preflight_corpus_unknown_world_volume_reference,
+            'baseline_fingerprint': 'e200719a2748b5a1257d7834478313d603069b4af59e02d1591b63198e9ad655',
+            'candidate_fingerprint': '4e1d1b9ae63ee52a7b0a79ab3eef17e34c2cbad316e97a07b2bc677af946943e',
+            'added_issue_codes': ['unknown_world_volume_reference'],
+            'resolved_issue_codes': ['missing_world_volume_reference'],
+            'counts_delta_by_code': {
+                'missing_world_volume_reference': -1,
+                'unknown_world_volume_reference': 1,
+            },
+            'issue_count_delta': 0,
+        },
+        {
+            'name': 'replica_bounds_to_division_bounds',
+            'baseline_seed': _seed_preflight_corpus_bad_replica_reference_and_bounds,
+            'candidate_seed': _seed_preflight_corpus_bad_division_axis_and_bounds,
+            'baseline_fingerprint': '77e2b23966d15dedfd239104c5c0f9ded7f2097d26cc5553c337f9b1e102e9b5',
+            'candidate_fingerprint': 'f5eb06213fb26a40c39308753c6a740665cd651994d73642dc440a9ca9ba6094',
+            'added_issue_codes': ['invalid_division_axis', 'invalid_division_partition_bounds'],
+            'resolved_issue_codes': [
+                'invalid_replica_direction',
+                'invalid_replica_instance_count',
+                'invalid_replica_width',
+                'unknown_procedural_volume_reference',
+            ],
+            'counts_delta_by_code': {
+                'invalid_division_axis': 1,
+                'invalid_division_partition_bounds': 1,
+                'invalid_replica_direction': -1,
+                'invalid_replica_instance_count': -1,
+                'invalid_replica_width': -1,
+                'unknown_procedural_volume_reference': -1,
+            },
+            'issue_count_delta': -2,
+        },
+        {
+            'name': 'division_bounds_to_lv_cycle',
+            'baseline_seed': _seed_preflight_corpus_bad_division_axis_and_bounds,
+            'candidate_seed': _seed_preflight_corpus_logical_volume_cycle,
+            'baseline_fingerprint': 'f5eb06213fb26a40c39308753c6a740665cd651994d73642dc440a9ca9ba6094',
+            'candidate_fingerprint': '7401a86ee10d69b29b204e78a22a34ca7f8d481297c02193615ea33cb7e3d7d3',
+            'added_issue_codes': ['placement_hierarchy_cycle'],
+            'resolved_issue_codes': ['invalid_division_axis', 'invalid_division_partition_bounds'],
+            'counts_delta_by_code': {
+                'invalid_division_axis': -1,
+                'invalid_division_partition_bounds': -1,
+                'placement_hierarchy_cycle': 1,
+            },
+            'issue_count_delta': -1,
+        },
+    ]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pm = _make_pm()
+        pm.projects_dir = tmpdir
+        pm.project_name = 'preflight_corpus_compare_transition_matrix'
+
+        for case in cases:
+            baseline_version_id = _save_seeded_preflight_corpus_version(
+                pm,
+                seed=case['baseline_seed'],
+                description=f"{case['name']}_baseline",
+            )
+            candidate_version_id = _save_seeded_preflight_corpus_version(
+                pm,
+                seed=case['candidate_seed'],
+                description=f"{case['name']}_candidate",
+            )
+
+            result = compare_preflight_versions(pm, baseline_version_id, candidate_version_id)
+            comparison = result['comparison']
+
+            assert comparison['baseline']['issue_fingerprint'] == case['baseline_fingerprint'], case['name']
+            assert comparison['candidate']['issue_fingerprint'] == case['candidate_fingerprint'], case['name']
+            assert comparison['added_issue_codes'] == case['added_issue_codes'], case['name']
+            assert comparison['resolved_issue_codes'] == case['resolved_issue_codes'], case['name']
+            assert comparison['counts_delta_by_code'] == case['counts_delta_by_code'], case['name']
+            assert comparison['issue_count_delta'] == case['issue_count_delta'], case['name']
+            assert comparison['status'] == {
+                'can_run_changed': False,
+                'regressed_can_run': False,
+                'improved_can_run': False,
+                'fingerprint_changed': True,
+            }, case['name']
+
+            _assert_compare_route_selection_and_source_metadata(
+                result,
+                baseline_version_id=baseline_version_id,
+                candidate_version_id=candidate_version_id,
+            )
+
+            replay_pm = _make_pm()
+            replay_pm.projects_dir = tmpdir
+            replay_pm.project_name = pm.project_name
+            replay_result = compare_preflight_versions(replay_pm, baseline_version_id, candidate_version_id)
+            assert replay_result['comparison'] == comparison, case['name']
+
+
 def test_preflight_default_project_can_run():
     pm = _make_pm()
     report = pm.run_preflight_checks()
