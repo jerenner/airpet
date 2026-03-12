@@ -168,6 +168,40 @@ def _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path):
     }
 
 
+def _seed_preflight_run_selector_stale_version_fixture(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_compare_parity_stale_selector_project"
+
+    simulation_run_id = "job_ai_route_compare_stale_selector"
+
+    oldest_matching_version_id, _ = pm.save_project_version('manual_ai_route_stale_a_old')
+    os.makedirs(
+        os.path.join(pm._get_version_dir(oldest_matching_version_id), 'sim_runs', simulation_run_id),
+        exist_ok=True,
+    )
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    stale_selected_version_id, _ = pm.save_project_version('manual_ai_route_stale_z_latest')
+    os.makedirs(
+        os.path.join(pm._get_version_dir(stale_selected_version_id), 'sim_runs', simulation_run_id),
+        exist_ok=True,
+    )
+
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    os.remove(os.path.join(pm._get_version_dir(stale_selected_version_id), 'version.json'))
+
+    return {
+        'simulation_run_id': simulation_run_id,
+        'oldest_matching_version_id': oldest_matching_version_id,
+        'stale_selected_version_id': stale_selected_version_id,
+    }
+
+
 def test_ai_tool_manage_define(pm):
     # Test creation
     res = dispatch_ai_tool(pm, "manage_define", {
@@ -1778,6 +1812,69 @@ def test_preflight_compare_routes_and_ai_wrappers_share_failure_error_envelopes(
         assert route_data == ai_data
         _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
         assert case["error_substring"] in route_data["error"].lower()
+
+
+def test_preflight_run_selector_routes_and_ai_wrappers_share_stale_id_404_error_envelopes(pm, tmp_path):
+    fixture = _seed_preflight_run_selector_stale_version_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "run_id": fixture["simulation_run_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+                "job_id": fixture["simulation_run_id"],
+            },
+        },
+        {
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "job_id": fixture["simulation_run_id"],
+                "n_back": 0,
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project": pm.project_name,
+                "run_id": fixture["simulation_run_id"],
+                "manual_saved_n_back": 0,
+            },
+        },
+        {
+            "route": "/api/preflight/compare_manual_saved_versions_for_simulation_run_indices",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "run_id": fixture["simulation_run_id"],
+                "baseline_n_back": 1,
+                "candidate_n_back": 0,
+            },
+            "tool": "compare_manual_preflight_versions_for_simulation_run_indices",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": fixture["simulation_run_id"],
+                "baseline_index": 1,
+                "candidate_index": 0,
+            },
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 404
+        assert route_data == ai_data
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+        assert "not found" in route_data["error"].lower()
+        assert fixture["stale_selected_version_id"] in route_data["error"]
 
 
 def test_ai_simulation_tools(pm):

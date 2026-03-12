@@ -6,6 +6,15 @@
 
 ## Recently Completed
 
+- **Run/manual selector stale-id 404 envelope parity coverage (route + AI wrappers)** (2026-03-12)
+  - Added `_seed_preflight_run_selector_stale_version_fixture(...)` in `tests/test_ai_api.py` to deterministically create run-linked selector fixtures where a selected manual version directory still exists but its `version.json` has been removed (stale-id scenario).
+  - Added `test_preflight_run_selector_routes_and_ai_wrappers_share_stale_id_404_error_envelopes` with table-driven route-vs-AI parity assertions for stale selected-version lookups across run/manual selector surfaces:
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run` ↔ `compare_autosave_preflight_vs_manual_saved_for_simulation_run`
+    - `POST /api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index` ↔ `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index`
+    - `POST /api/preflight/compare_manual_saved_versions_for_simulation_run_indices` ↔ `compare_manual_preflight_versions_for_simulation_run_indices`
+  - Locked status-aware 404 parity and metadata-clean failure envelopes (`success/error` only) when selector expansion succeeds but version-file resolution fails.
+  - Why: closes a deterministic stale-id reliability gap on run-linked/manual-index compare selectors used by both HTTP clients and AI automation.
+
 - **Route/AI parity checks for preflight list/discovery success payloads** (2026-03-12)
   - Added `test_preflight_list_routes_and_ai_wrappers_share_success_payloads` in `tests/test_ai_api.py`.
   - Added table-driven route-vs-AI success parity assertions for:
@@ -272,14 +281,14 @@
 
 ## Next Candidates
 
-1. **Run/manual compare selector stale-id 404 coverage**
-   - Add explicit stale-id regressions for run-linked/manual-index compare selector routes and AI wrappers where version lookups occur after selector expansion, ensuring `success/error` envelopes remain metadata-clean on not-found paths.
-   - Impact: medium (completes deterministic stale-id handling coverage across simulation-run keyed compare surfaces).
-
-2. **Expand compare parity matrix to remaining snapshot/explicit selector surfaces**
-   - Extend new route-vs-AI parity loops to include snapshot-specific compare selectors (`compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`, `compare_latest_snapshot_versions`) and representative stale-id/not-enough-versions failures.
+1. **Expand compare parity matrix to remaining snapshot/explicit selector surfaces**
+   - Extend route-vs-AI parity loops to include snapshot-specific compare selectors (`compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`, `compare_latest_snapshot_versions`) and representative stale-id/not-enough-versions failures.
    - Impact: medium (locks consistency for the remaining deterministic compare entry points used by snapshot-heavy workflows).
 
-3. **Route/AI parity matrix for preflight list/discovery failure envelopes**
+2. **Route/AI parity matrix for preflight list/discovery failure envelopes**
    - Add table-driven route-vs-AI parity checks for representative list/discovery failures (missing selectors, invalid limits), asserting status-aware envelope equality and exclusion of success-only metadata.
    - Impact: medium (completes deterministic parity guarantees across both success and failure list/discovery paths).
+
+3. **Stale-version metadata behavior for run-linked list selectors**
+   - Add regression coverage for `list_manual_saved_versions_for_simulation_run` when matching version directories have missing `version.json`, locking deterministic `version_json_mtime_utc`/source-path metadata and clarifying expected behavior for partially deleted artifacts.
+   - Impact: medium (improves diagnosability/reproducibility when project version directories drift).
