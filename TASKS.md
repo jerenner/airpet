@@ -2,9 +2,38 @@
 
 ## In Progress
 
-- None.
+- **Spike A: Local-model integration for AI operations (Checkpoint 2/5) — llama.cpp text-first adapter path**
+  - Objective: enable AIRPET AI workflows to support local backends (llama.cpp / LM Studio) with deterministic behavior and clear fallback rules.
+  - Current checkpoint scope:
+    - implement a llama.cpp text-first adapter path aligned with the normalized contract (request/response mapping, config knobs, timeout/retry policy)
+    - add deterministic selection plumbing so text-only flows can route to llama.cpp when enabled and capable
+    - extend contract tests to cover llama.cpp selection and fallback behavior
+  - Definition of done (Checkpoint 2):
+    - committed llama.cpp adapter scaffold with clear config surface
+    - selector can choose llama.cpp for text-first requirements (when enabled)
+    - baseline adapter/selection tests passing
+  - Next checkpoint (Checkpoint 3): implement LM Studio text-first adapter path.
+  - Note: selector parity/validation hardening remains in reserve unless a concrete bug/regression is found.
 
 ## Recently Completed
+
+- **Spike A Checkpoint 1/5 completed: backend adapter contract + capability matrix + selection invariant tests** (2026-03-13)
+  - Added normalized adapter contract implementation in `src/ai_backend_adapters.py`:
+    - declarative `AdapterSpec` + `AdapterCapabilities`
+    - deterministic requirement model (`BackendRequirements`) for tools/JSON/vision/streaming/context
+    - deterministic backend selection (`select_backend`) with preferred-backend + fallback semantics and attempted-backend diagnostics
+  - Added adapter contract spec doc: `docs/AI_BACKEND_ADAPTER_CONTRACT.md`.
+  - Added committed capability matrix artifact: `docs/AI_BACKEND_CAPABILITY_MATRIX.json` (remote Gemini + planned llama.cpp/LM Studio entries).
+  - Added baseline contract test coverage in `tests/test_ai_backend_adapters.py` for:
+    - capability-matrix reporting shape/version
+    - explicit preferred-backend selection
+    - fallback-on-mismatch behavior
+    - no-fallback failure behavior
+    - context-window requirement routing
+    - unknown preferred-backend rejection
+  - Why: establishes deterministic adapter/capability foundations required to safely implement local-model backends without route-selection ambiguity.
+  - Checks run:
+    - `pytest -q tests/test_ai_backend_adapters.py`
 
 - **Snapshot/explicit selector canonical-vs-alias precedence parity matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids; route ↔ AI wrappers)** (2026-03-13)
   - Added `test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
@@ -536,10 +565,25 @@
 
 ## Next Candidates
 
-1. **Run-linked selector malformed-id validation parity matrix**
-   - Add route + AI parity coverage for empty/whitespace/path-escape simulation-run selector ids across run-linked list/compare routes and wrappers so validation/error-envelope behavior remains deterministic under hostile or malformed input.
-   - Impact: medium (hardens reliability/security-facing selector validation contracts for automation workflows).
+1. **Spike A Checkpoint 3/5: LM Studio adapter (text-first path)**
+   - Implement LM Studio backend using the normalized adapter contract.
+   - Add parity smoke selection tests across Gemini + llama.cpp + LM Studio capability profiles.
+   - Impact: high (completes first full local-model optionality milestone).
 
-2. **Snapshot/saved explicit-selector malformed-id validation parity matrix**
-   - Add route + AI parity coverage for path-escape/absolute-path/malformed ids across explicit selector routes (`compare_autosave_vs_saved_version`, `compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`) so deterministic validation and error-envelope behavior is locked for hostile input beyond canonical-vs-alias precedence.
-   - Impact: medium (extends security/reliability guardrails for explicit selector workflows used by automation).
+2. **Spike A Checkpoint 4/5: `/api/ai/chat` backend-routing integration**
+   - Integrate adapter selector into AI chat entrypoint with deterministic requirement derivation per request mode.
+   - Preserve current Gemini behavior while adding explicit fallback/error diagnostics.
+   - Impact: high (moves contract from unit-test-only into user-visible runtime path).
+
+3. **Spike B Checkpoint 1/5: multimodal drawing intake ingestion foundation**
+   - Add PDF/image artifact intake + normalized metadata/provenance plumbing.
+   - Prepare deterministic artifact references for downstream extraction and review steps.
+   - Impact: high (opens multimodal pathway).
+
+### Reserve Backlog (only when needed for concrete bug/regression)
+
+- **Run-linked selector malformed-id validation parity matrix**
+  - Keep as reserve hardening: route + AI parity for hostile/malformed simulation-run selector ids.
+
+- **Snapshot/saved explicit-selector malformed-id validation parity matrix**
+  - Keep as reserve hardening: route + AI parity for hostile/malformed explicit snapshot/saved selector ids.
