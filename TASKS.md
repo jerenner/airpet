@@ -6,6 +6,22 @@
 
 ## Recently Completed
 
+- **`list_versions` canonical-vs-alias precedence parity matrix (conflicts + explicit-null/empty canonical handling, route ↔ AI)** (2026-03-13)
+  - Added `test_preflight_list_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
+  - New table-driven route↔AI parity coverage locks deterministic input-precedence behavior for mixed canonical/alias `list_versions` payloads:
+    - canonical `include_autosave` overriding conflicting `include_latest_autosave`
+    - explicit `null` canonical `include_autosave` not falling back to alias values
+    - canonical `limit` overriding conflicting alias limits (`max_versions`/`count`)
+    - explicit `null` canonical `limit` not falling back to alias limits
+    - canonical empty-string `limit` not falling back to aliases and preserving deterministic 400 validation semantics
+  - Success-path cases assert stable autosave inclusion/exclusion, deterministic returned/total counts, and ordering expectations.
+  - Failure-path case asserts metadata-clean error envelopes and wording parity (`limit`, `non-negative integer`).
+  - Why: closes the remaining `list_versions` selector precedence regression gap from Next Candidates, keeping HTTP and AI list/discovery behavior deterministic under mixed/conflicting payload shapes.
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "list_versions_route_and_ai_wrappers_share_alias_invalid_limit_error_payloads or list_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads or preflight_list_routes_and_ai_wrappers_share_success_payloads"`
+    - `pytest -q tests/test_ai_api.py`
+    - `pytest -q tests/test_preflight.py -k "list_versions_route"`
+
 - **Explicit `compare_versions` canonical-vs-alias precedence parity matrix (conflicts + explicit-null/empty canonical handling)** (2026-03-13)
   - Added `test_preflight_compare_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
   - New table-driven route↔AI parity coverage locks deterministic selector precedence for:
@@ -486,14 +502,14 @@
 
 ## Next Candidates
 
-1. **`list_versions` canonical-vs-alias precedence contract matrix**
-   - Add targeted route + AI parity coverage for mixed canonical/alias payloads (e.g., `limit` with `count`/`max_versions`, `include_autosave` with `include_latest_autosave`, explicit `null` values) so precedence rules remain deterministic and regression-safe.
-   - Impact: medium (protects newly-added alias support from subtle parsing drift).
-
-2. **Run-linked selector canonical-vs-alias precedence matrix (`simulation_run_id` vs `run_id`/`job_id`)**
+1. **Run-linked selector canonical-vs-alias precedence matrix (`simulation_run_id` vs `run_id`/`job_id`)**
    - Add parity coverage for mixed canonical/alias payload conflicts and explicit-null precedence across run-linked compare/list selector routes and AI wrappers to prevent future parsing drift.
    - Impact: medium (locks deterministic selector input precedence after required-field parity hardening).
 
-3. **Snapshot/explicit selector canonical-vs-alias precedence matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids)**
+2. **Snapshot/explicit selector canonical-vs-alias precedence matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids)**
    - Add route + AI parity coverage for mixed canonical/alias conflicts and explicit-null precedence on explicit selector routes (`compare_autosave_vs_saved_version`, `compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`) so selector resolution remains deterministic across wrappers and HTTP routes.
    - Impact: medium (extends precedence hardening beyond `compare_versions` to remaining explicit selector APIs).
+
+3. **Run-linked selector malformed-id validation parity matrix**
+   - Add route + AI parity coverage for empty/whitespace/path-escape simulation-run selector ids across run-linked list/compare routes and wrappers so validation/error-envelope behavior remains deterministic under hostile or malformed input.
+   - Impact: medium (hardens reliability/security-facing selector validation contracts for automation workflows).

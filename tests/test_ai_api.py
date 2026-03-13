@@ -1898,6 +1898,141 @@ def test_preflight_list_versions_route_and_ai_wrappers_share_alias_invalid_limit
     assert "limit" in route_data["error"]
 
 
+
+def test_preflight_list_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads(pm, tmp_path):
+    _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "name": "canonical_include_autosave_overrides_conflicting_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "include_autosave": False,
+                "include_latest_autosave": True,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "include_autosave": False,
+                "include_latest_autosave": True,
+            },
+            "expected_status": 200,
+            "expected_has_autosave": False,
+            "expected_total_versions": 2,
+            "expected_returned_versions": 2,
+            "expect_no_autosave_versions": True,
+        },
+        {
+            "name": "null_canonical_include_autosave_does_not_fall_back_to_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "include_autosave": None,
+                "include_latest_autosave": True,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "include_autosave": None,
+                "include_latest_autosave": True,
+            },
+            "expected_status": 200,
+            "expected_has_autosave": False,
+            "expected_total_versions": 2,
+            "expected_returned_versions": 2,
+            "expect_no_autosave_versions": True,
+        },
+        {
+            "name": "canonical_limit_overrides_conflicting_alias_limits",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "include_autosave": True,
+                "limit": 1,
+                "max_versions": 3,
+                "count": 2,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "include_autosave": True,
+                "limit": 1,
+                "max_versions": 3,
+                "count": 2,
+            },
+            "expected_status": 200,
+            "expected_has_autosave": True,
+            "expected_total_versions": 3,
+            "expected_returned_versions": 1,
+            "expect_autosave_first": True,
+        },
+        {
+            "name": "null_canonical_limit_does_not_fall_back_to_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "include_autosave": True,
+                "limit": None,
+                "max_versions": 1,
+                "count": 1,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "include_autosave": True,
+                "limit": None,
+                "max_versions": 1,
+                "count": 1,
+            },
+            "expected_status": 200,
+            "expected_has_autosave": True,
+            "expected_total_versions": 3,
+            "expected_returned_versions": 3,
+            "expect_autosave_first": True,
+        },
+        {
+            "name": "empty_canonical_limit_does_not_fall_back_to_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "include_autosave": True,
+                "limit": "",
+                "max_versions": 1,
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "include_autosave": True,
+                "limit": "",
+                "max_versions": 1,
+            },
+            "expected_status": 400,
+            "error_substrings": ["limit", "non-negative integer"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            "/api/preflight/list_versions",
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, "list_preflight_versions", case["ai_args"])
+
+        assert status_code == case["expected_status"], case["name"]
+        assert route_data == ai_data, case["name"]
+
+        if case["expected_status"] == 200:
+            assert route_data["success"] is True, case["name"]
+            assert route_data["has_autosave"] == case["expected_has_autosave"], case["name"]
+            assert route_data["total_versions"] == case["expected_total_versions"], case["name"]
+            assert route_data["returned_versions"] == case["expected_returned_versions"], case["name"]
+
+            if case.get("expect_no_autosave_versions"):
+                assert all(not entry["is_autosave"] for entry in route_data["versions"]), case["name"]
+
+            if case.get("expect_autosave_first"):
+                assert route_data["versions"][0]["version_id"] == "autosave", case["name"]
+
+            continue
+
+        _assert_preflight_list_ai_error_payload_excludes_success_metadata(route_data)
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring.lower() in error_lower, case["name"]
+
+
 def test_preflight_global_list_selector_workflows_route_and_ai_wrappers_share_payloads(pm, tmp_path):
     fixture = _seed_preflight_global_selector_route_ai_parity_fixture(pm, tmp_path)
 
