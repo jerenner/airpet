@@ -8203,6 +8203,10 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         # diagnostics (including alias-aware wording) in dispatch.
         route_aligned_required_fields = {
             "compare_preflight_versions": {"baseline_version_id", "candidate_version_id"},
+            "compare_autosave_preflight_vs_manual_saved_for_simulation_run": {"simulation_run_id"},
+            "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index": {"simulation_run_id"},
+            "list_manual_saved_versions_for_simulation_run": {"simulation_run_id"},
+            "compare_manual_preflight_versions_for_simulation_run_indices": {"simulation_run_id"},
             "compare_autosave_preflight_vs_saved_version": {"saved_version_id"},
             "compare_autosave_preflight_vs_snapshot_version": {"autosave_snapshot_version_id"},
             "compare_autosave_snapshot_preflight_versions": {
@@ -8304,6 +8308,18 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             body = {"success": False, "error": "Route returned no JSON body."}
 
         return status_code, body
+
+    def _resolve_simulation_run_id_with_aliases(raw_args: Dict[str, Any]) -> Any:
+        simulation_run_id = (
+            raw_args.get("simulation_run_id")
+            if raw_args.get("simulation_run_id") is not None
+            else raw_args.get("run_id")
+        )
+        if simulation_run_id is None:
+            simulation_run_id = raw_args.get("job_id")
+        if simulation_run_id is None:
+            simulation_run_id = raw_args.get("simulation_job_id")
+        return simulation_run_id
 
 
     args, normalize_error = _normalize_tool_args(tool_name, args)
@@ -8719,10 +8735,17 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_autosave_preflight_vs_manual_saved_for_simulation_run":
+            simulation_run_id = _resolve_simulation_run_id_with_aliases(args)
+            if simulation_run_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+                }
+
             try:
                 result = compare_autosave_preflight_vs_manual_saved_for_simulation_run(
                     pm,
-                    simulation_run_id=args.get("simulation_run_id"),
+                    simulation_run_id=simulation_run_id,
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
@@ -8734,10 +8757,17 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index":
+            simulation_run_id = _resolve_simulation_run_id_with_aliases(args)
+            if simulation_run_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+                }
+
             try:
                 result = compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
                     pm,
-                    simulation_run_id=args.get("simulation_run_id"),
+                    simulation_run_id=simulation_run_id,
                     manual_saved_index=args.get("manual_saved_index"),
                     project_name=args.get("project_name"),
                 )
@@ -8750,10 +8780,17 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "list_manual_saved_versions_for_simulation_run":
+            simulation_run_id = _resolve_simulation_run_id_with_aliases(args)
+            if simulation_run_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+                }
+
             try:
                 result = list_manual_saved_versions_for_simulation_run(
                     pm,
-                    simulation_run_id=args.get("simulation_run_id"),
+                    simulation_run_id=simulation_run_id,
                     project_name=args.get("project_name"),
                     limit=args.get("limit"),
                 )
@@ -8766,10 +8803,17 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_manual_preflight_versions_for_simulation_run_indices":
+            simulation_run_id = _resolve_simulation_run_id_with_aliases(args)
+            if simulation_run_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: simulation_run_id (or run_id/job_id).",
+                }
+
             try:
                 result = compare_manual_preflight_versions_for_simulation_run_indices(
                     pm,
-                    simulation_run_id=args.get("simulation_run_id"),
+                    simulation_run_id=simulation_run_id,
                     baseline_manual_saved_index=args.get("baseline_manual_saved_index"),
                     candidate_manual_saved_index=args.get("candidate_manual_saved_index"),
                     project_name=args.get("project_name"),

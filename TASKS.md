@@ -6,6 +6,23 @@
 
 ## Recently Completed
 
+- **Run-linked selector required-field diagnostics parity + null-canonical run-id alias fallback (route ↔ AI wrappers)** (2026-03-13)
+  - Hardened AI dispatch required-field handling in `app.py` for run-linked preflight selector tools so missing `simulation_run_id` errors now mirror route wording/envelope contracts instead of generic schema-level validation text:
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run`
+    - `compare_autosave_preflight_vs_manual_saved_for_simulation_run_index`
+    - `list_manual_saved_versions_for_simulation_run`
+    - `compare_manual_preflight_versions_for_simulation_run_indices`
+  - Added alias-aware run-id resolution helper in dispatcher branches so AI wrappers now honor `run_id`/`job_id` (and existing AI `simulation_job_id`) when canonical `simulation_run_id` is present but null.
+  - Extended `_validate_tool_args(...)` route-aligned required-field bypass map for these run-linked selector tools so dispatcher-level route-matched validation can run.
+  - Added route↔AI regression coverage in `tests/test_ai_api.py`:
+    - `test_preflight_run_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes`
+    - `test_preflight_run_selector_routes_and_ai_wrappers_honor_run_id_aliases_when_canonical_ids_are_null`
+  - Updated direct AI required-field regression expectations for run-linked selector wrappers to lock route-matched `Missing required field: simulation_run_id (or run_id/job_id).` wording.
+  - Why: closes remaining required-field contract drift on simulation-run selector workflows used by deterministic list/compare automation and keeps null-canonical alias recovery behavior consistent across HTTP and AI surfaces.
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "run_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes or run_selector_routes_and_ai_wrappers_honor_run_id_aliases_when_canonical_ids_are_null or compare_autosave_preflight_vs_manual_saved_for_simulation_run_requires_simulation_run_id or compare_autosave_preflight_vs_manual_saved_for_simulation_run_index_requires_simulation_run_id or compare_manual_preflight_versions_for_simulation_run_indices_requires_simulation_run_id or list_manual_saved_versions_for_simulation_run_requires_simulation_run_id_without_success_metadata"`
+    - `pytest -q tests/test_ai_api.py`
+
 - **Explicit compare selector required-field + null-canonical alias parity (route ↔ AI wrappers)** (2026-03-13)
   - Hardened dispatcher required-field handling in `app.py` for explicit compare selector tools so AI wrappers now mirror route diagnostics for missing selector ids:
     - `compare_autosave_preflight_vs_saved_version`
@@ -438,14 +455,14 @@
 
 ## Next Candidates
 
-1. **Run-linked selector required-field diagnostics parity (`simulation_run_id` aliases, route + AI wrappers)**
-   - Add route-vs-AI parity coverage for missing-run-id validation on run-linked compare/list selector surfaces (including alias forms and metadata-clean 400 envelopes), and align dispatcher wording where needed.
-   - Impact: medium (removes remaining required-field contract drift for run-driven automation workflows).
-
-2. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
+1. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
    - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).
 
-3. **`list_versions` canonical-vs-alias precedence contract matrix**
+2. **`list_versions` canonical-vs-alias precedence contract matrix**
    - Add targeted route + AI parity coverage for mixed canonical/alias payloads (e.g., `limit` with `count`/`max_versions`, `include_autosave` with `include_latest_autosave`, explicit `null` values) so precedence rules remain deterministic and regression-safe.
    - Impact: medium (protects newly-added alias support from subtle parsing drift).
+
+3. **Run-linked selector canonical-vs-alias precedence matrix (`simulation_run_id` vs `run_id`/`job_id`)**
+   - Add parity coverage for mixed canonical/alias payload conflicts and explicit-null precedence across run-linked compare/list selector routes and AI wrappers to prevent future parsing drift.
+   - Impact: medium (locks deterministic selector input precedence after required-field parity hardening).

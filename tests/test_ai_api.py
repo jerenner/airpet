@@ -1137,7 +1137,7 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_r
     res = dispatch_ai_tool(pm, "compare_autosave_preflight_vs_manual_saved_for_simulation_run", {})
 
     _assert_compare_ai_error_payload_excludes_success_metadata(res)
-    assert "missing required argument" in res["error"].lower()
+    assert "missing required field" in res["error"].lower()
     assert "simulation_run_id" in res["error"]
 
 
@@ -1151,7 +1151,7 @@ def test_ai_tool_compare_autosave_preflight_vs_manual_saved_for_simulation_run_i
     })
 
     _assert_compare_ai_error_payload_excludes_success_metadata(res)
-    assert "missing required argument" in res["error"].lower()
+    assert "missing required field" in res["error"].lower()
     assert "simulation_run_id" in res["error"]
 
 
@@ -1166,7 +1166,7 @@ def test_ai_tool_compare_manual_preflight_versions_for_simulation_run_indices_re
     })
 
     _assert_compare_ai_error_payload_excludes_success_metadata(res)
-    assert "missing required argument" in res["error"].lower()
+    assert "missing required field" in res["error"].lower()
     assert "simulation_run_id" in res["error"]
 
 
@@ -2497,6 +2497,184 @@ def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_share_requir
         error_lower = route_data["error"].lower()
         for expected_substring in case["error_substrings"]:
             assert expected_substring in error_lower, case["name"]
+
+
+
+def test_preflight_run_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_run_selector_required_field_parity_project"
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_manual_saved_for_run_missing_simulation_run_id",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+        },
+        {
+            "name": "compare_autosave_vs_manual_saved_for_run_index_missing_simulation_run_id",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "manual_saved_index": 0,
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project": pm.project_name,
+                "manual_saved_index": 0,
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+        },
+        {
+            "name": "compare_manual_saved_for_run_indices_missing_simulation_run_id",
+            "route": "/api/preflight/compare_manual_saved_versions_for_simulation_run_indices",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "tool": "compare_manual_preflight_versions_for_simulation_run_indices",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+        },
+        {
+            "name": "list_manual_saved_for_run_missing_simulation_run_id",
+            "route": "/api/preflight/list_manual_saved_versions_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+            },
+            "tool": "list_manual_saved_versions_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+            },
+            "assert_error_shape": _assert_preflight_list_ai_error_payload_excludes_success_metadata,
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 400, case["name"]
+        assert route_data == ai_data, case["name"]
+        case["assert_error_shape"](route_data)
+
+        error_lower = route_data["error"].lower()
+        for expected_substring in ("missing required field", "simulation_run_id", "run_id/job_id"):
+            assert expected_substring in error_lower, case["name"]
+
+
+
+def test_preflight_run_selector_routes_and_ai_wrappers_honor_run_id_aliases_when_canonical_ids_are_null(pm, tmp_path):
+    fixture = _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_manual_saved_for_run_uses_run_id_alias_when_simulation_run_id_is_null",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": fixture["simulation_run_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": fixture["simulation_run_id"],
+            },
+            "is_list_case": False,
+        },
+        {
+            "name": "compare_autosave_vs_manual_saved_for_run_index_uses_job_id_alias_when_simulation_run_id_is_null",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": fixture["simulation_run_id"],
+                "manual_saved_index": 0,
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": fixture["simulation_run_id"],
+                "manual_saved_index": 0,
+            },
+            "is_list_case": False,
+        },
+        {
+            "name": "compare_manual_saved_for_run_indices_uses_run_id_alias_when_simulation_run_id_is_null",
+            "route": "/api/preflight/compare_manual_saved_versions_for_simulation_run_indices",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": fixture["simulation_run_id"],
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "tool": "compare_manual_preflight_versions_for_simulation_run_indices",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": fixture["simulation_run_id"],
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "is_list_case": False,
+        },
+        {
+            "name": "list_manual_saved_for_run_uses_job_id_alias_when_simulation_run_id_is_null",
+            "route": "/api/preflight/list_manual_saved_versions_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": fixture["simulation_run_id"],
+                "count": 1,
+            },
+            "tool": "list_manual_saved_versions_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": fixture["simulation_run_id"],
+                "count": 1,
+            },
+            "is_list_case": True,
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 200, case["name"]
+        assert route_data == ai_data, case["name"]
+
+        if case["is_list_case"]:
+            assert route_data["success"] is True
+            assert route_data["simulation_run_id"] == fixture["simulation_run_id"]
+            assert route_data["returned_matching_manual_saved_versions"] == 1
+        else:
+            assert route_data["success"] is True
+            assert route_data["selection"]["simulation_run_id"] == fixture["simulation_run_id"]
 
 
 
