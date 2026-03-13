@@ -11,6 +11,8 @@ from src.ai_backend_adapters import (
     DEFAULT_BACKEND_SPECS,
     LlamaCppAdapterConfig,
     LlamaCppTextAdapter,
+    LMStudioAdapterConfig,
+    LMStudioTextAdapter,
     TextGenerationRequest,
     TextMessage,
     build_capability_matrix,
@@ -36,7 +38,7 @@ def test_default_capability_matrix_reports_expected_backends_and_contract_versio
     assert rows_by_id["llama_cpp"]["capabilities"]["supports_json_mode"] is True
 
     assert rows_by_id["lm_studio"]["enabled"] is False
-    assert rows_by_id["lm_studio"]["implementation_status"] == "planned"
+    assert rows_by_id["lm_studio"]["implementation_status"] == "implemented"
     assert rows_by_id["lm_studio"]["capabilities"]["supports_streaming"] is True
 
 
@@ -63,6 +65,23 @@ def test_runtime_overrides_can_enable_llama_cpp_and_override_context_window():
 
     assert rows_by_id["llama_cpp"].enabled is True
     assert rows_by_id["llama_cpp"].capabilities.max_context_tokens == 24576
+
+
+def test_runtime_overrides_can_enable_lm_studio_and_override_context_window():
+    runtime_config = {
+        "backends": {
+            "lm_studio": {
+                "enabled": True,
+                "max_context_tokens": 65536,
+            }
+        }
+    }
+
+    resolved = resolve_specs_with_runtime_overrides(runtime_config)
+    rows_by_id = {spec.backend_id: spec for spec in resolved}
+
+    assert rows_by_id["lm_studio"].enabled is True
+    assert rows_by_id["lm_studio"].capabilities.max_context_tokens == 65536
 
 
 def test_select_backend_prefers_explicit_backend_when_it_satisfies_requirements():
@@ -126,6 +145,94 @@ def test_select_text_backend_routes_to_llama_cpp_when_enabled_and_capable():
     assert selection.backend_id == "llama_cpp"
     assert selection.used_fallback is False
     assert selection.tried == ({"backend_id": "llama_cpp", "missing_capabilities": []},)
+
+
+def test_select_text_backend_routes_to_lm_studio_when_enabled_and_capable():
+    runtime_config = {
+        "backends": {
+            "llama_cpp": {
+                "enabled": True,
+                "max_context_tokens": 12000,
+            },
+            "lm_studio": {
+                "enabled": True,
+                "max_context_tokens": 48000,
+            },
+        }
+    }
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="Return compact JSON only."),),
+        require_tools=False,
+        require_json_mode=True,
+        min_context_tokens=20000,
+    )
+
+    selection = select_backend_for_text_request(
+        request=request,
+        runtime_config=runtime_config,
+        preferred_backend_id="lm_studio",
+        allow_fallback=False,
+    )
+
+    assert selection.backend_id == "lm_studio"
+    assert selection.used_fallback is False
+    assert selection.tried == ({"backend_id": "lm_studio", "missing_capabilities": []},)
+
+
+@pytest.mark.parametrize("preferred_backend", ["llama_cpp", "lm_studio"])
+def test_mixed_local_backends_fall_back_to_gemini_with_deterministic_diagnostics(preferred_backend):
+    runtime_config = {
+        "backends": {
+            "llama_cpp": {"enabled": True},
+            "lm_studio": {"enabled": True},
+        }
+    }
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="Call a tool."),),
+        require_tools=True,
+        require_json_mode=True,
+    )
+
+    selection = select_backend_for_text_request(
+        request=request,
+        runtime_config=runtime_config,
+        preferred_backend_id=preferred_backend,
+        allow_fallback=True,
+    )
+
+    assert selection.backend_id == "gemini_remote"
+    assert selection.used_fallback is True
+    assert selection.tried[0]["backend_id"] == preferred_backend
+    assert selection.tried[0]["missing_capabilities"] == ["tools"]
+    assert selection.tried[1] == {"backend_id": "gemini_remote", "missing_capabilities": []}
+
+
+@pytest.mark.parametrize("preferred_backend", ["llama_cpp", "lm_studio"])
+def test_mixed_local_backends_preserve_error_diagnostics_when_fallback_disabled(preferred_backend):
+    runtime_config = {
+        "backends": {
+            "llama_cpp": {"enabled": True},
+            "lm_studio": {"enabled": True},
+        }
+    }
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="Call a tool."),),
+        require_tools=True,
+        require_json_mode=True,
+    )
+
+    with pytest.raises(ValueError, match="No backend satisfies requirements") as exc_info:
+        select_backend_for_text_request(
+            request=request,
+            runtime_config=runtime_config,
+            preferred_backend_id=preferred_backend,
+            allow_fallback=False,
+        )
+
+    message = str(exc_info.value)
+    assert f"preferred={preferred_backend}" in message
+    assert f"'backend_id': '{preferred_backend}'" in message
+    assert "'missing_capabilities': ['tools']" in message
 
 
 def test_select_backend_errors_when_fallback_is_disabled_and_preferred_backend_fails():
@@ -223,6 +330,38 @@ def test_llama_cpp_adapter_builds_openai_chat_payload_for_text_first_json_mode()
     assert payload["temperature"] == 0.1
 
 
+def test_lm_studio_adapter_builds_openai_chat_payload_for_text_first_json_mode():
+    adapter = LMStudioTextAdapter(
+        LMStudioAdapterConfig(
+            base_url="http://localhost:1234",
+            model="qwen-local",
+            timeout_seconds=9,
+            max_retries=0,
+            retry_backoff_seconds=0,
+        )
+    )
+    request = TextGenerationRequest(
+        messages=(
+            TextMessage(role="system", content="You output JSON."),
+            TextMessage(role="user", content="Return object with ok=true"),
+        ),
+        require_json_mode=True,
+        max_output_tokens=256,
+        temperature=0.2,
+    )
+
+    payload = adapter.build_payload(request)
+
+    assert payload["model"] == "qwen-local"
+    assert payload["messages"] == [
+        {"role": "system", "content": "You output JSON."},
+        {"role": "user", "content": "Return object with ok=true"},
+    ]
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 256
+    assert payload["temperature"] == 0.2
+
+
 class _FakeResponse:
     def __init__(self, payload, status_code=200):
         self._payload = payload
@@ -285,3 +424,56 @@ def test_llama_cpp_adapter_retries_then_returns_normalized_response():
     assert response.model == "meta-llama"
     assert response.text == '{"ok": true}'
     assert response.usage == {"prompt_tokens": 12, "completion_tokens": 3}
+
+
+def test_lm_studio_adapter_retries_then_returns_normalized_response():
+    adapter = LMStudioTextAdapter(
+        LMStudioAdapterConfig(
+            base_url="http://localhost:1234",
+            model="qwen-local",
+            timeout_seconds=2,
+            max_retries=1,
+            retry_backoff_seconds=0,
+        )
+    )
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="hello"),),
+        require_json_mode=False,
+    )
+
+    calls = []
+
+    def fake_post(url, json, headers, timeout, verify):
+        calls.append(
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "timeout": timeout,
+                "verify": verify,
+            }
+        )
+        if len(calls) == 1:
+            raise RuntimeError("temporary connection drop")
+        return _FakeResponse(
+            {
+                "model": "qwen-local",
+                "usage": {"prompt_tokens": 18, "completion_tokens": 6},
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "{\"ok\": true}",
+                        }
+                    }
+                ],
+            }
+        )
+
+    response = adapter.invoke(request, http_post=fake_post)
+
+    assert len(calls) == 2
+    assert response.backend_id == "lm_studio"
+    assert response.model == "qwen-local"
+    assert response.text == '{"ok": true}'
+    assert response.usage == {"prompt_tokens": 18, "completion_tokens": 6}

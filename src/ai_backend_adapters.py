@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urljoin
 
-ADAPTER_CONTRACT_VERSION = "2026-03-13.checkpoint2"
+ADAPTER_CONTRACT_VERSION = "2026-03-13.checkpoint3"
 
 
 @dataclass(frozen=True)
@@ -229,6 +229,117 @@ class LlamaCppTextAdapter:
         )
 
 
+@dataclass(frozen=True)
+class LMStudioAdapterConfig:
+    base_url: str = "http://127.0.0.1:1234"
+    endpoint_path: str = "/v1/chat/completions"
+    model: str = "local-model"
+    timeout_seconds: float = 45.0
+    max_retries: int = 1
+    retry_backoff_seconds: float = 0.25
+    verify_tls: bool = True
+    headers: Tuple[Tuple[str, str], ...] = ()
+
+    @staticmethod
+    def from_runtime_config(runtime_config: Optional[Mapping[str, Any]] = None) -> "LMStudioAdapterConfig":
+        cfg = _runtime_backend_config(runtime_config, "lm_studio")
+        headers_obj = cfg.get("headers")
+        header_items: Tuple[Tuple[str, str], ...] = ()
+        if isinstance(headers_obj, Mapping):
+            header_items = tuple((str(k), str(v)) for k, v in headers_obj.items())
+
+        return LMStudioAdapterConfig(
+            base_url=str(cfg.get("base_url", "http://127.0.0.1:1234")),
+            endpoint_path=str(cfg.get("endpoint_path", "/v1/chat/completions")),
+            model=str(cfg.get("model", "local-model")),
+            timeout_seconds=float(cfg.get("timeout_seconds", 45.0)),
+            max_retries=max(0, int(cfg.get("max_retries", 1))),
+            retry_backoff_seconds=max(0.0, float(cfg.get("retry_backoff_seconds", 0.25))),
+            verify_tls=bool(cfg.get("verify_tls", True)),
+            headers=header_items,
+        )
+
+
+class LMStudioTextAdapter:
+    """Text-first adapter for LM Studio OpenAI-compatible chat endpoint."""
+
+    backend_id = "lm_studio"
+
+    def __init__(self, config: Optional[LMStudioAdapterConfig] = None):
+        self.config = config or LMStudioAdapterConfig()
+
+    def endpoint_url(self) -> str:
+        return urljoin(self.config.base_url.rstrip("/") + "/", self.config.endpoint_path.lstrip("/"))
+
+    def build_payload(self, request: TextGenerationRequest) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [m.as_openai_message() for m in request.messages],
+            "stream": request.require_streaming,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.max_output_tokens is not None:
+            payload["max_tokens"] = request.max_output_tokens
+        if request.stop:
+            payload["stop"] = list(request.stop)
+        if request.require_json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    def invoke(
+        self,
+        request: TextGenerationRequest,
+        http_post: Optional[Callable[..., Any]] = None,
+    ) -> TextGenerationResponse:
+        if http_post is None:
+            import requests
+
+            http_post = requests.post
+
+        payload = self.build_payload(request)
+        url = self.endpoint_url()
+        headers = {"Content-Type": "application/json"}
+        headers.update(dict(self.config.headers))
+
+        attempts_total = self.config.max_retries + 1
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, attempts_total + 1):
+            try:
+                response = http_post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.config.timeout_seconds,
+                    verify=self.config.verify_tls,
+                )
+                if hasattr(response, "raise_for_status"):
+                    response.raise_for_status()
+                body = response.json() if hasattr(response, "json") else {}
+                text = _extract_openai_style_text(body)
+                if not text:
+                    raise ValueError("lm_studio response did not include a non-empty assistant message")
+
+                return TextGenerationResponse(
+                    backend_id=self.backend_id,
+                    text=text,
+                    raw_response=body,
+                    model=body.get("model") if isinstance(body, dict) else None,
+                    usage=body.get("usage") if isinstance(body, dict) else None,
+                )
+            except Exception as err:
+                last_error = err
+                if attempt >= attempts_total:
+                    break
+                if self.config.retry_backoff_seconds > 0:
+                    time.sleep(self.config.retry_backoff_seconds)
+
+        raise RuntimeError(
+            f"lm_studio invocation failed after {attempts_total} attempt(s): {last_error}"
+        )
+
+
 DEFAULT_BACKEND_SPECS: Tuple[AdapterSpec, ...] = (
     AdapterSpec(
         backend_id="gemini_remote",
@@ -266,7 +377,7 @@ DEFAULT_BACKEND_SPECS: Tuple[AdapterSpec, ...] = (
         adapter_kind="local",
         priority=30,
         enabled=False,
-        implementation_status="planned",
+        implementation_status="implemented",
         capabilities=AdapterCapabilities(
             supports_tools=False,
             supports_json_mode=True,

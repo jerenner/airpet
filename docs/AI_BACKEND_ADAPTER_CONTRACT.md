@@ -1,6 +1,6 @@
-# AI Backend Adapter Contract (Spike A Checkpoint 2)
+# AI Backend Adapter Contract (Spike A Checkpoint 3)
 
-Contract version: `2026-03-13.checkpoint2`
+Contract version: `2026-03-13.checkpoint3`
 
 This document defines the normalized adapter contract AIRPET uses for AI backends.
 
@@ -9,7 +9,7 @@ This document defines the normalized adapter contract AIRPET uses for AI backend
 Provide one deterministic contract across:
 - current remote backend (`gemini_remote`)
 - implemented local text-first backend (`llama_cpp`)
-- planned local backend (`lm_studio`)
+- implemented local text-first backend (`lm_studio`)
 
 So routing/fallback logic can stay consistent across provider-specific SDK/API differences.
 
@@ -48,26 +48,26 @@ Given requirements + optional preferred backend:
 5. Selection is deterministic and records all attempted backends + missing capabilities.
 6. Runtime config can deterministically override backend enablement and context-window limits.
 
-## 5) Text-first llama.cpp adapter path
+## 5) Text-first local adapter paths
 
-Checkpoint 2 adds an implemented llama.cpp text-first adapter scaffold:
+Checkpoint 3 includes implemented text-first local adapter scaffolds for both llama.cpp and LM Studio:
 
 - normalized request envelope (`TextGenerationRequest` + `TextMessage`)
-- OpenAI-compatible llama.cpp payload mapping (`/v1/chat/completions`)
-- deterministic config surface (`LlamaCppAdapterConfig`):
-  - `base_url`, `endpoint_path`, `model`
-  - `timeout_seconds`, `max_retries`, `retry_backoff_seconds`
-  - TLS verify + custom headers
+- OpenAI-compatible payload mapping (`/v1/chat/completions`)
+- deterministic runtime config surfaces:
+  - `LlamaCppAdapterConfig`
+  - `LMStudioAdapterConfig`
+  - shared knobs: `base_url`, `endpoint_path`, `model`, `timeout_seconds`, `max_retries`, `retry_backoff_seconds`, TLS verify, custom headers
 - deterministic retry behavior (fixed retry count + fixed backoff)
 - normalized response envelope (`TextGenerationResponse`)
 
-This path is intended for text-first/JSON-first workflows where tool calling is not required.
+These paths are intended for text-first/JSON-first workflows where tool calling is not required.
 
 ## 6) Current matrix
 
 See `docs/AI_BACKEND_CAPABILITY_MATRIX.json`.
 
-Current status at Checkpoint 2:
+Current status at Checkpoint 3:
 - `gemini_remote`: enabled + implemented
 - `llama_cpp`: implemented (disabled by default until runtime-enabled)
-- `lm_studio`: planned (Checkpoint 3)
+- `lm_studio`: implemented (disabled by default until runtime-enabled)

@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-03-13.checkpoint2",
+  "contract_version": "2026-03-13.checkpoint3",
   "backends": [
     {
       "backend_id": "gemini_remote",
@@ -37,7 +37,7 @@
       "adapter_kind": "local",
       "priority": 30,
       "enabled": false,
-      "implementation_status": "planned",
+      "implementation_status": "implemented",
       "capabilities": {
         "supports_tools": false,
         "supports_json_mode": true,

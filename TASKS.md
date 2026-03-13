@@ -2,20 +2,39 @@
 
 ## In Progress
 
-- **Spike A: Local-model integration for AI operations (Checkpoint 3/5) — LM Studio text-first adapter path**
+- **Spike A: Local-model integration for AI operations (Checkpoint 4/5) — `/api/ai/chat` selector integration path**
   - Objective: enable AIRPET AI workflows to support local backends (llama.cpp / LM Studio) with deterministic behavior and clear fallback rules.
   - Current checkpoint scope:
-    - implement LM Studio text-first adapter scaffold aligned with the normalized contract used by Gemini/llama.cpp
-    - add deterministic routing parity tests across Gemini + llama.cpp + LM Studio capability profiles
-    - preserve deterministic fallback/error diagnostics under mixed local-backend availability
-  - Definition of done (Checkpoint 3):
-    - committed LM Studio adapter scaffold with explicit config knobs
-    - selector can deterministically choose LM Studio when enabled and capable
-    - parity selection tests passing across all three backend profiles
-  - Next checkpoint (Checkpoint 4): integrate backend selector into `/api/ai/chat` runtime path.
+    - integrate adapter selection (`select_backend_for_text_request`) into `/api/ai/chat` request handling
+    - map runtime AI config to text-first backend requirements (tools/json/stream/context)
+    - preserve deterministic fallback/error diagnostics in the runtime chat path
+  - Definition of done (Checkpoint 4):
+    - `/api/ai/chat` can resolve backend selection through the adapter contract layer
+    - runtime selection/fallback decisions are visible in deterministic diagnostics
+    - route-level tests lock stable behavior for preferred backend + fallback/no-fallback outcomes
+  - Next checkpoint (Checkpoint 5): wire concrete backend invocation path(s) + end-to-end runtime parity checks.
   - Note: selector parity/validation hardening remains in reserve unless a concrete bug/regression is found.
 
 ## Recently Completed
+
+- **Spike A Checkpoint 3/5 completed: LM Studio text-first adapter scaffold + mixed-backend routing parity coverage** (2026-03-13)
+  - Advanced adapter contract to Checkpoint 3 in `src/ai_backend_adapters.py`:
+    - implemented `LMStudioAdapterConfig` runtime config surface (endpoint/model/timeout/retry/backoff/TLS/headers)
+    - implemented `LMStudioTextAdapter` with OpenAI-compatible payload mapping + deterministic retry normalization
+    - promoted `lm_studio` default adapter spec status from `planned` to `implemented`
+    - bumped adapter contract version to `2026-03-13.checkpoint3`
+  - Expanded deterministic routing/fallback diagnostics coverage in `tests/test_ai_backend_adapters.py`:
+    - runtime enable + context-window override for LM Studio
+    - explicit LM Studio routing when enabled/capable
+    - mixed local-backend fallback parity to Gemini when tool capability is required
+    - no-fallback deterministic error diagnostics for both local preferred backends
+    - LM Studio payload mapping + retry/normalized-response behavior
+  - Updated contract docs/artifacts:
+    - `docs/AI_BACKEND_ADAPTER_CONTRACT.md` now documents Checkpoint 3 local adapter coverage
+    - `docs/AI_BACKEND_CAPABILITY_MATRIX.json` regenerated with checkpoint3 contract version and LM Studio marked implemented
+  - Why: closes the LM Studio adapter-scaffold gap and locks deterministic selection/fallback behavior across Gemini + llama.cpp + LM Studio profiles before runtime `/api/ai/chat` integration.
+  - Checks run:
+    - `pytest -q tests/test_ai_backend_adapters.py`
 
 - **Spike A Checkpoint 2/5 completed: llama.cpp text-first adapter scaffold + selection plumbing** (2026-03-13)
   - Upgraded adapter contract to Checkpoint 2 in `src/ai_backend_adapters.py`:
