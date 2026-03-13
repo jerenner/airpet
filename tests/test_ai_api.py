@@ -2423,6 +2423,164 @@ def test_preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stal
 
 
 
+def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_compare_required_selector_parity_project"
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_saved_version_missing_saved_version_id",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+            },
+            "error_substrings": ["missing required field", "saved_version_id"],
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_missing_snapshot_version_id",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+            },
+            "error_substrings": ["missing required field", "autosave_snapshot_version_id"],
+        },
+        {
+            "name": "compare_snapshot_versions_missing_baseline_snapshot_version_id",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "candidate_snapshot_version_id": "20990101_autosave_snapshot_candidate_present",
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "candidate_snapshot_version_id": "20990101_autosave_snapshot_candidate_present",
+            },
+            "error_substrings": ["missing required field", "baseline_snapshot_version_id"],
+        },
+        {
+            "name": "compare_snapshot_versions_missing_candidate_snapshot_version_id",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": "20990101_autosave_snapshot_baseline_present",
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": "20990101_autosave_snapshot_baseline_present",
+            },
+            "error_substrings": ["missing required field", "candidate_snapshot_version_id"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 400, case["name"]
+        assert route_data == ai_data, case["name"]
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring in error_lower, case["name"]
+
+
+
+def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_compare_null_canonical_alias_selector_parity_project"
+
+    existing_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_existing_alias_target')
+
+    missing_saved_version_id = "20990101_manual_missing_alias_fallback"
+    missing_snapshot_baseline_id = "20990101_autosave_snapshot_missing_alias_baseline"
+    missing_snapshot_candidate_id = "20990101_autosave_snapshot_missing_alias_candidate"
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_saved_version_uses_alias_when_saved_version_id_is_null",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": None,
+                "version_id": missing_saved_version_id,
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": None,
+                "version_id": missing_saved_version_id,
+            },
+            "expected_missing_version_id": missing_saved_version_id,
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_uses_alias_when_snapshot_id_is_null",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": None,
+                "snapshot_version": missing_snapshot_baseline_id,
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "autosave_snapshot_version_id": None,
+                "snapshot_version": missing_snapshot_baseline_id,
+            },
+            "expected_missing_version_id": missing_snapshot_baseline_id,
+        },
+        {
+            "name": "compare_snapshot_versions_uses_candidate_alias_when_candidate_id_is_null",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_version_id": existing_snapshot_version_id,
+                "candidate_snapshot_version_id": None,
+                "candidate_version_id": missing_snapshot_candidate_id,
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_version_id": existing_snapshot_version_id,
+                "candidate_snapshot_version_id": None,
+                "candidate_version_id": missing_snapshot_candidate_id,
+            },
+            "expected_missing_version_id": missing_snapshot_candidate_id,
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 404, case["name"]
+        assert route_data == ai_data, case["name"]
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+        assert "not found" in route_data["error"].lower(), case["name"]
+        assert case["expected_missing_version_id"] in route_data["error"], case["name"]
+
+
+
 def test_preflight_compare_versions_route_and_ai_wrappers_share_topology_reference_corpus_transition_matrix_payloads(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_corpus_transition_matrix"
