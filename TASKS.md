@@ -6,6 +6,20 @@
 
 ## Recently Completed
 
+- **Explicit `compare_versions` canonical-vs-alias precedence parity matrix (conflicts + explicit-null/empty canonical handling)** (2026-03-13)
+  - Added `test_preflight_compare_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
+  - New table-driven route↔AI parity coverage locks deterministic selector precedence for:
+    - canonical ids overriding conflicting alias ids when canonical values are non-null
+    - alias fallback when canonical ids are explicitly `null`
+    - canonical empty/whitespace ids not falling back to aliases (preserving 400 validation semantics)
+  - Success-path cases assert stable compare selection/source metadata for the resolved ids.
+  - Validation-failure cases assert metadata-clean error envelopes and wording parity (`version_id`, `non-empty string`).
+  - Why: closes the explicit compare selector canonical-vs-alias precedence gap so route and AI wrappers stay deterministic under mixed/conflicting payload shapes.
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes or compare_versions_route_and_ai_wrappers_share_invalid_id_validation_error_envelopes or compare_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads"`
+    - `pytest -q tests/test_ai_api.py`
+    - `pytest -q tests/test_preflight.py -k "compare_versions_route"`
+
 - **Explicit `compare_versions` invalid-id validation parity matrix (empty/whitespace/path-traversal forms, route + AI wrappers)** (2026-03-13)
   - Added `test_preflight_compare_versions_route_and_ai_wrappers_share_invalid_id_validation_error_envelopes` in `tests/test_ai_api.py`.
   - New table-driven parity coverage locks four malformed explicit selector input classes across route + AI surfaces:
@@ -480,6 +494,6 @@
    - Add parity coverage for mixed canonical/alias payload conflicts and explicit-null precedence across run-linked compare/list selector routes and AI wrappers to prevent future parsing drift.
    - Impact: medium (locks deterministic selector input precedence after required-field parity hardening).
 
-3. **Explicit compare selector canonical-vs-alias precedence matrix (`baseline_version_id`/`candidate_version_id`)**
-   - Add route + AI parity coverage for mixed canonical/alias conflicts and explicit-null precedence on `compare_versions` inputs (e.g., canonical key present as `null`/empty while alias key is set) so precedence behavior stays deterministic across wrappers and HTTP routes.
-   - Impact: medium (prevents future selector-resolution drift after invalid-id parity coverage).
+3. **Snapshot/explicit selector canonical-vs-alias precedence matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids)**
+   - Add route + AI parity coverage for mixed canonical/alias conflicts and explicit-null precedence on explicit selector routes (`compare_autosave_vs_saved_version`, `compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`) so selector resolution remains deterministic across wrappers and HTTP routes.
+   - Impact: medium (extends precedence hardening beyond `compare_versions` to remaining explicit selector APIs).

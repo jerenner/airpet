@@ -2503,6 +2503,113 @@ def test_preflight_compare_versions_route_and_ai_wrappers_share_invalid_id_valid
 
 
 
+def test_preflight_compare_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads(pm, tmp_path):
+    fixture = _seed_preflight_compare_versions_error_parity_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "name": "canonical_ids_override_conflicting_alias_ids",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": fixture["baseline_version_id"],
+                "baseline_version": "20990101_missing_alias_baseline_conflict",
+                "candidate_version_id": fixture["candidate_version_id"],
+                "candidate_version": "20990101_missing_alias_candidate_conflict",
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": fixture["baseline_version_id"],
+                "before_version": "20990101_missing_alias_baseline_conflict",
+                "candidate_version_id": fixture["candidate_version_id"],
+                "new_version": "20990101_missing_alias_candidate_conflict",
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["baseline_version_id"],
+            "expected_candidate_version_id": fixture["candidate_version_id"],
+        },
+        {
+            "name": "null_canonical_ids_fall_back_to_alias_ids",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": None,
+                "baseline_version": fixture["baseline_version_id"],
+                "candidate_version_id": None,
+                "candidate_version": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": None,
+                "before_version": fixture["baseline_version_id"],
+                "candidate_version_id": None,
+                "new_version": fixture["candidate_version_id"],
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["baseline_version_id"],
+            "expected_candidate_version_id": fixture["candidate_version_id"],
+        },
+        {
+            "name": "empty_canonical_baseline_id_does_not_fall_back_to_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": "",
+                "baseline_version": fixture["baseline_version_id"],
+                "candidate_version": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": "",
+                "before_version": fixture["baseline_version_id"],
+                "new_version": fixture["candidate_version_id"],
+            },
+            "expected_status": 400,
+            "error_substrings": ["version_id", "non-empty string"],
+        },
+        {
+            "name": "whitespace_canonical_candidate_id_does_not_fall_back_to_alias",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version": fixture["baseline_version_id"],
+                "candidate_version_id": "   ",
+                "candidate_version": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "before_version": fixture["baseline_version_id"],
+                "candidate_version_id": "   ",
+                "new_version": fixture["candidate_version_id"],
+            },
+            "expected_status": 400,
+            "error_substrings": ["version_id", "non-empty string"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            "/api/preflight/compare_versions",
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, "compare_preflight_versions", case["ai_args"])
+
+        assert status_code == case["expected_status"], case["name"]
+        assert route_data == ai_data, case["name"]
+
+        if case["expected_status"] == 200:
+            assert route_data["success"] is True, case["name"]
+            _assert_compare_ai_selection_and_source_metadata(
+                route_data,
+                baseline_version_id=case["expected_baseline_version_id"],
+                candidate_version_id=case["expected_candidate_version_id"],
+            )
+            continue
+
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring.lower() in error_lower, case["name"]
+
+
+
 def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_required_selector_parity_project"
