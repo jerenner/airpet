@@ -6,6 +6,22 @@
 
 ## Recently Completed
 
+- **Snapshot/explicit selector canonical-vs-alias precedence parity matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids; route ↔ AI wrappers)** (2026-03-13)
+  - Added `test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
+  - New table-driven route↔AI parity coverage locks deterministic selector-resolution behavior across explicit snapshot/saved compare surfaces:
+    - canonical selector ids override conflicting alias ids
+    - explicit-null canonical ids fall back to aliases with deterministic alias-order precedence
+    - empty/whitespace canonical ids do **not** fall back to aliases, preserving deterministic 400 validation behavior
+  - Coverage spans:
+    - `compare_autosave_vs_saved_version`
+    - `compare_autosave_vs_snapshot_version`
+    - `compare_snapshot_versions`
+  - Why: closes the remaining explicit snapshot/saved selector precedence gap from Next Candidates so HTTP and AI automation resolve mixed/conflicting payloads identically.
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "snapshot_and_explicit_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads or explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null or compare_snapshot_and_explicit_routes_and_ai_wrappers_share_success_payloads"`
+    - `pytest -q tests/test_ai_api.py`
+    - `pytest -q tests/test_preflight.py -k "compare_snapshot_versions or compare_autosave_vs_snapshot_version or compare_autosave_vs_saved_version"`
+
 - **Run-linked selector canonical-vs-alias precedence parity matrix (`simulation_run_id` vs `run_id`/`job_id`, route ↔ AI wrappers)** (2026-03-13)
   - Added `test_preflight_run_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads` in `tests/test_ai_api.py`.
   - New table-driven parity coverage locks deterministic run-linked selector precedence for compare/list workflows:
@@ -520,10 +536,10 @@
 
 ## Next Candidates
 
-1. **Snapshot/explicit selector canonical-vs-alias precedence matrix (`saved_version_id`, `autosave_snapshot_version_id`, snapshot baseline/candidate ids)**
-   - Add route + AI parity coverage for mixed canonical/alias conflicts and explicit-null precedence on explicit selector routes (`compare_autosave_vs_saved_version`, `compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`) so selector resolution remains deterministic across wrappers and HTTP routes.
-   - Impact: medium (extends precedence hardening beyond `compare_versions` to remaining explicit selector APIs).
-
-2. **Run-linked selector malformed-id validation parity matrix**
+1. **Run-linked selector malformed-id validation parity matrix**
    - Add route + AI parity coverage for empty/whitespace/path-escape simulation-run selector ids across run-linked list/compare routes and wrappers so validation/error-envelope behavior remains deterministic under hostile or malformed input.
    - Impact: medium (hardens reliability/security-facing selector validation contracts for automation workflows).
+
+2. **Snapshot/saved explicit-selector malformed-id validation parity matrix**
+   - Add route + AI parity coverage for path-escape/absolute-path/malformed ids across explicit selector routes (`compare_autosave_vs_saved_version`, `compare_autosave_vs_snapshot_version`, `compare_snapshot_versions`) so deterministic validation and error-envelope behavior is locked for hostile input beyond canonical-vs-alias precedence.
+   - Impact: medium (extends security/reliability guardrails for explicit selector workflows used by automation).

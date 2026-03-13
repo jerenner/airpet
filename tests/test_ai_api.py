@@ -3241,6 +3241,252 @@ def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_honor_aliase
 
 
 
+def test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads(pm, tmp_path):
+    fixture = _seed_preflight_snapshot_route_ai_parity_fixture(pm, tmp_path)
+
+    missing_saved_alias_conflict = "20990101_manual_missing_saved_alias_conflict"
+    missing_snapshot_alias_conflict = "20990101_autosave_snapshot_missing_alias_conflict"
+    missing_snapshot_baseline_alias_conflict = "20990101_autosave_snapshot_missing_baseline_alias_conflict"
+    missing_snapshot_candidate_alias_conflict = "20990101_autosave_snapshot_missing_candidate_alias_conflict"
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_saved_version_canonical_saved_version_id_overrides_conflicting_aliases",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": fixture["requested_saved_version_id"],
+                "saved_version": missing_saved_alias_conflict,
+                "version_id": "20990101_manual_missing_secondary_alias_conflict",
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": fixture["requested_saved_version_id"],
+                "saved_version": missing_saved_alias_conflict,
+                "version_id": "20990101_manual_missing_secondary_alias_conflict",
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["requested_saved_version_id"],
+            "expected_selection_fields": {
+                "saved_version_id": fixture["requested_saved_version_id"],
+            },
+        },
+        {
+            "name": "compare_autosave_vs_saved_version_null_canonical_prefers_saved_version_alias_over_version_id",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": None,
+                "saved_version": missing_saved_alias_conflict,
+                "version_id": fixture["requested_saved_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": None,
+                "saved_version": missing_saved_alias_conflict,
+                "version_id": fixture["requested_saved_version_id"],
+            },
+            "expected_status": 404,
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["not found"],
+            "expected_error_version_id": missing_saved_alias_conflict,
+        },
+        {
+            "name": "compare_autosave_vs_saved_version_empty_canonical_saved_version_id_does_not_fall_back_to_alias",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": "",
+                "saved_version": fixture["requested_saved_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": "",
+                "saved_version": fixture["requested_saved_version_id"],
+            },
+            "expected_status": 400,
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["saved_version_id", "required"],
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_canonical_snapshot_id_overrides_conflicting_aliases",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "snapshot_version_id": missing_snapshot_alias_conflict,
+                "snapshot_version": "20990101_autosave_snapshot_missing_secondary_alias_conflict",
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "autosave_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "snapshot_version_id": missing_snapshot_alias_conflict,
+                "snapshot_version": "20990101_autosave_snapshot_missing_secondary_alias_conflict",
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["baseline_snapshot_version_id"],
+            "expected_selection_fields": {
+                "autosave_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+            },
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_null_canonical_prefers_snapshot_version_id_alias_over_snapshot_version",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": None,
+                "snapshot_version_id": missing_snapshot_alias_conflict,
+                "snapshot_version": fixture["baseline_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "autosave_snapshot_version_id": None,
+                "snapshot_version_id": missing_snapshot_alias_conflict,
+                "snapshot_version": fixture["baseline_snapshot_version_id"],
+            },
+            "expected_status": 404,
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["not found"],
+            "expected_error_version_id": missing_snapshot_alias_conflict,
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_whitespace_canonical_snapshot_id_does_not_fall_back_to_alias",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": "   ",
+                "snapshot_version": fixture["baseline_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "autosave_snapshot_version_id": "   ",
+                "snapshot_version": fixture["baseline_snapshot_version_id"],
+            },
+            "expected_status": 400,
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["autosave_snapshot_version_id", "required"],
+        },
+        {
+            "name": "compare_snapshot_versions_canonical_snapshot_ids_override_conflicting_aliases",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "baseline_version_id": missing_snapshot_baseline_alias_conflict,
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+                "candidate_version_id": missing_snapshot_candidate_alias_conflict,
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "baseline_version_id": missing_snapshot_baseline_alias_conflict,
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+                "candidate_version_id": missing_snapshot_candidate_alias_conflict,
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["baseline_snapshot_version_id"],
+            "expected_candidate_version_id": fixture["candidate_snapshot_version_id"],
+            "expected_selection_fields": {
+                "baseline_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+            },
+        },
+        {
+            "name": "compare_snapshot_versions_null_canonical_prefers_snapshot_aliases_over_version_id_aliases",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_snapshot_version": fixture["baseline_snapshot_version_id"],
+                "baseline_version_id": missing_snapshot_baseline_alias_conflict,
+                "candidate_snapshot_version_id": None,
+                "candidate_snapshot_version": fixture["candidate_snapshot_version_id"],
+                "candidate_version_id": missing_snapshot_candidate_alias_conflict,
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_snapshot_version": fixture["baseline_snapshot_version_id"],
+                "baseline_version_id": missing_snapshot_baseline_alias_conflict,
+                "candidate_snapshot_version_id": None,
+                "candidate_snapshot_version": fixture["candidate_snapshot_version_id"],
+                "candidate_version_id": missing_snapshot_candidate_alias_conflict,
+            },
+            "expected_status": 200,
+            "expected_baseline_version_id": fixture["baseline_snapshot_version_id"],
+            "expected_candidate_version_id": fixture["candidate_snapshot_version_id"],
+            "expected_selection_fields": {
+                "baseline_snapshot_version_id": fixture["baseline_snapshot_version_id"],
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+            },
+        },
+        {
+            "name": "compare_snapshot_versions_empty_canonical_candidate_snapshot_id_does_not_fall_back_to_alias",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version": fixture["baseline_snapshot_version_id"],
+                "candidate_snapshot_version_id": "",
+                "candidate_version_id": fixture["candidate_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version": fixture["baseline_snapshot_version_id"],
+                "candidate_snapshot_version_id": "",
+                "candidate_version_id": fixture["candidate_snapshot_version_id"],
+            },
+            "expected_status": 400,
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["candidate_snapshot_version_id", "required"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == case["expected_status"], case["name"]
+        assert route_data == ai_data, case["name"]
+
+        if case["expected_status"] == 200:
+            assert route_data["success"] is True, case["name"]
+
+            expected_baseline_version_id = case.get("expected_baseline_version_id")
+            if expected_baseline_version_id is not None:
+                assert route_data["baseline_version_id"] == expected_baseline_version_id, case["name"]
+
+            expected_candidate_version_id = case.get("expected_candidate_version_id")
+            if expected_candidate_version_id is not None:
+                assert route_data["candidate_version_id"] == expected_candidate_version_id, case["name"]
+
+            for key, value in case.get("expected_selection_fields", {}).items():
+                assert route_data["selection"][key] == value, case["name"]
+            continue
+
+        case["assert_error_shape"](route_data)
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring.lower() in error_lower, case["name"]
+
+        expected_error_version_id = case.get("expected_error_version_id")
+        if expected_error_version_id is not None:
+            assert expected_error_version_id in route_data["error"], case["name"]
+
+
+
 def test_preflight_compare_versions_route_and_ai_wrappers_share_topology_reference_corpus_transition_matrix_payloads(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_corpus_transition_matrix"
