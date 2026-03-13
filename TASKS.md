@@ -6,6 +6,21 @@
 
 ## Recently Completed
 
+- **Route-level global selector `list_preflight_versions → compare_*` workflow coverage (success chaining + stale-id recovery envelopes)** (2026-03-13)
+  - Added `test_preflight_list_versions_route_can_drive_global_compare_selector_workflows` in `tests/test_preflight.py`.
+  - New deterministic route workflow coverage now starts from `POST /api/preflight/list_versions` and uses returned selectors to drive explicit global compare endpoints:
+    - `POST /api/preflight/compare_versions`
+    - `POST /api/preflight/compare_autosave_vs_saved_version`
+    - `POST /api/preflight/compare_autosave_vs_snapshot_version`
+    - `POST /api/preflight/compare_snapshot_versions`
+  - Locked selection/source metadata contracts on all chained success paths via `_assert_compare_route_selection_and_source_metadata(...)`.
+  - Added `test_preflight_list_versions_route_stale_global_selector_candidates_fail_compare_with_clean_404_envelopes` to lock stale-candidate recovery behavior when `list_versions` includes entries with `has_version_json == False`:
+    - stale manual selector via `compare_autosave_vs_saved_version`
+    - stale snapshot selector via `compare_autosave_vs_snapshot_version`
+    - stale manual candidate in explicit `compare_versions`
+    - stale snapshot candidate in explicit `compare_snapshot_versions`
+  - Why: extends deterministic selector-chaining confidence from run-linked workflows into global list/discovery workflows that users and automation rely on for saved/snapshot compare operations.
+
 - **Run-linked selector `list → compare` reproducibility matrix with mixed stale artifacts (route + AI wrappers)** (2026-03-12)
   - Added `test_preflight_run_selector_list_to_compare_workflow_route_and_ai_is_reproducible_with_mixed_stale_artifacts` in `tests/test_ai_api.py`.
   - New end-to-end workflow coverage starts from `list_manual_saved_versions_for_simulation_run` and feeds returned `manual_saved_index`/`version_id` values into compare selectors across route and AI tool surfaces.
@@ -386,6 +401,6 @@
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
    - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).
 
-3. **Route-level list-discovery chaining for global selectors (`list_preflight_versions → compare_*`)**
-   - Add deterministic workflow tests that consume `list_preflight_versions` output (autosave/manual/snapshot ids) to drive explicit compare selector endpoints and assert stable selection/source metadata plus stale-id recovery envelopes.
-   - Impact: medium-high (extends workflow-level reproducibility beyond run-linked selectors).
+3. **Cross-surface parity for global list-discovery chaining (`list_preflight_versions → compare_*`, route ↔ AI wrappers)**
+   - Extend the new route-level global-selector chaining coverage into table-driven route-vs-AI parity tests that consume list outputs, then run explicit compare selectors on both surfaces (including stale-id branches).
+   - Impact: medium-high (keeps deterministic workflow contracts aligned across HTTP clients and AI automation for global selector paths).
