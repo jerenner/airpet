@@ -252,6 +252,66 @@ def _seed_preflight_snapshot_insufficient_versions_fixture(pm, tmp_path):
     }
 
 
+def _seed_preflight_global_selector_route_ai_parity_fixture(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_global_selector_parity_project"
+
+    manual_baseline_version_id, _ = pm.save_project_version('manual_ai_global_selector_baseline')
+
+    pm.current_geometry_state.solids['box_solid'].raw_parameters['x'] = '1e-6'
+    pm.recalculate_geometry_state()
+    manual_candidate_version_id, _ = pm.save_project_version('manual_ai_global_selector_candidate')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    snapshot_baseline_version_id, _ = pm.save_project_version('autosave_snapshot_ai_global_selector_baseline')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'G4_Galactic'
+    pm.recalculate_geometry_state()
+    snapshot_candidate_version_id, _ = pm.save_project_version('autosave_snapshot_ai_global_selector_candidate')
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    return {
+        'manual_baseline_version_id': manual_baseline_version_id,
+        'manual_candidate_version_id': manual_candidate_version_id,
+        'snapshot_baseline_version_id': snapshot_baseline_version_id,
+        'snapshot_candidate_version_id': snapshot_candidate_version_id,
+    }
+
+
+def _seed_preflight_global_selector_stale_route_ai_parity_fixture(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "ai_route_global_selector_stale_parity_project"
+
+    active_manual_version_id, _ = pm.save_project_version('manual_ai_global_selector_active')
+    stale_manual_version_id, _ = pm.save_project_version('manual_ai_global_selector_stale')
+    active_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_ai_global_selector_active')
+    stale_snapshot_version_id, _ = pm.save_project_version('autosave_snapshot_ai_global_selector_stale')
+
+    os.remove(os.path.join(pm._get_version_dir(stale_manual_version_id), 'version.json'))
+    os.remove(os.path.join(pm._get_version_dir(stale_snapshot_version_id), 'version.json'))
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingMat'
+    pm.recalculate_geometry_state()
+    autosave_dir = pm._get_version_dir('autosave')
+    os.makedirs(autosave_dir, exist_ok=True)
+    with open(os.path.join(autosave_dir, 'version.json'), 'w') as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    return {
+        'active_manual_version_id': active_manual_version_id,
+        'stale_manual_version_id': stale_manual_version_id,
+        'active_snapshot_version_id': active_snapshot_version_id,
+        'stale_snapshot_version_id': stale_snapshot_version_id,
+    }
+
+
 def _seed_preflight_corpus_missing_world_volume_reference(pm):
     pm.current_geometry_state.world_volume_ref = ''
 
@@ -1812,6 +1872,227 @@ def test_preflight_list_routes_and_ai_wrappers_share_success_payloads(pm, tmp_pa
             assert route_data["matching_manual_saved_versions"][0]["version_id"] == expected_latest_matching_version_id
             assert route_data["matching_manual_saved_versions"][0]["timestamp_source"] == "version_id_prefix"
             assert route_data["matching_manual_saved_versions"][0]["source_path_checks"]["version_json_within_versions_root"] is True
+
+
+def test_preflight_global_list_selector_workflows_route_and_ai_wrappers_share_payloads(pm, tmp_path):
+    fixture = _seed_preflight_global_selector_route_ai_parity_fixture(pm, tmp_path)
+
+    list_status_code, list_route_data = _call_preflight_route_with_pm(
+        pm,
+        "/api/preflight/list_versions",
+        {
+            "project_name": pm.project_name,
+            "include_autosave": True,
+        },
+    )
+    list_ai_data = dispatch_ai_tool(pm, "list_preflight_versions", {
+        "project": pm.project_name,
+        "include_latest_autosave": True,
+    })
+
+    assert list_status_code == 200
+    assert list_route_data == list_ai_data
+    assert list_route_data["success"] is True
+    assert list_route_data["has_autosave"] is True
+
+    listed_manual_ids = [
+        entry["version_id"]
+        for entry in list_route_data["versions"]
+        if (not entry["is_autosave"]) and (not entry["is_autosave_snapshot"]) and entry["has_version_json"]
+    ]
+    listed_snapshot_ids = [
+        entry["version_id"]
+        for entry in list_route_data["versions"]
+        if entry["is_autosave_snapshot"] and entry["has_version_json"]
+    ]
+
+    assert len(listed_manual_ids) == 2
+    assert len(listed_snapshot_ids) == 2
+    assert fixture["manual_baseline_version_id"] in listed_manual_ids
+    assert fixture["manual_candidate_version_id"] in listed_manual_ids
+    assert fixture["snapshot_baseline_version_id"] in listed_snapshot_ids
+    assert fixture["snapshot_candidate_version_id"] in listed_snapshot_ids
+
+    workflow_cases = [
+        {
+            "name": "compare_versions_from_listed_manual_ids",
+            "route": "/api/preflight/compare_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": listed_manual_ids[1],
+                "candidate_version_id": listed_manual_ids[0],
+            },
+            "tool": "compare_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version": listed_manual_ids[1],
+                "candidate": listed_manual_ids[0],
+            },
+            "selection_ordering_basis": None,
+            "baseline_version_id": listed_manual_ids[1],
+            "candidate_version_id": listed_manual_ids[0],
+        },
+        {
+            "name": "compare_autosave_vs_saved_from_listed_manual_id",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": listed_manual_ids[0],
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "version": listed_manual_ids[0],
+            },
+            "selection_ordering_basis": "explicit_saved_version_id",
+            "baseline_version_id": listed_manual_ids[0],
+            "candidate_version_id": "autosave",
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_from_listed_snapshot_id",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": listed_snapshot_ids[0],
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "snapshot_version": listed_snapshot_ids[0],
+            },
+            "selection_ordering_basis": "explicit_autosave_snapshot_version_id",
+            "baseline_version_id": listed_snapshot_ids[0],
+            "candidate_version_id": "autosave",
+        },
+        {
+            "name": "compare_snapshot_versions_from_listed_snapshot_ids",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": listed_snapshot_ids[1],
+                "candidate_snapshot_version_id": listed_snapshot_ids[0],
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version": listed_snapshot_ids[1],
+                "candidate_version": listed_snapshot_ids[0],
+            },
+            "selection_ordering_basis": "explicit_autosave_snapshot_version_ids",
+            "baseline_version_id": listed_snapshot_ids[1],
+            "candidate_version_id": listed_snapshot_ids[0],
+        },
+    ]
+
+    for case in workflow_cases:
+        status_code, route_data = _call_preflight_route_with_pm(pm, case["route"], case["route_payload"])
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 200, case["name"]
+        assert route_data == ai_data, case["name"]
+        assert route_data["success"] is True, case["name"]
+
+        _assert_compare_ai_selection_and_source_metadata(
+            route_data,
+            baseline_version_id=case["baseline_version_id"],
+            candidate_version_id=case["candidate_version_id"],
+            selection_ordering_basis=case["selection_ordering_basis"],
+        )
+
+
+def test_preflight_global_list_stale_selector_workflows_route_and_ai_wrappers_share_404_error_envelopes(pm, tmp_path):
+    fixture = _seed_preflight_global_selector_stale_route_ai_parity_fixture(pm, tmp_path)
+
+    list_status_code, list_route_data = _call_preflight_route_with_pm(
+        pm,
+        "/api/preflight/list_versions",
+        {
+            "project_name": pm.project_name,
+        },
+    )
+    list_ai_data = dispatch_ai_tool(pm, "list_preflight_versions", {
+        "project": pm.project_name,
+    })
+
+    assert list_status_code == 200
+    assert list_route_data == list_ai_data
+    assert list_route_data["success"] is True
+
+    stale_manual_entry = next(entry for entry in list_route_data["versions"] if entry["version_id"] == fixture["stale_manual_version_id"])
+    stale_snapshot_entry = next(entry for entry in list_route_data["versions"] if entry["version_id"] == fixture["stale_snapshot_version_id"])
+
+    assert stale_manual_entry["has_version_json"] is False
+    assert stale_manual_entry["version_json_mtime_utc"] is None
+    assert stale_snapshot_entry["has_version_json"] is False
+    assert stale_snapshot_entry["version_json_mtime_utc"] is None
+
+    stale_workflow_cases = [
+        {
+            "name": "autosave_vs_saved_with_stale_manual_id",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": fixture["stale_manual_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version": fixture["stale_manual_version_id"],
+            },
+        },
+        {
+            "name": "autosave_vs_snapshot_with_stale_snapshot_id",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": fixture["stale_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "snapshot_version_id": fixture["stale_snapshot_version_id"],
+            },
+        },
+        {
+            "name": "compare_versions_with_stale_manual_candidate_id",
+            "route": "/api/preflight/compare_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": fixture["active_manual_version_id"],
+                "candidate_version_id": fixture["stale_manual_version_id"],
+            },
+            "tool": "compare_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline": fixture["active_manual_version_id"],
+                "candidate_version": fixture["stale_manual_version_id"],
+            },
+        },
+        {
+            "name": "compare_snapshot_versions_with_stale_candidate_id",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": fixture["active_snapshot_version_id"],
+                "candidate_snapshot_version_id": fixture["stale_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version": fixture["active_snapshot_version_id"],
+                "candidate": fixture["stale_snapshot_version_id"],
+            },
+        },
+    ]
+
+    for case in stale_workflow_cases:
+        status_code, route_data = _call_preflight_route_with_pm(pm, case["route"], case["route_payload"])
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 404, case["name"]
+        assert route_data == ai_data, case["name"]
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+        assert "not found" in route_data["error"].lower(), case["name"]
 
 
 def test_preflight_list_manual_saved_versions_for_simulation_run_route_and_ai_wrappers_share_stale_version_metadata_payloads(pm, tmp_path):

@@ -6,6 +6,18 @@
 
 ## Recently Completed
 
+- **Cross-surface parity for global list-discovery chaining (`list_preflight_versions → compare_*`, route ↔ AI wrappers)** (2026-03-13)
+  - Added reusable AI parity fixtures in `tests/test_ai_api.py`:
+    - `_seed_preflight_global_selector_route_ai_parity_fixture(...)`
+    - `_seed_preflight_global_selector_stale_route_ai_parity_fixture(...)`
+  - Added `test_preflight_global_list_selector_workflows_route_and_ai_wrappers_share_payloads` to lock deterministic route-vs-AI payload parity for list-discovery driven global compare workflows:
+    - `list_versions → compare_versions`
+    - `list_versions → compare_autosave_vs_saved_version`
+    - `list_versions → compare_autosave_vs_snapshot_version`
+    - `list_versions → compare_snapshot_versions`
+  - Added `test_preflight_global_list_stale_selector_workflows_route_and_ai_wrappers_share_404_error_envelopes` to lock route-vs-AI parity on stale-id global selector recovery paths, including metadata-clean 404 envelopes.
+  - Why: closes a medium-high deterministic workflow gap so both HTTP clients and AI automation can safely chain from global selector discovery into compare endpoints with identical success and stale-failure contracts.
+
 - **Route-level global selector `list_preflight_versions → compare_*` workflow coverage (success chaining + stale-id recovery envelopes)** (2026-03-13)
   - Added `test_preflight_list_versions_route_can_drive_global_compare_selector_workflows` in `tests/test_preflight.py`.
   - New deterministic route workflow coverage now starts from `POST /api/preflight/list_versions` and uses returned selectors to drive explicit global compare endpoints:
@@ -401,6 +413,6 @@
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
    - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).
 
-3. **Cross-surface parity for global list-discovery chaining (`list_preflight_versions → compare_*`, route ↔ AI wrappers)**
-   - Extend the new route-level global-selector chaining coverage into table-driven route-vs-AI parity tests that consume list outputs, then run explicit compare selectors on both surfaces (including stale-id branches).
-   - Impact: medium-high (keeps deterministic workflow contracts aligned across HTTP clients and AI automation for global selector paths).
+3. **`list_versions` route alias parity hardening (`count`/`max_versions`, `include_latest_autosave`)**
+   - Extend `/api/preflight/list_versions` request parsing to accept the same selector aliases used by AI wrappers (`count`/`max_versions` for `limit`, `include_latest_autosave` for `include_autosave`), then lock route↔AI parity for success + invalid-limit paths.
+   - Impact: medium (reduces avoidable route-vs-AI input-shape drift in global version-discovery workflows).
