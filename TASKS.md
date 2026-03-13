@@ -6,6 +6,22 @@
 
 ## Recently Completed
 
+- **Explicit compare selector required-field + null-canonical alias parity (route ↔ AI wrappers)** (2026-03-13)
+  - Hardened dispatcher required-field handling in `app.py` for explicit compare selector tools so AI wrappers now mirror route diagnostics for missing selector ids:
+    - `compare_autosave_preflight_vs_saved_version`
+    - `compare_autosave_preflight_vs_snapshot_version`
+    - `compare_autosave_snapshot_preflight_versions`
+    - (also tightened `compare_preflight_versions` alias fallback for null canonical ids)
+  - Updated `_validate_tool_args(...)` route-aligned required-field bypass map so these selector tools emit route-matched error messages instead of generic schema-level missing-argument text.
+  - Added route-style alias resolution in dispatcher branches to preserve fallback behavior when canonical selector keys are present but null and alias keys provide the id.
+  - Added regression coverage in `tests/test_ai_api.py`:
+    - `test_preflight_explicit_compare_selector_routes_and_ai_wrappers_share_required_field_validation_error_envelopes`
+    - `test_preflight_explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null`
+  - Why: closes deterministic route/AI drift on explicit compare selector validation and alias recovery paths that clients/agents rely on for robust preflight compare workflows.
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "explicit_compare_selector_routes_and_ai_wrappers or compare_autosave_preflight_vs_saved_version_requires_saved_version_id or compare_autosave_preflight_vs_snapshot_version_requires_snapshot_id or compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes or compare_snapshot_selector_routes_and_ai_wrappers_share_stale_id_404_error_envelopes"`
+    - `pytest -q tests/test_ai_api.py`
+
 - **`list_versions` route alias parity hardening (`count`/`max_versions`, `include_latest_autosave`)** (2026-03-13)
   - Extended `POST /api/preflight/list_versions` request parsing in `app.py` so route callers can use the same selector aliases as AI wrappers:
     - `include_latest_autosave` → `include_autosave`
@@ -422,9 +438,9 @@
 
 ## Next Candidates
 
-1. **Cross-surface parity for compare selector validation errors (400 aliases + required-field diagnostics)**
-   - Add route-vs-AI parity checks that intentionally exercise malformed selector aliases (e.g., conflicting/missing snapshot/saved fields) to lock equivalent validation messaging and metadata-clean error envelopes.
-   - Impact: medium (hardens deterministic client/agent branching for invalid-input recovery paths).
+1. **Run-linked selector required-field diagnostics parity (`simulation_run_id` aliases, route + AI wrappers)**
+   - Add route-vs-AI parity coverage for missing-run-id validation on run-linked compare/list selector surfaces (including alias forms and metadata-clean 400 envelopes), and align dispatcher wording where needed.
+   - Impact: medium (removes remaining required-field contract drift for run-driven automation workflows).
 
 2. **Explicit `compare_versions` invalid-id validation parity (empty/path-traversal forms, route + AI wrappers)**
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.

@@ -8198,12 +8198,22 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
         if req not in args or args[req] is None or args[req] == ""
     ]
     if missing:
-        # Keep compare_preflight_versions missing-field behavior aligned with the
-        # route contract: dispatcher returns a single shared required-field
-        # message when either explicit version id is absent.
+        # Keep explicit preflight compare selector missing-field behavior aligned
+        # with route contracts. These tools provide route-matched required-field
+        # diagnostics (including alias-aware wording) in dispatch.
+        route_aligned_required_fields = {
+            "compare_preflight_versions": {"baseline_version_id", "candidate_version_id"},
+            "compare_autosave_preflight_vs_saved_version": {"saved_version_id"},
+            "compare_autosave_preflight_vs_snapshot_version": {"autosave_snapshot_version_id"},
+            "compare_autosave_snapshot_preflight_versions": {
+                "baseline_snapshot_version_id",
+                "candidate_snapshot_version_id",
+            },
+        }
+
         if not (
-            tool_name == "compare_preflight_versions"
-            and set(missing).issubset({"baseline_version_id", "candidate_version_id"})
+            tool_name in route_aligned_required_fields
+            and set(missing).issubset(route_aligned_required_fields[tool_name])
         ):
             return f"Tool '{tool_name}' missing required argument(s): {', '.join(missing)}."
 
@@ -8606,8 +8616,29 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_preflight_versions":
-            baseline_version_id = args.get("baseline_version_id")
-            candidate_version_id = args.get("candidate_version_id")
+            baseline_version_id = (
+                args.get("baseline_version_id")
+                if args.get("baseline_version_id") is not None
+                else args.get("baseline_version")
+            )
+            if baseline_version_id is None:
+                baseline_version_id = args.get("baseline")
+            if baseline_version_id is None:
+                baseline_version_id = args.get("before_version")
+            if baseline_version_id is None:
+                baseline_version_id = args.get("base_version")
+
+            candidate_version_id = (
+                args.get("candidate_version_id")
+                if args.get("candidate_version_id") is not None
+                else args.get("candidate_version")
+            )
+            if candidate_version_id is None:
+                candidate_version_id = args.get("candidate")
+            if candidate_version_id is None:
+                candidate_version_id = args.get("after_version")
+            if candidate_version_id is None:
+                candidate_version_id = args.get("new_version")
 
             if baseline_version_id is None or candidate_version_id is None:
                 return {
@@ -8752,10 +8783,28 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_autosave_preflight_vs_saved_version":
+            saved_version_id = (
+                args.get("saved_version_id")
+                if args.get("saved_version_id") is not None
+                else args.get("saved_version")
+            )
+            if saved_version_id is None:
+                saved_version_id = args.get("version_id")
+            if saved_version_id is None:
+                saved_version_id = args.get("version")
+            if saved_version_id is None:
+                saved_version_id = args.get("baseline_version")
+
+            if saved_version_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: saved_version_id (or saved_version/version_id).",
+                }
+
             try:
                 result = compare_autosave_preflight_vs_saved_version(
                     pm,
-                    saved_version_id=args.get("saved_version_id"),
+                    saved_version_id=saved_version_id,
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
@@ -8767,10 +8816,32 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_autosave_preflight_vs_snapshot_version":
+            autosave_snapshot_version_id = (
+                args.get("autosave_snapshot_version_id")
+                if args.get("autosave_snapshot_version_id") is not None
+                else args.get("snapshot_version_id")
+            )
+            if autosave_snapshot_version_id is None:
+                autosave_snapshot_version_id = args.get("snapshot_version")
+            if autosave_snapshot_version_id is None:
+                autosave_snapshot_version_id = args.get("version_id")
+            if autosave_snapshot_version_id is None:
+                autosave_snapshot_version_id = args.get("version")
+            if autosave_snapshot_version_id is None:
+                autosave_snapshot_version_id = args.get("baseline_version")
+            if autosave_snapshot_version_id is None:
+                autosave_snapshot_version_id = args.get("autosave_snapshot_version")
+
+            if autosave_snapshot_version_id is None:
+                return {
+                    "success": False,
+                    "error": "Missing required field: autosave_snapshot_version_id (or snapshot_version_id/snapshot_version/version_id).",
+                }
+
             try:
                 result = compare_autosave_preflight_vs_snapshot_version(
                     pm,
-                    autosave_snapshot_version_id=args.get("autosave_snapshot_version_id"),
+                    autosave_snapshot_version_id=autosave_snapshot_version_id,
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
@@ -8810,11 +8881,47 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             }
 
         elif tool_name == "compare_autosave_snapshot_preflight_versions":
+            baseline_snapshot_version_id = (
+                args.get("baseline_snapshot_version_id")
+                if args.get("baseline_snapshot_version_id") is not None
+                else args.get("baseline_snapshot_version")
+            )
+            if baseline_snapshot_version_id is None:
+                baseline_snapshot_version_id = args.get("baseline_version_id")
+            if baseline_snapshot_version_id is None:
+                baseline_snapshot_version_id = args.get("baseline_version")
+            if baseline_snapshot_version_id is None:
+                baseline_snapshot_version_id = args.get("baseline")
+
+            candidate_snapshot_version_id = (
+                args.get("candidate_snapshot_version_id")
+                if args.get("candidate_snapshot_version_id") is not None
+                else args.get("candidate_snapshot_version")
+            )
+            if candidate_snapshot_version_id is None:
+                candidate_snapshot_version_id = args.get("candidate_version_id")
+            if candidate_snapshot_version_id is None:
+                candidate_snapshot_version_id = args.get("candidate_version")
+            if candidate_snapshot_version_id is None:
+                candidate_snapshot_version_id = args.get("candidate")
+
+            missing_fields = []
+            if baseline_snapshot_version_id is None:
+                missing_fields.append('baseline_snapshot_version_id (or baseline_snapshot_version/baseline_version_id/baseline_version)')
+            if candidate_snapshot_version_id is None:
+                missing_fields.append('candidate_snapshot_version_id (or candidate_snapshot_version/candidate_version_id/candidate_version)')
+
+            if missing_fields:
+                return {
+                    "success": False,
+                    "error": f"Missing required field(s): {', '.join(missing_fields)}.",
+                }
+
             try:
                 result = compare_autosave_snapshot_preflight_versions(
                     pm,
-                    baseline_snapshot_version_id=args.get("baseline_snapshot_version_id"),
-                    candidate_snapshot_version_id=args.get("candidate_snapshot_version_id"),
+                    baseline_snapshot_version_id=baseline_snapshot_version_id,
+                    candidate_snapshot_version_id=candidate_snapshot_version_id,
                     project_name=args.get("project_name"),
                 )
             except (ValueError, FileNotFoundError) as exc:
