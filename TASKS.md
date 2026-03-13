@@ -6,6 +6,23 @@
 
 ## Recently Completed
 
+- **`list_versions` route alias parity hardening (`count`/`max_versions`, `include_latest_autosave`)** (2026-03-13)
+  - Extended `POST /api/preflight/list_versions` request parsing in `app.py` so route callers can use the same selector aliases as AI wrappers:
+    - `include_latest_autosave` → `include_autosave`
+    - `max_versions` / `count` → `limit`
+  - Preserved canonical-field precedence and backwards-compatible null handling by checking key presence before falling back to aliases/defaults.
+  - Updated route regression coverage in `tests/test_preflight.py`:
+    - `test_preflight_list_versions_route_supports_limit_and_include_autosave_aliases`
+    - `test_preflight_list_versions_route_rejects_negative_limit` now exercises alias input (`max_versions=-1`).
+  - Updated cross-surface parity coverage in `tests/test_ai_api.py`:
+    - `test_preflight_list_routes_and_ai_wrappers_share_success_payloads` now drives the route via alias inputs.
+    - Added `test_preflight_list_versions_route_and_ai_wrappers_share_alias_invalid_limit_error_payloads` to lock deterministic 400 parity and metadata-clean error envelopes on alias-driven invalid-limit paths.
+  - Checks run:
+    - `pytest -q tests/test_preflight.py::test_preflight_list_versions_route_supports_limit_and_include_autosave_aliases tests/test_preflight.py::test_preflight_list_versions_route_rejects_negative_limit tests/test_ai_api.py::test_preflight_list_routes_and_ai_wrappers_share_success_payloads tests/test_ai_api.py::test_preflight_list_versions_route_and_ai_wrappers_share_alias_invalid_limit_error_payloads`
+    - `pytest -q tests/test_preflight.py -k "list_versions_route"`
+    - `pytest -q tests/test_ai_api.py -k "list_preflight_versions or preflight_list_routes_and_ai_wrappers_share_success_payloads"`
+  - Why: closes input-shape drift between HTTP and AI list/discovery workflows, improving deterministic automation behavior and recovery on invalid selector input.
+
 - **Cross-surface parity for global list-discovery chaining (`list_preflight_versions → compare_*`, route ↔ AI wrappers)** (2026-03-13)
   - Added reusable AI parity fixtures in `tests/test_ai_api.py`:
     - `_seed_preflight_global_selector_route_ai_parity_fixture(...)`
@@ -413,6 +430,6 @@
    - Add route-vs-AI parity coverage for explicit compare invalid-id inputs that should fail as 400 validation paths (empty string ids, whitespace-only ids, traversal-like ids), with metadata-clean envelopes and deterministic error messaging.
    - Impact: medium (hardens preflight selector safety/diagnostics consistency for malformed-id recovery paths).
 
-3. **`list_versions` route alias parity hardening (`count`/`max_versions`, `include_latest_autosave`)**
-   - Extend `/api/preflight/list_versions` request parsing to accept the same selector aliases used by AI wrappers (`count`/`max_versions` for `limit`, `include_latest_autosave` for `include_autosave`), then lock route↔AI parity for success + invalid-limit paths.
-   - Impact: medium (reduces avoidable route-vs-AI input-shape drift in global version-discovery workflows).
+3. **`list_versions` canonical-vs-alias precedence contract matrix**
+   - Add targeted route + AI parity coverage for mixed canonical/alias payloads (e.g., `limit` with `count`/`max_versions`, `include_autosave` with `include_latest_autosave`, explicit `null` values) so precedence rules remain deterministic and regression-safe.
+   - Impact: medium (protects newly-added alias support from subtle parsing drift).

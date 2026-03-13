@@ -1811,8 +1811,8 @@ def test_preflight_list_routes_and_ai_wrappers_share_success_payloads(pm, tmp_pa
             "route": "/api/preflight/list_versions",
             "route_payload": {
                 "project_name": pm.project_name,
-                "include_autosave": True,
-                "limit": 3,
+                "include_latest_autosave": True,
+                "max_versions": 3,
             },
             "tool": "list_preflight_versions",
             "ai_args": {
@@ -1872,6 +1872,30 @@ def test_preflight_list_routes_and_ai_wrappers_share_success_payloads(pm, tmp_pa
             assert route_data["matching_manual_saved_versions"][0]["version_id"] == expected_latest_matching_version_id
             assert route_data["matching_manual_saved_versions"][0]["timestamp_source"] == "version_id_prefix"
             assert route_data["matching_manual_saved_versions"][0]["source_path_checks"]["version_json_within_versions_root"] is True
+
+
+def test_preflight_list_versions_route_and_ai_wrappers_share_alias_invalid_limit_error_payloads(pm, tmp_path):
+    _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path)
+
+    route_status_code, route_data = _call_preflight_route_with_pm(
+        pm,
+        "/api/preflight/list_versions",
+        {
+            "project_name": pm.project_name,
+            "max_versions": -1,
+            "include_latest_autosave": True,
+        },
+    )
+    ai_data = dispatch_ai_tool(pm, "list_preflight_versions", {
+        "project": pm.project_name,
+        "count": -1,
+        "include_latest_autosave": True,
+    })
+
+    assert route_status_code == 400
+    assert route_data == ai_data
+    _assert_preflight_list_ai_error_payload_excludes_success_metadata(route_data)
+    assert "limit" in route_data["error"]
 
 
 def test_preflight_global_list_selector_workflows_route_and_ai_wrappers_share_payloads(pm, tmp_path):

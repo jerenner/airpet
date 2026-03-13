@@ -3088,8 +3088,22 @@ def preflight_list_versions_route():
     data = request.get_json(silent=True) or {}
 
     project_name = data.get('project_name') or pm.project_name
-    include_autosave = data.get('include_autosave', True)
-    limit = data.get('limit')
+
+    if 'include_autosave' in data:
+        include_autosave = data.get('include_autosave')
+    elif 'include_latest_autosave' in data:
+        include_autosave = data.get('include_latest_autosave')
+    else:
+        include_autosave = True
+
+    if 'limit' in data:
+        limit = data.get('limit')
+    elif 'max_versions' in data:
+        limit = data.get('max_versions')
+    elif 'count' in data:
+        limit = data.get('count')
+    else:
+        limit = None
 
     try:
         result = list_preflight_versions(

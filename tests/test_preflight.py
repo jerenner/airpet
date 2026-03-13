@@ -2032,7 +2032,7 @@ def test_list_preflight_versions_returns_autosave_and_saved_metadata():
     assert snapshot_entry['source_path_checks']['version_json_within_versions_root'] is True
 
 
-def test_preflight_list_versions_route_supports_limit_and_include_autosave_toggle():
+def test_preflight_list_versions_route_supports_limit_and_include_autosave_aliases():
     app.config['TESTING'] = True
     with app.test_client() as client, tempfile.TemporaryDirectory() as tmpdir:
         pm = _make_pm()
@@ -2050,8 +2050,8 @@ def test_preflight_list_versions_route_supports_limit_and_include_autosave_toggl
         with patch('app.get_project_manager_for_session', return_value=pm):
             resp = client.post('/api/preflight/list_versions', json={
                 'project_name': pm.project_name,
-                'include_autosave': False,
-                'limit': 1,
+                'include_latest_autosave': False,
+                'count': 1,
             })
 
     assert resp.status_code == 200
@@ -2071,7 +2071,7 @@ def test_preflight_list_versions_route_rejects_negative_limit():
         with patch('app.get_project_manager_for_session', return_value=pm):
             resp = client.post('/api/preflight/list_versions', json={
                 'project_name': pm.project_name,
-                'limit': -1,
+                'max_versions': -1,
             })
 
     assert resp.status_code == 400
