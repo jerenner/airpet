@@ -1,4 +1,4 @@
-# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 6)
+# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 7)
 
 Schema versions:
 - Checkpoint 1 artifact store: `2026-03-14.multimodal-intake.checkpoint1`
@@ -7,6 +7,7 @@ Schema versions:
 - Checkpoint 4 review→planning scaffold: `2026-03-14.multimodal-intake.checkpoint4`
 - Checkpoint 5 planning→geometry execution bridge: `2026-03-14.multimodal-intake.checkpoint5`
 - Checkpoint 6 execution-outcome normalization + per-operation failure taxonomy: `2026-03-14.multimodal-intake.checkpoint6`
+- Checkpoint 7 preflight-invariant cross-check + mismatch diagnostics for multimodal execution: `2026-03-14.multimodal-intake.checkpoint7`
 
 Checkpoint 1 introduced deterministic PDF/image artifact intake.
 Checkpoint 2 added deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives.
@@ -14,6 +15,7 @@ Checkpoint 3 wires those contracts into route-level API surfaces tied to uploade
 Checkpoint 4 adds deterministic review-envelope to planning-envelope mapping with explicit diagnostics for unsupported/ambiguous reviewed semantics.
 Checkpoint 5 bridges planning-envelope operation candidates into executable AI geometry-tool batches with deterministic ready/blocked execution gating.
 Checkpoint 6 adds deterministic per-operation execution outcomes (`applied|failed|not_executed`) with stable status codes for invalid logical-volume targets and invalid material application.
+Checkpoint 7 adds deterministic preflight invariant cross-checks (`baseline` vs `candidate` summaries) and mismatch diagnostics so multimodal execution outcomes can be audited for Geant4-facing compatibility confidence.
 
 ## Checkpoint 1: Artifact Intake Endpoints
 
@@ -362,7 +364,7 @@ Success response shape:
 ```json
 {
   "success": true,
-  "schema_version": "2026-03-14.multimodal-intake.checkpoint6",
+  "schema_version": "2026-03-14.multimodal-intake.checkpoint7",
   "planning_envelope": {"status": "ready"},
   "execution_plan": {"status": "ready"},
   "execution": {
@@ -384,6 +386,22 @@ Success response shape:
         "status_code": "applied"
       }
     ],
+    "preflight_crosscheck": {
+      "status": "consistent",
+      "mismatch_classes": [],
+      "invariants": {
+        "issue_count_delta": 0,
+        "regressed_can_run": false
+      },
+      "comparison": {
+        "status": {
+          "can_run_changed": false,
+          "regressed_can_run": false,
+          "fingerprint_changed": false
+        },
+        "issue_count_delta": 0
+      }
+    },
     "batch_result": {"success": true}
   }
 }
@@ -401,8 +419,16 @@ Checkpoint 6 deterministic execution-outcome status codes:
 - `missing_batch_result` when batch execution does not return an entry for an attempted operation
 - `operation_failed` fallback for uncategorized failures
 
-Reproducible request example:
-- `examples/multimodal/planning_execute_request.json`
+Checkpoint 7 deterministic preflight cross-check mismatch classes:
+- `preflight_can_run_regressed` when candidate preflight `can_run` regresses after execution
+- `preflight_issue_count_regressed_after_success` when execution reports `success` but candidate preflight issue count increases
+- `preflight_fingerprint_changed_after_success` when success execution changes preflight fingerprint/can-run without issue-count delta
+- `preflight_issue_count_regressed_under_partial_failure` when partial-failure execution increases issue count
+- `preflight_changed_without_applied_operations` when failed execution with zero applied operations still changes preflight invariants
+
+Representative geometry-flow examples:
+- Success path: `examples/multimodal/planning_execute_request.json`
+- Partial-failure path (missing LV binding): `examples/multimodal/planning_execute_request_partial_failure.json`
 
 ## Persistence Layout
 

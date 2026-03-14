@@ -457,7 +457,7 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert execute_response.status_code == 200
     payload = execute_response.get_json()
     assert payload['success'] is True
-    assert payload['schema_version'].endswith('checkpoint6')
+    assert payload['schema_version'].endswith('checkpoint7')
     assert payload['planning_envelope']['status'] == 'ready'
     assert payload['execution_plan']['status'] == 'ready'
     assert payload['execution_plan']['summary']['candidate_operation_count'] == 4
@@ -479,6 +479,16 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
         'applied',
         'applied',
         'applied',
+    ]
+
+    preflight_crosscheck = execution['preflight_crosscheck']
+    assert preflight_crosscheck['status'] == 'consistent'
+    assert preflight_crosscheck['mismatch_classes'] == []
+    assert preflight_crosscheck['invariants']['issue_count_delta'] == 0
+    assert preflight_crosscheck['comparison']['status']['regressed_can_run'] is False
+    assert preflight_crosscheck['comparison']['issue_count_delta'] == 0
+    assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
+        'preflight_invariants_stable_after_success',
     ]
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
@@ -588,6 +598,14 @@ def test_artifact_planning_execute_route_reports_partial_failure_for_invalid_log
         'invalid_target_logical_volume',
     ]
 
+    preflight_crosscheck = execution['preflight_crosscheck']
+    assert preflight_crosscheck['status'] == 'consistent'
+    assert preflight_crosscheck['mismatch_classes'] == []
+    assert preflight_crosscheck['invariants']['issue_count_delta'] == 0
+    assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
+        'preflight_invariants_stable_under_partial_failure',
+    ]
+
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
     assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
 
@@ -649,4 +667,96 @@ def test_artifact_planning_execute_route_reports_invalid_material_failure_when_m
     details = execution['operation_results'][2]['details']
     assert details['requested_material_ref'] == 'G4_NOT_A_REAL_MATERIAL'
     assert details['applied_material_ref'] == initial_material_ref
+
+    preflight_crosscheck = execution['preflight_crosscheck']
+    assert preflight_crosscheck['status'] == 'consistent'
+    assert preflight_crosscheck['mismatch_classes'] == []
+    assert preflight_crosscheck['invariants']['issue_count_delta'] == 0
+    assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
+        'preflight_invariants_stable_under_partial_failure',
+    ]
+
     assert pm.current_geometry_state.logical_volumes['box_LV'].material_ref == initial_material_ref
+
+
+def test_artifact_planning_execute_route_emits_preflight_mismatch_classes_when_success_regresses_preflight(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    baseline_report = {
+        'summary': {
+            'can_run': True,
+            'issue_count': 0,
+            'counts_by_code': {},
+            'issue_fingerprint': 'baseline_fingerprint',
+        }
+    }
+    candidate_report = {
+        'summary': {
+            'can_run': False,
+            'issue_count': 2,
+            'counts_by_code': {
+                'unknown_world_volume_reference': 1,
+                'placement_hierarchy_cycle': 1,
+            },
+            'issue_fingerprint': 'candidate_fingerprint',
+        }
+    }
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        with patch.object(pm, 'run_preflight_checks', side_effect=[baseline_report, candidate_report]) as preflight_mock:
+            execute_response = client.post(
+                f"/api/ai/artifacts/{artifact['artifact_id']}/planning/execute",
+                json={
+                    'extraction': extraction['extraction'],
+                    'review_envelope': extraction['review_envelope'],
+                    'region_bindings': {
+                        'region_b': {
+                            'logical_volume_name': 'box_LV',
+                            'material_map': {
+                                'si': 'G4_Galactic',
+                            },
+                        },
+                    },
+                },
+            )
+
+    assert execute_response.status_code == 200
+    payload = execute_response.get_json()
+    assert payload['success'] is True
+
+    execution = payload['execution']
+    assert execution['status'] == 'success'
+
+    preflight_crosscheck = execution['preflight_crosscheck']
+    assert preflight_crosscheck['status'] == 'mismatch_error'
+    assert preflight_crosscheck['mismatch_classes'] == [
+        'preflight_can_run_regressed',
+        'preflight_issue_count_regressed_after_success',
+    ]
+    assert preflight_crosscheck['invariants']['regressed_can_run'] is True
+    assert preflight_crosscheck['invariants']['issue_count_delta'] == 2
+    assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
+        'preflight_can_run_regressed',
+        'preflight_issue_count_regressed_after_success',
+    ]
+    assert preflight_mock.call_count == 2

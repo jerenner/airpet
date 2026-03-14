@@ -9679,7 +9679,7 @@ def get_ai_artifact_metadata_route(artifact_id):
 
 MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint3"
 MULTIMODAL_PLANNING_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint4"
-MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint6"
+MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint7"
 
 
 def _classify_multimodal_execution_failure_code(tool_name: str, error_text: str) -> str:
@@ -9893,6 +9893,218 @@ def _build_multimodal_execution_outcome(
         },
         "operation_results": operation_results,
         "diagnostics": diagnostics,
+    }
+
+
+def _build_multimodal_execution_preflight_crosscheck(
+    *,
+    execution_outcome: Dict[str, Any],
+    baseline_preflight_report: Optional[Dict[str, Any]],
+    candidate_preflight_report: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    execution_summary = execution_outcome.get("summary") if isinstance(execution_outcome, dict) else {}
+    if not isinstance(execution_summary, dict):
+        execution_summary = {}
+
+    def _as_non_negative_int(value: Any) -> int:
+        if isinstance(value, bool):
+            parsed = int(value)
+        elif isinstance(value, (int, float)):
+            parsed = int(value)
+        elif isinstance(value, str):
+            try:
+                parsed = int(float(value.strip()))
+            except Exception:
+                parsed = 0
+        else:
+            parsed = 0
+        return max(0, parsed)
+
+    execution_status = str(execution_outcome.get("status") or "").strip() if isinstance(execution_outcome, dict) else ""
+    attempted_operation_count = _as_non_negative_int(execution_summary.get("attempted_operation_count"))
+    applied_operation_count = _as_non_negative_int(execution_summary.get("applied_operation_count"))
+    failed_operation_count = _as_non_negative_int(execution_summary.get("failed_operation_count"))
+
+    baseline_summary = _extract_preflight_summary(baseline_preflight_report)
+    candidate_summary = _extract_preflight_summary(candidate_preflight_report)
+
+    if not isinstance(baseline_summary, dict) or not isinstance(candidate_summary, dict):
+        return {
+            "status": "not_available",
+            "execution_status": execution_status,
+            "invariants": {
+                "attempted_operation_count": attempted_operation_count,
+                "applied_operation_count": applied_operation_count,
+                "failed_operation_count": failed_operation_count,
+            },
+            "mismatch_classes": ["preflight_summary_unavailable"],
+            "diagnostics": [
+                {
+                    "code": "preflight_summary_unavailable",
+                    "severity": "warning",
+                    "message": "Unable to compare multimodal execution against preflight invariants because baseline or candidate summary is missing.",
+                }
+            ],
+            "baseline_preflight_summary": baseline_summary if isinstance(baseline_summary, dict) else None,
+            "candidate_preflight_summary": candidate_summary if isinstance(candidate_summary, dict) else None,
+            "comparison": None,
+        }
+
+    comparison = compare_preflight_summaries(baseline_summary, candidate_summary)
+    comparison_status = comparison.get("status", {}) if isinstance(comparison.get("status"), dict) else {}
+
+    issue_count_delta_raw = comparison.get("issue_count_delta")
+    if isinstance(issue_count_delta_raw, (int, float)):
+        issue_count_delta = int(issue_count_delta_raw)
+    else:
+        issue_count_delta = 0
+
+    regressed_can_run = bool(comparison_status.get("regressed_can_run"))
+    can_run_changed = bool(comparison_status.get("can_run_changed"))
+    fingerprint_changed = bool(comparison_status.get("fingerprint_changed"))
+
+    diagnostics: List[Dict[str, Any]] = []
+
+    if regressed_can_run:
+        diagnostics.append(
+            {
+                "code": "preflight_can_run_regressed",
+                "severity": "error",
+                "message": "Preflight can_run regressed after multimodal execution.",
+                "details": {
+                    "baseline_can_run": comparison.get("baseline", {}).get("can_run"),
+                    "candidate_can_run": comparison.get("candidate", {}).get("can_run"),
+                },
+            }
+        )
+
+    if execution_status == "success":
+        if issue_count_delta > 0:
+            diagnostics.append(
+                {
+                    "code": "preflight_issue_count_regressed_after_success",
+                    "severity": "error",
+                    "message": "Execution reported success but preflight issue count increased.",
+                    "details": {
+                        "issue_count_delta": issue_count_delta,
+                        "added_issue_codes": comparison.get("added_issue_codes", []),
+                        "increased_issue_codes": comparison.get("increased_issue_codes", []),
+                    },
+                }
+            )
+        elif issue_count_delta < 0:
+            diagnostics.append(
+                {
+                    "code": "preflight_issue_count_improved_after_success",
+                    "severity": "info",
+                    "message": "Execution reported success and preflight issue count improved.",
+                    "details": {
+                        "issue_count_delta": issue_count_delta,
+                        "resolved_issue_codes": comparison.get("resolved_issue_codes", []),
+                        "reduced_issue_codes": comparison.get("reduced_issue_codes", []),
+                    },
+                }
+            )
+        elif can_run_changed or fingerprint_changed:
+            diagnostics.append(
+                {
+                    "code": "preflight_fingerprint_changed_after_success",
+                    "severity": "warning",
+                    "message": "Execution reported success but preflight fingerprint/can_run changed with no issue-count delta.",
+                    "details": {
+                        "can_run_changed": can_run_changed,
+                        "fingerprint_changed": fingerprint_changed,
+                    },
+                }
+            )
+        else:
+            diagnostics.append(
+                {
+                    "code": "preflight_invariants_stable_after_success",
+                    "severity": "info",
+                    "message": "Execution reported success and preflight invariants remained stable.",
+                }
+            )
+    elif execution_status == "partial_failure":
+        if issue_count_delta > 0:
+            diagnostics.append(
+                {
+                    "code": "preflight_issue_count_regressed_under_partial_failure",
+                    "severity": "warning",
+                    "message": "Execution reported partial failure and preflight issue count increased.",
+                    "details": {
+                        "issue_count_delta": issue_count_delta,
+                        "added_issue_codes": comparison.get("added_issue_codes", []),
+                        "increased_issue_codes": comparison.get("increased_issue_codes", []),
+                    },
+                }
+            )
+        else:
+            diagnostics.append(
+                {
+                    "code": "preflight_invariants_stable_under_partial_failure",
+                    "severity": "info",
+                    "message": "Execution reported partial failure and preflight invariants remained stable or improved.",
+                    "details": {
+                        "issue_count_delta": issue_count_delta,
+                    },
+                }
+            )
+    elif execution_status == "failed":
+        if applied_operation_count == 0 and (issue_count_delta != 0 or can_run_changed or fingerprint_changed):
+            diagnostics.append(
+                {
+                    "code": "preflight_changed_without_applied_operations",
+                    "severity": "warning",
+                    "message": "Execution failed without applied operations but preflight invariants changed.",
+                    "details": {
+                        "issue_count_delta": issue_count_delta,
+                        "can_run_changed": can_run_changed,
+                        "fingerprint_changed": fingerprint_changed,
+                    },
+                }
+            )
+
+    severity_rank = {"error": 0, "warning": 1, "info": 2}
+    diagnostics.sort(
+        key=lambda item: (
+            severity_rank.get(str(item.get("severity") or "").lower(), 9),
+            str(item.get("code") or ""),
+        )
+    )
+
+    mismatch_classes = sorted(
+        {
+            str(item.get("code") or "")
+            for item in diagnostics
+            if str(item.get("severity") or "").lower() in {"error", "warning"} and str(item.get("code") or "")
+        }
+    )
+
+    if any(str(item.get("severity") or "").lower() == "error" for item in diagnostics):
+        status = "mismatch_error"
+    elif mismatch_classes:
+        status = "mismatch_warning"
+    else:
+        status = "consistent"
+
+    return {
+        "status": status,
+        "execution_status": execution_status,
+        "invariants": {
+            "attempted_operation_count": attempted_operation_count,
+            "applied_operation_count": applied_operation_count,
+            "failed_operation_count": failed_operation_count,
+            "issue_count_delta": issue_count_delta,
+            "can_run_changed": can_run_changed,
+            "regressed_can_run": regressed_can_run,
+            "fingerprint_changed": fingerprint_changed,
+        },
+        "mismatch_classes": mismatch_classes,
+        "diagnostics": diagnostics,
+        "baseline_preflight_summary": baseline_summary,
+        "candidate_preflight_summary": candidate_summary,
+        "comparison": comparison,
     }
 
 
@@ -10147,10 +10359,15 @@ def execute_ai_artifact_planning_route(artifact_id):
         for operation in execution_plan.get("geometry_operations", [])
     ]
 
+    baseline_preflight_report = None
+    candidate_preflight_report = None
+
     batch_result = None
     executed = False
     if execute_mutations:
+        baseline_preflight_report = pm.run_preflight_checks()
         batch_result = dispatch_ai_tool(pm, "batch_geometry_update", {"operations": batch_operations})
+        candidate_preflight_report = pm.run_preflight_checks()
         executed = True
 
     execution_outcome = _build_multimodal_execution_outcome(
@@ -10159,6 +10376,28 @@ def execute_ai_artifact_planning_route(artifact_id):
         batch_result=batch_result,
         execute_requested=execute_mutations,
     )
+
+    if execute_mutations:
+        preflight_crosscheck = _build_multimodal_execution_preflight_crosscheck(
+            execution_outcome=execution_outcome,
+            baseline_preflight_report=baseline_preflight_report,
+            candidate_preflight_report=candidate_preflight_report,
+        )
+    else:
+        preflight_crosscheck = {
+            "status": "not_requested",
+            "execution_status": execution_outcome.get("status"),
+            "invariants": {
+                "attempted_operation_count": 0,
+                "applied_operation_count": 0,
+                "failed_operation_count": 0,
+            },
+            "mismatch_classes": [],
+            "diagnostics": [],
+            "baseline_preflight_summary": None,
+            "candidate_preflight_summary": None,
+            "comparison": None,
+        }
 
     return jsonify({
         "success": True,
@@ -10172,6 +10411,7 @@ def execute_ai_artifact_planning_route(artifact_id):
             "summary": execution_outcome.get("summary"),
             "operation_results": execution_outcome.get("operation_results"),
             "diagnostics": execution_outcome.get("diagnostics"),
+            "preflight_crosscheck": preflight_crosscheck,
             "batch_result": batch_result,
         },
     })

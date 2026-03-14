@@ -2,19 +2,39 @@
 
 ## In Progress
 
-- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 2/3)**
+- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 3/3)**
   - Objective: ensure operations generated via multimodal extraction/planning produce deterministic, Geant4-compatible mutation outcomes and clear failure diagnostics.
   - Checkpoint plan (multi-heartbeat):
     - Completed checkpoints:
       - **1/3** execution-result normalization + deterministic per-operation failure taxonomy for bridge-applied mutations.
-    - Current checkpoint: **2/3** cross-check operation outcomes against preflight and representative example geometries.
-    - Next checkpoint: **3/3** add focused Geant4-facing parity diagnostics/reporting for multimodal-applied mutations.
+      - **2/3** deterministic preflight invariant cross-checking plus representative success/partial-failure geometry-flow coverage.
+    - Current checkpoint: **3/3** add focused Geant4-facing parity diagnostics/reporting for multimodal-applied mutations.
   - Definition of done for current checkpoint:
-    - representative example geometry flows cover successful + partial-failure multimodal execution outcomes
-    - outcome envelopes can be compared against preflight invariants in a deterministic way
-    - diagnostics identify mismatch classes useful for Geant4 compatibility confidence work
+    - parity diagnostics summarize Geant4-facing compatibility confidence for multimodal-applied mutations
+    - reporting highlights high-signal mismatch classes and affected operation groups
+    - examples/tests lock deterministic behavior for representative parity-reporting scenarios
 
 ## Recently Completed
+
+- **Spike B Follow-up Checkpoint 2/3 completed: deterministic preflight-invariant cross-checks + representative execution-flow coverage** (2026-03-14)
+  - Upgraded planning execution route contract in `app.py`:
+    - bumped `MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION` to `2026-03-14.multimodal-intake.checkpoint7`
+    - added deterministic `execution.preflight_crosscheck` envelope (`status`, `invariants`, `comparison`, `mismatch_classes`, `diagnostics`)
+    - preflight summary deltas are now computed for baseline-vs-candidate execution states using `compare_preflight_summaries(...)`
+  - Added deterministic mismatch taxonomy for execution-vs-preflight invariants:
+    - `preflight_can_run_regressed`
+    - `preflight_issue_count_regressed_after_success`
+    - `preflight_fingerprint_changed_after_success`
+    - `preflight_issue_count_regressed_under_partial_failure`
+    - `preflight_changed_without_applied_operations`
+  - Expanded route-level regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
+    - success and partial-failure multimodal execution flows now assert deterministic preflight cross-check invariants
+    - added mismatch-class regression test that simulates success execution with regressed preflight and verifies deterministic error classification
+  - Added representative partial-failure request artifact:
+    - `examples/multimodal/planning_execute_request_partial_failure.json`
+  - Updated checkpoint docs in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md` for checkpoint 7 contract details and mismatch taxonomy.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py`
 
 - **Spike B Follow-up Checkpoint 1/3 completed: execution outcome normalization + deterministic per-operation failure taxonomy** (2026-03-14)
   - Upgraded execution route contract in `app.py`:
