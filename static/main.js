@@ -2098,6 +2098,11 @@ async function handleAiGenerate(promptText) {
         return;
     }
 
+    if (selectedModel.startsWith('llama_cpp::') || selectedModel.startsWith('lm_studio::')) {
+        UIManager.showError("This action currently supports Gemini/Ollama models only. For llama.cpp/LM Studio, use the AI Assistant chat panel.");
+        return;
+    }
+
     if (selectedModel === '--export--') {
         // --- NEW: Call backend to get the prompt ---
         UIManager.showLoading("Building prompt for export...");
