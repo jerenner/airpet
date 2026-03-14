@@ -50,6 +50,7 @@ from src.ai_backend_adapters import (
     ADAPTER_CONTRACT_VERSION,
     TextGenerationRequest,
     TextMessage,
+    invoke_text_request_for_backend,
     select_backend_for_text_request,
 )
 
@@ -9579,6 +9580,8 @@ def ai_chat_route():
         return jsonify({"success": False, "error": "No message provided."}), 400
 
     backend_selection_payload = None
+    selector_runtime_config = None
+    selector_requirements = None
     selector_cfg = data.get("backend_selector")
     if isinstance(selector_cfg, dict):
         requirements_cfg = selector_cfg.get("requirements")
@@ -9588,6 +9591,7 @@ def ai_chat_route():
         runtime_config = selector_cfg.get("runtime_config")
         if not isinstance(runtime_config, dict):
             runtime_config = None
+        selector_runtime_config = runtime_config
 
         preferred_backend_id = (
             selector_cfg.get("preferred_backend_id")
@@ -9613,6 +9617,7 @@ def ai_chat_route():
             "require_streaming": text_request.require_streaming,
             "min_context_tokens": text_request.min_context_tokens,
         }
+        selector_requirements = dict(requirements_payload)
 
         try:
             selection = select_backend_for_text_request(
@@ -9640,12 +9645,24 @@ def ai_chat_route():
             "allow_fallback": allow_fallback,
             "requirements": requirements_payload,
             "resolved_backend_id": selection.backend_id,
+            "resolved_provider_family": selection.spec.provider_family,
+            "resolved_adapter_kind": selection.spec.adapter_kind,
             "used_fallback": selection.used_fallback,
             "tried": list(selection.tried),
         }
 
-    # Determine if we are using Gemini or Ollama
-    is_gemini = model_id.startswith("models/")
+    selected_backend_id = backend_selection_payload.get("resolved_backend_id") if backend_selection_payload else None
+    local_text_backends = {"llama_cpp", "lm_studio"}
+    use_local_text_adapter = selected_backend_id in local_text_backends
+
+    # Determine if we are using Gemini or Ollama. If selector is present, its
+    # resolved backend wins over model-id heuristics.
+    if selected_backend_id == "gemini_remote":
+        is_gemini = True
+    elif selected_backend_id in local_text_backends:
+        is_gemini = False
+    else:
+        is_gemini = model_id.startswith("models/")
 
     chat_extra_payload = {"backend_selection": backend_selection_payload} if backend_selection_payload else None
 
@@ -9666,7 +9683,77 @@ def ai_chat_route():
     context_summary = pm.get_summarized_context()
     formatted_user_msg = f"[System Context Update]\n{context_summary}\n\nUser Message: {user_message}"
 
+    if use_local_text_adapter:
+        pm.chat_history.append({
+            "role": "user",
+            "content": formatted_user_msg,
+            "metadata": {
+                "model_id": model_id,
+                "original_message": user_message,
+                "resolved_backend_id": selected_backend_id,
+            },
+        })
+
+        pm.begin_transaction()
+
+        try:
+            invocation_request = TextGenerationRequest(
+                messages=(
+                    TextMessage(role="system", content=load_system_prompt()),
+                    TextMessage(role="user", content=formatted_user_msg),
+                ),
+                require_tools=bool((selector_requirements or {}).get("require_tools", False)),
+                require_json_mode=bool((selector_requirements or {}).get("require_json_mode", True)),
+                require_streaming=bool((selector_requirements or {}).get("require_streaming", False)),
+                min_context_tokens=_coerce_optional_int((selector_requirements or {}).get("min_context_tokens")),
+            )
+
+            adapter_response = invoke_text_request_for_backend(
+                selected_backend_id,
+                invocation_request,
+                runtime_config=selector_runtime_config,
+            )
+
+            pm.chat_history.append({
+                "role": "assistant",
+                "content": adapter_response.text,
+                "metadata": {
+                    "resolved_backend_id": adapter_response.backend_id,
+                    "provider_model": adapter_response.model,
+                },
+            })
+
+            if backend_selection_payload is not None:
+                backend_selection_payload["execution_mode"] = "local_text_adapter"
+                backend_selection_payload["resolved_model"] = adapter_response.model
+
+            local_extra_payload = dict(chat_extra_payload or {})
+            local_extra_payload["backend_execution"] = {
+                "backend_id": adapter_response.backend_id,
+                "model": adapter_response.model,
+                "usage": adapter_response.usage,
+            }
+
+            pm.end_transaction(f"AI: {user_message[:50]}")
+            return create_success_response(pm, adapter_response.text, extra_payload=local_extra_payload)
+
+        except Exception as e:
+            pm.end_transaction("AI Error")
+            traceback.print_exc()
+            err_payload = {
+                "success": False,
+                "error": f"AI backend invocation failed ({selected_backend_id}): {e}",
+            }
+            if backend_selection_payload:
+                backend_selection_payload["execution_mode"] = "local_text_adapter"
+                err_payload["backend_selection"] = backend_selection_payload
+            return jsonify(err_payload), 502
+
     if is_gemini:
+        if backend_selection_payload is not None:
+            backend_selection_payload["execution_mode"] = "gemini_sdk"
+            backend_selection_payload["resolved_model"] = model_id
+
         client_instance = get_gemini_client_for_session()
         if not client_instance:
             err_payload = {"success": False, "error": "Gemini client not configured. Check your API key."}
@@ -9826,6 +9913,10 @@ def ai_chat_route():
             return jsonify(err_payload), status_code
 
     else: # Ollama Path
+        if backend_selection_payload is not None:
+            backend_selection_payload["execution_mode"] = "ollama_legacy"
+            backend_selection_payload["resolved_model"] = model_id
+
         pm.chat_history.append({
             "role": "user", 
             "content": formatted_user_msg,

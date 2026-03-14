@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urljoin
 
-ADAPTER_CONTRACT_VERSION = "2026-03-13.checkpoint3"
+ADAPTER_CONTRACT_VERSION = "2026-03-14.checkpoint5"
 
 
 @dataclass(frozen=True)
@@ -456,6 +456,29 @@ def select_backend_for_text_request(
         preferred_backend_id=preferred_backend_id,
         allow_fallback=allow_fallback,
     )
+
+
+def invoke_text_request_for_backend(
+    backend_id: str,
+    request: TextGenerationRequest,
+    *,
+    runtime_config: Optional[Mapping[str, Any]] = None,
+    http_post: Optional[Callable[..., Any]] = None,
+) -> TextGenerationResponse:
+    """Invoke a normalized text request for an implemented text-first backend."""
+
+    if backend_id == LlamaCppTextAdapter.backend_id:
+        adapter = LlamaCppTextAdapter(
+            LlamaCppAdapterConfig.from_runtime_config(runtime_config)
+        )
+    elif backend_id == LMStudioTextAdapter.backend_id:
+        adapter = LMStudioTextAdapter(
+            LMStudioAdapterConfig.from_runtime_config(runtime_config)
+        )
+    else:
+        raise ValueError(f"Unsupported text-first backend for adapter invocation: {backend_id}")
+
+    return adapter.invoke(request, http_post=http_post)
 
 
 def _ordered_candidates(

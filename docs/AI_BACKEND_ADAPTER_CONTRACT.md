@@ -1,6 +1,6 @@
-# AI Backend Adapter Contract (Spike A Checkpoint 3)
+# AI Backend Adapter Contract (Spike A Checkpoint 5)
 
-Contract version: `2026-03-13.checkpoint3`
+Contract version: `2026-03-14.checkpoint5`
 
 This document defines the normalized adapter contract AIRPET uses for AI backends.
 
@@ -50,7 +50,7 @@ Given requirements + optional preferred backend:
 
 ## 5) Text-first local adapter paths
 
-Checkpoint 3 includes implemented text-first local adapter scaffolds for both llama.cpp and LM Studio:
+Checkpoint 5 includes implemented text-first local adapter scaffolds **and runtime invocation wiring** for both llama.cpp and LM Studio:
 
 - normalized request envelope (`TextGenerationRequest` + `TextMessage`)
 - OpenAI-compatible payload mapping (`/v1/chat/completions`)
@@ -60,14 +60,26 @@ Checkpoint 3 includes implemented text-first local adapter scaffolds for both ll
   - shared knobs: `base_url`, `endpoint_path`, `model`, `timeout_seconds`, `max_retries`, `retry_backoff_seconds`, TLS verify, custom headers
 - deterministic retry behavior (fixed retry count + fixed backoff)
 - normalized response envelope (`TextGenerationResponse`)
+- normalized invocation dispatcher (`invoke_text_request_for_backend`) to route runtime requests by resolved backend id
 
 These paths are intended for text-first/JSON-first workflows where tool calling is not required.
 
-## 6) Current matrix
+## 6) `/api/ai/chat` runtime integration notes
+
+When a `backend_selector` payload is provided, `/api/ai/chat` now:
+
+- resolves deterministic backend selection via the adapter contract
+- routes local text-first selections (`llama_cpp`, `lm_studio`) through adapter invocation wiring
+- preserves deterministic diagnostics in `backend_selection`, including resolved backend, fallback usage, tried list, and execution mode
+- preserves backwards-compatible legacy paths:
+  - `gemini_remote` → Gemini SDK path
+  - no selector (or non-selector local model choice) → existing Ollama path
+
+## 7) Current matrix
 
 See `docs/AI_BACKEND_CAPABILITY_MATRIX.json`.
 
-Current status at Checkpoint 3:
+Current status at Checkpoint 5:
 - `gemini_remote`: enabled + implemented
 - `llama_cpp`: implemented (disabled by default until runtime-enabled)
 - `lm_studio`: implemented (disabled by default until runtime-enabled)

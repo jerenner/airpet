@@ -16,6 +16,7 @@ from src.ai_backend_adapters import (
     TextGenerationRequest,
     TextMessage,
     build_capability_matrix,
+    invoke_text_request_for_backend,
     resolve_specs_with_runtime_overrides,
     select_backend,
     select_backend_for_text_request,
@@ -477,3 +478,54 @@ def test_lm_studio_adapter_retries_then_returns_normalized_response():
     assert response.model == "qwen-local"
     assert response.text == '{"ok": true}'
     assert response.usage == {"prompt_tokens": 18, "completion_tokens": 6}
+
+
+def test_invoke_text_request_for_backend_dispatches_to_llama_cpp_with_runtime_model_override():
+    runtime_config = {
+        "backends": {
+            "llama_cpp": {
+                "enabled": True,
+                "base_url": "http://localhost:9001",
+                "model": "llama-local-override",
+            }
+        }
+    }
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="hello"),),
+        require_json_mode=False,
+    )
+
+    captured_calls = []
+
+    def fake_post(url, json, headers, timeout, verify):
+        captured_calls.append({"url": url, "json": json})
+        return _FakeResponse(
+            {
+                "model": "llama-local-override",
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            }
+        )
+
+    response = invoke_text_request_for_backend(
+        "llama_cpp",
+        request,
+        runtime_config=runtime_config,
+        http_post=fake_post,
+    )
+
+    assert captured_calls[0]["url"] == "http://localhost:9001/v1/chat/completions"
+    assert captured_calls[0]["json"]["model"] == "llama-local-override"
+    assert response.backend_id == "llama_cpp"
+    assert response.model == "llama-local-override"
+    assert response.text == "ok"
+
+
+def test_invoke_text_request_for_backend_rejects_unsupported_backend_id():
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="hello"),),
+        require_json_mode=False,
+    )
+
+    with pytest.raises(ValueError, match="Unsupported text-first backend"):
+        invoke_text_request_for_backend("gemini_remote", request)

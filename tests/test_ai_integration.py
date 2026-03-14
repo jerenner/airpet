@@ -186,6 +186,97 @@ def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error(client
         assert "'missing_capabilities': ['tools']" in data["backend_selection"]["selection_error"]
 
 
+def test_ai_chat_backend_selector_invokes_local_text_adapter_when_selected(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend') as MockInvokeAdapter:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockInvokeAdapter.return_value = MagicMock(
+            backend_id='llama_cpp',
+            model='llama-3.2-local',
+            text='{"status":"ok"}',
+            usage={'prompt_tokens': 42, 'completion_tokens': 9},
+        )
+
+        payload = {
+            "message": "Summarize the detector setup in compact JSON.",
+            "model": "models/gemini-2.0-flash-exp",
+            "backend_selector": {
+                "preferred_backend_id": "llama_cpp",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "llama_cpp": {
+                            "enabled": True,
+                            "model": "llama-3.2-local"
+                        }
+                    }
+                },
+                "requirements": {
+                    "require_tools": False,
+                    "require_json_mode": True,
+                    "require_streaming": False
+                }
+            }
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["message"] == '{"status":"ok"}'
+        assert data["backend_selection"]["resolved_backend_id"] == "llama_cpp"
+        assert data["backend_selection"]["execution_mode"] == "local_text_adapter"
+        assert data["backend_selection"]["resolved_model"] == "llama-3.2-local"
+        assert data["backend_execution"]["backend_id"] == "llama_cpp"
+        assert data["backend_execution"]["usage"] == {'prompt_tokens': 42, 'completion_tokens': 9}
+        MockInvokeAdapter.assert_called_once()
+
+
+def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_payload(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('connection refused')):
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        payload = {
+            "message": "Summarize in JSON.",
+            "model": "models/gemini-2.0-flash-exp",
+            "backend_selector": {
+                "preferred_backend_id": "lm_studio",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "lm_studio": {
+                            "enabled": True,
+                            "base_url": "http://localhost:1234"
+                        }
+                    }
+                },
+                "requirements": {
+                    "require_tools": False,
+                    "require_json_mode": True,
+                    "require_streaming": False
+                }
+            }
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 502
+        data = response.get_json()
+        assert data["success"] is False
+        assert "AI backend invocation failed (lm_studio)" in data["error"]
+        assert data["backend_selection"]["resolved_backend_id"] == "lm_studio"
+        assert data["backend_selection"]["execution_mode"] == "local_text_adapter"
+
+
 def test_ai_analysis_summary_integration(client):
     """Verify the analysis summary tool integration."""
     with patch('app.get_project_manager_for_session') as MockPMGetter, \

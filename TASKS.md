@@ -2,15 +2,37 @@
 
 ## In Progress
 
-- **Spike A: Local-model integration for AI operations (Checkpoint 5/5) — backend invocation wiring + runtime parity**
-  - Objective: complete runtime local-backend integration for AIRPET AI with deterministic route behavior.
+- **Spike B: Multimodal drawing intake workflow (Checkpoint 1/5) — artifact ingestion + provenance foundation**
+  - Objective: open a reliable multimodal path (PDF/image inputs → structured geometry-intent workflow) with deterministic artifact tracking.
   - Current checkpoint scope:
-    - wire concrete invocation path(s) for selected local adapters (llama.cpp / LM Studio)
-    - align `/api/ai/chat` execution routing with selector outcomes while preserving backward compatibility safeguards
-    - add end-to-end/runtime parity checks for selected backend execution + error envelopes
-  - Note: selector parity/validation hardening remains in reserve unless a concrete bug/regression is found.
+    - add API-level intake surface for PDF/image uploads dedicated to AI planning workflows
+    - persist normalized artifact metadata/provenance (id, mime type, size, source path checks, timestamps)
+    - add deterministic retrieval/listing primitives + baseline tests for reproducible downstream use
+  - Definition of done for current checkpoint:
+    - upload + metadata listing flow works end-to-end in tests
+    - metadata contract is documented and stable for downstream extraction/planning checkpoints
 
 ## Recently Completed
+
+- **Spike A Checkpoint 5/5 completed: local adapter invocation wiring + `/api/ai/chat` runtime parity** (2026-03-14)
+  - Completed runtime invocation wiring in `src/ai_backend_adapters.py`:
+    - added `invoke_text_request_for_backend(...)` dispatcher for deterministic backend-id based invocation
+    - supports implemented local text-first adapters (`llama_cpp`, `lm_studio`) with runtime config surfaces
+    - rejects unsupported backend ids with stable validation errors
+  - Integrated selector-driven execution routing in `app.py` `/api/ai/chat`:
+    - selector-resolved `llama_cpp`/`lm_studio` now executes through local text adapter invocation path
+    - selector-resolved `gemini_remote` explicitly uses Gemini SDK path (selector wins over model-id heuristic)
+    - preserved backward compatibility for legacy no-selector model paths
+    - expanded deterministic diagnostics payload with execution metadata (`resolved_provider_family`, `resolved_adapter_kind`, `execution_mode`, `resolved_model`)
+  - Added runtime parity/error-envelope coverage:
+    - `tests/test_ai_integration.py` now covers successful local-adapter execution via selector
+    - added deterministic 502 error-envelope test for local-adapter invocation failures
+    - `tests/test_ai_backend_adapters.py` now covers invocation dispatcher runtime-model override and unsupported-backend rejection
+  - Updated contract artifacts/docs:
+    - bumped adapter contract version to `2026-03-14.checkpoint5`
+    - updated `docs/AI_BACKEND_ADAPTER_CONTRACT.md` and `docs/AI_BACKEND_CAPABILITY_MATRIX.json`
+  - Checks run:
+    - `pytest -q tests/test_ai_integration.py tests/test_ai_backend_adapters.py`
 
 - **Spike A Checkpoint 4/5 completed: `/api/ai/chat` selector integration path with deterministic diagnostics** (2026-03-14)
   - Integrated adapter selection into runtime chat request handling in `app.py` via optional `backend_selector` payload support:
@@ -614,20 +636,20 @@
 
 ## Next Candidates
 
-1. **Spike A Checkpoint 4/5: `/api/ai/chat` backend-routing integration**
-   - Integrate adapter selector into AI chat entrypoint with deterministic requirement derivation per request mode.
-   - Preserve current Gemini behavior while adding explicit fallback/error diagnostics.
-   - Impact: high (moves local-model routing into the user-visible runtime path).
-
-2. **Spike A Checkpoint 5/5: backend observability + operator diagnostics**
-   - Add lightweight runtime observability for selected backend/fallback reason/attempted-capability mismatches.
-   - Expose deterministic diagnostics for debugging local-backend availability/config issues.
-   - Impact: medium-high (improves reliability and reproducibility under mixed backend environments).
-
-3. **Spike B Checkpoint 1/5: multimodal drawing intake ingestion foundation**
+1. **Spike B Checkpoint 1/5: multimodal drawing intake ingestion foundation**
    - Add PDF/image artifact intake + normalized metadata/provenance plumbing.
    - Prepare deterministic artifact references for downstream extraction and review steps.
    - Impact: high (opens multimodal pathway).
+
+2. **Spike B Checkpoint 2/5: multimodal extraction schema + review envelope**
+   - Define deterministic extraction payload contract (regions, dimensions, symbols, confidence/provenance links).
+   - Add machine-readable review payload so humans/AI can iterate safely before geometry writes.
+   - Impact: high (enables reliable PDF/image → geometry planning loop).
+
+3. **Spike A follow-on: backend health diagnostics endpoint + startup preflight hints**
+   - Add explicit local-backend health probe output (connectivity/model availability/timeout class) for operators.
+   - Surface deterministic readiness hints in API responses/UI diagnostics.
+   - Impact: medium-high (improves reliability under mixed local/remote backend setups).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 
