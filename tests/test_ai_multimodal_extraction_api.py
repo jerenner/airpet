@@ -241,3 +241,174 @@ def test_artifact_extraction_review_route_rejects_artifact_id_mismatch(client, t
     assert payload['success'] is False
     assert payload['error_code'] == 'extraction_validation_error'
     assert 'artifact_id' in payload['error']
+
+
+def test_artifact_planning_route_builds_deterministic_planning_envelope(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction_payload = extraction_response.get_json()
+
+        planning_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/envelope",
+            json={
+                'extraction': extraction_payload['extraction'],
+                'review_envelope': extraction_payload['review_envelope'],
+            },
+        )
+
+    assert planning_response.status_code == 200
+    payload = planning_response.get_json()
+    assert payload['success'] is True
+    assert payload['schema_version'].endswith('checkpoint4')
+    assert payload['planning_schema_version'].endswith('checkpoint4')
+
+    planning = payload['planning_envelope']
+    assert planning['schema_version'].endswith('checkpoint4')
+    assert planning['status'] == 'ready'
+    assert planning['summary']['error_count'] == 0
+    assert planning['summary']['candidate_operation_count'] == 4
+    assert [operation['operation_type'] for operation in planning['operations']] == [
+        'apply_region_dimension_hint',
+        'apply_region_dimension_hint',
+        'apply_region_material_hint',
+        'capture_region_annotation',
+    ]
+
+
+def test_artifact_planning_route_emits_diagnostics_for_unsupported_and_ambiguous_reviewed_items(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_payload = _payload_for_artifact(artifact)
+        extraction_payload['dimensions'].append(
+            {
+                'dimension_id': 'dim_c',
+                'region_id': 'region_a',
+                'value': 7.5,
+                'unit': 'inch',
+                'raw_text': '7.5 in',
+                'confidence': 0.88,
+                'provenance': {
+                    'artifact_id': artifact['artifact_id'],
+                    'artifact_sha256': artifact['sha256'],
+                    'page_index': 0,
+                    'source': 'ocr-text',
+                },
+            }
+        )
+        extraction_payload['symbols'].append(
+            {
+                'symbol_id': 'sym_c',
+                'region_id': 'region_b',
+                'symbol_type': 'material',
+                'text': 'Al',
+                'confidence': 0.83,
+                'provenance': {
+                    'artifact_id': artifact['artifact_id'],
+                    'artifact_sha256': artifact['sha256'],
+                    'page_index': 1,
+                    'source': 'ocr-symbol',
+                },
+            }
+        )
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': extraction_payload,
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        planning_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/envelope",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': extraction['review_envelope'],
+            },
+        )
+
+    assert planning_response.status_code == 200
+    payload = planning_response.get_json()
+    assert payload['success'] is True
+
+    planning = payload['planning_envelope']
+    assert planning['status'] == 'blocked'
+    assert planning['summary']['error_count'] == 2
+    assert planning['summary']['diagnostic_count'] == 2
+    assert [entry['code'] for entry in planning['diagnostics']] == [
+        'ambiguous_region_material_symbols',
+        'unsupported_dimension_unit',
+    ]
+
+
+def test_artifact_planning_route_rejects_mismatched_review_envelope(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+        review_envelope = extraction['review_envelope']
+        review_envelope['artifact_id'] = 'artifact_wrong'
+
+        planning_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/envelope",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': review_envelope,
+            },
+        )
+
+    assert planning_response.status_code == 400
+    payload = planning_response.get_json()
+    assert payload['success'] is False
+    assert payload['error_code'] == 'planning_validation_error'
+    assert 'review_envelope.artifact_id' in payload['error']

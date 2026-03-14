@@ -2,18 +2,35 @@
 
 ## In Progress
 
-- **Spike B: Multimodal drawing intake workflow (Checkpoint 4/5) — review envelope → planning scaffold**
-  - Objective: wire reviewed extraction envelopes into a deterministic planning scaffold that can be safely consumed by geometry-operation tooling.
+- **Spike B: Multimodal drawing intake workflow (Checkpoint 5/5) — planning envelope → AI geometry-operation flow integration**
+  - Objective: connect deterministic planning envelopes into AI geometry-operation execution flow with reproducible end-to-end examples.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives; **3/5** extraction/review route wiring + artifact-link validation contracts.
-    - Current checkpoint: **4/5** review-envelope to planning-envelope mapping scaffold with deterministic diagnostics for unsupported/ambiguous reviewed items.
-    - Next checkpoint: **5/5** connect planning envelope into AI geometry-operation flow with reproducible end-to-end example coverage.
+    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives; **3/5** extraction/review route wiring + artifact-link validation contracts; **4/5** review-envelope → planning-envelope scaffold + deterministic diagnostics.
+    - Current checkpoint: **5/5** planning-envelope execution bridge into AI geometry-operation flow with reproducible examples/tests.
+    - Next checkpoint: validate Geant4-facing geometry mutation parity and failure diagnostics for multimodal-derived operations.
   - Definition of done for current checkpoint:
-    - deterministic planning-envelope builder consumes review-approved extraction payloads
-    - explicit diagnostics for unsupported symbol/dimension semantics before any project mutation
-    - route/API test coverage locking success/error envelope shape
+    - planning-envelope operation candidates can be consumed by an AI geometry-operation execution path
+    - deterministic blocked/ready planning status gates mutation attempts
+    - reproducible end-to-end example coverage locks extraction→review→planning→operation flow
 
 ## Recently Completed
+
+- **Spike B Checkpoint 4/5 completed: deterministic review-envelope → planning-envelope scaffold with safety diagnostics** (2026-03-14)
+  - Added deterministic planning schema module: `src/ai_multimodal_planning_schema.py`.
+    - introduced `build_planning_envelope(...)` contract with stable ids + summary metadata
+    - maps review-approved extraction items into planning operation candidates (`apply_region_dimension_hint`, `apply_region_material_hint`, `capture_region_annotation`)
+    - emits explicit deterministic diagnostics for unsupported/ambiguous reviewed semantics (`unsupported_dimension_unit`, `unsupported_dimension_value`, `unsupported_symbol_type`, `ambiguous_region_dimension_semantics`, `ambiguous_region_material_symbols`, `review_not_approved`)
+    - enforces artifact/extraction/review linkage parity before planning (`artifact_id`, `artifact_sha256`, `extraction_id`)
+  - Added route-level planning API in `app.py`:
+    - `POST /api/ai/artifacts/<artifact_id>/planning/envelope`
+    - validates artifact-link integrity and returns deterministic planning envelope shape + version metadata
+    - deterministic error contract coverage (`artifact_not_found`, `artifact_blob_missing`, `planning_validation_error`)
+  - Added/expanded regression coverage:
+    - `tests/test_ai_multimodal_planning_schema.py` locks deterministic planning-envelope semantics + diagnostics
+    - `tests/test_ai_multimodal_extraction_api.py` now covers planning route success, blocked diagnostic path, and mismatch validation envelope
+  - Updated multimodal contract docs for checkpoint 4 in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md`.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_planning_schema.py tests/test_ai_multimodal_extraction_api.py tests/test_ai_multimodal_extraction_schema.py tests/test_ai_artifacts_api.py`
 
 - **Spike B Checkpoint 3/5 completed: extraction/review route wiring with artifact-link validation contracts** (2026-03-14)
   - Added route-level extraction/review API surface in `app.py`:
