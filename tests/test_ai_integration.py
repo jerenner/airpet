@@ -39,7 +39,8 @@ def test_ai_chat_flow_mocked(client):
     final_response.text = "Simulation started."
 
     with patch('app.get_gemini_client_for_session') as MockClientGetter, \
-         patch('app.get_project_manager_for_session') as MockPMGetter:
+         patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.types.GenerateContentConfig', side_effect=lambda **kwargs: kwargs):
         
         evaluator = ExpressionEvaluator()
         pm = ProjectManager(evaluator)
@@ -72,7 +73,8 @@ def test_ai_chat_handles_empty_gemini_candidate_content_with_text_fallback(clien
     mock_response.text = "Fallback response from Gemini."
 
     with patch('app.get_gemini_client_for_session') as MockClientGetter, \
-         patch('app.get_project_manager_for_session') as MockPMGetter:
+         patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.types.GenerateContentConfig', side_effect=lambda **kwargs: kwargs):
 
         evaluator = ExpressionEvaluator()
         pm = ProjectManager(evaluator)
@@ -90,6 +92,98 @@ def test_ai_chat_handles_empty_gemini_candidate_content_with_text_fallback(clien
         data = response.get_json()
         assert data['success']
         assert "Fallback response from Gemini." in data['message']
+
+
+def test_ai_chat_backend_selector_surfaces_fallback_diagnostics_in_success_response(client):
+    final_part = MagicMock()
+    final_part.function_call = None
+    final_part.text = "Selection fallback succeeded."
+
+    final_response = MagicMock()
+    final_response.candidates = [MagicMock()]
+    final_response.candidates[0].content.parts = [final_part]
+    final_response.candidates[0].content.role = "model"
+    final_response.text = "Selection fallback succeeded."
+
+    with patch('app.get_gemini_client_for_session') as MockClientGetter, \
+         patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.types.GenerateContentConfig', side_effect=lambda **kwargs: kwargs), \
+         patch('app.time.sleep', return_value=None):
+
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        mock_client = MagicMock()
+        MockClientGetter.return_value = mock_client
+        mock_client.models.generate_content.return_value = final_response
+
+        payload = {
+            "message": "hello",
+            "model": "models/gemini-2.0-flash-exp",
+            "backend_selector": {
+                "preferred_backend_id": "llama_cpp",
+                "allow_fallback": True,
+                "runtime_config": {
+                    "backends": {
+                        "llama_cpp": {"enabled": True}
+                    }
+                },
+                "requirements": {
+                    "require_tools": True,
+                    "require_json_mode": True
+                }
+            }
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["backend_selection"]["resolved_backend_id"] == "gemini_remote"
+        assert data["backend_selection"]["used_fallback"] is True
+        assert data["backend_selection"]["tried"][0]["backend_id"] == "llama_cpp"
+        assert data["backend_selection"]["tried"][0]["missing_capabilities"] == ["tools"]
+
+
+def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        payload = {
+            "message": "hello",
+            "model": "models/gemini-2.0-flash-exp",
+            "backend_selector": {
+                "preferred_backend_id": "llama_cpp",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "llama_cpp": {"enabled": True},
+                        "lm_studio": {"enabled": True}
+                    }
+                },
+                "requirements": {
+                    "require_tools": True,
+                    "require_json_mode": True
+                }
+            }
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data["success"] is False
+        assert "AI backend selection failed" in data["error"]
+        assert data["backend_selection"]["preferred_backend_id"] == "llama_cpp"
+        assert data["backend_selection"]["allow_fallback"] is False
+        assert "'backend_id': 'llama_cpp'" in data["backend_selection"]["selection_error"]
+        assert "'missing_capabilities': ['tools']" in data["backend_selection"]["selection_error"]
 
 
 def test_ai_analysis_summary_integration(client):

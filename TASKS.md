@@ -2,20 +2,31 @@
 
 ## In Progress
 
-- **Spike A: Local-model integration for AI operations (Checkpoint 4/5) — `/api/ai/chat` selector integration path**
-  - Objective: enable AIRPET AI workflows to support local backends (llama.cpp / LM Studio) with deterministic behavior and clear fallback rules.
+- **Spike A: Local-model integration for AI operations (Checkpoint 5/5) — backend invocation wiring + runtime parity**
+  - Objective: complete runtime local-backend integration for AIRPET AI with deterministic route behavior.
   - Current checkpoint scope:
-    - integrate adapter selection (`select_backend_for_text_request`) into `/api/ai/chat` request handling
-    - map runtime AI config to text-first backend requirements (tools/json/stream/context)
-    - preserve deterministic fallback/error diagnostics in the runtime chat path
-  - Definition of done (Checkpoint 4):
-    - `/api/ai/chat` can resolve backend selection through the adapter contract layer
-    - runtime selection/fallback decisions are visible in deterministic diagnostics
-    - route-level tests lock stable behavior for preferred backend + fallback/no-fallback outcomes
-  - Next checkpoint (Checkpoint 5): wire concrete backend invocation path(s) + end-to-end runtime parity checks.
+    - wire concrete invocation path(s) for selected local adapters (llama.cpp / LM Studio)
+    - align `/api/ai/chat` execution routing with selector outcomes while preserving backward compatibility safeguards
+    - add end-to-end/runtime parity checks for selected backend execution + error envelopes
   - Note: selector parity/validation hardening remains in reserve unless a concrete bug/regression is found.
 
 ## Recently Completed
+
+- **Spike A Checkpoint 4/5 completed: `/api/ai/chat` selector integration path with deterministic diagnostics** (2026-03-14)
+  - Integrated adapter selection into runtime chat request handling in `app.py` via optional `backend_selector` payload support:
+    - uses `select_backend_for_text_request` + `TextGenerationRequest` contract mapping
+    - maps runtime text-first requirement knobs (`require_tools`, `require_json_mode`, `require_streaming`, `min_context_tokens`)
+    - supports preferred backend + fallback policy inputs (`preferred_backend_id`, `allow_fallback`) and runtime backend overrides
+  - Added deterministic backend-selection diagnostics surfacing in `/api/ai/chat` responses:
+    - success payloads now include `backend_selection` metadata (`resolved_backend_id`, `used_fallback`, deterministic `tried` sequence)
+    - no-fallback selection failures now return 400 with stable `selection_error` diagnostics
+    - downstream runtime errors (Gemini/local invocation failures) preserve attached selection diagnostics when available
+  - Added route-level regression coverage in `tests/test_ai_integration.py`:
+    - preferred local backend + fallback-enabled path deterministically resolves to Gemini with stable tried/missing-capabilities diagnostics
+    - preferred local backend + fallback-disabled path returns deterministic 400 selector error diagnostics
+  - Checks run:
+    - `pytest -q tests/test_ai_integration.py tests/test_ai_backend_adapters.py`
+
 
 - **Spike A Checkpoint 3/5 completed: LM Studio text-first adapter scaffold + mixed-backend routing parity coverage** (2026-03-13)
   - Advanced adapter contract to Checkpoint 3 in `src/ai_backend_adapters.py`:

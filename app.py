@@ -46,6 +46,12 @@ from src.surrogate_experiment import run_surrogate_experiment, run_surrogate_exp
 from src.surrogate_synthetic import generate_synthetic_surrogate_benchmark
 from src.objective_engine import extract_objective_values_from_hdf5
 from src.objective_formula import get_allowed_formula_functions
+from src.ai_backend_adapters import (
+    ADAPTER_CONTRACT_VERSION,
+    TextGenerationRequest,
+    TextMessage,
+    select_backend_for_text_request,
+)
 
 from PIL import Image
 
@@ -9524,19 +9530,124 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = int(value)
+        return parsed if parsed >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            parsed = int(stripped)
+            return parsed if parsed >= 0 else None
+        except ValueError:
+            return None
+    return None
+
+
 @app.route('/api/ai/chat', methods=['POST'])
 def ai_chat_route():
     pm = get_project_manager_for_session()
-    data = request.get_json()
+    data = request.get_json() or {}
     user_message = data.get('message')
-    model_id = data.get('model', 'models/gemini-2.0-flash-exp') 
+    model_id = data.get('model', 'models/gemini-2.0-flash-exp')
     turn_limit = data.get('turn_limit', 10)
-    
+
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
 
+    backend_selection_payload = None
+    selector_cfg = data.get("backend_selector")
+    if isinstance(selector_cfg, dict):
+        requirements_cfg = selector_cfg.get("requirements")
+        if not isinstance(requirements_cfg, dict):
+            requirements_cfg = {}
+
+        runtime_config = selector_cfg.get("runtime_config")
+        if not isinstance(runtime_config, dict):
+            runtime_config = None
+
+        preferred_backend_id = (
+            selector_cfg.get("preferred_backend_id")
+            if selector_cfg.get("preferred_backend_id") is not None
+            else selector_cfg.get("preferred_backend")
+        )
+        if preferred_backend_id is not None:
+            preferred_backend_id = str(preferred_backend_id)
+
+        allow_fallback = _coerce_bool(selector_cfg.get("allow_fallback"), True)
+
+        text_request = TextGenerationRequest(
+            messages=(TextMessage(role="user", content=str(user_message)),),
+            require_tools=_coerce_bool(requirements_cfg.get("require_tools"), True),
+            require_json_mode=_coerce_bool(requirements_cfg.get("require_json_mode"), True),
+            require_streaming=_coerce_bool(requirements_cfg.get("require_streaming"), False),
+            min_context_tokens=_coerce_optional_int(requirements_cfg.get("min_context_tokens")),
+        )
+
+        requirements_payload = {
+            "require_tools": text_request.require_tools,
+            "require_json_mode": text_request.require_json_mode,
+            "require_streaming": text_request.require_streaming,
+            "min_context_tokens": text_request.min_context_tokens,
+        }
+
+        try:
+            selection = select_backend_for_text_request(
+                request=text_request,
+                runtime_config=runtime_config,
+                preferred_backend_id=preferred_backend_id,
+                allow_fallback=allow_fallback,
+            )
+        except ValueError as exc:
+            return jsonify({
+                "success": False,
+                "error": f"AI backend selection failed: {exc}",
+                "backend_selection": {
+                    "contract_version": ADAPTER_CONTRACT_VERSION,
+                    "preferred_backend_id": preferred_backend_id,
+                    "allow_fallback": allow_fallback,
+                    "requirements": requirements_payload,
+                    "selection_error": str(exc),
+                },
+            }), 400
+
+        backend_selection_payload = {
+            "contract_version": ADAPTER_CONTRACT_VERSION,
+            "preferred_backend_id": preferred_backend_id,
+            "allow_fallback": allow_fallback,
+            "requirements": requirements_payload,
+            "resolved_backend_id": selection.backend_id,
+            "used_fallback": selection.used_fallback,
+            "tried": list(selection.tried),
+        }
+
     # Determine if we are using Gemini or Ollama
     is_gemini = model_id.startswith("models/")
+
+    chat_extra_payload = {"backend_selection": backend_selection_payload} if backend_selection_payload else None
 
     # Initialize chat history if empty
     if not pm.chat_history:
@@ -9558,7 +9669,10 @@ def ai_chat_route():
     if is_gemini:
         client_instance = get_gemini_client_for_session()
         if not client_instance:
-            return jsonify({"success": False, "error": "Gemini client not configured. Check your API key."}), 500
+            err_payload = {"success": False, "error": "Gemini client not configured. Check your API key."}
+            if backend_selection_payload:
+                err_payload["backend_selection"] = backend_selection_payload
+            return jsonify(err_payload), 500
 
         pm.chat_history.append({
             "role": "user", 
@@ -9613,7 +9727,7 @@ def ai_chat_route():
                             "parts": [{"text": fallback_text}]
                         })
                         pm.end_transaction(f"AI: {user_message[:50]}")
-                        return create_success_response(pm, fallback_text)
+                        return create_success_response(pm, fallback_text, extra_payload=chat_extra_payload)
 
                     raise RuntimeError(
                         "Gemini returned an empty candidate content (possibly filtered/empty output). "
@@ -9678,7 +9792,7 @@ def ai_chat_route():
                         text_parts = [p.get('text') for p in assistant_parts if isinstance(p, dict) and p.get('text')]
                         final_text = "\n".join(text_parts) if text_parts else "Done."
                     
-                    res_obj = create_success_response(pm, final_text)
+                    res_obj = create_success_response(pm, final_text, extra_payload=chat_extra_payload)
                     # Re-inject captured job metadata into the final response
                     if job_id:
                         res_json = res_obj.get_json()
@@ -9696,7 +9810,7 @@ def ai_chat_route():
                 })
 
             pm.end_transaction("AI Timeout")
-            return create_success_response(pm, "Too many tool iterations.")
+            return create_success_response(pm, "Too many tool iterations.", extra_payload=chat_extra_payload)
 
         except Exception as e:
             pm.end_transaction("AI Error")
@@ -9706,7 +9820,10 @@ def ai_chat_route():
             if "429" in err_msg or "ResourceExhausted" in err_msg or "Quota" in err_msg:
                 err_msg = f"AI Rate Limit Exceeded (429): {err_msg}. Please wait a moment before trying again."
                 status_code = 429
-            return jsonify({"success": False, "error": err_msg}), status_code
+            err_payload = {"success": False, "error": err_msg}
+            if backend_selection_payload:
+                err_payload["backend_selection"] = backend_selection_payload
+            return jsonify(err_payload), status_code
 
     else: # Ollama Path
         pm.chat_history.append({
@@ -9813,7 +9930,7 @@ def ai_chat_route():
                 
                 if not assistant_msg.get('tool_calls'):
                     pm.end_transaction(f"AI: {user_message[:50]}")
-                    return create_success_response(pm, assistant_msg['content'])
+                    return create_success_response(pm, assistant_msg['content'], extra_payload=chat_extra_payload)
 
                 # Process tool calls
                 for tool_call in assistant_msg['tool_calls']:
@@ -9834,7 +9951,7 @@ def ai_chat_route():
                     pm.chat_history.append(tool_res)
             
             pm.end_transaction("AI Timeout")
-            return create_success_response(pm, "Too many tool iterations (Ollama).")
+            return create_success_response(pm, "Too many tool iterations (Ollama).", extra_payload=chat_extra_payload)
 
         except Exception as e:
             pm.end_transaction("AI Error")
@@ -9844,7 +9961,10 @@ def ai_chat_route():
             if "429" in err_msg:
                 err_msg = f"Local AI Overloaded (429): {err_msg}."
                 status_code = 429
-            return jsonify({"success": False, "error": err_msg}), status_code
+            err_payload = {"success": False, "error": err_msg}
+            if backend_selection_payload:
+                err_payload["backend_selection"] = backend_selection_payload
+            return jsonify(err_payload), status_code
 
 @app.route('/api/ai/history', methods=['GET'])
 def get_ai_history():
