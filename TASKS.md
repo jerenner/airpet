@@ -2,17 +2,38 @@
 
 ## In Progress
 
-- **Spike B: Multimodal drawing intake workflow (Checkpoint 3/5) — extraction/review route wiring**
-  - Objective: connect validated extraction/review contracts to API surfaces so uploaded artifacts can flow into review-ready payloads.
+- **Spike B: Multimodal drawing intake workflow (Checkpoint 4/5) — review envelope → planning scaffold**
+  - Objective: wire reviewed extraction envelopes into a deterministic planning scaffold that can be safely consumed by geometry-operation tooling.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives.
-    - Current checkpoint: **3/5** extraction/review route wiring and tests that connect uploaded artifacts to review-ready payloads.
-    - Next checkpoint: **4/5** wire extraction/review envelopes into AI planning flow with deterministic failure diagnostics.
+    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives; **3/5** extraction/review route wiring + artifact-link validation contracts.
+    - Current checkpoint: **4/5** review-envelope to planning-envelope mapping scaffold with deterministic diagnostics for unsupported/ambiguous reviewed items.
+    - Next checkpoint: **5/5** connect planning envelope into AI geometry-operation flow with reproducible end-to-end example coverage.
   - Definition of done for current checkpoint:
-    - route-level extraction/review endpoint(s) accept artifact-linked payloads and emit normalized extraction + review envelope outputs
-    - route tests lock deterministic success/error contracts (including stale/missing artifact handling)
+    - deterministic planning-envelope builder consumes review-approved extraction payloads
+    - explicit diagnostics for unsupported symbol/dimension semantics before any project mutation
+    - route/API test coverage locking success/error envelope shape
 
 ## Recently Completed
+
+- **Spike B Checkpoint 3/5 completed: extraction/review route wiring with artifact-link validation contracts** (2026-03-14)
+  - Added route-level extraction/review API surface in `app.py`:
+    - `POST /api/ai/artifacts/<artifact_id>/extraction/review`
+    - accepts artifact-linked extraction payloads and emits normalized extraction + review envelope output in one deterministic contract
+  - Wired schema contracts from `src/ai_multimodal_extraction_schema.py` into route execution:
+    - uses `normalize_extraction_payload(...)` with canonical artifact metadata
+    - uses `build_review_envelope(...)` with explicit status propagation
+  - Added deterministic route-level error contracts:
+    - `artifact_not_found` (404) for missing artifact metadata
+    - `artifact_blob_missing` (409) for stale metadata entries whose artifact blob is absent
+    - `extraction_validation_error` (400) for schema/provenance mismatches
+  - Added regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
+    - success path with deterministic ordering + review envelope output
+    - missing artifact handling
+    - stale/missing blob handling
+    - artifact-id mismatch validation handling
+  - Updated multimodal contract docs for checkpoint 3 route wiring in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md`.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py tests/test_ai_multimodal_extraction_schema.py tests/test_ai_artifacts_api.py`
 
 - **Spike B Checkpoint 2/5 completed: extraction schema + machine-readable review envelope primitives** (2026-03-14)
   - Added deterministic extraction/review schema module: `src/ai_multimodal_extraction_schema.py`.
@@ -674,15 +695,15 @@
 
 ## Next Candidates
 
-1. **Spike B Checkpoint 3/5: extraction/review API wiring with artifact linkage**
-   - Add deterministic API surfaces to attach extraction/review payloads to uploaded artifact ids.
-   - Validate artifact-id linkage + provenance references end-to-end.
-   - Impact: high (turns schema work into executable workflow).
-
-2. **Spike B Checkpoint 4/5: review-approved intent → geometry-operation mapping scaffold**
+1. **Spike B Checkpoint 4/5: review-approved intent → geometry-operation mapping scaffold**
    - Define deterministic mapping envelope from reviewed extraction payloads into geometry-operation plans.
    - Add safety guards so planning outputs are reviewable before any project mutation.
    - Impact: high (bridges multimodal review to actionable AIRPET operations).
+
+2. **Spike B Checkpoint 5/5: planning-envelope integration into AI geometry operation flows + reproducible example**
+   - Connect approved planning envelope into AI flow without direct mutation side-effects.
+   - Add one reproducible end-to-end artifact→review→planning example for operator confidence.
+   - Impact: high (turns multimodal path into an actionable reliable workflow).
 
 3. **Spike A follow-on: backend health diagnostics endpoint + startup preflight hints**
    - Add explicit local-backend health probe output (connectivity/model availability/timeout class) for operators.
