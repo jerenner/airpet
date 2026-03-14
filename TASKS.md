@@ -2,17 +2,35 @@
 
 ## In Progress
 
-- **Spike B: Multimodal drawing intake workflow (Checkpoint 1/5) — artifact ingestion + provenance foundation**
-  - Objective: open a reliable multimodal path (PDF/image inputs → structured geometry-intent workflow) with deterministic artifact tracking.
-  - Current checkpoint scope:
-    - add API-level intake surface for PDF/image uploads dedicated to AI planning workflows
-    - persist normalized artifact metadata/provenance (id, mime type, size, source path checks, timestamps)
-    - add deterministic retrieval/listing primitives + baseline tests for reproducible downstream use
+- **Spike B: Multimodal drawing intake workflow (Checkpoint 2/5) — extraction schema + review envelope**
+  - Objective: extend the new artifact-ingestion foundation into a deterministic extraction/review contract before geometry writes.
+  - Checkpoint plan (multi-heartbeat):
+    - Completed checkpoint: **1/5** artifact ingestion + provenance foundation.
+    - Current checkpoint: **2/5** define extraction payload schema (regions, dimensions, symbols, confidence/provenance links) and add machine-readable review envelope primitives.
+    - Next checkpoint: **3/5** extraction/review route wiring and tests that connect uploaded artifacts to review-ready payloads.
   - Definition of done for current checkpoint:
-    - upload + metadata listing flow works end-to-end in tests
-    - metadata contract is documented and stable for downstream extraction/planning checkpoints
+    - extraction/review schema is explicitly documented and represented in code
+    - schema-level validation tests lock deterministic field semantics and provenance linkage
 
 ## Recently Completed
+
+- **Spike B Checkpoint 1/5 completed: multimodal artifact ingestion + provenance foundation** (2026-03-14)
+  - Added deterministic multimodal artifact store module: `src/ai_artifact_store.py`.
+    - per-session persistence under `<projects_dir>/.airpet_ai_artifacts/{manifest.json,blobs/*}`
+    - accepted types locked to PDF/PNG/JPEG/WEBP
+    - normalized metadata/provenance captured (`artifact_id`, `mime_type`, `size_bytes`, `sha256`, source-path checks, timestamps)
+    - deterministic listing order `(created_at DESC, artifact_id DESC)` with optional missing-file filtering
+  - Added API-level intake/list/retrieval surfaces in `app.py`:
+    - `POST /api/ai/artifacts/upload`
+    - `GET|POST /api/ai/artifacts/list`
+    - `GET /api/ai/artifacts/<artifact_id>`
+  - Added regression coverage in `tests/test_ai_artifacts_api.py`:
+    - upload → list → metadata retrieval end-to-end flow
+    - deterministic list ordering + limit behavior
+    - unsupported file-type rejection
+  - Documented checkpoint-1 metadata contract in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md`.
+  - Checks run:
+    - `pytest -q tests/test_ai_artifacts_api.py tests/test_ai_integration.py tests/test_ai_backend_adapters.py`
 
 - **Spike A Checkpoint 5/5 completed: local adapter invocation wiring + `/api/ai/chat` runtime parity** (2026-03-14)
   - Completed runtime invocation wiring in `src/ai_backend_adapters.py`:
@@ -636,15 +654,15 @@
 
 ## Next Candidates
 
-1. **Spike B Checkpoint 1/5: multimodal drawing intake ingestion foundation**
-   - Add PDF/image artifact intake + normalized metadata/provenance plumbing.
-   - Prepare deterministic artifact references for downstream extraction and review steps.
-   - Impact: high (opens multimodal pathway).
+1. **Spike B Checkpoint 3/5: extraction/review API wiring with artifact linkage**
+   - Add deterministic API surfaces to attach extraction/review payloads to uploaded artifact ids.
+   - Validate artifact-id linkage + provenance references end-to-end.
+   - Impact: high (turns schema work into executable workflow).
 
-2. **Spike B Checkpoint 2/5: multimodal extraction schema + review envelope**
-   - Define deterministic extraction payload contract (regions, dimensions, symbols, confidence/provenance links).
-   - Add machine-readable review payload so humans/AI can iterate safely before geometry writes.
-   - Impact: high (enables reliable PDF/image → geometry planning loop).
+2. **Spike B Checkpoint 4/5: review-approved intent → geometry-operation mapping scaffold**
+   - Define deterministic mapping envelope from reviewed extraction payloads into geometry-operation plans.
+   - Add safety guards so planning outputs are reviewable before any project mutation.
+   - Impact: high (bridges multimodal review to actionable AIRPET operations).
 
 3. **Spike A follow-on: backend health diagnostics endpoint + startup preflight hints**
    - Add explicit local-backend health probe output (connectivity/model availability/timeout class) for operators.

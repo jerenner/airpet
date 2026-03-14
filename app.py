@@ -53,6 +53,11 @@ from src.ai_backend_adapters import (
     invoke_text_request_for_backend,
     select_backend_for_text_request,
 )
+from src.ai_artifact_store import (
+    ARTIFACT_STORE_SCHEMA_VERSION,
+    AIArtifactStore,
+    AIArtifactValidationError,
+)
 
 from PIL import Image
 
@@ -9566,6 +9571,95 @@ def _coerce_optional_int(value: Any) -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+def _get_ai_artifact_store_for_session(pm: Optional[ProjectManager] = None) -> AIArtifactStore:
+    pm = pm or get_project_manager_for_session()
+    return AIArtifactStore(
+        base_dir=Path(pm.projects_dir) / ".airpet_ai_artifacts",
+        workspace_root=Path(os.getcwd()),
+    )
+
+
+@app.route('/api/ai/artifacts/upload', methods=['POST'])
+def upload_ai_artifact_route():
+    pm = get_project_manager_for_session()
+    file = request.files.get('artifact') or request.files.get('file')
+    if file is None:
+        return jsonify({"success": False, "error": "Missing artifact file upload (field: artifact)."}), 400
+
+    source_path = request.form.get('source_path')
+    source_label = request.form.get('source_label')
+    store = _get_ai_artifact_store_for_session(pm)
+
+    try:
+        artifact = store.ingest_upload(file, source_path=source_path, source_label=source_label)
+        return jsonify({
+            "success": True,
+            "schema_version": ARTIFACT_STORE_SCHEMA_VERSION,
+            "artifact": artifact,
+        })
+    except AIArtifactValidationError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to ingest AI artifact: {exc}"}), 500
+
+
+@app.route('/api/ai/artifacts/list', methods=['GET', 'POST'])
+def list_ai_artifacts_route():
+    pm = get_project_manager_for_session()
+    store = _get_ai_artifact_store_for_session(pm)
+
+    if request.method == 'POST':
+        payload = request.get_json(silent=True) or {}
+    else:
+        payload = request.args or {}
+
+    raw_limit = payload.get('limit', 50)
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "limit must be a non-negative integer."}), 400
+
+    include_missing_files = _coerce_bool(payload.get('include_missing_files'), False)
+
+    try:
+        artifacts = store.list_metadata(limit=limit, include_missing_files=include_missing_files)
+        return jsonify({
+            "success": True,
+            "schema_version": ARTIFACT_STORE_SCHEMA_VERSION,
+            "count": len(artifacts),
+            "artifacts": artifacts,
+        })
+    except AIArtifactValidationError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to list AI artifacts: {exc}"}), 500
+
+
+@app.route('/api/ai/artifacts/<artifact_id>', methods=['GET'])
+def get_ai_artifact_metadata_route(artifact_id):
+    pm = get_project_manager_for_session()
+    store = _get_ai_artifact_store_for_session(pm)
+
+    try:
+        artifact = store.get_metadata(artifact_id)
+    except AIArtifactValidationError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to read AI artifact metadata: {exc}"}), 500
+
+    if artifact is None:
+        return jsonify({"success": False, "error": f"Artifact not found: {artifact_id}"}), 404
+
+    return jsonify({
+        "success": True,
+        "schema_version": ARTIFACT_STORE_SCHEMA_VERSION,
+        "artifact": artifact,
+    })
 
 
 @app.route('/api/ai/chat', methods=['POST'])
