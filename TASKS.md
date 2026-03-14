@@ -2,17 +2,37 @@
 
 ## In Progress
 
-- **Spike B: Multimodal drawing intake workflow (Checkpoint 2/5) — extraction schema + review envelope**
-  - Objective: extend the new artifact-ingestion foundation into a deterministic extraction/review contract before geometry writes.
+- **Spike B: Multimodal drawing intake workflow (Checkpoint 3/5) — extraction/review route wiring**
+  - Objective: connect validated extraction/review contracts to API surfaces so uploaded artifacts can flow into review-ready payloads.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoint: **1/5** artifact ingestion + provenance foundation.
-    - Current checkpoint: **2/5** define extraction payload schema (regions, dimensions, symbols, confidence/provenance links) and add machine-readable review envelope primitives.
-    - Next checkpoint: **3/5** extraction/review route wiring and tests that connect uploaded artifacts to review-ready payloads.
+    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives.
+    - Current checkpoint: **3/5** extraction/review route wiring and tests that connect uploaded artifacts to review-ready payloads.
+    - Next checkpoint: **4/5** wire extraction/review envelopes into AI planning flow with deterministic failure diagnostics.
   - Definition of done for current checkpoint:
-    - extraction/review schema is explicitly documented and represented in code
-    - schema-level validation tests lock deterministic field semantics and provenance linkage
+    - route-level extraction/review endpoint(s) accept artifact-linked payloads and emit normalized extraction + review envelope outputs
+    - route tests lock deterministic success/error contracts (including stale/missing artifact handling)
 
 ## Recently Completed
+
+- **Spike B Checkpoint 2/5 completed: extraction schema + machine-readable review envelope primitives** (2026-03-14)
+  - Added deterministic extraction/review schema module: `src/ai_multimodal_extraction_schema.py`.
+    - `normalize_extraction_payload(...)` validates and normalizes `regions`, `dimensions`, `symbols`
+    - confidence bounds locked to `[0,1]`, id uniqueness enforced, deterministic per-collection ordering
+    - dimensions/symbols must reference known `region_id`
+    - provenance linkage requires artifact-id + sha256 parity with canonical artifact metadata
+    - deterministic `extraction_id`/`review_envelope_id` generation when caller omits explicit ids
+  - Added machine-readable review envelope primitive builder: `build_review_envelope(...)`.
+    - stable review status enum (`pending_review`, `approved`, `needs_changes`, `rejected`)
+    - deterministic review-item list with per-item confidence/provenance + pending review state
+    - deterministic summary counts + confidence aggregate stats
+  - Added regression coverage in `tests/test_ai_multimodal_extraction_schema.py`:
+    - order-independent normalization invariants
+    - provenance mismatch rejection
+    - confidence-range validation
+    - review-envelope primitive shape and deterministic semantics
+  - Updated checkpoint contract docs: `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md`.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_schema.py tests/test_ai_artifacts_api.py tests/test_ai_integration.py tests/test_ai_backend_adapters.py`
 
 - **Spike B Checkpoint 1/5 completed: multimodal artifact ingestion + provenance foundation** (2026-03-14)
   - Added deterministic multimodal artifact store module: `src/ai_artifact_store.py`.
