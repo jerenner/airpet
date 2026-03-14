@@ -2,21 +2,33 @@
 
 ## In Progress
 
-- **Spike A Follow-on: local-backend UI exposure + selection wiring (Checkpoint 1/3)**
+- **Spike A Follow-on: local-backend UI exposure + selection wiring (Checkpoint 2/3)**
   - Objective: make llama.cpp / LM Studio backends visible and selectable from the user UI, not only backend payloads.
   - Checkpoint plan (multi-heartbeat):
     - Planned checkpoints:
-      - **1/3** expose local backend model discovery in health/model-list APIs and render them in UI selector groups.
+      - ✅ **1/3** expose local backend model discovery in health/model-list APIs and render them in UI selector groups.
       - **2/3** wire chat payload selection (`backend_selector`) from UI model choice with deterministic local-backend routing.
       - **3/3** add UX/readiness diagnostics + docs/tests so users understand local text-first limits and fallback behavior.
-    - Current checkpoint: **1/3** discovery + model-selector UI exposure.
-    - Next checkpoint: **2/3** chat payload selector wiring.
+    - Current checkpoint: **2/3** chat payload selector wiring.
+    - Next checkpoint: **3/3** UX/readiness diagnostics + docs/tests.
   - Definition of done for current checkpoint:
-    - `/ai_health_check` reports local-model lists for llama.cpp and LM Studio when reachable
-    - local model groups are shown in the model selector UI
-    - no regression to existing Gemini/Ollama model discovery behavior
+    - AI chat requests from local-model UI selections include deterministic `backend_selector` payloads
+    - `/api/ai/chat` routes selector-resolved local backends through text-adapter invocation path with stable diagnostics
+    - one-shot AI generate remains explicitly guarded to Gemini/Ollama while local-model chat path stays enabled
 
 ## Recently Completed
+
+- **Spike A Follow-on Checkpoint 1/3 completed: local-model discovery hardening + regression coverage for AI model availability route** (2026-03-14)
+  - Hardened `/ai_health_check` discovery flow in `app.py`:
+    - added model-id normalization (`trim + drop-empty + dedupe`) for Ollama, llama.cpp, LM Studio, and Gemini lists
+    - local OpenAI-compatible discovery now normalizes model payload rows defensively before exposing UI model options
+    - Ollama discovery now safely handles malformed payloads without failing the full health-check response
+  - Preserved Gemini/Ollama discovery behavior while exposing local backend groups (`llama_cpp`, `lm_studio`) in the same route contract.
+  - Added route-level regression coverage in `tests/test_ai_health_check.py`:
+    - full discovery path with mixed/duplicate payload rows across all providers
+    - resilience path where one provider returns malformed payload data while other providers continue to surface models
+  - Checks run:
+    - `pytest -q tests/test_ai_health_check.py`
 
 - **Spike B Follow-up Checkpoint 3/3 completed: Geant4-facing parity diagnostics/reporting for multimodal-applied mutations** (2026-03-14)
   - Upgraded multimodal planning execution route contract in `app.py`:

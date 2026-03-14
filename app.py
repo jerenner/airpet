@@ -7468,6 +7468,19 @@ def ai_health_check_route():
         },
     }
 
+    def _normalize_model_names(raw_names: List[Any]) -> List[str]:
+        normalized: List[str] = []
+        seen = set()
+        for raw_name in raw_names:
+            if raw_name is None:
+                continue
+            name = str(raw_name).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            normalized.append(name)
+        return normalized
+
     def _fetch_openai_compatible_model_ids(base_url: str) -> List[str]:
         url = f"{base_url.rstrip('/')}/v1/models"
         resp = requests.get(url, timeout=2)
@@ -7477,24 +7490,31 @@ def ai_health_check_route():
         data = payload.get("data")
         if not isinstance(data, list):
             return []
-        model_ids: List[str] = []
+        model_ids: List[Any] = []
         for item in data:
             if not isinstance(item, dict):
                 continue
-            model_id = item.get("id")
-            if model_id:
-                model_ids.append(str(model_id))
-        return model_ids
+            model_ids.append(item.get("id"))
+        return _normalize_model_names(model_ids)
 
     # 1. Check for Ollama models
     try:
         ollama_response = requests.get('http://localhost:11434/api/tags', timeout=3)
         if ollama_response.ok:
-            ollama_data = ollama_response.json()
-            response_data["models"]["ollama"] = [m['name'] for m in ollama_data.get('models', [])]
+            ollama_data = ollama_response.json() or {}
+            model_rows = ollama_data.get('models')
+            discovered_names: List[Any] = []
+            if isinstance(model_rows, list):
+                for row in model_rows:
+                    if isinstance(row, dict):
+                        discovered_names.append(row.get('name'))
+            response_data["models"]["ollama"] = _normalize_model_names(discovered_names)
     except requests.exceptions.RequestException:
         print("Ollama service is unreachable.")
         # We don't fail the whole request, just show no Ollama models
+    except Exception as e:
+        print(f"Error fetching Ollama models: {e}")
+        response_data["error_ollama"] = str(e)
 
     # 2. Check local OpenAI-compatible model servers (llama.cpp + LM Studio)
     try:
@@ -7517,14 +7537,19 @@ def ai_health_check_route():
     gemini_client = get_gemini_client_for_session()
     if gemini_client:
         try:
-            gemini_models = []
+            allowed_model_names = {
+                "models/gemini-3-flash-preview",
+                "models/gemini-2.5-flash",
+                "models/gemini-2.5-pro",
+            }
+            gemini_models: List[Any] = []
             # Use the initialized client to list models
             for model in gemini_client.models.list():
-                if 'generateContent' in model.supported_actions:
-                    # Filter for certain Gemini models only
-                    if(model.name == "models/gemini-3-flash-preview" or model.name == "models/gemini-2.5-flash" or model.name == "models/gemini-2.5-pro"):
-                        gemini_models.append(model.name)
-            response_data["models"]["gemini"] = gemini_models
+                supported_actions = getattr(model, "supported_actions", []) or []
+                model_name = getattr(model, "name", None)
+                if 'generateContent' in supported_actions and model_name in allowed_model_names:
+                    gemini_models.append(model_name)
+            response_data["models"]["gemini"] = _normalize_model_names(gemini_models)
         except Exception as e:
             print(f"Error fetching Gemini models: {e}")
             response_data["error_gemini"] = str(e)
