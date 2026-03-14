@@ -58,6 +58,13 @@ from src.ai_artifact_store import (
     AIArtifactStore,
     AIArtifactValidationError,
 )
+from src.ai_multimodal_extraction_schema import (
+    AIMultimodalSchemaValidationError,
+    MULTIMODAL_EXTRACTION_SCHEMA_VERSION,
+    MULTIMODAL_REVIEW_ENVELOPE_SCHEMA_VERSION,
+    build_review_envelope,
+    normalize_extraction_payload,
+)
 
 from PIL import Image
 
@@ -9660,6 +9667,73 @@ def get_ai_artifact_metadata_route(artifact_id):
         "schema_version": ARTIFACT_STORE_SCHEMA_VERSION,
         "artifact": artifact,
     })
+
+
+MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint3"
+
+
+@app.route('/api/ai/artifacts/<artifact_id>/extraction/review', methods=['POST'])
+def build_ai_artifact_extraction_review_route(artifact_id):
+    pm = get_project_manager_for_session()
+    store = _get_ai_artifact_store_for_session(pm)
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Request body must be a JSON object."}), 400
+
+    extraction_payload = payload.get("extraction")
+    if extraction_payload is None:
+        extraction_payload = payload
+    if not isinstance(extraction_payload, dict):
+        return jsonify({"success": False, "error": "extraction must be a JSON object."}), 400
+
+    review_status = payload.get("review_status")
+    if review_status is None:
+        review_status = payload.get("status", "pending_review")
+
+    try:
+        artifact = store.get_metadata(artifact_id)
+    except AIArtifactValidationError as exc:
+        return jsonify({"success": False, "error": str(exc), "error_code": "artifact_validation_error"}), 400
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to read AI artifact metadata: {exc}", "error_code": "artifact_metadata_error"}), 500
+
+    if artifact is None:
+        return jsonify({
+            "success": False,
+            "error": f"Artifact not found: {artifact_id}",
+            "error_code": "artifact_not_found",
+        }), 404
+
+    if store.resolve_artifact_path(artifact_id) is None:
+        return jsonify({
+            "success": False,
+            "error": f"Artifact blob file missing for artifact_id: {artifact_id}",
+            "error_code": "artifact_blob_missing",
+        }), 409
+
+    try:
+        normalized_extraction = normalize_extraction_payload(
+            extraction_payload,
+            artifact_metadata=artifact,
+        )
+        review_envelope = build_review_envelope(normalized_extraction, status=str(review_status))
+        return jsonify({
+            "success": True,
+            "schema_version": MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION,
+            "artifact_schema_version": ARTIFACT_STORE_SCHEMA_VERSION,
+            "extraction_schema_version": MULTIMODAL_EXTRACTION_SCHEMA_VERSION,
+            "review_schema_version": MULTIMODAL_REVIEW_ENVELOPE_SCHEMA_VERSION,
+            "artifact": artifact,
+            "extraction": normalized_extraction,
+            "review_envelope": review_envelope,
+        })
+    except AIMultimodalSchemaValidationError as exc:
+        return jsonify({"success": False, "error": str(exc), "error_code": "extraction_validation_error"}), 400
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"Failed to build extraction/review payloads: {exc}", "error_code": "extraction_pipeline_error"}), 500
 
 
 @app.route('/api/ai/chat', methods=['POST'])

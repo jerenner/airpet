@@ -1,9 +1,13 @@
-# AI Multimodal Artifact Intake + Extraction Contract (Checkpoint 2)
+# AI Multimodal Artifact Intake + Extraction Contract (Checkpoint 3)
 
-Schema version: `2026-03-14.multimodal-intake.checkpoint2`
+Schema versions:
+- Checkpoint 1 artifact store: `2026-03-14.multimodal-intake.checkpoint1`
+- Checkpoint 2 extraction/review primitives: `2026-03-14.multimodal-intake.checkpoint2`
+- Checkpoint 3 extraction/review route wiring: `2026-03-14.multimodal-intake.checkpoint3`
 
 Checkpoint 1 introduced deterministic PDF/image artifact intake.
-Checkpoint 2 adds deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives before any geometry write workflows.
+Checkpoint 2 added deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives.
+Checkpoint 3 wires those contracts into route-level API surfaces tied to uploaded artifact ids.
 
 ## Checkpoint 1: Artifact Intake Endpoints
 
@@ -175,6 +179,35 @@ Current review status enum:
 - `approved`
 - `needs_changes`
 - `rejected`
+
+## Checkpoint 3: Route-level extraction/review wiring
+
+### `POST /api/ai/artifacts/<artifact_id>/extraction/review`
+Build normalized extraction + machine-readable review envelope from an artifact-linked payload.
+
+Request body:
+- JSON object
+- `extraction` object (preferred). If omitted, route treats the full request object as extraction payload.
+- optional `review_status` (or `status`) for envelope status (`pending_review`, `approved`, `needs_changes`, `rejected`).
+
+Response shape (success):
+```json
+{
+  "success": true,
+  "schema_version": "2026-03-14.multimodal-intake.checkpoint3",
+  "artifact_schema_version": "2026-03-14.multimodal-intake.checkpoint1",
+  "extraction_schema_version": "2026-03-14.multimodal-intake.checkpoint2",
+  "review_schema_version": "2026-03-14.multimodal-intake.checkpoint2",
+  "artifact": {"artifact_id": "artifact_...", "sha256": "..."},
+  "extraction": {"artifact_id": "artifact_...", "extraction_id": "extract_..."},
+  "review_envelope": {"envelope_id": "review_...", "status": "pending_review"}
+}
+```
+
+Deterministic error contracts:
+- `404 artifact_not_found` when `<artifact_id>` is absent from manifest metadata
+- `409 artifact_blob_missing` when metadata exists but blob file is missing (stale artifact reference)
+- `400 extraction_validation_error` when extraction/review schema validation fails
 
 ## Persistence Layout
 
