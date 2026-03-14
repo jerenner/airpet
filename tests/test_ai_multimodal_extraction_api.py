@@ -457,7 +457,7 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert execute_response.status_code == 200
     payload = execute_response.get_json()
     assert payload['success'] is True
-    assert payload['schema_version'].endswith('checkpoint7')
+    assert payload['schema_version'].endswith('checkpoint8')
     assert payload['planning_envelope']['status'] == 'ready'
     assert payload['execution_plan']['status'] == 'ready'
     assert payload['execution_plan']['summary']['candidate_operation_count'] == 4
@@ -489,6 +489,17 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert preflight_crosscheck['comparison']['issue_count_delta'] == 0
     assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
         'preflight_invariants_stable_after_success',
+    ]
+
+    parity_report = execution['parity_report']
+    assert parity_report['status'] == 'compatible'
+    assert parity_report['preflight_crosscheck_status'] == 'consistent'
+    assert parity_report['geant4_compatibility_confidence']['label'] == 'high'
+    assert parity_report['summary']['high_signal_mismatch_count'] == 0
+    assert parity_report['summary']['high_signal_mismatch_classes'] == []
+    assert [group['group_id'] for group in parity_report['operation_groups']] == [
+        'dimension_hints',
+        'material_updates',
     ]
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
@@ -605,6 +616,11 @@ def test_artifact_planning_execute_route_reports_partial_failure_for_invalid_log
     assert [entry['code'] for entry in preflight_crosscheck['diagnostics']] == [
         'preflight_invariants_stable_under_partial_failure',
     ]
+
+    parity_report = execution['parity_report']
+    assert parity_report['status'] == 'compatible'
+    assert parity_report['geant4_compatibility_confidence']['label'] == 'guarded'
+    assert parity_report['summary']['high_signal_mismatch_count'] == 0
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
     assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
@@ -759,4 +775,21 @@ def test_artifact_planning_execute_route_emits_preflight_mismatch_classes_when_s
         'preflight_can_run_regressed',
         'preflight_issue_count_regressed_after_success',
     ]
+
+    parity_report = execution['parity_report']
+    assert parity_report['status'] == 'mismatch_error'
+    assert parity_report['geant4_compatibility_confidence']['label'] == 'low'
+    assert parity_report['summary']['high_signal_mismatch_classes'] == [
+        'preflight_can_run_regressed',
+        'preflight_issue_count_regressed_after_success',
+    ]
+    assert [entry['mismatch_class'] for entry in parity_report['high_signal_mismatches']] == [
+        'preflight_can_run_regressed',
+        'preflight_issue_count_regressed_after_success',
+    ]
+    assert [entry['group_id'] for entry in parity_report['high_signal_mismatches'][0]['affected_operation_groups']] == [
+        'dimension_hints',
+        'material_updates',
+    ]
+
     assert preflight_mock.call_count == 2

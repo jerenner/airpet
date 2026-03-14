@@ -1,0 +1,98 @@
+{
+  "success": true,
+  "schema_version": "2026-03-14.multimodal-intake.checkpoint8",
+  "execution": {
+    "status": "success",
+    "summary": {
+      "attempted_operation_count": 3,
+      "applied_operation_count": 3,
+      "failed_operation_count": 0
+    },
+    "preflight_crosscheck": {
+      "status": "mismatch_error",
+      "mismatch_classes": [
+        "preflight_can_run_regressed",
+        "preflight_issue_count_regressed_after_success"
+      ],
+      "invariants": {
+        "issue_count_delta": 2,
+        "regressed_can_run": true
+      }
+    },
+    "parity_report": {
+      "status": "mismatch_error",
+      "preflight_crosscheck_status": "mismatch_error",
+      "geant4_compatibility_confidence": {
+        "label": "low",
+        "score": 25,
+        "reason_codes": [
+          "preflight_mismatch_error",
+          "execution_status_success",
+          "preflight_can_run_regressed",
+          "preflight_issue_count_regressed_after_success"
+        ]
+      },
+      "summary": {
+        "high_signal_mismatch_count": 2,
+        "high_signal_mismatch_classes": [
+          "preflight_can_run_regressed",
+          "preflight_issue_count_regressed_after_success"
+        ],
+        "affected_operation_group_count": 2,
+        "issue_count_delta": 2,
+        "regressed_can_run": true
+      },
+      "operation_groups": [
+        {
+          "group_id": "dimension_hints",
+          "label": "Dimension hint mutations",
+          "operation_count": 2,
+          "applied_operation_count": 2,
+          "failed_operation_count": 0,
+          "not_executed_operation_count": 0,
+          "operation_indices": [0, 1],
+          "operation_types": ["apply_region_dimension_hint"],
+          "tool_names": ["manage_define"],
+          "status_codes": ["applied"]
+        },
+        {
+          "group_id": "material_updates",
+          "label": "Material update mutations",
+          "operation_count": 1,
+          "applied_operation_count": 1,
+          "failed_operation_count": 0,
+          "not_executed_operation_count": 0,
+          "operation_indices": [2],
+          "operation_types": ["apply_region_material_hint"],
+          "tool_names": ["manage_logical_volume"],
+          "status_codes": ["applied"]
+        }
+      ],
+      "high_signal_mismatches": [
+        {
+          "mismatch_class": "preflight_can_run_regressed",
+          "severity": "error",
+          "message": "Preflight can_run regressed after multimodal execution.",
+          "affected_operation_groups": [
+            {
+              "group_id": "dimension_hints",
+              "label": "Dimension hint mutations",
+              "operation_count": 2,
+              "applied_operation_count": 2,
+              "failed_operation_count": 0,
+              "status_codes": ["applied"]
+            },
+            {
+              "group_id": "material_updates",
+              "label": "Material update mutations",
+              "operation_count": 1,
+              "applied_operation_count": 1,
+              "failed_operation_count": 0,
+              "status_codes": ["applied"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
