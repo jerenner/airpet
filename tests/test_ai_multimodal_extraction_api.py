@@ -412,3 +412,116 @@ def test_artifact_planning_route_rejects_mismatched_review_envelope(client, tmp_
     assert payload['success'] is False
     assert payload['error_code'] == 'planning_validation_error'
     assert 'review_envelope.artifact_id' in payload['error']
+
+
+def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geometry_tools(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        execute_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/execute",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': extraction['review_envelope'],
+                'region_bindings': {
+                    'region_b': {
+                        'logical_volume_name': 'box_LV',
+                        'material_map': {
+                            'si': 'G4_Galactic',
+                        },
+                    },
+                },
+            },
+        )
+
+    assert execute_response.status_code == 200
+    payload = execute_response.get_json()
+    assert payload['success'] is True
+    assert payload['schema_version'].endswith('checkpoint5')
+    assert payload['planning_envelope']['status'] == 'ready'
+    assert payload['execution_plan']['status'] == 'ready'
+    assert payload['execution_plan']['summary']['candidate_operation_count'] == 4
+    assert payload['execution_plan']['summary']['mutation_operation_count'] == 3
+    assert payload['execution_plan']['summary']['annotation_note_count'] == 1
+
+    execution = payload['execution']
+    assert execution['attempted'] is True
+    assert execution['executed'] is True
+    assert execution['operation_count'] == 3
+    assert execution['batch_result']['success'] is True
+    assert len(execution['batch_result']['batch_results']) == 3
+    assert all(entry['success'] for entry in execution['batch_result']['batch_results'])
+
+    assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
+    assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
+    assert pm.current_geometry_state.logical_volumes['box_LV'].material_ref == 'G4_Galactic'
+
+
+def test_artifact_planning_execute_route_blocks_mutations_when_planning_is_blocked(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_payload = _payload_for_artifact(artifact)
+        extraction_payload['dimensions'][0]['unit'] = 'inch'
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': extraction_payload,
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        execute_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/execute",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': extraction['review_envelope'],
+                'region_bindings': {
+                    'region_b': {
+                        'logical_volume_name': 'box_LV',
+                        'material_map': {'si': 'G4_Galactic'},
+                    },
+                },
+            },
+        )
+
+    assert execute_response.status_code == 409
+    payload = execute_response.get_json()
+    assert payload['success'] is False
+    assert payload['error_code'] == 'planning_not_ready_for_execution'
+    assert payload['planning_envelope']['status'] == 'blocked'
+    assert payload['execution']['attempted'] is False
+    assert 'MM_DIM_region_a_dim_a' not in pm.current_geometry_state.defines

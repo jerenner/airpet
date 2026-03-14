@@ -1,0 +1,68 @@
+{
+  "extraction": {
+    "artifact_id": "artifact_...",
+    "artifact_sha256": "...",
+    "extraction_id": "extract_...",
+    "regions": [
+      {
+        "region_id": "region_a",
+        "label": "outer vessel",
+        "page_index": 0,
+        "bbox": {"x": 0.1, "y": 0.1, "width": 0.6, "height": 0.7},
+        "confidence": 0.93,
+        "provenance": {
+          "artifact_id": "artifact_...",
+          "artifact_sha256": "...",
+          "page_index": 0,
+          "source": "manual-markup"
+        }
+      }
+    ],
+    "dimensions": [
+      {
+        "dimension_id": "dim_a",
+        "region_id": "region_a",
+        "value": 120.0,
+        "unit": "mm",
+        "raw_text": "120 mm",
+        "confidence": 0.9,
+        "provenance": {
+          "artifact_id": "artifact_...",
+          "artifact_sha256": "...",
+          "page_index": 0,
+          "source": "ocr-text"
+        }
+      }
+    ],
+    "symbols": []
+  },
+  "review_envelope": {
+    "envelope_id": "review_...",
+    "artifact_id": "artifact_...",
+    "artifact_sha256": "...",
+    "extraction_id": "extract_...",
+    "status": "approved",
+    "items": [
+      {
+        "item_type": "region",
+        "item_id": "region_a",
+        "review_state": "approved"
+      },
+      {
+        "item_type": "dimension",
+        "item_id": "dim_a",
+        "review_state": "approved"
+      }
+    ],
+    "decisions": []
+  },
+  "region_bindings": {
+    "region_a": {
+      "logical_volume_name": "box_LV",
+      "material_map": {
+        "si": "G4_Galactic"
+      }
+    }
+  },
+  "execute": true
+}

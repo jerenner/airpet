@@ -2,18 +2,37 @@
 
 ## In Progress
 
-- **Spike B: Multimodal drawing intake workflow (Checkpoint 5/5) — planning envelope → AI geometry-operation flow integration**
-  - Objective: connect deterministic planning envelopes into AI geometry-operation execution flow with reproducible end-to-end examples.
+- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 1/3)**
+  - Objective: ensure operations generated via multimodal extraction/planning produce deterministic, Geant4-compatible mutation outcomes and clear failure diagnostics.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoints: **1/5** artifact ingestion + provenance foundation; **2/5** extraction schema + review envelope primitives; **3/5** extraction/review route wiring + artifact-link validation contracts; **4/5** review-envelope → planning-envelope scaffold + deterministic diagnostics.
-    - Current checkpoint: **5/5** planning-envelope execution bridge into AI geometry-operation flow with reproducible examples/tests.
-    - Next checkpoint: validate Geant4-facing geometry mutation parity and failure diagnostics for multimodal-derived operations.
+    - Completed checkpoints: none yet in this follow-up track.
+    - Current checkpoint: **1/3** add execution-result normalization + deterministic per-operation failure taxonomy for bridge-applied mutations.
+    - Next checkpoint: **2/3** cross-check operation outcomes against preflight and representative example geometries.
   - Definition of done for current checkpoint:
-    - planning-envelope operation candidates can be consumed by an AI geometry-operation execution path
-    - deterministic blocked/ready planning status gates mutation attempts
-    - reproducible end-to-end example coverage locks extraction→review→planning→operation flow
+    - execution route returns deterministic per-operation status codes/envelopes
+    - invalid target/material failures have explicit stable diagnostic codes
+    - regression tests lock success/partial-failure envelope parity
 
 ## Recently Completed
+
+- **Spike B Checkpoint 5/5 completed: planning-envelope execution bridge into AI geometry-operation flow** (2026-03-14)
+  - Added deterministic execution-bridge module: `src/ai_multimodal_operation_bridge.py`.
+    - introduced `build_geometry_execution_plan(...)` to translate planning-envelope candidates into AI geometry-tool batch operations
+    - dimension hints now map deterministically to `manage_define` mutations (`MM_DIM_<region>_<dimension>`)
+    - material hints can deterministically map to `manage_logical_volume` using `region_bindings` + optional `material_map`
+    - annotation captures are preserved as deterministic `annotation_notes`
+    - emits explicit execution diagnostics and status gating (`ready|blocked`) with stable summary counters
+  - Added route-level planning execution API in `app.py`:
+    - `POST /api/ai/artifacts/<artifact_id>/planning/execute`
+    - composes extraction normalization + planning envelope + execution-plan bridge in one deterministic contract
+    - enforces blocked/ready execution guardrails (`planning_not_ready_for_execution`, `execution_plan_blocked`)
+    - executes mapped mutations through existing AI geometry-operation path (`batch_geometry_update`)
+  - Added end-to-end regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
+    - approved extraction→review→planning→execution flow with deterministic mutation batch application
+    - blocked planning status path verifies mutation attempts are gated off
+  - Updated multimodal contract docs for checkpoint 5 in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md`.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py tests/test_ai_multimodal_planning_schema.py tests/test_ai_multimodal_extraction_schema.py tests/test_ai_artifacts_api.py`
 
 - **Spike B Checkpoint 4/5 completed: deterministic review-envelope → planning-envelope scaffold with safety diagnostics** (2026-03-14)
   - Added deterministic planning schema module: `src/ai_multimodal_planning_schema.py`.
