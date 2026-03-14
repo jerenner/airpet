@@ -2,18 +2,40 @@
 
 ## In Progress
 
-- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 1/3)**
+- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 2/3)**
   - Objective: ensure operations generated via multimodal extraction/planning produce deterministic, Geant4-compatible mutation outcomes and clear failure diagnostics.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoints: none yet in this follow-up track.
-    - Current checkpoint: **1/3** add execution-result normalization + deterministic per-operation failure taxonomy for bridge-applied mutations.
-    - Next checkpoint: **2/3** cross-check operation outcomes against preflight and representative example geometries.
+    - Completed checkpoints:
+      - **1/3** execution-result normalization + deterministic per-operation failure taxonomy for bridge-applied mutations.
+    - Current checkpoint: **2/3** cross-check operation outcomes against preflight and representative example geometries.
+    - Next checkpoint: **3/3** add focused Geant4-facing parity diagnostics/reporting for multimodal-applied mutations.
   - Definition of done for current checkpoint:
-    - execution route returns deterministic per-operation status codes/envelopes
-    - invalid target/material failures have explicit stable diagnostic codes
-    - regression tests lock success/partial-failure envelope parity
+    - representative example geometry flows cover successful + partial-failure multimodal execution outcomes
+    - outcome envelopes can be compared against preflight invariants in a deterministic way
+    - diagnostics identify mismatch classes useful for Geant4 compatibility confidence work
 
 ## Recently Completed
+
+- **Spike B Follow-up Checkpoint 1/3 completed: execution outcome normalization + deterministic per-operation failure taxonomy** (2026-03-14)
+  - Upgraded execution route contract in `app.py`:
+    - bumped `MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION` to `2026-03-14.multimodal-intake.checkpoint6`
+    - added deterministic execution outcome normalization (`_build_multimodal_execution_outcome`) for multimodal bridge mutations
+    - added per-operation envelopes with stable fields (`status`, `status_code`, `message`, `details`, `raw_result`)
+    - added deterministic aggregate execution status (`success|partial_failure|failed|no_operations|not_requested`)
+  - Added explicit failure-taxonomy handling for multimodal bridge operations:
+    - `invalid_target_logical_volume`
+    - `invalid_material_ref`
+    - fallback `operation_failed` / `missing_batch_result`
+    - postcondition validation catches material-not-applied cases even when underlying tool call returns success
+  - Expanded route-level regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
+    - success envelope now asserts deterministic operation-level status codes
+    - new partial-failure test for missing logical-volume target binding
+    - new partial-failure test for invalid material mapping not being applied
+  - Updated multimodal contract doc in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md` for checkpoint 6 execution outcome semantics and status-code taxonomy.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py`
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py tests/test_ai_multimodal_planning_schema.py tests/test_ai_multimodal_extraction_schema.py tests/test_ai_artifacts_api.py`
+    - `pytest -q tests/test_ai_integration.py tests/test_ai_backend_adapters.py`
 
 - **Spike B Checkpoint 5/5 completed: planning-envelope execution bridge into AI geometry-operation flow** (2026-03-14)
   - Added deterministic execution-bridge module: `src/ai_multimodal_operation_bridge.py`.

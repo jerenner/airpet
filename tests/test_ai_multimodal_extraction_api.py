@@ -457,7 +457,7 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert execute_response.status_code == 200
     payload = execute_response.get_json()
     assert payload['success'] is True
-    assert payload['schema_version'].endswith('checkpoint5')
+    assert payload['schema_version'].endswith('checkpoint6')
     assert payload['planning_envelope']['status'] == 'ready'
     assert payload['execution_plan']['status'] == 'ready'
     assert payload['execution_plan']['summary']['candidate_operation_count'] == 4
@@ -468,9 +468,18 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert execution['attempted'] is True
     assert execution['executed'] is True
     assert execution['operation_count'] == 3
+    assert execution['status'] == 'success'
+    assert execution['summary']['attempted_operation_count'] == 3
+    assert execution['summary']['applied_operation_count'] == 3
+    assert execution['summary']['failed_operation_count'] == 0
     assert execution['batch_result']['success'] is True
     assert len(execution['batch_result']['batch_results']) == 3
     assert all(entry['success'] for entry in execution['batch_result']['batch_results'])
+    assert [entry['status_code'] for entry in execution['operation_results']] == [
+        'applied',
+        'applied',
+        'applied',
+    ]
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
     assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
@@ -525,3 +534,119 @@ def test_artifact_planning_execute_route_blocks_mutations_when_planning_is_block
     assert payload['planning_envelope']['status'] == 'blocked'
     assert payload['execution']['attempted'] is False
     assert 'MM_DIM_region_a_dim_a' not in pm.current_geometry_state.defines
+
+
+def test_artifact_planning_execute_route_reports_partial_failure_for_invalid_logical_volume_target(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        execute_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/execute",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': extraction['review_envelope'],
+                'region_bindings': {
+                    'region_b': {
+                        'logical_volume_name': 'missing_lv',
+                        'material_map': {'si': 'G4_Galactic'},
+                    },
+                },
+            },
+        )
+
+    assert execute_response.status_code == 200
+    payload = execute_response.get_json()
+    assert payload['success'] is True
+
+    execution = payload['execution']
+    assert execution['status'] == 'partial_failure'
+    assert execution['summary']['applied_operation_count'] == 2
+    assert execution['summary']['failed_operation_count'] == 1
+    assert [entry['status_code'] for entry in execution['operation_results']] == [
+        'applied',
+        'applied',
+        'invalid_target_logical_volume',
+    ]
+
+    assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
+    assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
+
+
+def test_artifact_planning_execute_route_reports_invalid_material_failure_when_material_is_not_applied(client, tmp_path):
+    pm = _build_project_manager(tmp_path)
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        upload_response = client.post(
+            '/api/ai/artifacts/upload',
+            data={
+                'artifact': (io.BytesIO(b'\x89PNG\r\n\x1a\nimage'), 'detector.png'),
+            },
+            content_type='multipart/form-data',
+        )
+        assert upload_response.status_code == 200
+        artifact = upload_response.get_json()['artifact']
+
+        extraction_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/extraction/review",
+            json={
+                'review_status': 'approved',
+                'extraction': _payload_for_artifact(artifact),
+            },
+        )
+        assert extraction_response.status_code == 200
+        extraction = extraction_response.get_json()
+
+        initial_material_ref = pm.current_geometry_state.logical_volumes['box_LV'].material_ref
+
+        execute_response = client.post(
+            f"/api/ai/artifacts/{artifact['artifact_id']}/planning/execute",
+            json={
+                'extraction': extraction['extraction'],
+                'review_envelope': extraction['review_envelope'],
+                'region_bindings': {
+                    'region_b': {
+                        'logical_volume_name': 'box_LV',
+                        'material_map': {'si': 'G4_NOT_A_REAL_MATERIAL'},
+                    },
+                },
+            },
+        )
+
+    assert execute_response.status_code == 200
+    payload = execute_response.get_json()
+    assert payload['success'] is True
+
+    execution = payload['execution']
+    assert execution['status'] == 'partial_failure'
+    assert execution['summary']['applied_operation_count'] == 2
+    assert execution['summary']['failed_operation_count'] == 1
+    assert [entry['status_code'] for entry in execution['operation_results']] == [
+        'applied',
+        'applied',
+        'invalid_material_ref',
+    ]
+
+    details = execution['operation_results'][2]['details']
+    assert details['requested_material_ref'] == 'G4_NOT_A_REAL_MATERIAL'
+    assert details['applied_material_ref'] == initial_material_ref
+    assert pm.current_geometry_state.logical_volumes['box_LV'].material_ref == initial_material_ref

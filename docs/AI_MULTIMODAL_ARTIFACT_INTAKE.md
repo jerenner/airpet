@@ -1,4 +1,4 @@
-# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 5)
+# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 6)
 
 Schema versions:
 - Checkpoint 1 artifact store: `2026-03-14.multimodal-intake.checkpoint1`
@@ -6,12 +6,14 @@ Schema versions:
 - Checkpoint 3 extraction/review route wiring: `2026-03-14.multimodal-intake.checkpoint3`
 - Checkpoint 4 review→planning scaffold: `2026-03-14.multimodal-intake.checkpoint4`
 - Checkpoint 5 planning→geometry execution bridge: `2026-03-14.multimodal-intake.checkpoint5`
+- Checkpoint 6 execution-outcome normalization + per-operation failure taxonomy: `2026-03-14.multimodal-intake.checkpoint6`
 
 Checkpoint 1 introduced deterministic PDF/image artifact intake.
 Checkpoint 2 added deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives.
 Checkpoint 3 wires those contracts into route-level API surfaces tied to uploaded artifact ids.
 Checkpoint 4 adds deterministic review-envelope to planning-envelope mapping with explicit diagnostics for unsupported/ambiguous reviewed semantics.
 Checkpoint 5 bridges planning-envelope operation candidates into executable AI geometry-tool batches with deterministic ready/blocked execution gating.
+Checkpoint 6 adds deterministic per-operation execution outcomes (`applied|failed|not_executed`) with stable status codes for invalid logical-volume targets and invalid material application.
 
 ## Checkpoint 1: Artifact Intake Endpoints
 
@@ -360,13 +362,28 @@ Success response shape:
 ```json
 {
   "success": true,
-  "schema_version": "2026-03-14.multimodal-intake.checkpoint5",
+  "schema_version": "2026-03-14.multimodal-intake.checkpoint6",
   "planning_envelope": {"status": "ready"},
   "execution_plan": {"status": "ready"},
   "execution": {
     "attempted": true,
     "executed": true,
     "operation_count": 3,
+    "status": "success",
+    "summary": {
+      "attempted_operation_count": 3,
+      "applied_operation_count": 3,
+      "failed_operation_count": 0
+    },
+    "operation_results": [
+      {
+        "operation_index": 0,
+        "source_operation_id": "plan_dim_dim_a",
+        "tool_name": "manage_define",
+        "status": "applied",
+        "status_code": "applied"
+      }
+    ],
     "batch_result": {"success": true}
   }
 }
@@ -376,6 +393,13 @@ Deterministic execution guardrails:
 - `409 planning_not_ready_for_execution` when `planning_envelope.status != ready`
 - `409 execution_plan_blocked` when execution-plan diagnostics include errors
 - execution is never attempted in blocked states
+
+Checkpoint 6 deterministic execution-outcome status codes:
+- `applied` for successfully applied mutations
+- `invalid_target_logical_volume` for material updates that target a missing logical volume
+- `invalid_material_ref` for material updates where requested material could not be applied
+- `missing_batch_result` when batch execution does not return an entry for an attempted operation
+- `operation_failed` fallback for uncategorized failures
 
 Reproducible request example:
 - `examples/multimodal/planning_execute_request.json`
