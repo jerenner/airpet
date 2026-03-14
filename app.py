@@ -9679,7 +9679,7 @@ def get_ai_artifact_metadata_route(artifact_id):
 
 MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint3"
 MULTIMODAL_PLANNING_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint4"
-MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint7"
+MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint8"
 
 
 def _classify_multimodal_execution_failure_code(tool_name: str, error_text: str) -> str:
@@ -10108,6 +10108,325 @@ def _build_multimodal_execution_preflight_crosscheck(
     }
 
 
+def _resolve_multimodal_execution_operation_group(operation_result: Dict[str, Any]) -> Dict[str, str]:
+    source_operation_type = str(operation_result.get("source_operation_type") or "").strip().lower()
+    tool_name = str(operation_result.get("tool_name") or "").strip().lower()
+
+    if source_operation_type == "apply_region_dimension_hint" or tool_name == "manage_define":
+        return {"group_id": "dimension_hints", "label": "Dimension hint mutations"}
+
+    if source_operation_type == "apply_region_material_hint" or tool_name == "manage_logical_volume":
+        return {"group_id": "material_updates", "label": "Material update mutations"}
+
+    return {"group_id": "other_mutations", "label": "Other mutation operations"}
+
+
+def _build_multimodal_execution_operation_groups(execution_outcome: Dict[str, Any]) -> List[Dict[str, Any]]:
+    operation_results_raw = execution_outcome.get("operation_results") if isinstance(execution_outcome, dict) else []
+    operation_results = operation_results_raw if isinstance(operation_results_raw, list) else []
+
+    groups: Dict[str, Dict[str, Any]] = {}
+
+    for operation_result in operation_results:
+        if not isinstance(operation_result, dict):
+            continue
+
+        group_meta = _resolve_multimodal_execution_operation_group(operation_result)
+        group_id = group_meta["group_id"]
+        group_label = group_meta["label"]
+
+        entry = groups.get(group_id)
+        if entry is None:
+            entry = {
+                "group_id": group_id,
+                "label": group_label,
+                "operation_count": 0,
+                "applied_operation_count": 0,
+                "failed_operation_count": 0,
+                "not_executed_operation_count": 0,
+                "operation_indices": [],
+                "_operation_types": set(),
+                "_tool_names": set(),
+                "_status_codes": set(),
+            }
+            groups[group_id] = entry
+
+        entry["operation_count"] += 1
+
+        operation_index = operation_result.get("operation_index")
+        if isinstance(operation_index, int):
+            entry["operation_indices"].append(operation_index)
+
+        source_operation_type = str(operation_result.get("source_operation_type") or "").strip()
+        if source_operation_type:
+            entry["_operation_types"].add(source_operation_type)
+
+        tool_name = str(operation_result.get("tool_name") or "").strip()
+        if tool_name:
+            entry["_tool_names"].add(tool_name)
+
+        status_code = str(operation_result.get("status_code") or "").strip()
+        if status_code:
+            entry["_status_codes"].add(status_code)
+
+        status = str(operation_result.get("status") or "").strip().lower()
+        if status == "applied":
+            entry["applied_operation_count"] += 1
+        elif status == "failed":
+            entry["failed_operation_count"] += 1
+        elif status == "not_executed":
+            entry["not_executed_operation_count"] += 1
+
+    normalized_groups: List[Dict[str, Any]] = []
+    for group_id in sorted(groups.keys()):
+        entry = groups[group_id]
+        normalized_groups.append(
+            {
+                "group_id": entry["group_id"],
+                "label": entry["label"],
+                "operation_count": entry["operation_count"],
+                "applied_operation_count": entry["applied_operation_count"],
+                "failed_operation_count": entry["failed_operation_count"],
+                "not_executed_operation_count": entry["not_executed_operation_count"],
+                "operation_indices": sorted(entry["operation_indices"]),
+                "operation_types": sorted(entry["_operation_types"]),
+                "tool_names": sorted(entry["_tool_names"]),
+                "status_codes": sorted(entry["_status_codes"]),
+            }
+        )
+
+    return normalized_groups
+
+
+def _build_multimodal_geant4_parity_report(
+    *,
+    execution_outcome: Dict[str, Any],
+    preflight_crosscheck: Dict[str, Any],
+) -> Dict[str, Any]:
+    operation_groups = _build_multimodal_execution_operation_groups(execution_outcome)
+    operation_groups_by_id = {
+        str(group.get("group_id") or ""): group
+        for group in operation_groups
+        if str(group.get("group_id") or "")
+    }
+
+    execution_status = str(execution_outcome.get("status") or "").strip() if isinstance(execution_outcome, dict) else ""
+    preflight_status = str(preflight_crosscheck.get("status") or "").strip() if isinstance(preflight_crosscheck, dict) else ""
+
+    invariants = preflight_crosscheck.get("invariants") if isinstance(preflight_crosscheck, dict) else {}
+    if not isinstance(invariants, dict):
+        invariants = {}
+
+    issue_count_delta_raw = invariants.get("issue_count_delta")
+    if isinstance(issue_count_delta_raw, bool):
+        issue_count_delta = int(issue_count_delta_raw)
+    elif isinstance(issue_count_delta_raw, (int, float)):
+        issue_count_delta = int(issue_count_delta_raw)
+    elif isinstance(issue_count_delta_raw, str):
+        try:
+            issue_count_delta = int(float(issue_count_delta_raw.strip()))
+        except Exception:
+            issue_count_delta = 0
+    else:
+        issue_count_delta = 0
+
+    regressed_can_run = bool(invariants.get("regressed_can_run"))
+
+    comparison = preflight_crosscheck.get("comparison") if isinstance(preflight_crosscheck, dict) else {}
+    if not isinstance(comparison, dict):
+        comparison = {}
+
+    def _as_sorted_str_list(value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        unique: List[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in unique:
+                unique.append(text)
+        return sorted(unique)
+
+    issue_code_delta = {
+        "added_issue_codes": _as_sorted_str_list(comparison.get("added_issue_codes")),
+        "increased_issue_codes": _as_sorted_str_list(comparison.get("increased_issue_codes")),
+        "resolved_issue_codes": _as_sorted_str_list(comparison.get("resolved_issue_codes")),
+        "reduced_issue_codes": _as_sorted_str_list(comparison.get("reduced_issue_codes")),
+    }
+
+    diagnostics_raw = preflight_crosscheck.get("diagnostics") if isinstance(preflight_crosscheck, dict) else []
+    diagnostics = diagnostics_raw if isinstance(diagnostics_raw, list) else []
+
+    high_signal_diagnostics: List[Dict[str, str]] = []
+    seen_mismatch_codes: set[str] = set()
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, dict):
+            continue
+        code = str(diagnostic.get("code") or "").strip()
+        severity = str(diagnostic.get("severity") or "").strip().lower()
+        message = str(diagnostic.get("message") or "").strip()
+        if not code or severity not in {"error", "warning"}:
+            continue
+        seen_mismatch_codes.add(code)
+        high_signal_diagnostics.append(
+            {
+                "code": code,
+                "severity": severity,
+                "message": message,
+            }
+        )
+
+    mismatch_classes_raw = preflight_crosscheck.get("mismatch_classes") if isinstance(preflight_crosscheck, dict) else []
+    mismatch_classes = _as_sorted_str_list(mismatch_classes_raw)
+    for mismatch_code in mismatch_classes:
+        if mismatch_code in seen_mismatch_codes:
+            continue
+        inferred_severity = "error" if preflight_status == "mismatch_error" else "warning"
+        high_signal_diagnostics.append(
+            {
+                "code": mismatch_code,
+                "severity": inferred_severity,
+                "message": f"Preflight mismatch class detected: {mismatch_code}.",
+            }
+        )
+
+    def _select_affected_group_ids(mismatch_code: str) -> List[str]:
+        def _sorted_ids_for(predicate) -> List[str]:
+            return sorted(
+                [
+                    str(group.get("group_id") or "")
+                    for group in operation_groups
+                    if str(group.get("group_id") or "") and predicate(group)
+                ]
+            )
+
+        if mismatch_code in {
+            "preflight_can_run_regressed",
+            "preflight_issue_count_regressed_after_success",
+            "preflight_fingerprint_changed_after_success",
+        }:
+            selected = _sorted_ids_for(lambda group: int(group.get("applied_operation_count") or 0) > 0)
+        elif mismatch_code == "preflight_issue_count_regressed_under_partial_failure":
+            selected = _sorted_ids_for(
+                lambda group: int(group.get("applied_operation_count") or 0) > 0
+                or int(group.get("failed_operation_count") or 0) > 0
+            )
+        elif mismatch_code == "preflight_changed_without_applied_operations":
+            selected = _sorted_ids_for(lambda group: int(group.get("failed_operation_count") or 0) > 0)
+        else:
+            selected = _sorted_ids_for(lambda group: int(group.get("operation_count") or 0) > 0)
+
+        if selected:
+            return selected
+
+        return _sorted_ids_for(lambda group: int(group.get("operation_count") or 0) > 0)
+
+    high_signal_mismatches: List[Dict[str, Any]] = []
+    affected_group_ids_union: List[str] = []
+
+    for diagnostic in high_signal_diagnostics:
+        mismatch_code = diagnostic["code"]
+        affected_group_ids = _select_affected_group_ids(mismatch_code)
+        for group_id in affected_group_ids:
+            if group_id not in affected_group_ids_union:
+                affected_group_ids_union.append(group_id)
+
+        affected_groups: List[Dict[str, Any]] = []
+        for group_id in affected_group_ids:
+            group = operation_groups_by_id.get(group_id)
+            if not isinstance(group, dict):
+                continue
+            affected_groups.append(
+                {
+                    "group_id": group.get("group_id"),
+                    "label": group.get("label"),
+                    "operation_count": int(group.get("operation_count") or 0),
+                    "applied_operation_count": int(group.get("applied_operation_count") or 0),
+                    "failed_operation_count": int(group.get("failed_operation_count") or 0),
+                    "status_codes": list(group.get("status_codes") or []),
+                }
+            )
+
+        high_signal_mismatches.append(
+            {
+                "mismatch_class": mismatch_code,
+                "severity": diagnostic["severity"],
+                "message": diagnostic["message"],
+                "affected_operation_groups": affected_groups,
+            }
+        )
+
+    reason_codes: List[str] = []
+    if preflight_status == "mismatch_error":
+        reason_codes.append("preflight_mismatch_error")
+    elif preflight_status == "mismatch_warning":
+        reason_codes.append("preflight_mismatch_warning")
+    elif preflight_status in {"not_available", "not_requested"}:
+        reason_codes.append("preflight_crosscheck_not_available")
+    elif preflight_status == "consistent":
+        reason_codes.append("preflight_invariants_consistent")
+
+    reason_codes.append(f"execution_status_{execution_status or 'unknown'}")
+
+    for mismatch_code in mismatch_classes:
+        if mismatch_code not in reason_codes:
+            reason_codes.append(mismatch_code)
+
+    if preflight_status in {"not_available", "not_requested"}:
+        parity_status = "not_available"
+        confidence_label = "not_available"
+        confidence_score = 0
+    elif preflight_status == "mismatch_error":
+        parity_status = "mismatch_error"
+        confidence_label = "low"
+        confidence_score = 25
+    elif preflight_status == "mismatch_warning":
+        parity_status = "mismatch_warning"
+        confidence_label = "guarded"
+        confidence_score = 55
+    else:
+        parity_status = "compatible"
+        if execution_status == "success":
+            confidence_label = "high"
+            confidence_score = 90
+        elif execution_status == "partial_failure":
+            confidence_label = "guarded"
+            confidence_score = 60
+        elif execution_status == "failed":
+            confidence_label = "low"
+            confidence_score = 30
+        else:
+            confidence_label = "guarded"
+            confidence_score = 50
+
+    high_signal_mismatch_classes = [
+        str(item.get("mismatch_class") or "")
+        for item in high_signal_mismatches
+        if str(item.get("mismatch_class") or "")
+    ]
+
+    return {
+        "status": parity_status,
+        "execution_status": execution_status,
+        "preflight_crosscheck_status": preflight_status,
+        "geant4_compatibility_confidence": {
+            "label": confidence_label,
+            "score": confidence_score,
+            "reason_codes": reason_codes,
+        },
+        "summary": {
+            "operation_group_count": len(operation_groups),
+            "high_signal_mismatch_count": len(high_signal_mismatches),
+            "high_signal_mismatch_classes": high_signal_mismatch_classes,
+            "affected_operation_group_count": len(affected_group_ids_union),
+            "issue_count_delta": issue_count_delta,
+            "regressed_can_run": regressed_can_run,
+        },
+        "issue_code_delta": issue_code_delta,
+        "operation_groups": operation_groups,
+        "high_signal_mismatches": high_signal_mismatches,
+    }
+
+
 @app.route('/api/ai/artifacts/<artifact_id>/extraction/review', methods=['POST'])
 def build_ai_artifact_extraction_review_route(artifact_id):
     pm = get_project_manager_for_session()
@@ -10399,6 +10718,11 @@ def execute_ai_artifact_planning_route(artifact_id):
             "comparison": None,
         }
 
+    parity_report = _build_multimodal_geant4_parity_report(
+        execution_outcome=execution_outcome,
+        preflight_crosscheck=preflight_crosscheck,
+    )
+
     return jsonify({
         "success": True,
         **response_payload,
@@ -10412,6 +10736,7 @@ def execute_ai_artifact_planning_route(artifact_id):
             "operation_results": execution_outcome.get("operation_results"),
             "diagnostics": execution_outcome.get("diagnostics"),
             "preflight_crosscheck": preflight_crosscheck,
+            "parity_report": parity_report,
             "batch_result": batch_result,
         },
     })

@@ -1,4 +1,4 @@
-# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 7)
+# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 8)
 
 Schema versions:
 - Checkpoint 1 artifact store: `2026-03-14.multimodal-intake.checkpoint1`
@@ -8,6 +8,7 @@ Schema versions:
 - Checkpoint 5 planning→geometry execution bridge: `2026-03-14.multimodal-intake.checkpoint5`
 - Checkpoint 6 execution-outcome normalization + per-operation failure taxonomy: `2026-03-14.multimodal-intake.checkpoint6`
 - Checkpoint 7 preflight-invariant cross-check + mismatch diagnostics for multimodal execution: `2026-03-14.multimodal-intake.checkpoint7`
+- Checkpoint 8 Geant4-facing parity report for multimodal-applied mutations: `2026-03-14.multimodal-intake.checkpoint8`
 
 Checkpoint 1 introduced deterministic PDF/image artifact intake.
 Checkpoint 2 added deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives.
@@ -16,6 +17,7 @@ Checkpoint 4 adds deterministic review-envelope to planning-envelope mapping wit
 Checkpoint 5 bridges planning-envelope operation candidates into executable AI geometry-tool batches with deterministic ready/blocked execution gating.
 Checkpoint 6 adds deterministic per-operation execution outcomes (`applied|failed|not_executed`) with stable status codes for invalid logical-volume targets and invalid material application.
 Checkpoint 7 adds deterministic preflight invariant cross-checks (`baseline` vs `candidate` summaries) and mismatch diagnostics so multimodal execution outcomes can be audited for Geant4-facing compatibility confidence.
+Checkpoint 8 adds deterministic Geant4-facing parity reporting with operation-group rollups, compatibility-confidence scoring, and high-signal mismatch↔operation-group highlighting.
 
 ## Checkpoint 1: Artifact Intake Endpoints
 
@@ -364,7 +366,7 @@ Success response shape:
 ```json
 {
   "success": true,
-  "schema_version": "2026-03-14.multimodal-intake.checkpoint7",
+  "schema_version": "2026-03-14.multimodal-intake.checkpoint8",
   "planning_envelope": {"status": "ready"},
   "execution_plan": {"status": "ready"},
   "execution": {
@@ -402,6 +404,18 @@ Success response shape:
         "issue_count_delta": 0
       }
     },
+    "parity_report": {
+      "status": "compatible",
+      "preflight_crosscheck_status": "consistent",
+      "geant4_compatibility_confidence": {
+        "label": "high",
+        "score": 90
+      },
+      "summary": {
+        "high_signal_mismatch_classes": [],
+        "affected_operation_group_count": 0
+      }
+    },
     "batch_result": {"success": true}
   }
 }
@@ -426,9 +440,16 @@ Checkpoint 7 deterministic preflight cross-check mismatch classes:
 - `preflight_issue_count_regressed_under_partial_failure` when partial-failure execution increases issue count
 - `preflight_changed_without_applied_operations` when failed execution with zero applied operations still changes preflight invariants
 
+Checkpoint 8 Geant4-facing parity-report contract (`execution.parity_report`):
+- deterministic operation-group rollups (`dimension_hints`, `material_updates`, `other_mutations`) with per-group status counts and status-code summaries
+- deterministic compatibility-confidence payload (`label`, `score`, `reason_codes`) derived from execution outcome + preflight cross-check status
+- high-signal mismatch highlighting that maps warning/error mismatch classes to affected operation groups
+- deterministic issue-code delta summary (`added/increased/resolved/reduced`) to support parity diagnostics triage
+
 Representative geometry-flow examples:
-- Success path: `examples/multimodal/planning_execute_request.json`
-- Partial-failure path (missing LV binding): `examples/multimodal/planning_execute_request_partial_failure.json`
+- Success path request: `examples/multimodal/planning_execute_request.json`
+- Partial-failure path request (missing LV binding): `examples/multimodal/planning_execute_request_partial_failure.json`
+- Mismatch-error parity-report response: `examples/multimodal/planning_execute_response_parity_mismatch.json`
 
 ## Persistence Layout
 

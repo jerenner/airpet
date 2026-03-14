@@ -2,19 +2,41 @@
 
 ## In Progress
 
-- **Spike B Follow-up: Geant4-facing parity + diagnostics for multimodal-derived operations (Checkpoint 3/3)**
-  - Objective: ensure operations generated via multimodal extraction/planning produce deterministic, Geant4-compatible mutation outcomes and clear failure diagnostics.
+- **Spike A Follow-on: local-backend health diagnostics + startup readiness hints (Checkpoint 1/3)**
+  - Objective: make mixed Gemini/llama.cpp/LM Studio setups easier to debug deterministically before `/api/ai/chat` failures.
   - Checkpoint plan (multi-heartbeat):
-    - Completed checkpoints:
-      - **1/3** execution-result normalization + deterministic per-operation failure taxonomy for bridge-applied mutations.
-      - **2/3** deterministic preflight invariant cross-checking plus representative success/partial-failure geometry-flow coverage.
-    - Current checkpoint: **3/3** add focused Geant4-facing parity diagnostics/reporting for multimodal-applied mutations.
+    - Planned checkpoints:
+      - **1/3** add deterministic backend-health probe primitive (connectivity/model/timeout classification).
+      - **2/3** expose route-level diagnostics endpoint + stable error/readiness envelope.
+      - **3/3** surface startup/readiness hints in API responses/docs with regression coverage.
+    - Current checkpoint: **1/3** backend-health probe primitive + focused contract tests.
+    - Next checkpoint: **2/3** route-level health endpoint integration.
   - Definition of done for current checkpoint:
-    - parity diagnostics summarize Geant4-facing compatibility confidence for multimodal-applied mutations
-    - reporting highlights high-signal mismatch classes and affected operation groups
-    - examples/tests lock deterministic behavior for representative parity-reporting scenarios
+    - deterministic health probe output shape for gemini/local adapters
+    - normalized failure-class taxonomy suitable for operator triage
+    - regression tests lock probe determinism for representative healthy/unhealthy backend states
 
 ## Recently Completed
+
+- **Spike B Follow-up Checkpoint 3/3 completed: Geant4-facing parity diagnostics/reporting for multimodal-applied mutations** (2026-03-14)
+  - Upgraded multimodal planning execution route contract in `app.py`:
+    - bumped `MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION` to `2026-03-14.multimodal-intake.checkpoint8`
+    - added deterministic `execution.parity_report` envelope generated from execution outcomes + preflight cross-checks
+  - Added deterministic operation-group reporting for multimodal-applied mutations:
+    - grouped operation outcomes into `dimension_hints`, `material_updates`, `other_mutations`
+    - each group now includes per-status counts, status-code rollups, and operation-index provenance
+  - Added high-signal mismatch highlighting for Geant4-facing triage:
+    - warning/error mismatch classes are mapped to affected operation groups
+    - parity report now includes compatibility-confidence scoring (`label`, `score`, `reason_codes`) and issue-code delta summaries
+  - Expanded regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
+    - success path now asserts deterministic parity-report compatibility confidence + operation-group summaries
+    - partial-failure path asserts guarded confidence under consistent preflight invariants
+    - mismatch-error path asserts deterministic high-signal mismatch classes and affected operation-group mapping
+  - Added representative parity-report example artifact:
+    - `examples/multimodal/planning_execute_response_parity_mismatch.json`
+  - Updated multimodal contract docs in `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md` for checkpoint 8 parity-report semantics.
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py`
 
 - **Spike B Follow-up Checkpoint 2/3 completed: deterministic preflight-invariant cross-checks + representative execution-flow coverage** (2026-03-14)
   - Upgraded planning execution route contract in `app.py`:
@@ -773,20 +795,20 @@
 
 ## Next Candidates
 
-1. **Spike B Checkpoint 4/5: review-approved intent → geometry-operation mapping scaffold**
-   - Define deterministic mapping envelope from reviewed extraction payloads into geometry-operation plans.
-   - Add safety guards so planning outputs are reviewable before any project mutation.
-   - Impact: high (bridges multimodal review to actionable AIRPET operations).
+1. **Spike A Follow-on Checkpoint 2/3: backend diagnostics endpoint contract + route wiring**
+   - Expose deterministic backend-health payload at route level for operators and automation.
+   - Lock success/error envelope parity for healthy, timeout, unreachable, and misconfigured local-backend states.
+   - Impact: high (unblocks actionable troubleshooting before runtime chat failures).
 
-2. **Spike B Checkpoint 5/5: planning-envelope integration into AI geometry operation flows + reproducible example**
-   - Connect approved planning envelope into AI flow without direct mutation side-effects.
-   - Add one reproducible end-to-end artifact→review→planning example for operator confidence.
-   - Impact: high (turns multimodal path into an actionable reliable workflow).
+2. **Spike A Follow-on Checkpoint 3/3: startup readiness hints surfaced in `/api/ai/chat` diagnostics**
+   - Attach deterministic backend-readiness hints to selector and runtime error payloads.
+   - Keep hints concise but machine-readable for UI and AI-assisted remediation flows.
+   - Impact: medium-high (improves mixed-backend reliability and operator speed).
 
-3. **Spike A follow-on: backend health diagnostics endpoint + startup preflight hints**
-   - Add explicit local-backend health probe output (connectivity/model availability/timeout class) for operators.
-   - Surface deterministic readiness hints in API responses/UI diagnostics.
-   - Impact: medium-high (improves reliability under mixed local/remote backend setups).
+3. **Multimodal parity follow-on: preflight code-family correlation hints in parity report**
+   - Add deterministic mapping from changed preflight issue codes to likely operation families (dimension/material/topology).
+   - Expand parity-report regression tests for representative Geant4-facing issue-family transitions.
+   - Impact: medium-high (improves root-cause diagnostics after multimodal execution).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 
