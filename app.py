@@ -9679,7 +9679,221 @@ def get_ai_artifact_metadata_route(artifact_id):
 
 MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint3"
 MULTIMODAL_PLANNING_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint4"
-MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint5"
+MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint6"
+
+
+def _classify_multimodal_execution_failure_code(tool_name: str, error_text: str) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    normalized_error = str(error_text or "").strip().lower()
+
+    if not normalized_error:
+        return "operation_failed"
+
+    if "not found" in normalized_error:
+        if "logical volume" in normalized_error:
+            return "invalid_target_logical_volume"
+        if "material" in normalized_error:
+            return "invalid_material_ref"
+        if "define" in normalized_error:
+            return "invalid_target_define"
+
+    if normalized_tool == "manage_logical_volume" and "material" in normalized_error:
+        return "invalid_material_ref"
+
+    return "operation_failed"
+
+
+def _detect_multimodal_execution_postcondition_failure(
+    pm: ProjectManager,
+    *,
+    tool_name: str,
+    arguments: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    normalized_tool = str(tool_name or "").strip().lower()
+    geometry_state = getattr(pm, "current_geometry_state", None)
+
+    if normalized_tool == "manage_logical_volume" and geometry_state is not None:
+        lv_name = str(arguments.get("name") or "").strip()
+        requested_material_ref = arguments.get("material_ref")
+        requested_material_ref = str(requested_material_ref or "").strip()
+
+        if lv_name:
+            target_lv = geometry_state.logical_volumes.get(lv_name)
+            if target_lv is None:
+                return {
+                    "status": "failed",
+                    "status_code": "invalid_target_logical_volume",
+                    "message": f"Logical volume '{lv_name}' was not found during execution.",
+                    "details": {"logical_volume_name": lv_name},
+                }
+
+            if requested_material_ref:
+                applied_material_ref = str(getattr(target_lv, "material_ref", "") or "").strip()
+                if applied_material_ref != requested_material_ref:
+                    return {
+                        "status": "failed",
+                        "status_code": "invalid_material_ref",
+                        "message": "Requested material_ref was not applied to the target logical volume.",
+                        "details": {
+                            "logical_volume_name": lv_name,
+                            "requested_material_ref": requested_material_ref,
+                            "applied_material_ref": applied_material_ref,
+                        },
+                    }
+
+    return None
+
+
+def _build_multimodal_execution_outcome(
+    pm: ProjectManager,
+    *,
+    execution_plan: Dict[str, Any],
+    batch_result: Optional[Dict[str, Any]],
+    execute_requested: bool,
+) -> Dict[str, Any]:
+    geometry_operations_raw = execution_plan.get("geometry_operations") if isinstance(execution_plan, dict) else []
+    geometry_operations = geometry_operations_raw if isinstance(geometry_operations_raw, list) else []
+
+    batch_results_raw = batch_result.get("batch_results") if isinstance(batch_result, dict) else []
+    batch_results = batch_results_raw if isinstance(batch_results_raw, list) else []
+
+    operation_results: List[Dict[str, Any]] = []
+
+    if not execute_requested:
+        for idx, operation in enumerate(geometry_operations):
+            op = operation if isinstance(operation, dict) else {}
+            op_args = op.get("arguments", {}) if isinstance(op.get("arguments"), dict) else {}
+            operation_results.append(
+                {
+                    "operation_index": idx,
+                    "source_operation_id": op.get("source_operation_id"),
+                    "source_operation_type": op.get("source_operation_type"),
+                    "target_region_id": op.get("target_region_id"),
+                    "tool_name": op.get("tool_name"),
+                    "status": "not_executed",
+                    "status_code": "execution_not_requested",
+                    "message": "Execution was not requested for this operation.",
+                    "arguments": op_args,
+                    "raw_result": None,
+                }
+            )
+
+        return {
+            "status": "not_requested",
+            "summary": {
+                "candidate_operation_count": len(geometry_operations),
+                "attempted_operation_count": 0,
+                "applied_operation_count": 0,
+                "failed_operation_count": 0,
+                "not_executed_operation_count": len(geometry_operations),
+                "batch_result_count": 0,
+                "unexpected_batch_result_count": 0,
+            },
+            "operation_results": operation_results,
+            "diagnostics": [],
+        }
+
+    for idx, operation in enumerate(geometry_operations):
+        op = operation if isinstance(operation, dict) else {}
+        tool_name = op.get("tool_name")
+        op_args = op.get("arguments", {}) if isinstance(op.get("arguments"), dict) else {}
+
+        raw_result = batch_results[idx] if idx < len(batch_results) and isinstance(batch_results[idx], dict) else None
+        status = "failed"
+        status_code = "missing_batch_result"
+        message = "No batch result entry was returned for this operation."
+        details = None
+
+        if raw_result is not None:
+            if raw_result.get("success") is True:
+                postcondition_failure = _detect_multimodal_execution_postcondition_failure(
+                    pm,
+                    tool_name=str(tool_name or ""),
+                    arguments=op_args,
+                )
+                if postcondition_failure is None:
+                    status = "applied"
+                    status_code = "applied"
+                    message = str(raw_result.get("message") or "Operation applied.")
+                else:
+                    status = str(postcondition_failure.get("status") or "failed")
+                    status_code = str(postcondition_failure.get("status_code") or "operation_failed")
+                    message = str(postcondition_failure.get("message") or "Operation postcondition check failed.")
+                    details = postcondition_failure.get("details")
+            else:
+                postcondition_failure = _detect_multimodal_execution_postcondition_failure(
+                    pm,
+                    tool_name=str(tool_name or ""),
+                    arguments=op_args,
+                )
+                if postcondition_failure is not None:
+                    status_code = str(postcondition_failure.get("status_code") or "operation_failed")
+                    message = str(postcondition_failure.get("message") or "Operation failed.")
+                    details = postcondition_failure.get("details")
+                else:
+                    error_text = str(raw_result.get("error") or "")
+                    status_code = _classify_multimodal_execution_failure_code(str(tool_name or ""), error_text)
+                    message = error_text or "Operation failed."
+
+        operation_results.append(
+            {
+                "operation_index": idx,
+                "source_operation_id": op.get("source_operation_id"),
+                "source_operation_type": op.get("source_operation_type"),
+                "target_region_id": op.get("target_region_id"),
+                "tool_name": tool_name,
+                "status": status,
+                "status_code": status_code,
+                "message": message,
+                "details": details,
+                "arguments": op_args,
+                "raw_result": raw_result,
+            }
+        )
+
+    unexpected_batch_result_count = max(0, len(batch_results) - len(geometry_operations))
+    diagnostics: List[Dict[str, Any]] = []
+    if unexpected_batch_result_count > 0:
+        diagnostics.append(
+            {
+                "code": "unexpected_batch_result_entries",
+                "severity": "warning",
+                "message": "batch_geometry_update returned more result entries than requested operations.",
+                "details": {
+                    "batch_result_count": len(batch_results),
+                    "operation_count": len(geometry_operations),
+                    "unexpected_batch_result_count": unexpected_batch_result_count,
+                },
+            }
+        )
+
+    attempted_operation_count = len(operation_results)
+    applied_operation_count = sum(1 for item in operation_results if item.get("status") == "applied")
+    failed_operation_count = sum(1 for item in operation_results if item.get("status") == "failed")
+
+    if attempted_operation_count == 0:
+        outcome_status = "no_operations"
+    elif failed_operation_count == 0:
+        outcome_status = "success"
+    elif applied_operation_count == 0:
+        outcome_status = "failed"
+    else:
+        outcome_status = "partial_failure"
+
+    return {
+        "status": outcome_status,
+        "summary": {
+            "candidate_operation_count": len(geometry_operations),
+            "attempted_operation_count": attempted_operation_count,
+            "applied_operation_count": applied_operation_count,
+            "failed_operation_count": failed_operation_count,
+            "not_executed_operation_count": 0,
+            "batch_result_count": len(batch_results),
+            "unexpected_batch_result_count": unexpected_batch_result_count,
+        },
+        "operation_results": operation_results,
+        "diagnostics": diagnostics,
+    }
 
 
 @app.route('/api/ai/artifacts/<artifact_id>/extraction/review', methods=['POST'])
@@ -9939,6 +10153,13 @@ def execute_ai_artifact_planning_route(artifact_id):
         batch_result = dispatch_ai_tool(pm, "batch_geometry_update", {"operations": batch_operations})
         executed = True
 
+    execution_outcome = _build_multimodal_execution_outcome(
+        pm,
+        execution_plan=execution_plan,
+        batch_result=batch_result,
+        execute_requested=execute_mutations,
+    )
+
     return jsonify({
         "success": True,
         **response_payload,
@@ -9947,6 +10168,10 @@ def execute_ai_artifact_planning_route(artifact_id):
             "execute_requested": execute_mutations,
             "executed": executed,
             "operation_count": len(batch_operations),
+            "status": execution_outcome.get("status"),
+            "summary": execution_outcome.get("summary"),
+            "operation_results": execution_outcome.get("operation_results"),
+            "diagnostics": execution_outcome.get("diagnostics"),
             "batch_result": batch_result,
         },
     })
