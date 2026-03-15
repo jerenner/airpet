@@ -6060,18 +6060,68 @@ def update_object_transform_route():
     else:
         return jsonify({"success": False, "error": error_msg or "Could not update transform."}), 404
     
+UPDATE_PROPERTY_ALLOWED_OBJECT_TYPES = {
+    "define",
+    "material",
+    "solid",
+    "logical_volume",
+    "physical_volume",
+}
+
+
+def _normalize_update_property_payload(data):
+    if not isinstance(data, dict):
+        return None, "Invalid JSON payload for property update"
+
+    normalized = {
+        "object_type": data.get("object_type"),
+        "object_id": data.get("object_id"),
+        "property_path": data.get("property_path"),
+        "new_value": data.get("new_value"),
+    }
+
+    for field in ("object_type", "object_id", "property_path"):
+        raw_value = normalized[field]
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            return None, f"Missing or invalid '{field}' for property update"
+        normalized[field] = raw_value.strip()
+
+    if normalized["object_type"] not in UPDATE_PROPERTY_ALLOWED_OBJECT_TYPES:
+        return None, f"Unsupported object_type '{normalized['object_type']}' for property update"
+
+    path_parts = normalized["property_path"].split(".")
+    if any(not part for part in path_parts):
+        return None, f"Invalid property_path '{normalized['property_path']}'"
+
+    return normalized, None
+
+
+def _status_code_for_update_property_failure(update_error):
+    if not update_error:
+        return 500
+
+    error_text = str(update_error).strip().lower()
+    if error_text.startswith("invalid property path"):
+        return 400
+    if error_text.startswith("could not find object"):
+        return 404
+
+    return 500
+
+
 @app.route('/update_property', methods=['POST'])
 def update_property_route():
+    data = request.get_json(silent=True)
+    normalized, validation_error = _normalize_update_property_payload(data)
+    if validation_error:
+        return jsonify({"success": False, "error": validation_error}), 400
+
     pm = get_project_manager_for_session()
 
-    data = request.get_json()
-    obj_type = data.get('object_type')
-    obj_id = data.get('object_id')
-    prop_path = data.get('property_path')
-    new_value = data.get('new_value')
-
-    if not all([obj_type, obj_id, prop_path]):
-        return jsonify({"error": "Missing data for property update"}), 400
+    obj_type = normalized["object_type"]
+    obj_id = normalized["object_id"]
+    prop_path = normalized["property_path"]
+    new_value = normalized["new_value"]
 
     update_result = pm.update_object_property(obj_type, obj_id, prop_path, new_value)
     update_error = None
@@ -6088,7 +6138,7 @@ def update_property_route():
     if success:
         return create_success_response(pm, "Property updated.")
 
-    return jsonify({"success": False, "error": update_error or "Failed to update property"}), 500
+    return jsonify({"success": False, "error": update_error or "Failed to update property"}), _status_code_for_update_property_failure(update_error)
 
 @app.route('/add_material', methods=['POST'])
 def add_material_route():

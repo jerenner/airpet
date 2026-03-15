@@ -7,6 +7,28 @@
 
 ## Recently Completed
 
+- **Reliability hardening checkpoint completed: `/update_property` payload validation matrix + deterministic 4xx/5xx failure mapping** (2026-03-15)
+  - Hardened request validation in `app.py` before invoking `ProjectManager.update_object_property(...)`:
+    - rejects malformed/non-object JSON payloads with deterministic 400 responses
+    - enforces required string fields for `object_type`, `object_id`, and `property_path`
+    - validates supported object types (`define`, `material`, `solid`, `logical_volume`, `physical_volume`)
+    - rejects malformed nested property paths with empty segments (e.g. `a..b`, leading/trailing dots)
+  - Added deterministic failure classification for route-level update failures:
+    - `Invalid property path ...` → HTTP 400
+    - `Could not find object ...` → HTTP 404
+    - unclassified or bool-only failures → HTTP 500
+  - Expanded route regression coverage in `tests/test_update_property_api.py`:
+    - malformed payloads + required-field validation matrix
+    - unsupported object type and malformed property-path coverage
+    - deterministic tuple-failure status mapping assertions (400/404/500)
+    - compatibility preserved for bool and tuple success returns
+  - Checks run:
+    - `python -m py_compile app.py`
+    - `pytest -q tests/test_update_property_api.py` (24 passed)
+  - Checkpoint finished:
+    - ✔ route now fails fast on malformed mutation requests instead of forwarding ambiguous payloads into backend mutation logic
+    - ✔ client-side/manual/AI editors now receive reproducible status semantics for path/object validation failures
+
 - **Scoped-geometry checkpoint completed: division inspector fields are now editable via expression-backed controls** (2026-03-15)
   - Extended logical-volume inspector procedural editing in `static/uiManager.js` for `content_type === 'division'`.
   - Added deterministic division inspector binding helpers in `static/divisionInspectorBindings.js`:
@@ -1028,15 +1050,15 @@
 
 ## Next Candidates
 
-1. **Reliability hardening: `/update_property` validation matrix for nested property paths**
-   - Add API tests for missing/intermediate path segments, malformed payloads, and unsupported object types.
-   - Ensure deterministic 4xx/5xx status mapping so client error handling is reproducible.
-   - Impact: medium-high (reduces silent data integrity failures during manual/AI edits).
-
-2. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
+1. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
    - Add a representative fixture where procedural geometry edits intentionally trigger topology + overlap warnings.
    - Lock parity-report mismatch-class reporting against expected operation-family buckets.
    - Impact: medium-high (strengthens Geant4-facing diagnostics confidence for procedural workflows).
+
+2. **Reliability follow-on: centralize nested-property path validation in `ProjectManager.update_object_property(...)`**
+   - Mirror route-level path-segment validation at the mutation core so non-route callers (scripts/future APIs) get the same deterministic guardrails.
+   - Add unit-level coverage for intermediate-path traversal failures (dict/object chains) and invalid nested segments.
+   - Impact: medium (keeps mutation safety invariant consistent across entrypoints).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 
