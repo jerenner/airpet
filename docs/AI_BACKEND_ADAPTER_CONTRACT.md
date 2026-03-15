@@ -83,3 +83,39 @@ Current status at Checkpoint 5:
 - `gemini_remote`: enabled + implemented
 - `llama_cpp`: implemented (disabled by default until runtime-enabled)
 - `lm_studio`: implemented (disabled by default until runtime-enabled)
+
+## 8) Local-backend readiness diagnostics (Checkpoint 3 follow-on)
+
+To reduce ambiguity for local text-first paths, AIRPET now emits machine-readable readiness diagnostics in two places:
+
+- `GET|POST /api/ai/backends/diagnostics`
+- `/api/ai/chat` error payloads under `backend_diagnostics`
+
+### Readiness statuses
+
+Local backends are classified into a deterministic status set:
+
+- `healthy`
+- `timeout`
+- `unreachable`
+- `misconfigured`
+
+Each diagnostic entry includes:
+
+- `backend_id`
+- `status`
+- `readiness_code`
+- `ready` (boolean)
+- `models_endpoint` (`<base_url>/v1/models` probe target)
+- `http_status` (when available)
+- `models` / `model_count` (when probe succeeds)
+
+### `/api/ai/chat` failure-stage distinction
+
+When local-selector chat paths fail, diagnostics now distinguish failure stages:
+
+- `selector_validation`: malformed selector input (for example invalid `llama_cpp::<model_name>` format)
+- `selector_requirements`: backend selection could not satisfy declared requirements
+- `backend_runtime`: backend was selected, then invocation failed at runtime
+
+This allows UI/workflow logic to separate user-input fixes from backend availability/remediation steps.

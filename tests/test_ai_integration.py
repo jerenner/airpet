@@ -160,7 +160,13 @@ def test_ai_chat_backend_selector_surfaces_fallback_diagnostics_in_success_respo
 
 
 def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error(client):
-    with patch('app.get_project_manager_for_session') as MockPMGetter:
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.build_local_backend_readiness_diagnostic', return_value={
+             'backend_id': 'llama_cpp',
+             'status': 'healthy',
+             'readiness_code': 'ok',
+             'ready': True,
+         }):
         evaluator = ExpressionEvaluator()
         pm = ProjectManager(evaluator)
         pm.create_empty_project()
@@ -195,6 +201,9 @@ def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error(client
         assert data["backend_selection"]["allow_fallback"] is False
         assert "'backend_id': 'llama_cpp'" in data["backend_selection"]["selection_error"]
         assert "'missing_capabilities': ['tools']" in data["backend_selection"]["selection_error"]
+        assert data["backend_diagnostics"]["failure_stage"] == "selector_requirements"
+        assert data["backend_diagnostics"]["error_code"] == "backend_selection_failed"
+        assert data["backend_diagnostics"]["readiness"]["status"] == "healthy"
 
 
 def test_ai_chat_backend_selector_invokes_local_text_adapter_when_selected(client):
@@ -250,7 +259,13 @@ def test_ai_chat_backend_selector_invokes_local_text_adapter_when_selected(clien
 
 def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_payload(client):
     with patch('app.get_project_manager_for_session') as MockPMGetter, \
-         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('connection refused')):
+         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('connection refused')), \
+         patch('app.build_local_backend_readiness_diagnostic', return_value={
+             'backend_id': 'lm_studio',
+             'status': 'unreachable',
+             'readiness_code': 'backend_unreachable',
+             'ready': False,
+         }):
         evaluator = ExpressionEvaluator()
         pm = ProjectManager(evaluator)
         pm.create_empty_project()
@@ -286,6 +301,9 @@ def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_p
         assert "AI backend invocation failed (lm_studio)" in data["error"]
         assert data["backend_selection"]["resolved_backend_id"] == "lm_studio"
         assert data["backend_selection"]["execution_mode"] == "local_text_adapter"
+        assert data["backend_diagnostics"]["failure_stage"] == "backend_runtime"
+        assert data["backend_diagnostics"]["error_code"] == "local_backend_invocation_failed"
+        assert data["backend_diagnostics"]["readiness"]["status"] == "unreachable"
 
 
 def test_ai_chat_infers_local_backend_selector_from_model_prefix(client):
@@ -325,7 +343,13 @@ def test_ai_chat_infers_local_backend_selector_from_model_prefix(client):
 
 
 def test_ai_chat_rejects_local_model_prefix_without_model_name(client):
-    with patch('app.get_project_manager_for_session') as MockPMGetter:
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.build_local_backend_readiness_diagnostic', return_value={
+             'backend_id': 'llama_cpp',
+             'status': 'misconfigured',
+             'readiness_code': 'invalid_models_payload',
+             'ready': False,
+         }):
         evaluator = ExpressionEvaluator()
         pm = ProjectManager(evaluator)
         pm.create_empty_project()
@@ -343,6 +367,9 @@ def test_ai_chat_rejects_local_model_prefix_without_model_name(client):
         assert data["success"] is False
         assert "Invalid local model selector" in data["error"]
         assert "llama_cpp::<model_name>" in data["error"]
+        assert data["backend_diagnostics"]["failure_stage"] == "selector_validation"
+        assert data["backend_diagnostics"]["error_code"] == "invalid_local_model_selector"
+        assert data["backend_diagnostics"]["readiness"]["backend_id"] == "llama_cpp"
 
 
 @pytest.mark.parametrize("model_name", ["llama_cpp::llama-3.2-local", "lm_studio::qwen2.5"])

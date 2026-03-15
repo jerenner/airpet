@@ -2,21 +2,53 @@
 
 ## In Progress
 
-- **Spike A Follow-on: local-backend UI exposure + selection wiring (Checkpoint 3/3)**
-  - Objective: make llama.cpp / LM Studio backends visible/selectable and provide deterministic UX/readiness diagnostics for local text-first chat paths.
+- **Spike A Next: UI surfacing for local backend readiness diagnostics (Checkpoint 1/2)**
+  - Objective: expose local backend readiness (`healthy|timeout|unreachable|misconfigured`) directly in the model selection UX so users can self-remediate quickly.
   - Checkpoint plan (multi-heartbeat):
     - Planned checkpoints:
-      - ✅ **1/3** expose local backend model discovery in health/model-list APIs and render them in UI selector groups.
-      - ✅ **2/3** wire chat payload selection (`backend_selector`) from UI model choice with deterministic local-backend routing.
-      - **3/3** add UX/readiness diagnostics + docs/tests so users understand local text-first limits and fallback behavior.
-    - Current checkpoint: **3/3** UX/readiness diagnostics + docs/tests.
-    - Next checkpoint: backend diagnostics endpoint contract + route wiring (healthy/timeout/unreachable/misconfigured parity).
+      - **1/2** wire `/api/ai/backends/diagnostics` + `/api/ai/chat` `backend_diagnostics` into selector-level badges/tooltips.
+      - **2/2** add front-end regression coverage + docs/examples for remediation guidance.
+    - Current checkpoint: **1/2** UI wiring for readiness states and failure-stage messaging.
+    - Next checkpoint: deterministic UX copy + tests for selector-validation vs backend-runtime failure states.
   - Definition of done for current checkpoint:
-    - `/api/ai/chat` local-selector failures include deterministic, machine-readable readiness hints
-    - diagnostics distinguish selector/input-validation failures from backend reachability/runtime failures
-    - docs/examples/tests describe local text-first constraints and remediation paths
+    - model picker shows deterministic readiness state for `llama_cpp` and `lm_studio`
+    - chat error surfaces selector-stage vs runtime-stage failures distinctly
+    - no regression for Gemini/Ollama-only flows
 
 ## Recently Completed
+
+- **Spike A Follow-on Checkpoint 3/3 completed: local-backend readiness diagnostics contracts + `/api/ai/chat` failure-stage hints** (2026-03-15)
+  - Added deterministic local-backend diagnostics contract in `app.py`:
+    - introduced `LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION = 2026-03-15.local-backend-diagnostics.checkpoint3`
+    - added reusable readiness probes for local OpenAI-compatible backends via `/v1/models`
+    - introduced stable readiness classification set: `healthy`, `timeout`, `unreachable`, `misconfigured`
+  - Added route-level diagnostics API:
+    - `GET|POST /api/ai/backends/diagnostics`
+    - supports backend scoping (`backends`) + runtime-config overrides
+    - returns deterministic summary counters and per-backend probe diagnostics
+  - Wired diagnostics into existing API surfaces:
+    - `/ai_health_check` now includes `local_backend_diagnostics` alongside model lists
+    - `/api/ai/chat` local-selector failure payloads now include `backend_diagnostics` with explicit failure stages:
+      - `selector_validation`
+      - `selector_requirements`
+      - `backend_runtime`
+  - Added/updated regression coverage:
+    - `tests/test_ai_health_check.py`: diagnostics route parity coverage for healthy/timeout/unreachable/misconfigured classes
+    - `tests/test_ai_integration.py`: deterministic chat error payload coverage for selector + runtime diagnostics hints
+  - Updated docs:
+    - expanded `docs/AI_BACKEND_ADAPTER_CONTRACT.md` with readiness-status taxonomy and failure-stage semantics
+  - Checks run:
+    - `pytest -q tests/test_ai_health_check.py`
+    - `pytest -q tests/test_ai_integration.py -k "backend_selector_returns_deterministic_no_fallback_error or backend_selector_returns_deterministic_local_invocation_error_payload or rejects_local_model_prefix_without_model_name"`
+    - `pytest -q tests/test_ai_integration.py tests/test_ai_health_check.py tests/test_ai_backend_adapters.py`
+  - Checkpoint finished:
+    - ✔ `/api/ai/chat` local-selector failures include deterministic machine-readable readiness hints
+    - ✔ selector/input-validation vs backend runtime/reachability failures are explicitly separated
+    - ✔ docs/tests now describe local text-first constraints and remediation path
+  - Next checkpoint:
+    - UI wiring to display readiness/failure-stage diagnostics in model selection and chat error UX
+  - Risks/blockers:
+    - none (backend probes are lightweight but assume local endpoints are reachable within configured timeout)
 
 - **Spike A Follow-on Checkpoint 2/3 completed: deterministic local-model chat selector inference + one-shot guardrails** (2026-03-15)
   - Hardened local-model chat routing in `app.py` for UI/API parity:

@@ -8,9 +8,10 @@ from app import app
 
 
 class StubResponse:
-    def __init__(self, payload=None, ok=True, json_error=None):
+    def __init__(self, payload=None, ok=True, status_code=200, json_error=None):
         self._payload = payload
         self.ok = ok
+        self.status_code = status_code
         self._json_error = json_error
 
     def json(self):
@@ -76,8 +77,8 @@ def test_ai_health_check_discovers_local_and_remote_models_with_normalized_lists
     )
 
     with patch('app.requests.get', side_effect=fake_get), \
-         patch('app.LlamaCppAdapterConfig', return_value=SimpleNamespace(base_url='http://llama.local/')), \
-         patch('app.LMStudioAdapterConfig', return_value=SimpleNamespace(base_url='http://lm.local')), \
+         patch('app.LlamaCppAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://llama.local/', timeout_seconds=1.0)), \
+         patch('app.LMStudioAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://lm.local', timeout_seconds=1.0)), \
          patch('app.get_gemini_client_for_session', return_value=gemini_client):
 
         response = client.get('/ai_health_check')
@@ -114,8 +115,8 @@ def test_ai_health_check_stays_successful_when_one_provider_returns_bad_payload(
     )
 
     with patch('app.requests.get', side_effect=fake_get), \
-         patch('app.LlamaCppAdapterConfig', return_value=SimpleNamespace(base_url='http://llama.local')), \
-         patch('app.LMStudioAdapterConfig', return_value=SimpleNamespace(base_url='http://lm.local')), \
+         patch('app.LlamaCppAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://llama.local', timeout_seconds=1.0)), \
+         patch('app.LMStudioAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://lm.local', timeout_seconds=1.0)), \
          patch('app.get_gemini_client_for_session', return_value=gemini_client):
 
         response = client.get('/ai_health_check')
@@ -129,3 +130,57 @@ def test_ai_health_check_stays_successful_when_one_provider_returns_bad_payload(
     assert data['models']['lm_studio'] == ['lmstudio-community/gemma-3-12b']
     assert data['models']['gemini'] == ['models/gemini-2.5-flash']
     assert data['error_ollama'] == 'invalid ollama payload'
+
+
+def test_ai_backend_diagnostics_route_reports_healthy_and_timeout_statuses(client):
+    def fake_get(url, timeout=0):
+        if url == 'http://llama.local/v1/models':
+            return StubResponse(payload={'data': [{'id': 'llama-3.2'}]}, ok=True, status_code=200)
+        if url == 'http://lm.local/v1/models':
+            raise requests.exceptions.ConnectTimeout('timed out')
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    with patch('app.requests.get', side_effect=fake_get), \
+         patch('app.LlamaCppAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://llama.local', timeout_seconds=1.0)), \
+         patch('app.LMStudioAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://lm.local', timeout_seconds=1.0)):
+
+        response = client.get('/api/ai/backends/diagnostics')
+
+    assert response.status_code == 200
+    data = response.get_json()
+
+    assert data['success'] is True
+    by_backend = {item['backend_id']: item for item in data['diagnostics']}
+
+    assert by_backend['llama_cpp']['status'] == 'healthy'
+    assert by_backend['llama_cpp']['readiness_code'] == 'ok'
+    assert by_backend['llama_cpp']['models'] == ['llama-3.2']
+
+    assert by_backend['lm_studio']['status'] == 'timeout'
+    assert by_backend['lm_studio']['readiness_code'] == 'backend_timeout'
+
+
+def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(client):
+    def fake_get(url, timeout=0):
+        if url == 'http://llama.local/v1/models':
+            return StubResponse(payload={'error': 'not found'}, ok=False, status_code=404)
+        if url == 'http://lm.local/v1/models':
+            raise requests.exceptions.ConnectionError('connection refused')
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    with patch('app.requests.get', side_effect=fake_get), \
+         patch('app.LlamaCppAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://llama.local', timeout_seconds=1.0)), \
+         patch('app.LMStudioAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://lm.local', timeout_seconds=1.0)):
+
+        response = client.post('/api/ai/backends/diagnostics', json={'backends': ['llama_cpp', 'lm_studio']})
+
+    assert response.status_code == 200
+    data = response.get_json()
+
+    assert data['success'] is True
+    by_backend = {item['backend_id']: item for item in data['diagnostics']}
+
+    assert by_backend['llama_cpp']['status'] == 'misconfigured'
+    assert by_backend['llama_cpp']['readiness_code'] == 'backend_models_endpoint_not_found'
+    assert by_backend['lm_studio']['status'] == 'unreachable'
+    assert by_backend['lm_studio']['readiness_code'] == 'backend_unreachable'

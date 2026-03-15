@@ -7456,6 +7456,289 @@ def get_defines_by_type_route():
     
     return jsonify(filtered_defines)
 
+LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION = "2026-03-15.local-backend-diagnostics.checkpoint3"
+LOCAL_BACKEND_STATUS_VALUES = ("healthy", "timeout", "unreachable", "misconfigured")
+
+
+def _normalize_model_names(raw_names: List[Any]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for raw_name in raw_names:
+        if raw_name is None:
+            continue
+        name = str(raw_name).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        normalized.append(name)
+    return normalized
+
+
+def _resolve_local_backend_probe_config(
+    backend_id: str,
+    runtime_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if backend_id == "llama_cpp":
+        cfg = LlamaCppAdapterConfig.from_runtime_config(runtime_config)
+        return {
+            "backend_id": backend_id,
+            "provider_family": "llama.cpp",
+            "base_url": cfg.base_url,
+            "timeout_seconds": min(max(float(cfg.timeout_seconds), 0.1), 5.0),
+        }
+
+    if backend_id == "lm_studio":
+        cfg = LMStudioAdapterConfig.from_runtime_config(runtime_config)
+        return {
+            "backend_id": backend_id,
+            "provider_family": "lm_studio",
+            "base_url": cfg.base_url,
+            "timeout_seconds": min(max(float(cfg.timeout_seconds), 0.1), 5.0),
+        }
+
+    raise ValueError(f"Unsupported local backend for readiness probe: {backend_id}")
+
+
+def _classify_backend_probe_exception(exc: Exception) -> Dict[str, str]:
+    if isinstance(exc, (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout, requests.exceptions.Timeout)):
+        return {
+            "status": "timeout",
+            "readiness_code": "backend_timeout",
+            "message": "Timed out while connecting to backend models endpoint.",
+        }
+
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return {
+            "status": "unreachable",
+            "readiness_code": "backend_unreachable",
+            "message": "Backend service is unreachable.",
+        }
+
+    if isinstance(exc, (requests.exceptions.InvalidURL, requests.exceptions.InvalidSchema, requests.exceptions.MissingSchema, requests.exceptions.SSLError)):
+        return {
+            "status": "misconfigured",
+            "readiness_code": "backend_misconfigured",
+            "message": "Backend endpoint appears misconfigured.",
+        }
+
+    return {
+        "status": "unreachable",
+        "readiness_code": "backend_request_error",
+        "message": "Backend readiness probe failed.",
+    }
+
+
+def _probe_openai_compatible_models_endpoint(
+    backend_id: str,
+    *,
+    provider_family: str,
+    base_url: str,
+    timeout_seconds: float,
+    requests_get=None,
+) -> Dict[str, Any]:
+    requests_get = requests_get or requests.get
+    models_url = f"{str(base_url).rstrip('/')}/v1/models"
+
+    base_payload = {
+        "backend_id": backend_id,
+        "provider_family": provider_family,
+        "adapter_kind": "local",
+        "checked_via": "v1_models_probe",
+        "models_endpoint": models_url,
+        "status": "unreachable",
+        "readiness_code": "backend_request_error",
+        "ready": False,
+        "message": "Backend readiness probe did not run.",
+        "http_status": None,
+        "model_count": 0,
+        "models": [],
+    }
+
+    try:
+        response = requests_get(models_url, timeout=timeout_seconds)
+    except requests.exceptions.RequestException as exc:
+        failure = _classify_backend_probe_exception(exc)
+        return {
+            **base_payload,
+            "status": failure["status"],
+            "readiness_code": failure["readiness_code"],
+            "message": failure["message"],
+        }
+    except Exception as exc:
+        return {
+            **base_payload,
+            "status": "misconfigured",
+            "readiness_code": "backend_probe_exception",
+            "message": f"Backend readiness probe raised an unexpected error: {exc}",
+        }
+
+    http_status = getattr(response, "status_code", None)
+    response_ok = getattr(response, "ok", None)
+    if response_ok is None:
+        if isinstance(http_status, int):
+            response_ok = 200 <= http_status < 300
+        else:
+            response_ok = True
+
+    if not response_ok:
+        if http_status in (408, 504):
+            status = "timeout"
+            readiness_code = "backend_timeout"
+            message = f"Backend models endpoint timed out (HTTP {http_status})."
+        elif isinstance(http_status, int) and http_status >= 500:
+            status = "unreachable"
+            readiness_code = "backend_http_error"
+            message = f"Backend models endpoint returned upstream error HTTP {http_status}."
+        elif http_status in (401, 403):
+            status = "misconfigured"
+            readiness_code = "backend_auth_required"
+            message = f"Backend models endpoint rejected the request (HTTP {http_status})."
+        elif http_status == 404:
+            status = "misconfigured"
+            readiness_code = "backend_models_endpoint_not_found"
+            message = "Backend models endpoint was not found (HTTP 404)."
+        else:
+            status = "misconfigured"
+            readiness_code = "backend_http_error"
+            message = f"Backend models endpoint returned HTTP {http_status}."
+
+        return {
+            **base_payload,
+            "status": status,
+            "readiness_code": readiness_code,
+            "message": message,
+            "http_status": http_status,
+        }
+
+    try:
+        payload = response.json() or {}
+    except Exception:
+        return {
+            **base_payload,
+            "status": "misconfigured",
+            "readiness_code": "invalid_models_payload",
+            "message": "Backend models endpoint returned invalid JSON payload.",
+            "http_status": http_status,
+        }
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return {
+            **base_payload,
+            "status": "misconfigured",
+            "readiness_code": "invalid_models_payload",
+            "message": "Backend models endpoint payload is missing list field 'data'.",
+            "http_status": http_status,
+        }
+
+    model_ids: List[Any] = []
+    for item in data:
+        if isinstance(item, dict):
+            model_ids.append(item.get("id"))
+
+    models = _normalize_model_names(model_ids)
+    return {
+        **base_payload,
+        "status": "healthy",
+        "readiness_code": "ok",
+        "ready": True,
+        "message": "Backend models endpoint is reachable.",
+        "http_status": http_status,
+        "model_count": len(models),
+        "models": models,
+    }
+
+
+def build_local_backend_readiness_diagnostic(
+    backend_id: str,
+    *,
+    runtime_config: Optional[Dict[str, Any]] = None,
+    requests_get=None,
+) -> Dict[str, Any]:
+    probe_cfg = _resolve_local_backend_probe_config(backend_id, runtime_config=runtime_config)
+    diagnostic = _probe_openai_compatible_models_endpoint(
+        backend_id=backend_id,
+        provider_family=probe_cfg["provider_family"],
+        base_url=probe_cfg["base_url"],
+        timeout_seconds=probe_cfg["timeout_seconds"],
+        requests_get=requests_get,
+    )
+    diagnostic["schema_version"] = LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION
+    return diagnostic
+
+
+def _build_local_backend_diagnostics_payload(
+    *,
+    backend_ids: Optional[List[str]] = None,
+    runtime_config: Optional[Dict[str, Any]] = None,
+    requests_get=None,
+) -> Dict[str, Any]:
+    normalized_backend_ids = backend_ids or ["llama_cpp", "lm_studio"]
+    diagnostics: List[Dict[str, Any]] = []
+
+    for backend_id in normalized_backend_ids:
+        if backend_id not in {"llama_cpp", "lm_studio"}:
+            raise ValueError(f"Unsupported backend id: {backend_id}")
+        diagnostics.append(
+            build_local_backend_readiness_diagnostic(
+                backend_id,
+                runtime_config=runtime_config,
+                requests_get=requests_get,
+            )
+        )
+
+    summary = {
+        "checked_backend_count": len(diagnostics),
+        "status_counts": {status: 0 for status in LOCAL_BACKEND_STATUS_VALUES},
+        "ready_backend_count": 0,
+    }
+
+    for diagnostic in diagnostics:
+        status = str(diagnostic.get("status") or "").strip()
+        if status in summary["status_counts"]:
+            summary["status_counts"][status] += 1
+        if diagnostic.get("ready") is True:
+            summary["ready_backend_count"] += 1
+
+    return {
+        "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
+        "diagnostics": diagnostics,
+        "summary": summary,
+    }
+
+
+@app.route('/api/ai/backends/diagnostics', methods=['GET', 'POST'])
+def ai_backend_diagnostics_route():
+    payload = request.get_json(silent=True) if request.method == 'POST' else request.args
+    payload = payload or {}
+
+    raw_backends = payload.get('backends')
+    backend_ids: Optional[List[str]] = None
+    if raw_backends is not None:
+        if isinstance(raw_backends, str):
+            backend_ids = [raw_backends]
+        elif isinstance(raw_backends, list):
+            backend_ids = [str(item).strip() for item in raw_backends if str(item).strip()]
+        else:
+            return jsonify({"success": False, "error": "backends must be a string or list of strings."}), 400
+
+    runtime_config_raw = payload.get('runtime_config')
+    runtime_config = runtime_config_raw if isinstance(runtime_config_raw, dict) else None
+
+    try:
+        diagnostics_payload = _build_local_backend_diagnostics_payload(
+            backend_ids=backend_ids,
+            runtime_config=runtime_config,
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    return jsonify({
+        "success": True,
+        **diagnostics_payload,
+    })
+
+
 @app.route('/ai_health_check', methods=['GET'])
 def ai_health_check_route():
     response_data = {
@@ -7467,35 +7750,6 @@ def ai_health_check_route():
             "lm_studio": [],
         },
     }
-
-    def _normalize_model_names(raw_names: List[Any]) -> List[str]:
-        normalized: List[str] = []
-        seen = set()
-        for raw_name in raw_names:
-            if raw_name is None:
-                continue
-            name = str(raw_name).strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            normalized.append(name)
-        return normalized
-
-    def _fetch_openai_compatible_model_ids(base_url: str) -> List[str]:
-        url = f"{base_url.rstrip('/')}/v1/models"
-        resp = requests.get(url, timeout=2)
-        if not resp.ok:
-            return []
-        payload = resp.json() or {}
-        data = payload.get("data")
-        if not isinstance(data, list):
-            return []
-        model_ids: List[Any] = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            model_ids.append(item.get("id"))
-        return _normalize_model_names(model_ids)
 
     # 1. Check for Ollama models
     try:
@@ -7517,21 +7771,19 @@ def ai_health_check_route():
         response_data["error_ollama"] = str(e)
 
     # 2. Check local OpenAI-compatible model servers (llama.cpp + LM Studio)
-    try:
-        response_data["models"]["llama_cpp"] = _fetch_openai_compatible_model_ids(LlamaCppAdapterConfig().base_url)
-    except requests.exceptions.RequestException:
-        print("llama.cpp service is unreachable.")
-    except Exception as e:
-        print(f"Error fetching llama.cpp models: {e}")
-        response_data["error_llama_cpp"] = str(e)
+    local_diag_payload = _build_local_backend_diagnostics_payload()
+    diagnostics_by_id = {
+        item["backend_id"]: item
+        for item in local_diag_payload.get("diagnostics", [])
+        if isinstance(item, dict)
+    }
 
-    try:
-        response_data["models"]["lm_studio"] = _fetch_openai_compatible_model_ids(LMStudioAdapterConfig().base_url)
-    except requests.exceptions.RequestException:
-        print("LM Studio service is unreachable.")
-    except Exception as e:
-        print(f"Error fetching LM Studio models: {e}")
-        response_data["error_lm_studio"] = str(e)
+    llama_diag = diagnostics_by_id.get("llama_cpp", {})
+    lm_diag = diagnostics_by_id.get("lm_studio", {})
+
+    response_data["models"]["llama_cpp"] = list(llama_diag.get("models", [])) if isinstance(llama_diag.get("models"), list) else []
+    response_data["models"]["lm_studio"] = list(lm_diag.get("models", [])) if isinstance(lm_diag.get("models"), list) else []
+    response_data["local_backend_diagnostics"] = diagnostics_by_id
 
     # 3. Check for Gemini models if the client was initialized
     gemini_client = get_gemini_client_for_session()
@@ -10912,6 +11164,61 @@ def execute_ai_artifact_planning_route(artifact_id):
     })
 
 
+def _infer_local_backend_id_from_model_prefix(model_id: Any) -> Optional[str]:
+    if not isinstance(model_id, str):
+        return None
+
+    normalized_model_id = model_id.strip()
+    if normalized_model_id.startswith("llama_cpp::"):
+        return "llama_cpp"
+    if normalized_model_id.startswith("lm_studio::"):
+        return "lm_studio"
+    return None
+
+
+def _build_chat_backend_diagnostics(
+    *,
+    failure_stage: str,
+    error_code: str,
+    backend_id: Optional[str] = None,
+    runtime_config: Optional[Dict[str, Any]] = None,
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    stage_to_error_class = {
+        "selector_validation": "selector_input_validation",
+        "selector_requirements": "selector_requirement_mismatch",
+        "backend_runtime": "backend_runtime_failure",
+    }
+
+    diagnostics: Dict[str, Any] = {
+        "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
+        "failure_stage": failure_stage,
+        "error_class": stage_to_error_class.get(failure_stage, "backend_diagnostics_error"),
+        "error_code": error_code,
+        "backend_id": backend_id,
+    }
+
+    if message:
+        diagnostics["message"] = message
+
+    if backend_id in {"llama_cpp", "lm_studio"}:
+        diagnostics["readiness"] = build_local_backend_readiness_diagnostic(
+            backend_id,
+            runtime_config=runtime_config,
+        )
+    else:
+        diagnostics["readiness"] = {
+            "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
+            "status": "misconfigured",
+            "readiness_code": "readiness_not_applicable",
+            "ready": False,
+            "message": "Readiness probe is only available for local text-first backends.",
+            "backend_id": backend_id,
+        }
+
+    return diagnostics
+
+
 @app.route('/api/ai/chat', methods=['POST'])
 def ai_chat_route():
     pm = get_project_manager_for_session()
@@ -10932,6 +11239,12 @@ def ai_chat_route():
         return jsonify({
             "success": False,
             "error": "Invalid backend_selector payload. Expected an object.",
+            "backend_diagnostics": _build_chat_backend_diagnostics(
+                failure_stage="selector_validation",
+                error_code="invalid_backend_selector_payload",
+                backend_id=None,
+                message="backend_selector must be a JSON object when provided.",
+            ),
         }), 400
 
     selector_cfg = selector_cfg_raw if isinstance(selector_cfg_raw, dict) else None
@@ -10940,7 +11253,17 @@ def ai_chat_route():
     if selector_cfg is None:
         inferred_selector_cfg, infer_error = _infer_local_backend_selector_from_model_id(model_id)
         if infer_error:
-            return jsonify({"success": False, "error": infer_error}), 400
+            inferred_backend_id = _infer_local_backend_id_from_model_prefix(model_id)
+            return jsonify({
+                "success": False,
+                "error": infer_error,
+                "backend_diagnostics": _build_chat_backend_diagnostics(
+                    failure_stage="selector_validation",
+                    error_code="invalid_local_model_selector",
+                    backend_id=inferred_backend_id,
+                    message="Local model prefixes must follow '<backend>::<model_name>'.",
+                ),
+            }), 400
         if inferred_selector_cfg is not None:
             selector_cfg = inferred_selector_cfg
             selector_inferred_from_model = True
@@ -10999,6 +11322,13 @@ def ai_chat_route():
                     "requirements": requirements_payload,
                     "selection_error": str(exc),
                 },
+                "backend_diagnostics": _build_chat_backend_diagnostics(
+                    failure_stage="selector_requirements",
+                    error_code="backend_selection_failed",
+                    backend_id=preferred_backend_id if preferred_backend_id in {"llama_cpp", "lm_studio"} else None,
+                    runtime_config=runtime_config,
+                    message="Backend selector requirements could not be satisfied by the preferred backend configuration.",
+                ),
             }), 400
 
         backend_selection_payload = {
@@ -11106,6 +11436,13 @@ def ai_chat_route():
             err_payload = {
                 "success": False,
                 "error": f"AI backend invocation failed ({selected_backend_id}): {e}",
+                "backend_diagnostics": _build_chat_backend_diagnostics(
+                    failure_stage="backend_runtime",
+                    error_code="local_backend_invocation_failed",
+                    backend_id=selected_backend_id,
+                    runtime_config=selector_runtime_config,
+                    message="Local backend invocation failed after selection succeeded.",
+                ),
             }
             if backend_selection_payload:
                 backend_selection_payload["execution_mode"] = "local_text_adapter"
