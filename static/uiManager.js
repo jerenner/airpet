@@ -2,6 +2,15 @@
 import * as THREE from 'three';
 import * as SceneManager from './sceneManager.js';
 import * as ExpressionInput from './expressionInput.js';
+import {
+    normalizeAiBackendDiagnostics,
+    getLocalBackendIdForModel,
+    getReadinessLabel,
+    buildLocalBackendTooltip,
+    formatLocalModelOptionLabel,
+    buildBackendStatusChip,
+    applyBackendStatusChip,
+} from './backendDiagnosticsUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -2043,90 +2052,6 @@ export function clearAiPrompt() {
     }
 }
 
-function normalizeAiBackendDiagnostics(localBackendDiagnostics) {
-    if (Array.isArray(localBackendDiagnostics)) {
-        return localBackendDiagnostics.reduce((acc, item) => {
-            if (item && typeof item === 'object' && item.backend_id) {
-                acc[item.backend_id] = item;
-            }
-            return acc;
-        }, {});
-    }
-
-    if (localBackendDiagnostics && typeof localBackendDiagnostics === 'object') {
-        return Object.entries(localBackendDiagnostics).reduce((acc, [backendId, diagnostic]) => {
-            if (diagnostic && typeof diagnostic === 'object') {
-                acc[backendId] = diagnostic;
-            }
-            return acc;
-        }, {});
-    }
-
-    return {};
-}
-
-function getLocalBackendIdForModel(modelValue) {
-    if (typeof modelValue !== 'string') return null;
-    if (modelValue.startsWith('llama_cpp::')) return 'llama_cpp';
-    if (modelValue.startsWith('lm_studio::')) return 'lm_studio';
-    return null;
-}
-
-function getBackendDisplayName(backendId) {
-    if (backendId === 'llama_cpp') return 'llama.cpp';
-    if (backendId === 'lm_studio') return 'LM Studio';
-    return backendId || 'Local backend';
-}
-
-function getReadinessBadge(status) {
-    switch ((status || '').toLowerCase()) {
-        case 'healthy':
-            return '🟢';
-        case 'timeout':
-            return '🟠';
-        case 'unreachable':
-            return '🔴';
-        case 'misconfigured':
-            return '🟣';
-        default:
-            return '⚪';
-    }
-}
-
-function getReadinessLabel(status) {
-    switch ((status || '').toLowerCase()) {
-        case 'healthy':
-            return 'healthy';
-        case 'timeout':
-            return 'timeout';
-        case 'unreachable':
-            return 'unreachable';
-        case 'misconfigured':
-            return 'misconfigured';
-        default:
-            return 'unknown';
-    }
-}
-
-function buildLocalBackendTooltip(backendId, diagnostic) {
-    const backendLabel = getBackendDisplayName(backendId);
-    const status = getReadinessLabel(diagnostic?.status);
-    const readinessCode = diagnostic?.readiness_code || 'n/a';
-    const message = diagnostic?.message || 'No readiness diagnostics available yet.';
-    const endpoint = diagnostic?.models_endpoint;
-
-    const lines = [
-        `${backendLabel} readiness: ${status}`,
-        `Code: ${readinessCode}`,
-        message,
-    ];
-
-    if (endpoint) {
-        lines.push(`Probe: ${endpoint}`);
-    }
-
-    return lines.join('\n');
-}
 
 export function getAiBackendDiagnosticForModel(modelValue = null) {
     const selectedModel = modelValue || getAiSelectedModel();
@@ -2145,7 +2070,7 @@ export function upsertAiBackendDiagnostic(diagnostic) {
         const options = aiModelSelect.querySelectorAll(`option[data-backend-id="${backendId}"]`);
         options.forEach(option => {
             const rawModelName = String(option.value || '').split('::').slice(1).join('::') || option.textContent;
-            option.textContent = `${getReadinessBadge(diagnostic.status)} ${rawModelName}`;
+            option.textContent = formatLocalModelOptionLabel(rawModelName, diagnostic);
             option.title = buildLocalBackendTooltip(backendId, diagnostic);
             option.dataset.readinessStatus = getReadinessLabel(diagnostic.status);
         });
@@ -2158,29 +2083,9 @@ export function updateAiBackendStatus(modelValue = null) {
     if (!aiBackendStatusEl) return;
 
     const selectedModel = modelValue || getAiSelectedModel();
-    const backendId = getLocalBackendIdForModel(selectedModel);
+    const chip = buildBackendStatusChip(selectedModel, aiBackendDiagnosticsById);
 
-    aiBackendStatusEl.className = 'ai-model-info ai-backend-status';
-
-    if (!selectedModel) {
-        aiBackendStatusEl.textContent = 'Backend: n/a';
-        aiBackendStatusEl.title = 'No AI model selected.';
-        return;
-    }
-
-    if (!backendId) {
-        aiBackendStatusEl.textContent = 'Backend: cloud';
-        aiBackendStatusEl.title = 'Gemini/Ollama routing does not require local backend readiness probes.';
-        return;
-    }
-
-    const diagnostic = aiBackendDiagnosticsById[backendId] || null;
-    const status = getReadinessLabel(diagnostic?.status);
-    const badge = getReadinessBadge(diagnostic?.status);
-
-    aiBackendStatusEl.classList.add(`status-${status}`);
-    aiBackendStatusEl.textContent = `${badge} ${getBackendDisplayName(backendId)}: ${status}`;
-    aiBackendStatusEl.title = buildLocalBackendTooltip(backendId, diagnostic);
+    applyBackendStatusChip(aiBackendStatusEl, chip);
 }
 
 /**
@@ -2213,7 +2118,7 @@ export function populateAiModelSelector(models, localBackendDiagnostics = null) 
 
                 if (backendId) {
                     const diagnostic = aiBackendDiagnosticsById[backendId] || null;
-                    option.textContent = `${getReadinessBadge(diagnostic?.status)} ${prettyName}`;
+                    option.textContent = formatLocalModelOptionLabel(prettyName, diagnostic);
                     option.title = buildLocalBackendTooltip(backendId, diagnostic);
                     option.dataset.backendId = backendId;
                     option.dataset.readinessStatus = getReadinessLabel(diagnostic?.status);

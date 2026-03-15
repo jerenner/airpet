@@ -7,6 +7,26 @@
 
 ## Recently Completed
 
+- **AI UX hardening checkpoint completed: lightweight backend diagnostics DOM smoke harness** (2026-03-15)
+  - Added a shared frontend diagnostics helper module: `static/backendDiagnosticsUi.js`.
+    - Centralizes selector-badge copy, backend status-chip descriptors, tooltip formatting, and chat-remediation formatting.
+    - Reduces drift risk between `static/uiManager.js` and `static/aiAssistant.js` by moving shared copy/logic into one source.
+  - Refactored consumers:
+    - `static/uiManager.js` now imports/apply shared diagnostics helpers for local selector option labels and status-chip transitions.
+    - `static/aiAssistant.js` now imports the shared backend-diagnostics formatter for chat failure rendering.
+  - Added fast JS smoke coverage in `tests/js/backend_diagnostics_panels.test.mjs` for:
+    - selector badge copy + tooltip text stability
+    - status-chip transitions (`n/a` → cloud → local healthy/unreachable)
+    - chat remediation rendering paths (action-code mapping and explicit action override)
+  - Checks run:
+    - `node --check static/backendDiagnosticsUi.js`
+    - `node --check static/aiAssistant.js`
+    - `node --check static/uiManager.js`
+    - `node --test tests/js/backend_diagnostics_panels.test.mjs` (4 passed)
+  - Checkpoint finished:
+    - ✔ selector badge/status-chip/remediation copy now has a deterministic JS regression harness
+    - ✔ shared diagnostics formatting utility prevents silent copy skew across UI surfaces
+
 - **Multimodal parity follow-on Checkpoint 2/2 completed: mixed delta-transition correlation coverage + example artifact** (2026-03-15)
   - Expanded route-level parity regression coverage in `tests/test_ai_multimodal_extraction_api.py`:
     - added mixed transition matrix assertions for `added`, `increased`, `resolved`, and `reduced` issue-code deltas
@@ -953,11 +973,6 @@
    - Add deterministic mapping from changed preflight issue codes to likely operation families (dimension/material/topology).
    - Expand parity-report regression tests for representative Geant4-facing issue-family transitions.
    - Impact: medium-high (improves root-cause diagnostics after multimodal execution).
-
-2. **AI UX hardening: lightweight DOM-level regression harness for backend diagnostics panels**
-   - Add fast JS tests for selector badge copy, status-chip transitions, and chat remediation rendering paths.
-   - Keep route-level contracts in pytest, and lock UX copy regressions with a narrow jsdom/Playwright smoke suite.
-   - Impact: medium (reduces UI-copy drift risk across future backend diagnostics changes).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 
