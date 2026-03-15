@@ -7,6 +7,27 @@
 
 ## Recently Completed
 
+- **Scoped-geometry checkpoint completed: division inspector fields are now editable via expression-backed controls** (2026-03-15)
+  - Extended logical-volume inspector procedural editing in `static/uiManager.js` for `content_type === 'division'`.
+  - Added deterministic division inspector binding helpers in `static/divisionInspectorBindings.js`:
+    - `getDivisionInspectorEditableFieldSpecs(...)` for stable field rendering metadata.
+    - `buildDivisionInspectorPropertyUpdateArgs(...)` to lock update payload shape (`logical_volume`, `content.<field>` paths only).
+  - Inspector edits for divisions now route through the existing property-update flow (`callbacks.onInspectorPropertyChanged` → `/update_property`) with explicit nested paths:
+    - `content.number`
+    - `content.width`
+    - `content.offset`
+  - Added focused JS regression coverage in `tests/js/division_inspector_bindings.test.mjs` for:
+    - field rendering spec stability + fallback defaults
+    - update payload shape + unsupported nested-path rejection
+    - expression value coercion contract
+  - Checks run:
+    - `node --check static/divisionInspectorBindings.js`
+    - `node --check static/uiManager.js`
+    - `node --test tests/js/division_inspector_bindings.test.mjs tests/js/replica_inspector_bindings.test.mjs` (10 passed)
+  - Checkpoint finished:
+    - ✔ division procedural parameters can now be edited directly from the inspector without reopening LV modals
+    - ✔ inspector update-path contract is deterministic and regression-tested for nested division fields
+
 - **Scoped-geometry checkpoint completed: replica inspector fields are now editable via expression-backed controls** (2026-03-15)
   - Replaced read-only replica inspector values for logical volumes (`number`, `width`, `offset`) with expression input controls in `static/uiManager.js`.
   - Added deterministic replica inspector binding helpers in `static/replicaInspectorBindings.js`:
@@ -1016,11 +1037,6 @@
    - Add a representative fixture where procedural geometry edits intentionally trigger topology + overlap warnings.
    - Lock parity-report mismatch-class reporting against expected operation-family buckets.
    - Impact: medium-high (strengthens Geant4-facing diagnostics confidence for procedural workflows).
-
-3. **Scoped-geometry follow-on: extend inspector editing parity to division volumes**
-   - Add expression-backed inspector controls for division `number/width/offset` (matching the new replica workflow).
-   - Route updates through deterministic nested property paths and add binding-contract regression tests.
-   - Impact: medium-high (keeps procedural editing ergonomics consistent across replica/division content types).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 

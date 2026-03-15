@@ -15,6 +15,10 @@ import {
     getReplicaInspectorEditableFieldSpecs,
     buildReplicaInspectorPropertyUpdateArgs,
 } from './replicaInspectorBindings.js';
+import {
+    getDivisionInspectorEditableFieldSpecs,
+    buildDivisionInspectorPropertyUpdateArgs,
+} from './divisionInspectorBindings.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -1083,6 +1087,38 @@ export async function populateInspector(itemContext, projectState) {
 
             const dir = replica.direction;
             createReadOnlyProperty(inspectorContentDiv, "Direction:", `(x: ${dir.x}, y: ${dir.y}, z: ${dir.z})`);
+        } else if (data.content_type === 'division') {
+            const division = data.content;
+            createReadOnlyProperty(inspectorContentDiv, "Solid (Envelope):", data.solid_ref);
+            createReadOnlyProperty(inspectorContentDiv, "Divided LV:", division.volume_ref);
+
+            const editableDivisionFields = getDivisionInspectorEditableFieldSpecs(division);
+            const lvIdForUpdate = id || name;
+            const inputIdPrefix = `inspector_division_${toDomSafeToken(lvIdForUpdate)}`;
+
+            editableDivisionFields.forEach((field) => {
+                createEditableExpressionProperty(inspectorContentDiv, {
+                    inputId: `${inputIdPrefix}_${field.key}`,
+                    labelText: field.label,
+                    initialValue: field.value,
+                    propertyPath: field.propertyPath,
+                    onChange: (newExpressionValue) => {
+                        const update = buildDivisionInspectorPropertyUpdateArgs(
+                            lvIdForUpdate,
+                            field.propertyPath,
+                            newExpressionValue
+                        );
+                        callbacks.onInspectorPropertyChanged(
+                            update.objectType,
+                            update.objectId,
+                            update.propertyPath,
+                            update.newValue
+                        );
+                    }
+                });
+            });
+
+            createReadOnlyProperty(inspectorContentDiv, "Axis:", division.axis);
         }
         else { // It's a standard LV (or another procedural type for later)
             createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
