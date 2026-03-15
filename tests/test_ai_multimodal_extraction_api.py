@@ -457,7 +457,7 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
     assert execute_response.status_code == 200
     payload = execute_response.get_json()
     assert payload['success'] is True
-    assert payload['schema_version'].endswith('checkpoint8')
+    assert payload['schema_version'].endswith('checkpoint9')
     assert payload['planning_envelope']['status'] == 'ready'
     assert payload['execution_plan']['status'] == 'ready'
     assert payload['execution_plan']['summary']['candidate_operation_count'] == 4
@@ -501,6 +501,17 @@ def test_artifact_planning_execute_route_applies_ready_plan_through_batch_geomet
         'dimension_hints',
         'material_updates',
     ]
+    assert parity_report['issue_code_family_correlations']['summary'] == {
+        'changed_issue_code_count': 0,
+        'with_observed_overlap_count': 0,
+        'without_observed_overlap_count': 0,
+        'confidence_counts': {
+            'high': 0,
+            'medium': 0,
+            'low': 0,
+        },
+    }
+    assert parity_report['issue_code_family_correlations']['entries'] == []
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
     assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
@@ -621,6 +632,17 @@ def test_artifact_planning_execute_route_reports_partial_failure_for_invalid_log
     assert parity_report['status'] == 'compatible'
     assert parity_report['geant4_compatibility_confidence']['label'] == 'guarded'
     assert parity_report['summary']['high_signal_mismatch_count'] == 0
+    assert parity_report['issue_code_family_correlations']['summary'] == {
+        'changed_issue_code_count': 0,
+        'with_observed_overlap_count': 0,
+        'without_observed_overlap_count': 0,
+        'confidence_counts': {
+            'high': 0,
+            'medium': 0,
+            'low': 0,
+        },
+    }
+    assert parity_report['issue_code_family_correlations']['entries'] == []
 
     assert 'MM_DIM_region_a_dim_a' in pm.current_geometry_state.defines
     assert 'MM_DIM_region_b_dim_b' in pm.current_geometry_state.defines
@@ -790,6 +812,28 @@ def test_artifact_planning_execute_route_emits_preflight_mismatch_classes_when_s
     assert [entry['group_id'] for entry in parity_report['high_signal_mismatches'][0]['affected_operation_groups']] == [
         'dimension_hints',
         'material_updates',
+    ]
+
+    correlations = parity_report['issue_code_family_correlations']
+    assert correlations['summary'] == {
+        'changed_issue_code_count': 2,
+        'with_observed_overlap_count': 0,
+        'without_observed_overlap_count': 2,
+        'confidence_counts': {
+            'high': 0,
+            'medium': 2,
+            'low': 0,
+        },
+    }
+    assert [entry['issue_code'] for entry in correlations['entries']] == [
+        'placement_hierarchy_cycle',
+        'unknown_world_volume_reference',
+    ]
+    assert [entry['change_kind'] for entry in correlations['entries']] == ['added', 'added']
+    assert [entry['delta'] for entry in correlations['entries']] == [1, 1]
+    assert [entry['likely_operation_family_ids'] for entry in correlations['entries']] == [
+        ['other_mutations'],
+        ['other_mutations'],
     ]
 
     assert preflight_mock.call_count == 2

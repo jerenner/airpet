@@ -10101,7 +10101,7 @@ def get_ai_artifact_metadata_route(artifact_id):
 
 MULTIMODAL_EXTRACTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint3"
 MULTIMODAL_PLANNING_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint4"
-MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-14.multimodal-intake.checkpoint8"
+MULTIMODAL_PLANNING_EXECUTION_ROUTE_SCHEMA_VERSION = "2026-03-15.multimodal-intake.checkpoint9"
 
 
 def _classify_multimodal_execution_failure_code(tool_name: str, error_text: str) -> str:
@@ -10620,6 +10620,263 @@ def _build_multimodal_execution_operation_groups(execution_outcome: Dict[str, An
     return normalized_groups
 
 
+_MULTIMODAL_OPERATION_GROUP_LABELS: Dict[str, str] = {
+    "dimension_hints": "Dimension hint mutations",
+    "material_updates": "Material update mutations",
+    "other_mutations": "Other mutation operations",
+}
+
+_MULTIMODAL_ISSUE_CODE_FAMILY_EXACT_HINTS: Dict[str, str] = {
+    "missing_material_reference": "material_updates",
+    "unknown_material_reference": "material_updates",
+    "invalid_replica_instance_count": "dimension_hints",
+    "invalid_replica_width": "dimension_hints",
+    "invalid_replica_direction": "dimension_hints",
+    "invalid_division_axis": "dimension_hints",
+    "invalid_division_partition_bounds": "dimension_hints",
+    "invalid_division_slice_width": "dimension_hints",
+    "invalid_parameterised_ncopies": "dimension_hints",
+    "missing_parameterised_parameters": "dimension_hints",
+    "parameterised_parameter_count_mismatch": "dimension_hints",
+    "non_finite_dimension": "dimension_hints",
+    "non_positive_dimension": "dimension_hints",
+    "tiny_dimension": "dimension_hints",
+    "invalid_radial_bounds": "dimension_hints",
+    "low_facet_count": "dimension_hints",
+    "possible_overlap_aabb": "dimension_hints",
+    "overlap_report_truncated": "dimension_hints",
+    "missing_world_volume_reference": "other_mutations",
+    "unknown_world_volume_reference": "other_mutations",
+    "missing_placement_volume_reference": "other_mutations",
+    "unknown_placement_volume_reference": "other_mutations",
+    "world_volume_referenced_as_child": "other_mutations",
+    "missing_procedural_placement_definition": "other_mutations",
+    "missing_procedural_volume_reference": "other_mutations",
+    "unknown_procedural_volume_reference": "other_mutations",
+    "placement_hierarchy_cycle": "other_mutations",
+    "placement_hierarchy_cycle_report_truncated": "other_mutations",
+    "missing_solid_reference": "other_mutations",
+    "missing_project_state": "other_mutations",
+    "recalculation_failed": "other_mutations",
+}
+
+_MULTIMODAL_ISSUE_CODE_FAMILY_KEYWORD_HINTS: Dict[str, List[str]] = {
+    "material_updates": ["material"],
+    "dimension_hints": [
+        "dimension",
+        "radial",
+        "replica",
+        "division",
+        "parameterised",
+        "facet",
+        "overlap",
+        "slice_width",
+    ],
+    "other_mutations": [
+        "world_volume",
+        "placement",
+        "hierarchy",
+        "cycle",
+        "solid_reference",
+        "procedural",
+        "project_state",
+        "recalculation",
+    ],
+}
+
+
+def _order_multimodal_operation_group_ids(group_ids: List[str]) -> List[str]:
+    ordering = ["dimension_hints", "material_updates", "other_mutations"]
+    rank = {group_id: index for index, group_id in enumerate(ordering)}
+    return sorted(group_ids, key=lambda item: (rank.get(item, 99), item))
+
+
+def _resolve_multimodal_issue_code_family_hints(issue_code: str) -> Dict[str, Any]:
+    normalized_code = str(issue_code or "").strip().lower()
+    if not normalized_code:
+        return {
+            "family_ids": ["other_mutations"],
+            "confidence": "low",
+            "reason_codes": ["missing_issue_code"],
+        }
+
+    exact_match = _MULTIMODAL_ISSUE_CODE_FAMILY_EXACT_HINTS.get(normalized_code)
+    if exact_match:
+        return {
+            "family_ids": [exact_match],
+            "confidence": "high",
+            "reason_codes": ["exact_issue_code_family_match"],
+        }
+
+    matched_families: List[str] = []
+    for family_id, keywords in _MULTIMODAL_ISSUE_CODE_FAMILY_KEYWORD_HINTS.items():
+        if any(keyword in normalized_code for keyword in keywords):
+            matched_families.append(family_id)
+
+    matched_families = _order_multimodal_operation_group_ids(list(dict.fromkeys(matched_families)))
+    if matched_families:
+        return {
+            "family_ids": matched_families,
+            "confidence": "medium",
+            "reason_codes": ["keyword_issue_code_family_match"],
+        }
+
+    return {
+        "family_ids": ["other_mutations"],
+        "confidence": "low",
+        "reason_codes": ["fallback_issue_code_family_other_mutations"],
+    }
+
+
+def _build_multimodal_issue_code_family_correlations(
+    *,
+    issue_code_delta: Dict[str, List[str]],
+    comparison: Dict[str, Any],
+    operation_groups: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not isinstance(issue_code_delta, dict):
+        issue_code_delta = {}
+    if not isinstance(comparison, dict):
+        comparison = {}
+
+    groups_by_id = {
+        str(group.get("group_id") or ""): group
+        for group in operation_groups
+        if isinstance(group, dict) and str(group.get("group_id") or "")
+    }
+
+    executed_group_ids = _order_multimodal_operation_group_ids(
+        [
+            group_id
+            for group_id, group in groups_by_id.items()
+            if int(group.get("operation_count") or 0) > 0
+        ]
+    )
+
+    counts_delta_by_code_raw = comparison.get("counts_delta_by_code")
+    counts_delta_by_code: Dict[str, int] = {}
+    if isinstance(counts_delta_by_code_raw, dict):
+        for issue_code, delta in counts_delta_by_code_raw.items():
+            issue_code_text = str(issue_code or "").strip()
+            if not issue_code_text:
+                continue
+            if isinstance(delta, bool):
+                counts_delta_by_code[issue_code_text] = int(delta)
+            elif isinstance(delta, (int, float)):
+                counts_delta_by_code[issue_code_text] = int(delta)
+            elif isinstance(delta, str):
+                try:
+                    counts_delta_by_code[issue_code_text] = int(float(delta.strip()))
+                except Exception:
+                    continue
+
+    change_kind_specs = [
+        ("added", "added_issue_codes", 1),
+        ("increased", "increased_issue_codes", 1),
+        ("resolved", "resolved_issue_codes", -1),
+        ("reduced", "reduced_issue_codes", -1),
+    ]
+
+    entries: List[Dict[str, Any]] = []
+    confidence_counts = {"high": 0, "medium": 0, "low": 0}
+    with_overlap_count = 0
+
+    for change_kind, delta_key, fallback_delta_sign in change_kind_specs:
+        codes_raw = issue_code_delta.get(delta_key)
+        if not isinstance(codes_raw, list):
+            continue
+
+        codes = sorted({str(item or "").strip() for item in codes_raw if str(item or "").strip()})
+        for issue_code in codes:
+            family_hint = _resolve_multimodal_issue_code_family_hints(issue_code)
+            family_ids = _order_multimodal_operation_group_ids(
+                [
+                    str(group_id or "").strip()
+                    for group_id in family_hint.get("family_ids", [])
+                    if str(group_id or "").strip()
+                ]
+            )
+            if not family_ids:
+                family_ids = ["other_mutations"]
+
+            observed_overlap_ids = [group_id for group_id in family_ids if group_id in executed_group_ids]
+
+            confidence = str(family_hint.get("confidence") or "low").strip().lower()
+            if confidence not in {"high", "medium", "low"}:
+                confidence = "low"
+
+            reason_codes = [
+                str(code or "").strip()
+                for code in family_hint.get("reason_codes", [])
+                if str(code or "").strip()
+            ]
+
+            if observed_overlap_ids:
+                reason_codes.append("overlap_with_executed_operation_groups")
+            elif executed_group_ids:
+                reason_codes.append("no_overlap_with_executed_operation_groups")
+                if confidence == "high":
+                    confidence = "medium"
+                elif confidence == "medium":
+                    confidence = "low"
+            else:
+                reason_codes.append("no_executed_operation_groups_available")
+
+            if confidence in confidence_counts:
+                confidence_counts[confidence] += 1
+
+            if observed_overlap_ids:
+                with_overlap_count += 1
+
+            delta = counts_delta_by_code.get(issue_code)
+            if delta is None:
+                delta = fallback_delta_sign
+
+            likely_families: List[Dict[str, Any]] = []
+            for group_id in family_ids:
+                group = groups_by_id.get(group_id)
+                label = str(
+                    (group or {}).get("label")
+                    or _MULTIMODAL_OPERATION_GROUP_LABELS.get(group_id)
+                    or group_id
+                )
+                likely_families.append(
+                    {
+                        "group_id": group_id,
+                        "label": label,
+                        "observed_in_execution": group_id in executed_group_ids,
+                    }
+                )
+
+            deduped_reason_codes: List[str] = []
+            for code in reason_codes:
+                if code not in deduped_reason_codes:
+                    deduped_reason_codes.append(code)
+
+            entries.append(
+                {
+                    "issue_code": issue_code,
+                    "change_kind": change_kind,
+                    "delta": int(delta),
+                    "confidence": confidence,
+                    "reason_codes": deduped_reason_codes,
+                    "likely_operation_family_ids": [entry["group_id"] for entry in likely_families],
+                    "likely_operation_families": likely_families,
+                    "observed_overlap_operation_family_ids": observed_overlap_ids,
+                }
+            )
+
+    return {
+        "summary": {
+            "changed_issue_code_count": len(entries),
+            "with_observed_overlap_count": with_overlap_count,
+            "without_observed_overlap_count": max(0, len(entries) - with_overlap_count),
+            "confidence_counts": confidence_counts,
+        },
+        "entries": entries,
+    }
+
+
 def _build_multimodal_geant4_parity_report(
     *,
     execution_outcome: Dict[str, Any],
@@ -10674,6 +10931,12 @@ def _build_multimodal_geant4_parity_report(
         "resolved_issue_codes": _as_sorted_str_list(comparison.get("resolved_issue_codes")),
         "reduced_issue_codes": _as_sorted_str_list(comparison.get("reduced_issue_codes")),
     }
+
+    issue_code_family_correlations = _build_multimodal_issue_code_family_correlations(
+        issue_code_delta=issue_code_delta,
+        comparison=comparison,
+        operation_groups=operation_groups,
+    )
 
     diagnostics_raw = preflight_crosscheck.get("diagnostics") if isinstance(preflight_crosscheck, dict) else []
     diagnostics = diagnostics_raw if isinstance(diagnostics_raw, list) else []
@@ -10844,6 +11107,7 @@ def _build_multimodal_geant4_parity_report(
             "regressed_can_run": regressed_can_run,
         },
         "issue_code_delta": issue_code_delta,
+        "issue_code_family_correlations": issue_code_family_correlations,
         "operation_groups": operation_groups,
         "high_signal_mismatches": high_signal_mismatches,
     }

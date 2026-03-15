@@ -1,4 +1,4 @@
-# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 8)
+# AI Multimodal Artifact Intake + Extraction/Planning/Execution Contract (Checkpoint 9)
 
 Schema versions:
 - Checkpoint 1 artifact store: `2026-03-14.multimodal-intake.checkpoint1`
@@ -9,6 +9,7 @@ Schema versions:
 - Checkpoint 6 execution-outcome normalization + per-operation failure taxonomy: `2026-03-14.multimodal-intake.checkpoint6`
 - Checkpoint 7 preflight-invariant cross-check + mismatch diagnostics for multimodal execution: `2026-03-14.multimodal-intake.checkpoint7`
 - Checkpoint 8 Geant4-facing parity report for multimodal-applied mutations: `2026-03-14.multimodal-intake.checkpoint8`
+- Checkpoint 9 parity-report preflight issue-code ↔ operation-family correlation hints: `2026-03-15.multimodal-intake.checkpoint9`
 
 Checkpoint 1 introduced deterministic PDF/image artifact intake.
 Checkpoint 2 added deterministic extraction schema validation (`regions`, `dimensions`, `symbols`) and machine-readable review-envelope primitives.
@@ -18,6 +19,7 @@ Checkpoint 5 bridges planning-envelope operation candidates into executable AI g
 Checkpoint 6 adds deterministic per-operation execution outcomes (`applied|failed|not_executed`) with stable status codes for invalid logical-volume targets and invalid material application.
 Checkpoint 7 adds deterministic preflight invariant cross-checks (`baseline` vs `candidate` summaries) and mismatch diagnostics so multimodal execution outcomes can be audited for Geant4-facing compatibility confidence.
 Checkpoint 8 adds deterministic Geant4-facing parity reporting with operation-group rollups, compatibility-confidence scoring, and high-signal mismatch↔operation-group highlighting.
+Checkpoint 9 adds deterministic preflight issue-code family correlation hints (`dimension_hints`, `material_updates`, `other_mutations`) so parity-report deltas can be triaged faster.
 
 ## Checkpoint 1: Artifact Intake Endpoints
 
@@ -366,7 +368,7 @@ Success response shape:
 ```json
 {
   "success": true,
-  "schema_version": "2026-03-14.multimodal-intake.checkpoint8",
+  "schema_version": "2026-03-15.multimodal-intake.checkpoint9",
   "planning_envelope": {"status": "ready"},
   "execution_plan": {"status": "ready"},
   "execution": {
@@ -414,6 +416,12 @@ Success response shape:
       "summary": {
         "high_signal_mismatch_classes": [],
         "affected_operation_group_count": 0
+      },
+      "issue_code_family_correlations": {
+        "summary": {
+          "changed_issue_code_count": 0
+        },
+        "entries": []
       }
     },
     "batch_result": {"success": true}
@@ -445,6 +453,12 @@ Checkpoint 8 Geant4-facing parity-report contract (`execution.parity_report`):
 - deterministic compatibility-confidence payload (`label`, `score`, `reason_codes`) derived from execution outcome + preflight cross-check status
 - high-signal mismatch highlighting that maps warning/error mismatch classes to affected operation groups
 - deterministic issue-code delta summary (`added/increased/resolved/reduced`) to support parity diagnostics triage
+
+Checkpoint 9 preflight issue-code family correlation hints (`execution.parity_report.issue_code_family_correlations`):
+- deterministic per-issue-code correlation entries with `change_kind`, signed `delta`, confidence, and reason codes
+- deterministic mapping to likely operation families (`dimension_hints`, `material_updates`, `other_mutations`)
+- explicit overlap hints with operation families that were observed in this execution
+- summary counters for changed issue-code volume, overlap coverage, and confidence distribution
 
 Representative geometry-flow examples:
 - Success path request: `examples/multimodal/planning_execute_request.json`
