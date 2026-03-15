@@ -7,6 +7,28 @@
 
 ## Recently Completed
 
+- **Scoped-geometry checkpoint completed: replica inspector fields are now editable via expression-backed controls** (2026-03-15)
+  - Replaced read-only replica inspector values for logical volumes (`number`, `width`, `offset`) with expression input controls in `static/uiManager.js`.
+  - Added deterministic replica inspector binding helpers in `static/replicaInspectorBindings.js`:
+    - `getReplicaInspectorEditableFieldSpecs(...)` for stable field rendering metadata.
+    - `buildReplicaInspectorPropertyUpdateArgs(...)` to lock update payload shape (`logical_volume`, `content.<field>` paths only).
+  - Inspector edits now route through existing property-update flow (`callbacks.onInspectorPropertyChanged` → `/update_property`) with explicit nested paths:
+    - `content.number`
+    - `content.width`
+    - `content.offset`
+  - Added focused JS regression coverage in `tests/js/replica_inspector_bindings.test.mjs` for:
+    - field rendering spec stability + fallback defaults
+    - update payload shape + unsupported nested-path rejection
+    - expression value coercion contract
+  - Checks run:
+    - `node --check static/replicaInspectorBindings.js`
+    - `node --check static/uiManager.js`
+    - `node --test tests/js/replica_inspector_bindings.test.mjs tests/js/backend_diagnostics_panels.test.mjs` (9 passed)
+    - `pytest -q tests/test_update_property_api.py` (4 passed)
+  - Checkpoint finished:
+    - ✔ replica procedural parameters can now be edited directly from the inspector without opening LV modals
+    - ✔ inspector update-path contract is deterministic and regression-tested for nested replica fields
+
 - **Reliability checkpoint completed: `/update_property` route now honors ProjectManager failure tuples** (2026-03-15)
   - Fixed a backend route contract bug in `app.py`:
     - `/update_property` now correctly unpacks `ProjectManager.update_object_property(...)` tuple results (`(success, error_message)`) instead of relying on tuple truthiness.
@@ -985,21 +1007,20 @@
 
 ## Next Candidates
 
-1. **Scoped-geometry workflow: make replica inspector fields editable with expression-aware inputs**
-   - Replace read-only replica fields (`number`, `width`, `offset`) with expression-backed controls in `static/uiManager.js`.
-   - Route edits through `/update_property` so users/AI can iterate replica rules from the inspector without modal detours.
-   - Add focused regression coverage for inspector rendering + update-path payload shape.
-   - Impact: high (directly improves scoped editing throughput for procedural geometry).
-
-2. **Reliability hardening: `/update_property` validation matrix for nested property paths**
+1. **Reliability hardening: `/update_property` validation matrix for nested property paths**
    - Add API tests for missing/intermediate path segments, malformed payloads, and unsupported object types.
    - Ensure deterministic 4xx/5xx status mapping so client error handling is reproducible.
    - Impact: medium-high (reduces silent data integrity failures during manual/AI edits).
 
-3. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
+2. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
    - Add a representative fixture where procedural geometry edits intentionally trigger topology + overlap warnings.
    - Lock parity-report mismatch-class reporting against expected operation-family buckets.
    - Impact: medium-high (strengthens Geant4-facing diagnostics confidence for procedural workflows).
+
+3. **Scoped-geometry follow-on: extend inspector editing parity to division volumes**
+   - Add expression-backed inspector controls for division `number/width/offset` (matching the new replica workflow).
+   - Route updates through deterministic nested property paths and add binding-contract regression tests.
+   - Impact: medium-high (keeps procedural editing ergonomics consistent across replica/division content types).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 

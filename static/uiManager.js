@@ -11,6 +11,10 @@ import {
     buildBackendStatusChip,
     applyBackendStatusChip,
 } from './backendDiagnosticsUi.js';
+import {
+    getReplicaInspectorEditableFieldSpecs,
+    buildReplicaInspectorPropertyUpdateArgs,
+} from './replicaInspectorBindings.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -958,6 +962,33 @@ function buildInspectorTransformEditor(parent, type, label, pvData, defines, pro
     parent.appendChild(group);
 }
 
+function toDomSafeToken(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return 'item';
+    return raw.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function createEditableExpressionProperty(parent, { inputId, labelText, initialValue, propertyPath, onChange }) {
+    const propDiv = document.createElement('div');
+    propDiv.className = 'property_item editable';
+    propDiv.dataset.propertyPath = propertyPath;
+
+    const component = ExpressionInput.create(
+        inputId,
+        labelText,
+        initialValue,
+        (newValue) => onChange(newValue)
+    );
+
+    const inputEl = component.querySelector('.expression-input');
+    if (inputEl) {
+        inputEl.dataset.propertyPath = propertyPath;
+    }
+
+    propDiv.appendChild(component);
+    parent.appendChild(propDiv);
+}
+
 // --- Inspector Panel Management ---
 export async function populateInspector(itemContext, projectState) {
     if (!inspectorContentDiv) return;
@@ -1023,10 +1054,33 @@ export async function populateInspector(itemContext, projectState) {
             const replica = data.content;
             createReadOnlyProperty(inspectorContentDiv, "Solid (Envelope):", data.solid_ref);
             createReadOnlyProperty(inspectorContentDiv, "Replicated LV:", replica.volume_ref);
-            // TODO: Create editable expression inputs for these
-            createReadOnlyProperty(inspectorContentDiv, "Number:", replica.number);
-            createReadOnlyProperty(inspectorContentDiv, "Width:", replica.width);
-            createReadOnlyProperty(inspectorContentDiv, "Offset:", replica.offset);
+
+            const editableReplicaFields = getReplicaInspectorEditableFieldSpecs(replica);
+            const lvIdForUpdate = id || name;
+            const inputIdPrefix = `inspector_replica_${toDomSafeToken(lvIdForUpdate)}`;
+
+            editableReplicaFields.forEach((field) => {
+                createEditableExpressionProperty(inspectorContentDiv, {
+                    inputId: `${inputIdPrefix}_${field.key}`,
+                    labelText: field.label,
+                    initialValue: field.value,
+                    propertyPath: field.propertyPath,
+                    onChange: (newExpressionValue) => {
+                        const update = buildReplicaInspectorPropertyUpdateArgs(
+                            lvIdForUpdate,
+                            field.propertyPath,
+                            newExpressionValue
+                        );
+                        callbacks.onInspectorPropertyChanged(
+                            update.objectType,
+                            update.objectId,
+                            update.propertyPath,
+                            update.newValue
+                        );
+                    }
+                });
+            });
+
             const dir = replica.direction;
             createReadOnlyProperty(inspectorContentDiv, "Direction:", `(x: ${dir.x}, y: ${dir.y}, z: ${dir.z})`);
         }
