@@ -1,6 +1,6 @@
 {
   "success": true,
-  "schema_version": "2026-03-14.multimodal-intake.checkpoint8",
+  "schema_version": "2026-03-15.multimodal-intake.checkpoint9",
   "execution": {
     "status": "success",
     "summary": {
@@ -41,6 +41,71 @@
         "affected_operation_group_count": 2,
         "issue_count_delta": 2,
         "regressed_can_run": true
+      },
+      "issue_code_delta": {
+        "added_issue_codes": [
+          "placement_hierarchy_cycle",
+          "unknown_world_volume_reference"
+        ],
+        "increased_issue_codes": [],
+        "resolved_issue_codes": [],
+        "reduced_issue_codes": []
+      },
+      "issue_code_family_correlations": {
+        "summary": {
+          "changed_issue_code_count": 2,
+          "with_observed_overlap_count": 0,
+          "without_observed_overlap_count": 2,
+          "confidence_counts": {
+            "high": 0,
+            "medium": 2,
+            "low": 0
+          }
+        },
+        "entries": [
+          {
+            "issue_code": "placement_hierarchy_cycle",
+            "change_kind": "added",
+            "delta": 1,
+            "confidence": "medium",
+            "reason_codes": [
+              "exact_issue_code_family_match",
+              "no_overlap_with_executed_operation_groups"
+            ],
+            "likely_operation_family_ids": [
+              "other_mutations"
+            ],
+            "likely_operation_families": [
+              {
+                "group_id": "other_mutations",
+                "label": "Other mutation operations",
+                "observed_in_execution": false
+              }
+            ],
+            "observed_overlap_operation_family_ids": []
+          },
+          {
+            "issue_code": "unknown_world_volume_reference",
+            "change_kind": "added",
+            "delta": 1,
+            "confidence": "medium",
+            "reason_codes": [
+              "exact_issue_code_family_match",
+              "no_overlap_with_executed_operation_groups"
+            ],
+            "likely_operation_family_ids": [
+              "other_mutations"
+            ],
+            "likely_operation_families": [
+              {
+                "group_id": "other_mutations",
+                "label": "Other mutation operations",
+                "observed_in_execution": false
+              }
+            ],
+            "observed_overlap_operation_family_ids": []
+          }
+        ]
       },
       "operation_groups": [
         {

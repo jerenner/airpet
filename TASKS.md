@@ -2,19 +2,42 @@
 
 ## In Progress
 
-- **Multimodal parity follow-on: preflight code-family correlation hints in parity report (Checkpoint 1/2)**
-  - Objective: map changed preflight issue codes to likely operation families (`dimension_hints`, `material_updates`, `other_mutations`) for faster Geant4-facing triage.
+- **Multimodal parity follow-on: expand issue-code family-correlation regression matrix (Checkpoint 2/2)**
+  - Objective: harden parity-report triage confidence by testing broader preflight code-delta transitions against deterministic family-hint contracts.
   - Checkpoint plan (multi-heartbeat):
-    - **1/2** add deterministic issue-family correlation mapping into `execution.parity_report` payloads.
-    - **2/2** add regression tests + representative examples/docs for correlation behavior.
-  - Current checkpoint: **1/2** design and wire deterministic correlation rules with stable route-level contract fields.
-  - Next checkpoint: expand multimodal parity regression matrix and examples.
+    - ✅ **1/2** deterministic issue-family correlation mapping wired into `execution.parity_report`.
+    - **2/2** expand regression matrix + examples/docs for representative added/increased/resolved/reduced transitions.
+  - Current checkpoint: **2/2** add broader route-level regression coverage for mixed code-delta transitions and overlap/no-overlap correlation behaviors.
+  - Next checkpoint: add representative parity example artifacts for resolved/reduced issue-code transitions.
   - Definition of done for current checkpoint:
-    - parity report includes deterministic preflight-code-family correlation hints
-    - correlation output is stable across success/partial-failure envelopes
-    - docs/task notes capture operator-facing interpretation guidance
+    - regression suite covers representative `added|increased|resolved|reduced` issue-code transitions
+    - tests lock confidence + overlap behavior for family hints (`dimension_hints`, `material_updates`, `other_mutations`)
+    - docs/examples include at least one non-added transition case
 
 ## Recently Completed
+
+- **Multimodal parity follow-on Checkpoint 1/2 completed: deterministic preflight issue-code ↔ operation-family correlation hints** (2026-03-15)
+  - Upgraded multimodal planning execution route schema to `2026-03-15.multimodal-intake.checkpoint9`.
+  - Added deterministic parity-report correlation contract in `app.py`:
+    - `execution.parity_report.issue_code_family_correlations.summary`
+    - `execution.parity_report.issue_code_family_correlations.entries[]`
+  - Correlation entries now include stable triage fields:
+    - `issue_code`, `change_kind`, signed `delta`
+    - `confidence`, `reason_codes`
+    - `likely_operation_family_ids`, `likely_operation_families`, `observed_overlap_operation_family_ids`
+  - Added deterministic family-hint taxonomy and fallback behavior for preflight code deltas:
+    - `material_updates`, `dimension_hints`, `other_mutations`
+    - explicit issue-code mappings + keyword fallback + overlap-aware confidence adjustments
+  - Added/updated route-level regression assertions in `tests/test_ai_multimodal_extraction_api.py` to lock:
+    - zero-delta stable correlation summaries for success + partial-failure execution paths
+    - mismatch-error path correlation entries for added topology/reference issue codes (`placement_hierarchy_cycle`, `unknown_world_volume_reference`)
+  - Updated operator docs/examples:
+    - `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md` (checkpoint9 contract + field semantics)
+    - `examples/multimodal/planning_execute_response_parity_mismatch.json` (checkpoint9 response with correlation payload)
+  - Checks run:
+    - `python3 -m py_compile app.py`
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py` (12 passed)
+
 
 - **Spike A Next Checkpoint 2/2 completed: deterministic remediation copy + regression contracts + docs/examples** (2026-03-15)
   - Finalized deterministic local-backend remediation payloads in `app.py` for `/api/ai/chat` local-selector failure paths:
