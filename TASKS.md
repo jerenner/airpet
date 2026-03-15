@@ -7,6 +7,22 @@
 
 ## Recently Completed
 
+- **Reliability checkpoint completed: `/update_property` route now honors ProjectManager failure tuples** (2026-03-15)
+  - Fixed a backend route contract bug in `app.py`:
+    - `/update_property` now correctly unpacks `ProjectManager.update_object_property(...)` tuple results (`(success, error_message)`) instead of relying on tuple truthiness.
+    - failure responses now propagate the specific backend error message when available.
+    - compatibility preserved for legacy bool returns (`True|False`) from older codepaths.
+  - Added route-level regression tests in `tests/test_update_property_api.py` to pin:
+    - tuple failure contract returns HTTP 500 and preserves backend error text.
+    - success contract parity for both bool and tuple success returns.
+    - bool failure fallback returns deterministic generic error text.
+  - Checks run:
+    - `python3 -m py_compile app.py`
+    - `pytest -q tests/test_update_property_api.py` (4 passed)
+  - Checkpoint finished:
+    - ✔ invalid property updates can no longer silently report success due to tuple truthiness
+    - ✔ deterministic failure diagnostics now surface to the UI/client layer
+
 - **AI UX hardening checkpoint completed: lightweight backend diagnostics DOM smoke harness** (2026-03-15)
   - Added a shared frontend diagnostics helper module: `static/backendDiagnosticsUi.js`.
     - Centralizes selector-badge copy, backend status-chip descriptors, tooltip formatting, and chat-remediation formatting.
@@ -969,10 +985,21 @@
 
 ## Next Candidates
 
-1. **Multimodal parity follow-on: preflight code-family correlation hints in parity report**
-   - Add deterministic mapping from changed preflight issue codes to likely operation families (dimension/material/topology).
-   - Expand parity-report regression tests for representative Geant4-facing issue-family transitions.
-   - Impact: medium-high (improves root-cause diagnostics after multimodal execution).
+1. **Scoped-geometry workflow: make replica inspector fields editable with expression-aware inputs**
+   - Replace read-only replica fields (`number`, `width`, `offset`) with expression-backed controls in `static/uiManager.js`.
+   - Route edits through `/update_property` so users/AI can iterate replica rules from the inspector without modal detours.
+   - Add focused regression coverage for inspector rendering + update-path payload shape.
+   - Impact: high (directly improves scoped editing throughput for procedural geometry).
+
+2. **Reliability hardening: `/update_property` validation matrix for nested property paths**
+   - Add API tests for missing/intermediate path segments, malformed payloads, and unsupported object types.
+   - Ensure deterministic 4xx/5xx status mapping so client error handling is reproducible.
+   - Impact: medium-high (reduces silent data integrity failures during manual/AI edits).
+
+3. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
+   - Add a representative fixture where procedural geometry edits intentionally trigger topology + overlap warnings.
+   - Lock parity-report mismatch-class reporting against expected operation-family buckets.
+   - Impact: medium-high (strengthens Geant4-facing diagnostics confidence for procedural workflows).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 

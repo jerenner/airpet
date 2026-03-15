@@ -6073,11 +6073,22 @@ def update_property_route():
     if not all([obj_type, obj_id, prop_path]):
         return jsonify({"error": "Missing data for property update"}), 400
 
-    success = pm.update_object_property(obj_type, obj_id, prop_path, new_value)
+    update_result = pm.update_object_property(obj_type, obj_id, prop_path, new_value)
+    update_error = None
+
+    # Compatibility: older codepaths may still return a bare bool while
+    # ProjectManager currently returns (success, error_message).
+    if isinstance(update_result, tuple):
+        success = bool(update_result[0])
+        if len(update_result) > 1:
+            update_error = update_result[1]
+    else:
+        success = bool(update_result)
+
     if success:
         return create_success_response(pm, "Property updated.")
-    else:
-        return jsonify({"success": False, "error": "Failed to update property"}), 500
+
+    return jsonify({"success": False, "error": update_error or "Failed to update property"}), 500
 
 @app.route('/add_material', methods=['POST'])
 def add_material_route():
