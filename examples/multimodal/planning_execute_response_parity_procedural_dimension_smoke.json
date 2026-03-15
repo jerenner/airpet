@@ -1,0 +1,117 @@
+{
+  "success": true,
+  "schema_version": "2026-03-15.multimodal-intake.checkpoint9",
+  "execution": {
+    "status": "success",
+    "summary": {
+      "attempted_operation_count": 2,
+      "applied_operation_count": 2,
+      "failed_operation_count": 0
+    },
+    "preflight_crosscheck": {
+      "status": "mismatch_error",
+      "mismatch_classes": [
+        "preflight_issue_count_regressed_after_success"
+      ],
+      "invariants": {
+        "issue_count_delta": 3,
+        "regressed_can_run": false
+      },
+      "diagnostics": [
+        {
+          "code": "preflight_issue_count_regressed_after_success",
+          "severity": "error",
+          "message": "Execution reported success but preflight issue count increased."
+        }
+      ]
+    },
+    "parity_report": {
+      "status": "mismatch_error",
+      "preflight_crosscheck_status": "mismatch_error",
+      "geant4_compatibility_confidence": {
+        "label": "low",
+        "score": 25,
+        "reason_codes": [
+          "preflight_mismatch_error",
+          "execution_status_success",
+          "preflight_issue_count_regressed_after_success"
+        ]
+      },
+      "summary": {
+        "high_signal_mismatch_classes": [
+          "preflight_issue_count_regressed_after_success"
+        ],
+        "affected_operation_group_count": 1
+      },
+      "issue_code_delta": {
+        "added_issue_codes": [
+          "invalid_division_axis",
+          "possible_overlap_aabb"
+        ],
+        "increased_issue_codes": [
+          "invalid_replica_width"
+        ],
+        "resolved_issue_codes": [],
+        "reduced_issue_codes": []
+      },
+      "operation_groups": [
+        {
+          "group_id": "dimension_hints",
+          "operation_count": 2,
+          "applied_operation_count": 2,
+          "failed_operation_count": 0
+        }
+      ],
+      "issue_code_family_correlations": {
+        "summary": {
+          "changed_issue_code_count": 3,
+          "with_observed_overlap_count": 3,
+          "without_observed_overlap_count": 0,
+          "confidence_counts": {
+            "high": 3,
+            "medium": 0,
+            "low": 0
+          }
+        },
+        "entries": [
+          {
+            "issue_code": "invalid_division_axis",
+            "change_kind": "added",
+            "delta": 1,
+            "confidence": "high",
+            "likely_operation_family_ids": [
+              "dimension_hints"
+            ],
+            "observed_overlap_operation_family_ids": [
+              "dimension_hints"
+            ]
+          },
+          {
+            "issue_code": "possible_overlap_aabb",
+            "change_kind": "added",
+            "delta": 1,
+            "confidence": "high",
+            "likely_operation_family_ids": [
+              "dimension_hints"
+            ],
+            "observed_overlap_operation_family_ids": [
+              "dimension_hints"
+            ]
+          },
+          {
+            "issue_code": "invalid_replica_width",
+            "change_kind": "increased",
+            "delta": 1,
+            "confidence": "high",
+            "likely_operation_family_ids": [
+              "dimension_hints"
+            ],
+            "observed_overlap_operation_family_ids": [
+              "dimension_hints"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

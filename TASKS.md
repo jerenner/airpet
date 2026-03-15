@@ -7,6 +7,24 @@
 
 ## Recently Completed
 
+- **Geant4 confidence checkpoint completed: procedural replica/division parity smoke fixture + mismatch-bucket coverage** (2026-03-15)
+  - Added a high-signal multimodal parity smoke regression in `tests/test_ai_multimodal_extraction_api.py`:
+    - `test_artifact_planning_execute_route_geant4_parity_smoke_for_procedural_dimension_deltas`
+    - drives a dimension-only execution path, then compares baseline/candidate preflight summaries with procedural deltas (`invalid_replica_width`, `invalid_division_axis`, `possible_overlap_aabb`)
+  - Locked deterministic mismatch + bucket expectations for Geant4-facing parity diagnostics:
+    - preflight mismatch class: `preflight_issue_count_regressed_after_success`
+    - high-signal affected operation-group routing constrained to `dimension_hints`
+    - issue-code family correlation overlap/confidence matrix pinned for procedural dimension deltas
+  - Added representative example payload artifact:
+    - `examples/multimodal/planning_execute_response_parity_procedural_dimension_smoke.json`
+  - Updated docs:
+    - `docs/AI_MULTIMODAL_ARTIFACT_INTAKE.md` now references the procedural smoke example under representative geometry-flow parity responses
+  - Checks run:
+    - `pytest -q tests/test_ai_multimodal_extraction_api.py -k "procedural_dimension_deltas or parity_family_correlations_cover_mixed_issue_code_transitions or emits_preflight_mismatch_classes_when_success_regresses_preflight"`
+  - Checkpoint finished:
+    - ✔ Geant4-facing parity diagnostics now include a deterministic smoke fixture for replica/division-style procedural regressions
+    - ✔ mismatch-class → operation-family bucket mapping is now pinned for a dimension-only mutation execution path
+
 - **Reliability hardening checkpoint completed: `/update_property` payload validation matrix + deterministic 4xx/5xx failure mapping** (2026-03-15)
   - Hardened request validation in `app.py` before invoking `ProjectManager.update_object_property(...)`:
     - rejects malformed/non-object JSON payloads with deterministic 400 responses
@@ -1050,15 +1068,15 @@
 
 ## Next Candidates
 
-1. **Geant4 confidence lane: parity smoke fixture for replica/division mutation preflight deltas**
-   - Add a representative fixture where procedural geometry edits intentionally trigger topology + overlap warnings.
-   - Lock parity-report mismatch-class reporting against expected operation-family buckets.
-   - Impact: medium-high (strengthens Geant4-facing diagnostics confidence for procedural workflows).
-
-2. **Reliability follow-on: centralize nested-property path validation in `ProjectManager.update_object_property(...)`**
+1. **Reliability follow-on: centralize nested-property path validation in `ProjectManager.update_object_property(...)`**
    - Mirror route-level path-segment validation at the mutation core so non-route callers (scripts/future APIs) get the same deterministic guardrails.
    - Add unit-level coverage for intermediate-path traversal failures (dict/object chains) and invalid nested segments.
    - Impact: medium (keeps mutation safety invariant consistent across entrypoints).
+
+2. **Geant4 confidence follow-on: partial-failure procedural parity-warning matrix**
+   - Add a complementary parity smoke fixture where procedural dimension mutations yield `partial_failure` plus increased preflight issues.
+   - Lock `preflight_issue_count_regressed_under_partial_failure` warning semantics and affected-operation-group bucketing (`dimension_hints` vs mixed-group fallbacks).
+   - Impact: medium-high (completes warning-tier coverage next to the new mismatch-error procedural smoke fixture).
 
 ### Reserve Backlog (only when needed for concrete bug/regression)
 
