@@ -3256,6 +3256,92 @@ def test_preflight_run_selector_routes_and_ai_wrappers_share_malformed_id_valida
 
 
 
+def test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes(pm, tmp_path):
+    fixture = _seed_preflight_snapshot_route_ai_parity_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "name": "compare_autosave_vs_saved_version_rejects_nested_path_saved_version_id",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": "nested/run/id",
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": "nested/run/id",
+            },
+            "error_substrings": ["invalid version_id", "nested/run/id"],
+        },
+        {
+            "name": "compare_autosave_vs_saved_version_rejects_dot_segment_alias",
+            "route": "/api/preflight/compare_autosave_vs_saved_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "saved_version_id": None,
+                "saved_version": "..",
+            },
+            "tool": "compare_autosave_preflight_vs_saved_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "saved_version_id": None,
+                "saved_version": "..",
+            },
+            "error_substrings": ["invalid version_id", "'..'"],
+        },
+        {
+            "name": "compare_autosave_vs_snapshot_version_rejects_path_traversal_snapshot_id",
+            "route": "/api/preflight/compare_autosave_vs_snapshot_version",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "autosave_snapshot_version_id": "../20260318_autosave_snapshot_escape",
+            },
+            "tool": "compare_autosave_preflight_vs_snapshot_version",
+            "ai_args": {
+                "project": pm.project_name,
+                "autosave_snapshot_version_id": "../20260318_autosave_snapshot_escape",
+            },
+            "error_substrings": ["invalid version_id", "20260318_autosave_snapshot_escape"],
+        },
+        {
+            "name": "compare_snapshot_versions_rejects_nested_path_baseline_snapshot_alias",
+            "route": "/api/preflight/compare_snapshot_versions",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_snapshot_version": "nested/20260318_autosave_snapshot_baseline",
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+            },
+            "tool": "compare_autosave_snapshot_preflight_versions",
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_snapshot_version_id": None,
+                "baseline_snapshot_version": "nested/20260318_autosave_snapshot_baseline",
+                "candidate_snapshot_version_id": fixture["candidate_snapshot_version_id"],
+            },
+            "error_substrings": ["invalid version_id", "nested/20260318_autosave_snapshot_baseline"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 400, case["name"]
+        assert route_data == ai_data, case["name"]
+        _assert_compare_ai_error_payload_excludes_success_metadata(route_data)
+
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring.lower() in error_lower, case["name"]
+
+
+
 def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_null_canonical_alias_selector_parity_project"

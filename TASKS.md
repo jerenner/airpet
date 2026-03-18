@@ -3,9 +3,27 @@
 ## In Progress
 
 - _None currently._
-  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently snapshot/saved explicit-selector malformed-id validation parity).
+  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently selector-id sanitization helper consolidation).
 
 ## Recently Completed
+
+- **Reliability/security checkpoint completed: explicit snapshot/saved selector malformed-id guardrails + parity matrix (route ↔ AI wrappers)** (2026-03-18)
+  - Hardened explicit saved/snapshot selector id validation in `app.py`:
+    - `_resolve_saved_version_json_path(...)` now rejects path-like version ids deterministically (`.`, `..`, and any `/` or `\\` path separators) before filesystem lookup.
+    - keeps existing non-empty-string validation and route/AI alias-precedence semantics unchanged.
+  - Added route↔AI malformed-id parity regression coverage in `tests/test_ai_api.py`:
+    - `test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes`
+    - locks deterministic 400 parity + metadata-clean error envelopes for malformed explicit selector ids across:
+      - `compare_autosave_vs_saved_version` (nested path + dot-segment alias)
+      - `compare_autosave_vs_snapshot_version` (path traversal snapshot selector)
+      - `compare_snapshot_versions` (nested baseline snapshot selector alias)
+  - Checks run:
+    - `python -m py_compile app.py tests/test_ai_api.py`
+    - `pytest -q tests/test_ai_api.py -k "run_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes or snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes"` (2 passed)
+    - `pytest -q tests/test_ai_api.py` (121 passed)
+  - Checkpoint finished:
+    - ✔ explicit saved/snapshot selector APIs now fail fast on path-like malformed ids with deterministic 400 validation errors
+    - ✔ route and AI wrapper failure contracts are parity-locked for malformed explicit selector inputs
 
 - **Reliability/security checkpoint completed: run-linked selector malformed-id validation parity matrix (route ↔ AI wrappers)** (2026-03-18)
   - Hardened run-linked selector id normalization in `app.py`:
@@ -1146,12 +1164,13 @@
 
 ## Next Candidates
 
-1. **Reliability/security hardening: snapshot/saved explicit-selector malformed-id validation parity matrix (route ↔ AI wrappers)**
-   - Extend malformed-id parity coverage for explicit `saved_version_id` / snapshot id selectors across route + AI surfaces.
-   - Lock metadata-clean failure envelopes and route-vs-AI wording/status equivalence.
-   - Impact: medium-high (completes hostile-input guardrails for remaining explicit selector families).
-
-2. **Reliability hardening: consolidate selector-id sanitization into shared helper(s)**
+1. **Reliability hardening: consolidate selector-id sanitization into shared helper(s)**
    - Extract shared deterministic id-sanitization helpers for run-linked and explicit selector ids to reduce drift between validation paths.
+   - Update route + AI wrapper call sites to use shared helpers without changing canonical/alias precedence semantics.
    - Add focused regression checks that pin helper behavior for empty/null/alias/path-like inputs.
    - Impact: medium (reduces future contract skew as selector surfaces expand).
+
+2. **Reliability/security follow-on: explicit selector malformed-id matrix for Windows-style separators + mixed alias forms**
+   - Extend malformed-id parity coverage for `\\` path separators and mixed canonical-null/alias fallback payloads on explicit saved/snapshot selectors.
+   - Lock deterministic 400 parity and metadata-clean envelopes for these cross-platform hostile-input forms.
+   - Impact: medium (tightens cross-platform selector validation confidence).

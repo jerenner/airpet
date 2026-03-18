@@ -1701,6 +1701,15 @@ def _resolve_saved_version_json_path(pm: ProjectManager, project_name: str, vers
     if not version_id_norm:
         raise ValueError("version_id must be a non-empty string.")
 
+    # Saved/snapshot selectors are directory-name ids under `<project>/versions`.
+    # Keep selectors as a single path segment and reject path-like forms
+    # deterministically so malformed hostile ids fail as validation errors.
+    if version_id_norm in {'.', '..'}:
+        raise ValueError(f"Invalid version_id '{version_id_norm}'.")
+
+    if '/' in version_id_norm or '\\' in version_id_norm:
+        raise ValueError(f"Invalid version_id '{version_id_norm}'.")
+
     versions_root = os.path.realpath(os.path.join(pm.projects_dir, project_name_norm, 'versions'))
     candidate_path = os.path.realpath(os.path.join(versions_root, version_id_norm, 'version.json'))
 
