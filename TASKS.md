@@ -2,24 +2,29 @@
 
 ## In Progress
 
-- **Reliability follow-on (multi-heartbeat): broaden shared selector-id helper adoption across remaining single-segment selector surfaces** (started 2026-03-18)
-  - Overall objective:
-    - finish consolidating explicit preflight version selector normalization on `_normalize_single_segment_selector_id(...)` without changing route↔AI alias precedence contracts.
-  - Checkpoint plan:
-    1. ✅ Normalize explicit saved/snapshot selector call sites in compare helpers (`compare_autosave_preflight_vs_saved_version`, `compare_autosave_preflight_vs_snapshot_version`, `compare_autosave_snapshot_preflight_versions`) via a shared preflight-version selector wrapper.
-    2. ✅ Add focused selector-sanitization regression coverage for path-like explicit selector ids across those compare helper surfaces.
-    3. ⏭ Audit any remaining single-segment id-like selector surfaces outside these compare helpers and decide whether helper adoption is semantically safe.
-  - Current checkpoint status:
-    - Checkpoints 1/3 and 2/3 completed in this heartbeat.
-  - Next checkpoint (next heartbeat):
-    - Execute checkpoint 3/3 audit and either land additional helper adoption + parity tests or record explicit non-adoption rationale.
-  - Definition of done for the next checkpoint:
-    - no remaining safe/obvious single-segment selector surfaces are left unconsolidated without rationale.
-    - route↔AI parity and canonical/alias precedence behavior remains unchanged on covered surfaces.
-  - Risks/blockers:
-    - low; need to avoid broadening helper usage into selector fields that intentionally accept non-single-segment semantics.
+- **No active coding checkpoint (ready for next heartbeat task selection).**
+  - Last multi-heartbeat reliability follow-on (selector-id helper consolidation) is now complete.
+  - Next heartbeat should pick a product-forward checkpoint (feature/architecture) unless a live regression appears.
 
 ## Recently Completed
+
+- **Reliability follow-on Checkpoint 3/3 completed: audited remaining single-segment selector surfaces and finished shared helper consolidation for compare-version selectors** (2026-03-18)
+  - Audited remaining preflight selector surfaces outside explicit autosave/snapshot compare helpers.
+  - Completed helper consolidation in `app.py`:
+    - `_resolve_saved_version_json_path(...)` now normalizes ids via `_normalize_preflight_version_selector_id(...)` (shared wrapper), eliminating the last direct single-segment selector normalization path in preflight version resolution.
+  - Expanded regression coverage for the remaining compare-version selector surface:
+    - `tests/test_selector_id_sanitization.py`
+      - added baseline/candidate malformed-selector matrix for `compare_preflight_versions(...)` (dot segments + slash/backslash path-like ids).
+    - `tests/test_ai_api.py`
+      - expanded `test_preflight_compare_versions_route_and_ai_wrappers_share_invalid_id_validation_error_envelopes` with Windows-separator malformed ids and canonical-null malformed-alias fallback rejection.
+  - Checks run:
+    - `python -m py_compile app.py tests/test_selector_id_sanitization.py tests/test_ai_api.py`
+    - `pytest -q tests/test_selector_id_sanitization.py` (32 passed)
+    - `pytest -q tests/test_ai_api.py -k "preflight_compare_versions_route_and_ai_wrappers_share_invalid_id_validation_error_envelopes or preflight_compare_versions_route_and_ai_wrappers_share_canonical_alias_precedence_payloads or preflight_compare_versions_route_and_ai_wrappers_share_missing_and_stale_error_envelopes"` (3 passed)
+  - Checkpoint finished:
+    - ✔ remaining compare-version selector normalization now routes through the same shared preflight selector helper contract.
+    - ✔ compare-version route↔AI malformed-id parity now explicitly includes Windows-separator and canonical-null malformed-alias scenarios.
+    - ✔ no additional safe/obvious single-segment preflight selector surfaces remain unconsolidated.
 
 - **Reliability follow-on Checkpoints 1/3 + 2/3 completed: shared explicit preflight version-selector normalization + path-like selector sanitization coverage** (2026-03-18)
   - Added shared explicit selector normalization helper in `app.py`:

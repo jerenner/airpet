@@ -1729,9 +1729,8 @@ def _resolve_saved_version_json_path(pm: ProjectManager, project_name: str, vers
     # Saved/snapshot selectors are directory-name ids under `<project>/versions`.
     # Keep selectors as a single path segment and reject path-like forms
     # deterministically so malformed hostile ids fail as validation errors.
-    version_id_norm = _normalize_single_segment_selector_id(
+    version_id_norm = _normalize_preflight_version_selector_id(
         version_id,
-        field_name='version_id',
         required_error="version_id must be a non-empty string.",
     )
 

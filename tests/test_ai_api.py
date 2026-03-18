@@ -2618,6 +2618,36 @@ def test_preflight_compare_versions_route_and_ai_wrappers_share_invalid_id_valid
             },
             "error_substrings": ["invalid version_id", "/tmp/airpet_escape_candidate"],
         },
+        {
+            "name": "windows_separator_baseline_id",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": "nested\\windows_baseline_version_id",
+                "candidate_version_id": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": "nested\\windows_baseline_version_id",
+                "candidate": fixture["candidate_version_id"],
+            },
+            "error_substrings": ["invalid version_id", "nested\\windows_baseline_version_id"],
+        },
+        {
+            "name": "null_canonical_baseline_uses_malformed_alias_and_fails",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "baseline_version_id": None,
+                "baseline_version": "nested\\windows_baseline_alias",
+                "candidate_version_id": fixture["candidate_version_id"],
+            },
+            "ai_args": {
+                "project": pm.project_name,
+                "baseline_version_id": None,
+                "before_version": "nested\\windows_baseline_alias",
+                "candidate_version_id": fixture["candidate_version_id"],
+            },
+            "error_substrings": ["invalid version_id", "nested\\windows_baseline_alias"],
+        },
     ]
 
     for case in cases:
