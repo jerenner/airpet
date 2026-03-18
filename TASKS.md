@@ -3,9 +3,28 @@
 ## In Progress
 
 - _None currently._
-  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently selector-id sanitization helper consolidation).
+  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently Windows-separator + mixed-alias malformed-id parity follow-on).
 
 ## Recently Completed
+
+- **Reliability hardening checkpoint completed: shared single-segment selector-id sanitization helper consolidation (run-linked + explicit selectors)** (2026-03-18)
+  - Consolidated selector id sanitization logic in `app.py`:
+    - added `_normalize_single_segment_selector_id(...)` to normalize non-empty selector ids and reject path-like forms deterministically (`.`, `..`, `/`, `\\`).
+    - refactored `_normalize_simulation_run_id(...)` to reuse the shared helper while preserving existing required-field and error-message semantics.
+    - refactored `_resolve_saved_version_json_path(...)` to reuse the shared helper for explicit/snapshot saved-version selectors before filesystem resolution.
+  - Added focused regression coverage in `tests/test_selector_id_sanitization.py`:
+    - empty/null selector rejection contract
+    - path-like selector rejection contract (dot-segments + slash/backslash forms)
+    - valid alias-style selector acceptance contract
+    - shared-contract behavior for `_normalize_simulation_run_id(...)` and `_resolve_saved_version_json_path(...)`
+  - Checks run:
+    - `python3 -m py_compile app.py tests/test_selector_id_sanitization.py`
+    - `pytest -q tests/test_selector_id_sanitization.py` (16 passed)
+    - `pytest -q tests/test_ai_api.py -k "run_selector_routes_and_ai_wrappers_honor_run_id_aliases_when_canonical_ids_are_null or run_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes or snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes or explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null"` (4 passed)
+  - Checkpoint finished:
+    - ✔ run-linked and explicit selector-id sanitization now shares one deterministic normalization path
+    - ✔ existing route↔AI alias precedence and malformed-id parity contracts remain stable under helper consolidation
+
 
 - **Reliability/security checkpoint completed: explicit snapshot/saved selector malformed-id guardrails + parity matrix (route ↔ AI wrappers)** (2026-03-18)
   - Hardened explicit saved/snapshot selector id validation in `app.py`:
@@ -1164,13 +1183,12 @@
 
 ## Next Candidates
 
-1. **Reliability hardening: consolidate selector-id sanitization into shared helper(s)**
-   - Extract shared deterministic id-sanitization helpers for run-linked and explicit selector ids to reduce drift between validation paths.
-   - Update route + AI wrapper call sites to use shared helpers without changing canonical/alias precedence semantics.
-   - Add focused regression checks that pin helper behavior for empty/null/alias/path-like inputs.
-   - Impact: medium (reduces future contract skew as selector surfaces expand).
-
-2. **Reliability/security follow-on: explicit selector malformed-id matrix for Windows-style separators + mixed alias forms**
+1. **Reliability/security follow-on: explicit selector malformed-id matrix for Windows-style separators + mixed alias forms**
    - Extend malformed-id parity coverage for `\\` path separators and mixed canonical-null/alias fallback payloads on explicit saved/snapshot selectors.
    - Lock deterministic 400 parity and metadata-clean envelopes for these cross-platform hostile-input forms.
    - Impact: medium (tightens cross-platform selector validation confidence).
+
+2. **Reliability follow-on: broaden shared selector-id helper adoption to additional single-segment selector surfaces**
+   - Audit remaining id-like selectors that behave as single path segments and adopt `_normalize_single_segment_selector_id(...)` where semantics match.
+   - Add parity-focused tests to confirm no canonical/alias precedence drift on newly consolidated call sites.
+   - Impact: medium (keeps validation behavior aligned as selector APIs grow).

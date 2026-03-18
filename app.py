@@ -1692,23 +1692,39 @@ def compare_preflight_summaries(baseline_summary: Any, candidate_summary: Any) -
     }
 
 
+def _normalize_single_segment_selector_id(
+    selector_id: Any,
+    *,
+    field_name: str,
+    required_error: str,
+) -> str:
+    """Normalize selector ids that must remain a single non-empty path segment."""
+    selector_id_norm = str(selector_id or '').strip()
+    if not selector_id_norm:
+        raise ValueError(required_error)
+
+    if selector_id_norm in {'.', '..'}:
+        raise ValueError(f"Invalid {field_name} '{selector_id_norm}'.")
+
+    if '/' in selector_id_norm or '\\' in selector_id_norm:
+        raise ValueError(f"Invalid {field_name} '{selector_id_norm}'.")
+
+    return selector_id_norm
+
+
 def _resolve_saved_version_json_path(pm: ProjectManager, project_name: str, version_id: Any) -> tuple[str, str]:
     project_name_norm = str(project_name or '').strip()
     if not project_name_norm:
         raise ValueError("project_name is required to compare saved versions.")
 
-    version_id_norm = str(version_id or '').strip()
-    if not version_id_norm:
-        raise ValueError("version_id must be a non-empty string.")
-
     # Saved/snapshot selectors are directory-name ids under `<project>/versions`.
     # Keep selectors as a single path segment and reject path-like forms
     # deterministically so malformed hostile ids fail as validation errors.
-    if version_id_norm in {'.', '..'}:
-        raise ValueError(f"Invalid version_id '{version_id_norm}'.")
-
-    if '/' in version_id_norm or '\\' in version_id_norm:
-        raise ValueError(f"Invalid version_id '{version_id_norm}'.")
+    version_id_norm = _normalize_single_segment_selector_id(
+        version_id,
+        field_name='version_id',
+        required_error="version_id must be a non-empty string.",
+    )
 
     versions_root = os.path.realpath(os.path.join(pm.projects_dir, project_name_norm, 'versions'))
     candidate_path = os.path.realpath(os.path.join(versions_root, version_id_norm, 'version.json'))
@@ -1974,20 +1990,14 @@ def compare_autosave_preflight_vs_previous_manual_saved(pm: ProjectManager, proj
 
 
 def _normalize_simulation_run_id(simulation_run_id: Any) -> str:
-    simulation_run_id_norm = str(simulation_run_id or '').strip()
-    if not simulation_run_id_norm:
-        raise ValueError("simulation_run_id is required to compare autosave against simulation-linked manual saves.")
-
     # Run ids are treated as directory-name selectors under each saved version's
     # `sim_runs/` folder. Keep the selector as a single id segment and reject
     # path-like inputs deterministically.
-    if simulation_run_id_norm in {'.', '..'}:
-        raise ValueError(f"Invalid simulation_run_id '{simulation_run_id_norm}'.")
-
-    if '/' in simulation_run_id_norm or '\\' in simulation_run_id_norm:
-        raise ValueError(f"Invalid simulation_run_id '{simulation_run_id_norm}'.")
-
-    return simulation_run_id_norm
+    return _normalize_single_segment_selector_id(
+        simulation_run_id,
+        field_name='simulation_run_id',
+        required_error="simulation_run_id is required to compare autosave against simulation-linked manual saves.",
+    )
 
 
 def compare_autosave_preflight_vs_manual_saved_for_simulation_run_index(
