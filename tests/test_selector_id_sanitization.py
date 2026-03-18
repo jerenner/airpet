@@ -9,6 +9,7 @@ from app import (
     compare_autosave_preflight_vs_saved_version,
     compare_autosave_preflight_vs_snapshot_version,
     compare_autosave_snapshot_preflight_versions,
+    compare_preflight_versions,
 )
 from src.expression_evaluator import ExpressionEvaluator
 from src.project_manager import ProjectManager
@@ -81,6 +82,39 @@ def test_resolve_saved_version_json_path_uses_shared_single_segment_contract(tmp
 
     with pytest.raises(ValueError, match=r"Invalid version_id"):
         _resolve_saved_version_json_path(pm, pm.project_name, "nested/run/id")
+
+
+@pytest.mark.parametrize(
+    "selector_field,path_like_version_id",
+    [
+        ("baseline_version_id", "."),
+        ("candidate_version_id", ".."),
+        ("baseline_version_id", "nested/run/id"),
+        ("candidate_version_id", r"nested\\run\\id"),
+    ],
+)
+def test_compare_preflight_versions_rejects_path_like_baseline_or_candidate_version_selectors(
+    selector_field,
+    path_like_version_id,
+    tmp_path,
+):
+    pm = _make_pm(tmp_path)
+
+    baseline_version_id, _ = pm.save_project_version("selector-sanitization-compare-baseline")
+    candidate_version_id, _ = pm.save_project_version("selector-sanitization-compare-candidate")
+
+    compare_kwargs = {
+        "baseline_version_id": baseline_version_id,
+        "candidate_version_id": candidate_version_id,
+    }
+    compare_kwargs[selector_field] = path_like_version_id
+
+    with pytest.raises(ValueError, match=r"Invalid version_id"):
+        compare_preflight_versions(
+            pm,
+            project_name=pm.project_name,
+            **compare_kwargs,
+        )
 
 
 @pytest.mark.parametrize("path_like_version_id", [".", "..", "nested/run/id", r"nested\\run\\id"])
