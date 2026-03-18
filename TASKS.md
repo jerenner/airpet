@@ -3,9 +3,30 @@
 ## In Progress
 
 - _None currently._
-  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently reliability hardening for core nested-property path validation parity).
+  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently run-linked malformed-id validation parity for preflight selectors).
 
 ## Recently Completed
+
+- **Reliability hardening checkpoint completed: centralized nested-property path validation in `ProjectManager.update_object_property(...)`** (2026-03-18)
+  - Added core mutation-path normalization helper in `src/project_manager.py`:
+    - `_normalize_update_property_path_parts(...)` now enforces string/non-empty property paths and rejects malformed nested segments (leading/trailing dots, empty segments).
+    - mirrors route-level path-segment guardrails so non-route callers (scripts/future APIs) get deterministic `Invalid property path ...` failures before mutation traversal.
+  - Hardened core nested traversal failure handling in `update_object_property(...)`:
+    - expanded deterministic invalid-path failure capture across dict/object traversal chains (`AttributeError`, `KeyError`, `TypeError`, `IndexError`).
+    - preserves existing success-path behavior for valid nested updates.
+  - Added direct ProjectManager regression coverage in `tests/test_project_manager_update_property.py`:
+    - malformed nested-segment rejection matrix (`.a`, `a.`, `a..b`, etc.)
+    - non-string/blank property-path rejection
+    - intermediate dict-chain traversal failure contract (`raw_parameters.inner.value`)
+    - intermediate object-chain traversal failure contract (`content.missing_attr.value`)
+    - valid nested dict update success-path parity (`raw_parameters.x`)
+  - Checks run:
+    - `pytest -q tests/test_project_manager_update_property.py tests/test_update_property_api.py` (34 passed)
+    - `python3 -m py_compile src/project_manager.py app.py`
+  - Checkpoint finished:
+    - ✔ nested property-path validation is now enforced at the mutation core, not only at the HTTP route boundary
+    - ✔ direct/non-route mutation callers now receive deterministic malformed-path failures aligned with route guardrails
+
 
 - **Geant4 confidence checkpoint completed: failed-only parity-warning smoke fixture + failed-group routing coverage** (2026-03-18)
   - Added a failed-outcome multimodal parity smoke regression in `tests/test_ai_multimodal_extraction_api.py`:
@@ -1106,15 +1127,12 @@
 
 ## Next Candidates
 
-1. **Reliability follow-on: centralize nested-property path validation in `ProjectManager.update_object_property(...)`**
-   - Mirror route-level path-segment validation at the mutation core so non-route callers (scripts/future APIs) get the same deterministic guardrails.
-   - Add unit-level coverage for intermediate-path traversal failures (dict/object chains) and invalid nested segments.
-   - Impact: medium (keeps mutation safety invariant consistent across entrypoints).
+1. **Reliability/security hardening: run-linked selector malformed-id validation parity matrix (route ↔ AI wrappers)**
+   - Add table-driven hostile/malformed-id input coverage for simulation-run selector routes and AI wrappers.
+   - Lock deterministic 400 envelopes + wording parity for empty/whitespace/path-traversal/absolute-path run-id forms.
+   - Impact: medium-high (prevents selector-validation drift and hardens deterministic automation behavior).
 
-### Reserve Backlog (only when needed for concrete bug/regression)
-
-- **Run-linked selector malformed-id validation parity matrix**
-  - Keep as reserve hardening: route + AI parity for hostile/malformed simulation-run selector ids.
-
-- **Snapshot/saved explicit-selector malformed-id validation parity matrix**
-  - Keep as reserve hardening: route + AI parity for hostile/malformed explicit snapshot/saved selector ids.
+2. **Reliability/security hardening: snapshot/saved explicit-selector malformed-id validation parity matrix (route ↔ AI wrappers)**
+   - Extend malformed-id parity coverage for explicit `saved_version_id` / snapshot id selectors across route + AI surfaces.
+   - Lock metadata-clean failure envelopes and route-vs-AI wording/status equivalence.
+   - Impact: medium (completes explicit-selector hostile-input guardrail coverage).
