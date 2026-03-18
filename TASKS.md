@@ -3,9 +3,28 @@
 ## In Progress
 
 - _None currently._
-  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently run-linked malformed-id validation parity for preflight selectors).
+  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently snapshot/saved explicit-selector malformed-id validation parity).
 
 ## Recently Completed
+
+- **Reliability/security checkpoint completed: run-linked selector malformed-id validation parity matrix (route ↔ AI wrappers)** (2026-03-18)
+  - Hardened run-linked selector id normalization in `app.py`:
+    - `_normalize_simulation_run_id(...)` now rejects path-like ids deterministically (`.`, `..`, and any `/` or `\\` path separators).
+    - keeps existing required-field behavior for empty/whitespace ids so canonical-key precedence semantics remain unchanged.
+  - Added route↔AI parity regression coverage in `tests/test_ai_api.py`:
+    - `test_preflight_run_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes`
+    - locks deterministic 400 parity + metadata-clean error envelopes for malformed run-id forms across all run-linked selector surfaces:
+      - path traversal (`../outside_sim_runs_root`)
+      - absolute-path alias input (`/tmp/airpet_escape_run_id`)
+      - dot-segment alias input (`..`)
+      - nested path input (`nested/run/id`)
+  - Checks run:
+    - `pytest -q tests/test_ai_api.py -k "run_selector"` (6 passed)
+    - `pytest -q tests/test_preflight.py -k "simulation_run"` (25 passed)
+    - `python -m py_compile app.py tests/test_ai_api.py`
+  - Checkpoint finished:
+    - ✔ run-linked selector APIs now fail fast on path-like/malformed run ids before filesystem selector traversal
+    - ✔ route and AI wrapper error contracts stay deterministic and payload-identical for malformed-id scenarios
 
 - **Reliability hardening checkpoint completed: centralized nested-property path validation in `ProjectManager.update_object_property(...)`** (2026-03-18)
   - Added core mutation-path normalization helper in `src/project_manager.py`:
@@ -1127,12 +1146,12 @@
 
 ## Next Candidates
 
-1. **Reliability/security hardening: run-linked selector malformed-id validation parity matrix (route ↔ AI wrappers)**
-   - Add table-driven hostile/malformed-id input coverage for simulation-run selector routes and AI wrappers.
-   - Lock deterministic 400 envelopes + wording parity for empty/whitespace/path-traversal/absolute-path run-id forms.
-   - Impact: medium-high (prevents selector-validation drift and hardens deterministic automation behavior).
-
-2. **Reliability/security hardening: snapshot/saved explicit-selector malformed-id validation parity matrix (route ↔ AI wrappers)**
+1. **Reliability/security hardening: snapshot/saved explicit-selector malformed-id validation parity matrix (route ↔ AI wrappers)**
    - Extend malformed-id parity coverage for explicit `saved_version_id` / snapshot id selectors across route + AI surfaces.
    - Lock metadata-clean failure envelopes and route-vs-AI wording/status equivalence.
-   - Impact: medium (completes explicit-selector hostile-input guardrail coverage).
+   - Impact: medium-high (completes hostile-input guardrails for remaining explicit selector families).
+
+2. **Reliability hardening: consolidate selector-id sanitization into shared helper(s)**
+   - Extract shared deterministic id-sanitization helpers for run-linked and explicit selector ids to reduce drift between validation paths.
+   - Add focused regression checks that pin helper behavior for empty/null/alias/path-like inputs.
+   - Impact: medium (reduces future contract skew as selector surfaces expand).

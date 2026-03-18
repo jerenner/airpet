@@ -1968,6 +1968,16 @@ def _normalize_simulation_run_id(simulation_run_id: Any) -> str:
     simulation_run_id_norm = str(simulation_run_id or '').strip()
     if not simulation_run_id_norm:
         raise ValueError("simulation_run_id is required to compare autosave against simulation-linked manual saves.")
+
+    # Run ids are treated as directory-name selectors under each saved version's
+    # `sim_runs/` folder. Keep the selector as a single id segment and reject
+    # path-like inputs deterministically.
+    if simulation_run_id_norm in {'.', '..'}:
+        raise ValueError(f"Invalid simulation_run_id '{simulation_run_id_norm}'.")
+
+    if '/' in simulation_run_id_norm or '\\' in simulation_run_id_norm:
+        raise ValueError(f"Invalid simulation_run_id '{simulation_run_id_norm}'.")
+
     return simulation_run_id_norm
 
 

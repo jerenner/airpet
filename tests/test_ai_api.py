@@ -3160,6 +3160,102 @@ def test_preflight_run_selector_routes_and_ai_wrappers_share_canonical_alias_pre
 
 
 
+def test_preflight_run_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes(pm, tmp_path):
+    _seed_preflight_compare_route_ai_parity_fixture(pm, tmp_path)
+
+    cases = [
+        {
+            "name": "compare_for_run_rejects_path_traversal_simulation_run_id",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": "../outside_sim_runs_root",
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": "../outside_sim_runs_root",
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["invalid simulation_run_id", "outside_sim_runs_root"],
+        },
+        {
+            "name": "compare_for_run_index_rejects_absolute_path_run_id_alias",
+            "route": "/api/preflight/compare_autosave_vs_manual_saved_for_simulation_run_index",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": "/tmp/airpet_escape_run_id",
+                "manual_saved_index": 0,
+            },
+            "tool": "compare_autosave_preflight_vs_manual_saved_for_simulation_run_index",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "run_id": "/tmp/airpet_escape_run_id",
+                "manual_saved_index": 0,
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["invalid simulation_run_id", "airpet_escape_run_id"],
+        },
+        {
+            "name": "compare_manual_indices_rejects_dotdot_run_id_alias",
+            "route": "/api/preflight/compare_manual_saved_versions_for_simulation_run_indices",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": "..",
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "tool": "compare_manual_preflight_versions_for_simulation_run_indices",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": None,
+                "job_id": "..",
+                "baseline_manual_saved_index": 1,
+                "candidate_manual_saved_index": 0,
+            },
+            "assert_error_shape": _assert_compare_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["invalid simulation_run_id", "'..'"],
+        },
+        {
+            "name": "list_manual_saved_rejects_nested_path_simulation_run_id",
+            "route": "/api/preflight/list_manual_saved_versions_for_simulation_run",
+            "route_payload": {
+                "project_name": pm.project_name,
+                "simulation_run_id": "nested/run/id",
+                "count": 1,
+            },
+            "tool": "list_manual_saved_versions_for_simulation_run",
+            "ai_args": {
+                "project": pm.project_name,
+                "simulation_run_id": "nested/run/id",
+                "count": 1,
+            },
+            "assert_error_shape": _assert_preflight_list_ai_error_payload_excludes_success_metadata,
+            "error_substrings": ["invalid simulation_run_id", "nested/run/id"],
+        },
+    ]
+
+    for case in cases:
+        status_code, route_data = _call_preflight_route_with_pm(
+            pm,
+            case["route"],
+            case["route_payload"],
+        )
+        ai_data = dispatch_ai_tool(pm, case["tool"], case["ai_args"])
+
+        assert status_code == 400, case["name"]
+        assert route_data == ai_data, case["name"]
+
+        case["assert_error_shape"](route_data)
+        error_lower = route_data["error"].lower()
+        for expected_substring in case["error_substrings"]:
+            assert expected_substring.lower() in error_lower, case["name"]
+
+
+
 def test_preflight_explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null(pm, tmp_path):
     pm.projects_dir = str(tmp_path)
     pm.project_name = "ai_route_compare_null_canonical_alias_selector_parity_project"
