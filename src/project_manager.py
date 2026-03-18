@@ -2830,6 +2830,20 @@ class ProjectManager:
 
         return obj.to_dict() if obj else None
 
+    def _normalize_update_property_path_parts(self, property_path):
+        if not isinstance(property_path, str):
+            return None, f"Invalid property path '{property_path}'"
+
+        normalized_property_path = property_path.strip()
+        if not normalized_property_path:
+            return None, f"Invalid property path '{property_path}'"
+
+        path_parts = normalized_property_path.split('.')
+        if any(not part for part in path_parts):
+            return None, f"Invalid property path '{property_path}'"
+
+        return path_parts, None
+
     def update_object_property(self, object_type, object_id, property_path, new_value):
         """
         Updates a property of an object.
@@ -2872,8 +2886,11 @@ class ProjectManager:
         if not target_obj: 
             return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
 
+        path_parts, path_error = self._normalize_update_property_path_parts(property_path)
+        if path_error:
+            return False, path_error
+
         try:
-            path_parts = property_path.split('.')
             current_level_obj = target_obj
             for part in path_parts[:-1]:
                 if isinstance(current_level_obj, dict):
@@ -2886,7 +2903,7 @@ class ProjectManager:
                 current_level_obj[final_key] = new_value
             else:
                 setattr(current_level_obj, final_key, new_value)
-        except (AttributeError, KeyError) as e:
+        except (AttributeError, KeyError, TypeError, IndexError) as e:
             return False, f"Invalid property path '{property_path}': {e}"
         
         # Capture the new state
