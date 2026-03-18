@@ -1712,6 +1712,15 @@ def _normalize_single_segment_selector_id(
     return selector_id_norm
 
 
+def _normalize_preflight_version_selector_id(version_id: Any, *, required_error: str) -> str:
+    """Normalize explicit preflight version selectors as single-segment ids."""
+    return _normalize_single_segment_selector_id(
+        version_id,
+        field_name='version_id',
+        required_error=required_error,
+    )
+
+
 def _resolve_saved_version_json_path(pm: ProjectManager, project_name: str, version_id: Any) -> tuple[str, str]:
     project_name_norm = str(project_name or '').strip()
     if not project_name_norm:
@@ -2218,9 +2227,10 @@ def compare_autosave_preflight_vs_saved_version(pm: ProjectManager, saved_versio
     if not project_name_norm:
         raise ValueError("project_name is required to compare autosave with a saved version.")
 
-    saved_version_id_norm = str(saved_version_id or '').strip()
-    if not saved_version_id_norm:
-        raise ValueError("saved_version_id is required to compare autosave preflight checks.")
+    saved_version_id_norm = _normalize_preflight_version_selector_id(
+        saved_version_id,
+        required_error="saved_version_id is required to compare autosave preflight checks.",
+    )
     if saved_version_id_norm == AUTOSAVE_VERSION_ID:
         raise ValueError("saved_version_id must refer to a manually saved version, not 'autosave'.")
 
@@ -2262,9 +2272,10 @@ def compare_autosave_preflight_vs_snapshot_version(pm: ProjectManager, autosave_
     if not project_name_norm:
         raise ValueError("project_name is required to compare autosave with an autosave snapshot version.")
 
-    snapshot_version_id_norm = str(autosave_snapshot_version_id or '').strip()
-    if not snapshot_version_id_norm:
-        raise ValueError("autosave_snapshot_version_id is required to compare autosave preflight checks.")
+    snapshot_version_id_norm = _normalize_preflight_version_selector_id(
+        autosave_snapshot_version_id,
+        required_error="autosave_snapshot_version_id is required to compare autosave preflight checks.",
+    )
     if snapshot_version_id_norm == AUTOSAVE_VERSION_ID:
         raise ValueError("autosave_snapshot_version_id must refer to a saved autosave snapshot, not 'autosave'.")
     if not _is_autosave_snapshot_version_id(snapshot_version_id_norm):
@@ -2425,13 +2436,14 @@ def compare_autosave_snapshot_preflight_versions(
     if not project_name_norm:
         raise ValueError("project_name is required to compare autosave snapshot versions.")
 
-    baseline_snapshot_version_id_norm = str(baseline_snapshot_version_id or '').strip()
-    candidate_snapshot_version_id_norm = str(candidate_snapshot_version_id or '').strip()
-
-    if not baseline_snapshot_version_id_norm:
-        raise ValueError("baseline_snapshot_version_id is required to compare autosave snapshot versions.")
-    if not candidate_snapshot_version_id_norm:
-        raise ValueError("candidate_snapshot_version_id is required to compare autosave snapshot versions.")
+    baseline_snapshot_version_id_norm = _normalize_preflight_version_selector_id(
+        baseline_snapshot_version_id,
+        required_error="baseline_snapshot_version_id is required to compare autosave snapshot versions.",
+    )
+    candidate_snapshot_version_id_norm = _normalize_preflight_version_selector_id(
+        candidate_snapshot_version_id,
+        required_error="candidate_snapshot_version_id is required to compare autosave snapshot versions.",
+    )
 
     if baseline_snapshot_version_id_norm == candidate_snapshot_version_id_norm:
         raise ValueError("baseline_snapshot_version_id and candidate_snapshot_version_id must be different snapshot versions.")

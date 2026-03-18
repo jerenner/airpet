@@ -2,10 +2,44 @@
 
 ## In Progress
 
-- _None currently._
-  - Next heartbeat should continue with the highest-impact remaining `Next Candidates` item (currently broader shared selector-id helper adoption across remaining single-segment selector surfaces).
+- **Reliability follow-on (multi-heartbeat): broaden shared selector-id helper adoption across remaining single-segment selector surfaces** (started 2026-03-18)
+  - Overall objective:
+    - finish consolidating explicit preflight version selector normalization on `_normalize_single_segment_selector_id(...)` without changing route↔AI alias precedence contracts.
+  - Checkpoint plan:
+    1. ✅ Normalize explicit saved/snapshot selector call sites in compare helpers (`compare_autosave_preflight_vs_saved_version`, `compare_autosave_preflight_vs_snapshot_version`, `compare_autosave_snapshot_preflight_versions`) via a shared preflight-version selector wrapper.
+    2. ✅ Add focused selector-sanitization regression coverage for path-like explicit selector ids across those compare helper surfaces.
+    3. ⏭ Audit any remaining single-segment id-like selector surfaces outside these compare helpers and decide whether helper adoption is semantically safe.
+  - Current checkpoint status:
+    - Checkpoints 1/3 and 2/3 completed in this heartbeat.
+  - Next checkpoint (next heartbeat):
+    - Execute checkpoint 3/3 audit and either land additional helper adoption + parity tests or record explicit non-adoption rationale.
+  - Definition of done for the next checkpoint:
+    - no remaining safe/obvious single-segment selector surfaces are left unconsolidated without rationale.
+    - route↔AI parity and canonical/alias precedence behavior remains unchanged on covered surfaces.
+  - Risks/blockers:
+    - low; need to avoid broadening helper usage into selector fields that intentionally accept non-single-segment semantics.
 
 ## Recently Completed
+
+- **Reliability follow-on Checkpoints 1/3 + 2/3 completed: shared explicit preflight version-selector normalization + path-like selector sanitization coverage** (2026-03-18)
+  - Added shared explicit selector normalization helper in `app.py`:
+    - `_normalize_preflight_version_selector_id(...)` now routes explicit preflight version selectors through `_normalize_single_segment_selector_id(...)` with deterministic single-segment guardrails (`.`, `..`, `/`, `\\`).
+  - Consolidated remaining explicit compare helper call sites onto the shared helper:
+    - `compare_autosave_preflight_vs_saved_version(...)`
+    - `compare_autosave_preflight_vs_snapshot_version(...)`
+    - `compare_autosave_snapshot_preflight_versions(...)`
+  - Added focused selector-sanitization regression coverage in `tests/test_selector_id_sanitization.py`:
+    - path-like selector rejection matrix for explicit saved-version compare selectors
+    - path-like selector rejection matrix for explicit autosave-snapshot compare selectors
+    - baseline/candidate path-like selector rejection matrix for explicit snapshot-vs-snapshot compare selectors
+  - Checks run:
+    - `python -m py_compile app.py tests/test_selector_id_sanitization.py`
+    - `pytest -q tests/test_selector_id_sanitization.py` (28 passed)
+    - `pytest -q tests/test_ai_api.py -k "snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes or snapshot_and_explicit_selector_routes_and_ai_wrappers_share_canonical_alias_precedence_payloads or explicit_compare_selector_routes_and_ai_wrappers_honor_aliases_when_canonical_ids_are_null"` (3 passed)
+  - Checkpoints finished:
+    - ✔ explicit compare helper selector normalization now shares deterministic single-segment-id validation
+    - ✔ regression coverage locks path-like selector rejection behavior across saved/snapshot explicit compare helper surfaces
+    - ✔ existing route↔AI alias precedence parity checks remain green on covered selector surfaces
 
 - **Reliability/security checkpoint completed: explicit selector malformed-id parity matrix now covers Windows separators + mixed canonical-null alias forms** (2026-03-18)
   - Expanded route↔AI malformed-id parity coverage in `tests/test_ai_api.py` (`test_preflight_snapshot_and_explicit_selector_routes_and_ai_wrappers_share_malformed_id_validation_error_envelopes`):

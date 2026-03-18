@@ -6,6 +6,9 @@ from app import (
     _normalize_simulation_run_id,
     _normalize_single_segment_selector_id,
     _resolve_saved_version_json_path,
+    compare_autosave_preflight_vs_saved_version,
+    compare_autosave_preflight_vs_snapshot_version,
+    compare_autosave_snapshot_preflight_versions,
 )
 from src.expression_evaluator import ExpressionEvaluator
 from src.project_manager import ProjectManager
@@ -78,3 +81,52 @@ def test_resolve_saved_version_json_path_uses_shared_single_segment_contract(tmp
 
     with pytest.raises(ValueError, match=r"Invalid version_id"):
         _resolve_saved_version_json_path(pm, pm.project_name, "nested/run/id")
+
+
+@pytest.mark.parametrize("path_like_version_id", [".", "..", "nested/run/id", r"nested\\run\\id"])
+def test_compare_autosave_vs_saved_version_rejects_path_like_selected_saved_version_ids(path_like_version_id, tmp_path):
+    pm = _make_pm(tmp_path)
+
+    with pytest.raises(ValueError, match=r"Invalid version_id"):
+        compare_autosave_preflight_vs_saved_version(
+            pm,
+            saved_version_id=path_like_version_id,
+            project_name=pm.project_name,
+        )
+
+
+@pytest.mark.parametrize("path_like_snapshot_id", [".", "..", "nested/run/id", r"nested\\run\\id"])
+def test_compare_autosave_vs_snapshot_version_rejects_path_like_selected_snapshot_ids(path_like_snapshot_id, tmp_path):
+    pm = _make_pm(tmp_path)
+
+    with pytest.raises(ValueError, match=r"Invalid version_id"):
+        compare_autosave_preflight_vs_snapshot_version(
+            pm,
+            autosave_snapshot_version_id=path_like_snapshot_id,
+            project_name=pm.project_name,
+        )
+
+
+@pytest.mark.parametrize(
+    "baseline_snapshot_version_id,candidate_snapshot_version_id",
+    [
+        (".", "20260318_autosave_snapshot_candidate"),
+        ("20260318_autosave_snapshot_baseline", ".."),
+        ("nested/run/id", "20260318_autosave_snapshot_candidate"),
+        ("20260318_autosave_snapshot_baseline", r"nested\\run\\id"),
+    ],
+)
+def test_compare_autosave_snapshot_versions_reject_path_like_baseline_or_candidate_selectors(
+    baseline_snapshot_version_id,
+    candidate_snapshot_version_id,
+    tmp_path,
+):
+    pm = _make_pm(tmp_path)
+
+    with pytest.raises(ValueError, match=r"Invalid version_id"):
+        compare_autosave_snapshot_preflight_versions(
+            pm,
+            baseline_snapshot_version_id=baseline_snapshot_version_id,
+            candidate_snapshot_version_id=candidate_snapshot_version_id,
+            project_name=pm.project_name,
+        )
