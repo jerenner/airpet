@@ -86,6 +86,48 @@ def test_runtime_overrides_can_enable_lm_studio_and_override_context_window():
     assert rows_by_id["lm_studio"].capabilities.max_context_tokens == 65536
 
 
+def test_runtime_overrides_can_override_backend_capability_flags_from_top_level_fields():
+    runtime_config = {
+        "backends": {
+            "lm_studio": {
+                "enabled": True,
+                "supports_tools": True,
+                "supports_json_mode": "true",
+                "supports_streaming": 1,
+                "supports_vision": "false",
+            }
+        }
+    }
+
+    resolved = resolve_specs_with_runtime_overrides(runtime_config)
+    rows_by_id = {spec.backend_id: spec for spec in resolved}
+
+    assert rows_by_id["lm_studio"].capabilities.supports_tools is True
+    assert rows_by_id["lm_studio"].capabilities.supports_json_mode is True
+    assert rows_by_id["lm_studio"].capabilities.supports_streaming is True
+    assert rows_by_id["lm_studio"].capabilities.supports_vision is False
+
+
+def test_runtime_overrides_can_override_backend_capability_flags_from_nested_capabilities_block():
+    runtime_config = {
+        "backends": {
+            "llama_cpp": {
+                "enabled": True,
+                "capabilities": {
+                    "supports_tools": False,
+                    "max_context_tokens": 4096,
+                },
+            }
+        }
+    }
+
+    resolved = resolve_specs_with_runtime_overrides(runtime_config)
+    rows_by_id = {spec.backend_id: spec for spec in resolved}
+
+    assert rows_by_id["llama_cpp"].capabilities.supports_tools is False
+    assert rows_by_id["llama_cpp"].capabilities.max_context_tokens == 4096
+
+
 def test_select_backend_prefers_explicit_backend_when_it_satisfies_requirements():
     selection = select_backend(
         requirements=BackendRequirements(require_json_mode=True),
@@ -167,6 +209,34 @@ def test_select_text_backend_routes_to_lm_studio_when_enabled_and_capable():
         require_tools=False,
         require_json_mode=True,
         min_context_tokens=20000,
+    )
+
+    selection = select_backend_for_text_request(
+        request=request,
+        runtime_config=runtime_config,
+        preferred_backend_id="lm_studio",
+        allow_fallback=False,
+    )
+
+    assert selection.backend_id == "lm_studio"
+    assert selection.used_fallback is False
+    assert selection.tried == ({"backend_id": "lm_studio", "missing_capabilities": []},)
+
+
+def test_select_text_backend_routes_to_lm_studio_for_tool_requests_when_tools_capability_override_is_enabled():
+    runtime_config = {
+        "backends": {
+            "lm_studio": {
+                "enabled": True,
+                "supports_tools": True,
+                "max_context_tokens": 48000,
+            },
+        }
+    }
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="Call manage_define."),),
+        require_tools=True,
+        require_json_mode=True,
     )
 
     selection = select_backend_for_text_request(
@@ -585,6 +655,65 @@ def test_lm_studio_adapter_retries_then_returns_normalized_response():
     assert response.model == "qwen-local"
     assert response.text == '{"ok": true}'
     assert response.usage == {"prompt_tokens": 18, "completion_tokens": 6}
+
+
+def test_lm_studio_adapter_accepts_tool_only_assistant_messages():
+    adapter = LMStudioTextAdapter(
+        LMStudioAdapterConfig(
+            base_url="http://localhost:1234",
+            model="qwen-local",
+            timeout_seconds=2,
+            max_retries=0,
+            retry_backoff_seconds=0,
+        )
+    )
+    request = TextGenerationRequest(
+        messages=(TextMessage(role="user", content="hello"),),
+        require_json_mode=False,
+        require_tools=True,
+        tool_schemas=(
+            {
+                "type": "function",
+                "function": {
+                    "name": "manage_define",
+                    "description": "Create define",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+    )
+
+    def fake_post(url, json, headers, timeout, verify):
+        return _FakeResponse(
+            {
+                "model": "qwen-local",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "manage_define",
+                                        "arguments": "{\"name\":\"x\",\"value\":\"1\"}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ],
+            }
+        )
+
+    response = adapter.invoke(request, http_post=fake_post)
+    assert response.backend_id == "lm_studio"
+    assert response.text == ""
+    assert isinstance(response.tool_calls, list)
+    assert response.tool_calls[0]["function"]["name"] == "manage_define"
 
 
 def test_invoke_text_request_for_backend_dispatches_to_llama_cpp_with_runtime_model_override():

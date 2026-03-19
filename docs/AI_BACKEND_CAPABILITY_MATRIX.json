@@ -1,5 +1,5 @@
 {
-  "contract_version": "2026-03-16.local-tools",
+  "contract_version": "2026-03-19.local-capability-overrides",
   "backends": [
     {
       "backend_id": "gemini_remote",

@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urljoin
 
-ADAPTER_CONTRACT_VERSION = "2026-03-16.local-tools"
+ADAPTER_CONTRACT_VERSION = "2026-03-19.local-capability-overrides"
 
 
 @dataclass(frozen=True)
@@ -432,6 +432,36 @@ def build_capability_matrix(specs: Sequence[AdapterSpec] = DEFAULT_BACKEND_SPECS
     }
 
 
+def _parse_bool_override(value: Any) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _runtime_capability_override(
+    backend_cfg: Mapping[str, Any],
+    key: str,
+) -> Any:
+    if key in backend_cfg:
+        return backend_cfg.get(key)
+
+    nested_capabilities = backend_cfg.get("capabilities")
+    if isinstance(nested_capabilities, Mapping):
+        return nested_capabilities.get(key)
+
+    return None
+
+
 def resolve_specs_with_runtime_overrides(
     runtime_config: Optional[Mapping[str, Any]],
     specs: Sequence[AdapterSpec] = DEFAULT_BACKEND_SPECS,
@@ -445,16 +475,45 @@ def resolve_specs_with_runtime_overrides(
             continue
 
         enabled = spec.enabled
-        if "enabled" in backend_cfg:
-            enabled = bool(backend_cfg.get("enabled"))
+        enabled_override = _parse_bool_override(backend_cfg.get("enabled"))
+        if enabled_override is not None:
+            enabled = enabled_override
 
         implementation_status = str(backend_cfg.get("implementation_status", spec.implementation_status))
 
-        max_context_tokens = spec.capabilities.max_context_tokens
-        if "max_context_tokens" in backend_cfg and backend_cfg.get("max_context_tokens") is not None:
-            max_context_tokens = int(backend_cfg.get("max_context_tokens"))
+        supports_tools = spec.capabilities.supports_tools
+        supports_tools_override = _parse_bool_override(_runtime_capability_override(backend_cfg, "supports_tools"))
+        if supports_tools_override is not None:
+            supports_tools = supports_tools_override
 
-        resolved_capabilities = replace(spec.capabilities, max_context_tokens=max_context_tokens)
+        supports_json_mode = spec.capabilities.supports_json_mode
+        supports_json_mode_override = _parse_bool_override(_runtime_capability_override(backend_cfg, "supports_json_mode"))
+        if supports_json_mode_override is not None:
+            supports_json_mode = supports_json_mode_override
+
+        supports_vision = spec.capabilities.supports_vision
+        supports_vision_override = _parse_bool_override(_runtime_capability_override(backend_cfg, "supports_vision"))
+        if supports_vision_override is not None:
+            supports_vision = supports_vision_override
+
+        supports_streaming = spec.capabilities.supports_streaming
+        supports_streaming_override = _parse_bool_override(_runtime_capability_override(backend_cfg, "supports_streaming"))
+        if supports_streaming_override is not None:
+            supports_streaming = supports_streaming_override
+
+        max_context_tokens = spec.capabilities.max_context_tokens
+        max_context_tokens_override = _runtime_capability_override(backend_cfg, "max_context_tokens")
+        if max_context_tokens_override is not None:
+            max_context_tokens = int(max_context_tokens_override)
+
+        resolved_capabilities = replace(
+            spec.capabilities,
+            supports_tools=supports_tools,
+            supports_json_mode=supports_json_mode,
+            supports_vision=supports_vision,
+            supports_streaming=supports_streaming,
+            max_context_tokens=max_context_tokens,
+        )
         resolved.append(
             replace(
                 spec,

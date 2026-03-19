@@ -315,6 +315,86 @@ def test_ai_chat_local_llama_executes_tool_calls_from_json_fallback(client):
         assert any(msg.role == "tool" and msg.tool_call_id for msg in second_turn_request.messages)
 
 
+def test_ai_chat_local_lm_studio_executes_tool_calls_when_tools_capability_override_is_enabled(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend') as MockInvokeAdapter, \
+         patch('app.dispatch_ai_tool') as MockDispatchTool:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockInvokeAdapter.side_effect = [
+            MagicMock(
+                backend_id='lm_studio',
+                model='qwen2.5-local',
+                text=(
+                    "Executing the requested update.\n\n"
+                    "```json\n"
+                    "{\n"
+                    "  \"tool_calls\": [\n"
+                    "    {\"tool\": \"manage_define\", \"name\": \"pitch_mm\", \"value\": \"3.5\"}\n"
+                    "  ]\n"
+                    "}\n"
+                    "```"
+                ),
+                usage={'prompt_tokens': 42, 'completion_tokens': 14},
+                raw_response={},
+            ),
+            MagicMock(
+                backend_id='lm_studio',
+                model='qwen2.5-local',
+                text='Done. Applied pitch define update.',
+                usage={'prompt_tokens': 49, 'completion_tokens': 11},
+                raw_response={},
+            ),
+        ]
+
+        MockDispatchTool.return_value = {"success": True}
+
+        payload = {
+            "message": "Set pitch define to 3.5 mm.",
+            "backend_selector": {
+                "preferred_backend_id": "lm_studio",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "lm_studio": {
+                            "enabled": True,
+                            "model": "qwen2.5-local",
+                            "supports_tools": True,
+                        }
+                    }
+                },
+                "requirements": {
+                    "require_tools": True,
+                    "require_json_mode": True,
+                    "require_streaming": False,
+                },
+            },
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert "Done. Applied pitch define update." in data["message"]
+        assert data["backend_selection"]["resolved_backend_id"] == "lm_studio"
+        assert data["backend_selection"]["execution_mode"] == "local_text_adapter"
+        assert MockInvokeAdapter.call_count == 2
+        MockDispatchTool.assert_called_once()
+
+        called_tool_name = MockDispatchTool.call_args.args[1]
+        called_tool_args = MockDispatchTool.call_args.args[2]
+        assert called_tool_name == "manage_define"
+        assert called_tool_args == {"name": "pitch_mm", "value": "3.5"}
+
+        second_turn_request = MockInvokeAdapter.call_args_list[1].args[1]
+        assert any(msg.role == "assistant" and msg.tool_calls for msg in second_turn_request.messages)
+        assert any(msg.role == "tool" and msg.tool_call_id for msg in second_turn_request.messages)
+
+
 def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_payload(client):
     with patch('app.get_project_manager_for_session') as MockPMGetter, \
          patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('connection refused')), \

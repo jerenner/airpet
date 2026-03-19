@@ -3,10 +3,35 @@
 ## In Progress
 
 - **No active coding checkpoint (ready for next heartbeat task selection).**
-  - Last multi-heartbeat reliability follow-on (selector-id helper consolidation) is now complete.
-  - Next heartbeat should pick a product-forward checkpoint (feature/architecture) unless a live regression appears.
+  - Latest product-forward local-model optionality checkpoint is complete (runtime capability overrides + LM Studio tool-loop routing coverage).
+  - Next heartbeat should continue product-forward progress (prefer scoped-geometry UX or Geant4 confidence tooling) unless a live regression appears.
 
 ## Recently Completed
+
+- **Local-model optionality checkpoint completed: runtime backend capability overrides + LM Studio tool-loop contract coverage** (2026-03-19)
+  - Extended adapter runtime override resolution in `src/ai_backend_adapters.py`:
+    - runtime config can now override capability flags (`supports_tools`, `supports_json_mode`, `supports_vision`, `supports_streaming`) in addition to existing enablement and context-window controls.
+    - supports both top-level backend override keys and nested `capabilities` override objects (top-level precedence).
+  - Enabled deterministic selector-path opt-in for LM Studio tool workflows without changing default matrix behavior:
+    - tool-requiring selection can now resolve to `lm_studio` when operators explicitly set `supports_tools=true` in runtime config.
+  - Expanded regression coverage:
+    - `tests/test_ai_backend_adapters.py`
+      - capability flag override matrix (top-level + nested capability block)
+      - selector success contract for LM Studio tool requests under explicit capability override
+      - LM Studio adapter tool-only assistant payload normalization coverage
+    - `tests/test_ai_integration.py`
+      - end-to-end `/api/ai/chat` local LM Studio tool-loop execution under capability override (JSON tool-call fallback path)
+  - Updated docs:
+    - `docs/AI_BACKEND_ADAPTER_CONTRACT.md` (runtime capability override semantics + LM Studio opt-in note)
+    - `docs/AI_BACKEND_CAPABILITY_MATRIX.json` (contract version bump)
+  - Checks run:
+    - `python -m py_compile src/ai_backend_adapters.py tests/test_ai_backend_adapters.py tests/test_ai_integration.py app.py`
+    - `pytest -q tests/test_ai_backend_adapters.py` (26 passed)
+    - `pytest -q tests/test_ai_integration.py -k "lm_studio or local_llama_executes_tool_calls_from_json_fallback or backend_selector_returns_deterministic_no_fallback_error_for_lm_studio_tools"` (4 passed, 12 deselected)
+  - Checkpoint finished:
+    - ✔ runtime backend selection contract now supports deterministic capability-flag overrides.
+    - ✔ LM Studio can participate in tool-required local selector paths when explicitly opted in.
+    - ✔ route-level local tool-loop behavior remains covered for both llama.cpp and LM Studio override flows.
 
 - **Reliability follow-on Checkpoint 3/3 completed: audited remaining single-segment selector surfaces and finished shared helper consolidation for compare-version selectors** (2026-03-18)
   - Audited remaining preflight selector surfaces outside explicit autosave/snapshot compare helpers.
@@ -1239,7 +1264,22 @@
 
 ## Next Candidates
 
-1. **Reliability follow-on: broaden shared selector-id helper adoption to additional single-segment selector surfaces**
+1. **Scoped-geometry workflow checkpoint: add deterministic subtree preflight/filter mode for AI + UI flows**
+   - Add a route/helper path that runs preflight on a selected LV/assembly subtree and returns scoped diagnostics + summary deltas vs full-geometry preflight.
+   - Ensure selector/path validation is deterministic and route↔AI wrappers keep parity on malformed scope inputs.
+   - Impact: high (directly advances scoped editing + faster iteration on large geometries).
+
+2. **Geant4 confidence checkpoint: parity fixture set for scoped preflight drift classes**
+   - Add representative fixtures/tests that pin mismatch classes when scoped edits alter overlaps/replica constraints in one subtree while global preflight remains stable.
+   - Expand deterministic diagnostics for issue-family correlations in scoped mode.
+   - Impact: high (stronger confidence that scoped workflows preserve Geant4-relevant invariants).
+
+3. **Local-model optionality follow-on: operator-facing capability override diagnostics in backend readiness/chat payloads**
+   - Surface effective capability overrides (`supports_tools` etc.) in diagnostics payloads so users can audit why a backend was/was not selected.
+   - Add deterministic remediation guidance when override config contradicts probed backend behavior.
+   - Impact: medium-high (reduces confusion while adopting local backends across diverse model servers).
+
+4. **Reliability follow-on: broaden shared selector-id helper adoption to additional single-segment selector surfaces**
    - Audit remaining id-like selectors that behave as single path segments and adopt `_normalize_single_segment_selector_id(...)` where semantics match.
    - Add parity-focused tests to confirm no canonical/alias precedence drift on newly consolidated call sites.
    - Impact: medium (keeps validation behavior aligned as selector APIs grow).

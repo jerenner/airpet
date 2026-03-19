@@ -1,6 +1,6 @@
 # AI Backend Adapter Contract (Spike A Checkpoint 6)
 
-Contract version: `2026-03-16.local-tools`
+Contract version: `2026-03-19.local-capability-overrides`
 
 This document defines the normalized adapter contract AIRPET uses for AI backends.
 
@@ -46,7 +46,9 @@ Given requirements + optional preferred backend:
 3. Reject backends that are disabled or missing required capabilities.
 4. If `allow_fallback=false` and preferred backend fails, stop and return an error.
 5. Selection is deterministic and records all attempted backends + missing capabilities.
-6. Runtime config can deterministically override backend enablement and context-window limits.
+6. Runtime config can deterministically override backend enablement plus capability flags (`supports_tools`, `supports_json_mode`, `supports_vision`, `supports_streaming`) and context-window limits.
+
+Override keys can be provided either as top-level backend config fields or inside a nested `capabilities` object; top-level fields take precedence when both are present.
 
 ## 5) Text-first local adapter paths
 
@@ -62,7 +64,7 @@ Checkpoint 5 includes implemented text-first local adapter scaffolds **and runti
 - normalized response envelope (`TextGenerationResponse`)
 - normalized invocation dispatcher (`invoke_text_request_for_backend`) to route runtime requests by resolved backend id
 
-These paths are intended for text-first/JSON-first workflows, with native tool-call loop support now enabled for `llama_cpp`.
+These paths are intended for text-first/JSON-first workflows, with native tool-call loop support enabled for `llama_cpp`; `lm_studio` can opt into tool-requiring selection flows via runtime capability override when the operator confirms model-side tool support.
 
 ## 6) `/api/ai/chat` runtime integration notes
 
