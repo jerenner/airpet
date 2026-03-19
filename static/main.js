@@ -3033,7 +3033,9 @@ function resolveScopedPreflightCandidateFromSelectionItem(item) {
 
 function buildScopedPreflightRequestFromSelection() {
     const selection = getSelectionContext();
-    if (!Array.isArray(selection) || selection.length === 0) return null;
+    if (!Array.isArray(selection) || selection.length === 0) {
+        return { candidate: null, reason: 'no_selection', candidateCount: 0 };
+    }
 
     const candidates = [];
     const seen = new Set();
@@ -3048,8 +3050,14 @@ function buildScopedPreflightRequestFromSelection() {
         }
     });
 
-    if (candidates.length !== 1) return null;
-    return candidates[0];
+    if (candidates.length === 0) {
+        return { candidate: null, reason: 'selection_not_scopeable', candidateCount: 0 };
+    }
+    if (candidates.length > 1) {
+        return { candidate: null, reason: 'ambiguous_selection', candidateCount: candidates.length };
+    }
+
+    return { candidate: candidates[0], reason: 'resolved', candidateCount: 1 };
 }
 
 async function runAndRenderPreflight({
@@ -3065,9 +3073,17 @@ async function runAndRenderPreflight({
     let scope = null;
     let summaryDelta = null;
     let usedScopedPreflight = false;
+    let scopedSelectionReason = null;
+    let scopedSelectionCandidateCount = 0;
+    let scopedFallbackError = null;
 
     try {
-        const scopedSelection = preferScopedSelection ? buildScopedPreflightRequestFromSelection() : null;
+        const scopedSelectionResult = preferScopedSelection
+            ? buildScopedPreflightRequestFromSelection()
+            : { candidate: null, reason: null, candidateCount: 0 };
+        const scopedSelection = scopedSelectionResult?.candidate || null;
+        scopedSelectionReason = scopedSelectionResult?.reason || null;
+        scopedSelectionCandidateCount = scopedSelectionResult?.candidateCount || 0;
 
         if (scopedSelection) {
             try {
@@ -3078,6 +3094,7 @@ async function runAndRenderPreflight({
                 summaryDelta = scopedPayload?.summary_delta || null;
                 usedScopedPreflight = true;
             } catch (scopeError) {
+                scopedFallbackError = String(scopeError?.message || scopeError || 'unknown_error');
                 console.warn('Scoped preflight failed; falling back to global preflight:', scopeError);
             }
         }
@@ -3093,6 +3110,10 @@ async function runAndRenderPreflight({
             scopedReport,
             summaryDelta,
             usedScopedPreflight,
+            preferScopedSelection,
+            scopedSelectionReason,
+            scopedSelectionCandidateCount,
+            scopedFallbackError,
         });
 
         const errors = summary.errors || 0;
@@ -3121,7 +3142,17 @@ async function runAndRenderPreflight({
                 "Preflight checks failed.\n" +
                 formatPreflightIssues(errorIssues, 8)
             );
-            return { ok: false, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
+            return {
+                ok: false,
+                report,
+                scope,
+                scopedReport,
+                summaryDelta,
+                usedScopedPreflight,
+                scopedSelectionReason,
+                scopedSelectionCandidateCount,
+                scopedFallbackError,
+            };
         }
 
         if (enforceRunBlocking && warnings > 0 && confirmWarnings) {
@@ -3132,14 +3163,44 @@ async function runAndRenderPreflight({
                 "\n\nContinue anyway?"
             );
             if (!proceed) {
-                return { ok: false, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
+                return {
+                    ok: false,
+                    report,
+                    scope,
+                    scopedReport,
+                    summaryDelta,
+                    usedScopedPreflight,
+                    scopedSelectionReason,
+                    scopedSelectionCandidateCount,
+                    scopedFallbackError,
+                };
             }
         }
 
-        return { ok: true, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
+        return {
+            ok: true,
+            report,
+            scope,
+            scopedReport,
+            summaryDelta,
+            usedScopedPreflight,
+            scopedSelectionReason,
+            scopedSelectionCandidateCount,
+            scopedFallbackError,
+        };
     } catch (error) {
         UIManager.showError("Failed to run preflight checks: " + error.message);
-        return { ok: false, report: null, scope: null, scopedReport: null, summaryDelta: null, usedScopedPreflight: false };
+        return {
+            ok: false,
+            report: null,
+            scope: null,
+            scopedReport: null,
+            summaryDelta: null,
+            usedScopedPreflight: false,
+            scopedSelectionReason: null,
+            scopedSelectionCandidateCount: 0,
+            scopedFallbackError: String(error?.message || error || 'unknown_error'),
+        };
     } finally {
         UIManager.setPreflightState('idle');
     }

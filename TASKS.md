@@ -2,25 +2,48 @@
 
 ## In Progress
 
-- **Scoped-geometry follow-on (multi-heartbeat): inspector/workspace scoped-preflight UX integration** (started 2026-03-19)
+- **Geant4 confidence checkpoint (multi-heartbeat): scoped preflight drift-class parity fixtures + deterministic diagnostics** (started 2026-03-19)
   - Why this task now:
-    - Highest product-forward impact from current Next Candidates: scoped preflight is already available at route/AI layers, but users still need manual interpretation in the simulation panel.
-    - Recent streak leaned heavily toward reliability/test hardening; this checkpoint rebalances toward day-to-day editing UX.
+    - Scoped preflight is now integrated into the normal simulation-panel UX, so the next high-impact step is confidence hardening for scoped-vs-global drift behavior.
+    - This aligns with north-star priority (Geant4 compatibility confidence) while following a product-forward UX checkpoint.
   - Checkpoints (2–5 plan):
-    1. ✅ **Completed (this heartbeat):** selection-aware scoped preflight execution wired into Simulation panel preflight action with deterministic selector handoff from tree/inspector context and graceful fallback to global preflight.
-    2. ✅ **Completed (this heartbeat):** preflight panel rendering extended with scope context + scope/outside-scope summary delta lines and scoped issue labeling.
-    3. ✅ **Completed (this heartbeat):** simulation run gating path intentionally kept on full-geometry preflight.
-    4. **Current checkpoint (next heartbeat):** polish scoped-vs-global interpretation UX (copy/affordance tweaks and optional quick-toggle behavior) and decide whether additional backend metadata surfacing is needed.
+    1. **Current checkpoint:** add first scoped-drift parity fixture path that pins mismatch classification/delta behavior when scoped edits regress overlap/replica-like constraints in one subtree.
+    2. add deterministic issue-family correlation expectations for scoped drift (`scope` vs `outside_scope`) in parity outputs.
+    3. add representative examples/docs for scoped-drift parity diagnostics.
   - Definition of done (current checkpoint):
-    - Manual `🧪 Preflight` action uses selected LV/assembly context when deterministically resolvable. ✅
-    - Scoped API payload uses canonical `{ scope: { type, name } }` contract. ✅
-    - If selection is ambiguous/unsupported/stale, behavior falls back cleanly to global preflight without blocking the user. ✅
+    - at least one scoped-drift regression fixture deterministically exercises mismatch-class behavior.
+    - assertions lock scoped/global delta semantics (`summary_delta.scope` and `summary_delta.outside_scope`) for that fixture.
+    - tests are reproducible and pass in targeted suite execution.
   - Next checkpoint after current:
-    - tighten panel presentation polish + optional user guidance text for scoped-vs-global interpretation.
+    - broaden fixture matrix to include mixed scoped issue-family transitions and correlation hints.
   - Risks/blockers:
-    - front-end-only flow has limited automated coverage in current repo; rely on deterministic logic + targeted backend smoke checks.
+    - selecting realistic scoped-drift fixtures may require careful geometry seeding to avoid brittle test setup.
 
 ## Recently Completed
+
+- **Scoped-geometry follow-on checkpoint completed: scoped-vs-global interpretation polish + quick issue-list toggle in Simulation panel** (2026-03-19)
+  - Polished scoped preflight interpretation UX in `static/uiManager.js` and `templates/index.html`:
+    - added explicit scoped/full-geometry context copy in summary lines (`Preflight (full geometry)` + scope/outside-scope lines).
+    - added a guidance hint line clarifying that simulation run safety still uses full-geometry preflight.
+    - added fallback guidance copy when scoped execution is requested but unavailable (no selection, non-scopeable selection, ambiguous selection, or scoped-route failure).
+  - Added optional quick-toggle affordance for diagnostics interpretation:
+    - new inline controls allow switching issue list rendering between `Scoped issues` and `Full-geometry issues` after a scoped preflight run.
+    - toggle state persists across rerenders for the current session until preflight panel reset.
+  - Extended scoped-selection resolution metadata flow in `static/main.js`:
+    - scoped selection resolver now returns deterministic reason metadata (`resolved`, `no_selection`, `selection_not_scopeable`, `ambiguous_selection`) plus candidate counts.
+    - scoped route failures now attach deterministic fallback error metadata for UI messaging.
+  - Decision on additional backend metadata:
+    - no extra backend payload fields required for this checkpoint; existing `scope`, `scoped_preflight_report`, and `summary_delta` are sufficient for current UX interpretation goals.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/main.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/uiManager.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/apiService.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "preflight_scope_route"` (3 passed, 107 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/backend_diagnostics_panels.test.mjs tests/js/replica_inspector_bindings.test.mjs tests/js/division_inspector_bindings.test.mjs` (14 passed)
+  - Checkpoint finished:
+    - ✔ scoped-vs-global diagnostics interpretation is clearer in-panel.
+    - ✔ users can quickly switch issue-list perspective without rerunning preflight.
+    - ✔ fallback behavior now explains why full-geometry diagnostics are being shown.
 
 - **Scoped-geometry follow-on checkpoint: Simulation panel now runs selection-aware scoped preflight with scoped diagnostics rendering** (2026-03-19)
   - Wired scoped-preflight execution into frontend preflight flow:

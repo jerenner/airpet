@@ -761,7 +761,8 @@
         }
 
         #preflight_scope_line,
-        #preflight_delta_line {
+        #preflight_delta_line,
+        #preflight_scope_hint_line {
             display: none;
             font-size: 11px;
             color: #334155;
@@ -771,6 +772,35 @@
 
         #preflight_delta_line {
             color: #475569;
+        }
+
+        #preflight_scope_hint_line {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        #preflight_issue_toggle_row {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            margin: 4px 0 2px;
+        }
+
+        .preflight_toggle_btn {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            color: #334155;
+            cursor: pointer;
+        }
+
+        .preflight_toggle_btn.active {
+            background: #dbeafe;
+            border-color: #60a5fa;
+            color: #1d4ed8;
+            font-weight: 600;
         }
 
         #preflight_issues_label {
@@ -2177,6 +2207,11 @@
                         <div id="preflight_summary_line">Preflight: not run yet.</div>
                         <div id="preflight_scope_line"></div>
                         <div id="preflight_delta_line"></div>
+                        <div id="preflight_scope_hint_line"></div>
+                        <div id="preflight_issue_toggle_row">
+                            <button id="preflight_show_scope_issues_btn" class="preflight_toggle_btn" type="button">Scoped issues</button>
+                            <button id="preflight_show_global_issues_btn" class="preflight_toggle_btn" type="button">Full-geometry issues</button>
+                        </div>
                         <div id="preflight_issues_label">Issues</div>
                         <div id="preflight_issues_list">
                             <div id="preflight_empty_line" style="color: #64748b;">Run preflight to see geometry checks and diagnostics.</div>

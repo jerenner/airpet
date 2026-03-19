@@ -73,7 +73,13 @@ let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButt
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
-    preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightIssuesLabel, preflightIssuesList;
+    preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightScopeHintLine,
+    preflightIssueToggleRow, preflightShowScopeIssuesBtn, preflightShowGlobalIssuesBtn,
+    preflightIssuesLabel, preflightIssuesList;
+
+// Sticky preflight panel view state for scoped/global issue toggling
+let preflightLastRenderState = null;
+let preflightIssueDisplayMode = 'auto'; // auto | scoped | global
 
 // Analysis control variables
 let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
@@ -271,6 +277,10 @@ export function initUI(cb) {
     preflightSummaryLine = document.getElementById('preflight_summary_line');
     preflightScopeLine = document.getElementById('preflight_scope_line');
     preflightDeltaLine = document.getElementById('preflight_delta_line');
+    preflightScopeHintLine = document.getElementById('preflight_scope_hint_line');
+    preflightIssueToggleRow = document.getElementById('preflight_issue_toggle_row');
+    preflightShowScopeIssuesBtn = document.getElementById('preflight_show_scope_issues_btn');
+    preflightShowGlobalIssuesBtn = document.getElementById('preflight_show_global_issues_btn');
     preflightIssuesLabel = document.getElementById('preflight_issues_label');
     preflightIssuesList = document.getElementById('preflight_issues_list');
 
@@ -522,6 +532,22 @@ export function initUI(cb) {
     });
     stopSimButton.addEventListener('click', callbacks.onStopSimulationClicked);
     if (preflightButton) preflightButton.addEventListener('click', callbacks.onRunPreflightClicked);
+    if (preflightShowScopeIssuesBtn) {
+        preflightShowScopeIssuesBtn.addEventListener('click', () => {
+            preflightIssueDisplayMode = 'scoped';
+            if (preflightLastRenderState) {
+                renderPreflightReport(preflightLastRenderState.report, preflightLastRenderState.details);
+            }
+        });
+    }
+    if (preflightShowGlobalIssuesBtn) {
+        preflightShowGlobalIssuesBtn.addEventListener('click', () => {
+            preflightIssueDisplayMode = 'global';
+            if (preflightLastRenderState) {
+                renderPreflightReport(preflightLastRenderState.report, preflightLastRenderState.details);
+            }
+        });
+    }
     simOptionsButton.addEventListener('click', callbacks.onSimOptionsClicked);
     saveSimOptionsButton.addEventListener('click', callbacks.onSaveSimOptions);
     drawTracksCheckbox.addEventListener('change', callbacks.onDrawTracksToggle);
@@ -2305,7 +2331,55 @@ export function setPreflightState(state) {
     preflightButton.textContent = isRunning ? '🧪 Preflight...' : '🧪 Preflight';
 }
 
+function formatPreflightScopeLabel(scope) {
+    if (!scope || !scope.type || !scope.name) return '';
+    if (scope.type === 'logical_volume') return `LV "${scope.name}"`;
+    if (scope.type === 'assembly') return `Assembly "${scope.name}"`;
+    return `${scope.type} "${scope.name}"`;
+}
+
+function resolveScopedPreflightFallbackHint(details = {}) {
+    if (!details?.preferScopedSelection || details?.usedScopedPreflight) return '';
+
+    if (details?.scopedFallbackError) {
+        return 'Scoped preflight route failed; showing full-geometry diagnostics instead.';
+    }
+
+    const reason = details?.scopedSelectionReason;
+    if (reason === 'no_selection') {
+        return 'No geometry selection detected; showing full-geometry diagnostics.';
+    }
+    if (reason === 'selection_not_scopeable') {
+        return 'Current selection is not scopeable (choose an LV, assembly, or PV linked to one).';
+    }
+    if (reason === 'ambiguous_selection') {
+        const count = Number(details?.scopedSelectionCandidateCount || 0);
+        if (count > 1) {
+            return `Selection resolves to ${count} scope targets; showing full-geometry diagnostics.`;
+        }
+        return 'Selection resolves to multiple scope targets; showing full-geometry diagnostics.';
+    }
+
+    return 'Scoped preflight was not applied; showing full-geometry diagnostics.';
+}
+
+function updatePreflightIssueToggleState({ showToggle = false, activeMode = 'global' } = {}) {
+    if (preflightIssueToggleRow) {
+        preflightIssueToggleRow.style.display = showToggle ? 'flex' : 'none';
+    }
+    if (preflightShowScopeIssuesBtn) {
+        preflightShowScopeIssuesBtn.classList.toggle('active', showToggle && activeMode === 'scoped');
+        preflightShowScopeIssuesBtn.disabled = !showToggle;
+    }
+    if (preflightShowGlobalIssuesBtn) {
+        preflightShowGlobalIssuesBtn.classList.toggle('active', activeMode === 'global');
+    }
+}
+
 export function clearPreflightReport() {
+    preflightLastRenderState = null;
+    preflightIssueDisplayMode = 'auto';
+
     if (preflightSummaryLine) {
         preflightSummaryLine.textContent = 'Preflight: not run yet.';
         preflightSummaryLine.style.color = '#334155';
@@ -2318,6 +2392,12 @@ export function clearPreflightReport() {
         preflightDeltaLine.textContent = '';
         preflightDeltaLine.style.display = 'none';
     }
+    if (preflightScopeHintLine) {
+        preflightScopeHintLine.textContent = '';
+        preflightScopeHintLine.style.display = 'none';
+    }
+    updatePreflightIssueToggleState({ showToggle: false, activeMode: 'global' });
+
     if (preflightIssuesLabel) {
         preflightIssuesLabel.textContent = 'Issues';
     }
@@ -2334,6 +2414,8 @@ export function clearPreflightReport() {
 export function renderPreflightReport(report, details = {}) {
     if (!preflightSummaryLine || !preflightIssuesList) return;
 
+    preflightLastRenderState = { report, details };
+
     const scope = details?.scope || null;
     const scopedReport = details?.scopedReport || null;
     const summaryDelta = details?.summaryDelta || null;
@@ -2345,13 +2427,12 @@ export function renderPreflightReport(report, details = {}) {
     const infos = summary.infos || 0;
     const canRun = !!summary.can_run;
 
-    preflightSummaryLine.textContent = `Preflight: ${errors} error(s), ${warnings} warning(s), ${infos} info. ` +
+    const summaryPrefix = usedScopedPreflight ? 'Preflight (full geometry)' : 'Preflight';
+    preflightSummaryLine.textContent = `${summaryPrefix}: ${errors} error(s), ${warnings} warning(s), ${infos} info. ` +
         (canRun ? 'Simulation can run.' : 'Simulation blocked.');
     preflightSummaryLine.style.color = canRun ? '#166534' : '#b91c1c';
 
-    const scopeLabel = scope?.type === 'logical_volume'
-        ? `LV "${scope?.name || ''}"`
-        : (scope?.type === 'assembly' ? `Assembly "${scope?.name || ''}"` : `${scope?.type || ''} "${scope?.name || ''}"`);
+    const scopeLabel = formatPreflightScopeLabel(scope);
 
     if (preflightScopeLine) {
         if (usedScopedPreflight && scope && scopedReport?.summary) {
@@ -2377,30 +2458,65 @@ export function renderPreflightReport(report, details = {}) {
             const outInfos = outsideScope.infos || 0;
             const outIssueCount = outsideScope.issue_count || 0;
             preflightDeltaLine.style.display = 'block';
-            preflightDeltaLine.textContent = `Outside scope: ${outErrors} error(s), ${outWarnings} warning(s), ${outInfos} info (${outIssueCount} issue(s)).`;
+            preflightDeltaLine.textContent = `Outside selected scope: ${outErrors} error(s), ${outWarnings} warning(s), ${outInfos} info (${outIssueCount} issue(s)).`;
         } else {
             preflightDeltaLine.textContent = '';
             preflightDeltaLine.style.display = 'none';
         }
     }
 
+    if (preflightScopeHintLine) {
+        const fallbackHint = resolveScopedPreflightFallbackHint(details);
+        if (usedScopedPreflight) {
+            preflightScopeHintLine.style.display = 'block';
+            preflightScopeHintLine.textContent = 'Run safety still uses full-geometry preflight before simulation start.';
+        } else if (fallbackHint) {
+            preflightScopeHintLine.style.display = 'block';
+            preflightScopeHintLine.textContent = fallbackHint;
+        } else {
+            preflightScopeHintLine.textContent = '';
+            preflightScopeHintLine.style.display = 'none';
+        }
+    }
+
+    const hasScopedIssueSet = usedScopedPreflight && Array.isArray(scopedReport?.issues);
+    const activeIssueMode = hasScopedIssueSet
+        ? (preflightIssueDisplayMode === 'global' ? 'global' : 'scoped')
+        : 'global';
+    if (!hasScopedIssueSet && preflightIssueDisplayMode === 'scoped') {
+        preflightIssueDisplayMode = 'auto';
+    }
+
+    updatePreflightIssueToggleState({
+        showToggle: hasScopedIssueSet,
+        activeMode: activeIssueMode,
+    });
+
     if (preflightIssuesLabel) {
-        preflightIssuesLabel.textContent = (usedScopedPreflight && scope)
-            ? `Scoped issues (${scopeLabel})`
-            : 'Issues';
+        if (hasScopedIssueSet && activeIssueMode === 'scoped' && scopeLabel) {
+            preflightIssuesLabel.textContent = `Scoped issues (${scopeLabel})`;
+        } else if (hasScopedIssueSet && activeIssueMode === 'global') {
+            preflightIssuesLabel.textContent = 'Full-geometry issues';
+        } else {
+            preflightIssuesLabel.textContent = 'Issues';
+        }
     }
 
     preflightIssuesList.innerHTML = '';
-    const issues = (usedScopedPreflight && Array.isArray(scopedReport?.issues))
+    const issues = (hasScopedIssueSet && activeIssueMode === 'scoped')
         ? scopedReport.issues
         : (report?.issues || []);
 
     if (issues.length === 0) {
         const empty = document.createElement('div');
         empty.style.color = '#64748b';
-        empty.textContent = usedScopedPreflight
-            ? 'No issues detected in the selected scope.'
-            : 'No issues detected.';
+        if (hasScopedIssueSet && activeIssueMode === 'scoped') {
+            empty.textContent = 'No issues detected in the selected scope.';
+        } else if (hasScopedIssueSet && activeIssueMode === 'global') {
+            empty.textContent = 'No full-geometry issues detected.';
+        } else {
+            empty.textContent = 'No issues detected.';
+        }
         preflightIssuesList.appendChild(empty);
         return;
     }
