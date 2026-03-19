@@ -2,11 +2,48 @@
 
 ## In Progress
 
-- **No active coding checkpoint (ready for next heartbeat task selection).**
-  - Latest product-forward scoped-geometry checkpoint is complete (scoped preflight route + AI tool parity + selector normalization).
-  - Next heartbeat should continue product-forward progress (prefer scoped-geometry UX follow-on or Geant4 confidence fixtures) unless a live regression appears.
+- **Scoped-geometry follow-on (multi-heartbeat): inspector/workspace scoped-preflight UX integration** (started 2026-03-19)
+  - Why this task now:
+    - Highest product-forward impact from current Next Candidates: scoped preflight is already available at route/AI layers, but users still need manual interpretation in the simulation panel.
+    - Recent streak leaned heavily toward reliability/test hardening; this checkpoint rebalances toward day-to-day editing UX.
+  - Checkpoints (2–5 plan):
+    1. ✅ **Completed (this heartbeat):** selection-aware scoped preflight execution wired into Simulation panel preflight action with deterministic selector handoff from tree/inspector context and graceful fallback to global preflight.
+    2. ✅ **Completed (this heartbeat):** preflight panel rendering extended with scope context + scope/outside-scope summary delta lines and scoped issue labeling.
+    3. ✅ **Completed (this heartbeat):** simulation run gating path intentionally kept on full-geometry preflight.
+    4. **Current checkpoint (next heartbeat):** polish scoped-vs-global interpretation UX (copy/affordance tweaks and optional quick-toggle behavior) and decide whether additional backend metadata surfacing is needed.
+  - Definition of done (current checkpoint):
+    - Manual `🧪 Preflight` action uses selected LV/assembly context when deterministically resolvable. ✅
+    - Scoped API payload uses canonical `{ scope: { type, name } }` contract. ✅
+    - If selection is ambiguous/unsupported/stale, behavior falls back cleanly to global preflight without blocking the user. ✅
+  - Next checkpoint after current:
+    - tighten panel presentation polish + optional user guidance text for scoped-vs-global interpretation.
+  - Risks/blockers:
+    - front-end-only flow has limited automated coverage in current repo; rely on deterministic logic + targeted backend smoke checks.
 
 ## Recently Completed
+
+- **Scoped-geometry follow-on checkpoint: Simulation panel now runs selection-aware scoped preflight with scoped diagnostics rendering** (2026-03-19)
+  - Wired scoped-preflight execution into frontend preflight flow:
+    - added `runScopedPreflightChecks(scopeType, scopeName)` in `static/apiService.js` targeting `POST /api/preflight/check_scope` with canonical nested payload `{ scope: { type, name } }`.
+    - `runAndRenderPreflight(...)` in `static/main.js` now supports `preferScopedSelection` and attempts scoped preflight for manual panel checks.
+  - Added deterministic tree/inspector selector handoff in `static/main.js`:
+    - selection candidates are resolved from current hierarchy/inspector context (`logical_volume`, `assembly`, and `physical_volume` via resolved `volume_ref`).
+    - multi-selection is accepted only when all resolvable items collapse to a single deterministic scope target.
+    - ambiguous/unsupported selections and scoped-route failures fall back automatically to full preflight.
+  - Kept simulation safety contract unchanged:
+    - run-blocking preflight path still uses full-geometry checks (no scoped gating regression risk).
+  - Extended simulation panel preflight rendering in `templates/index.html` + `static/uiManager.js`:
+    - added scoped summary line, outside-scope delta line, and scoped issue list labeling.
+    - when scoped preflight is active, issue list renders scoped issues; otherwise behavior stays global.
+  - Checks run:
+    - `node --check static/main.js`
+    - `node --check static/uiManager.js`
+    - `node --check static/apiService.js`
+    - `pytest -q tests/test_preflight.py -k "preflight_scope_route"` (3 passed, 107 deselected)
+  - Checkpoint finished:
+    - ✔ scoped preflight is now reachable directly from normal inspector/workspace selection flow.
+    - ✔ users can distinguish scoped vs full-geometry diagnostics in-panel without parsing raw API payloads.
+    - ✔ run-start guardrail remains full-geometry preflight.
 
 - **Scoped-geometry checkpoint completed: deterministic scoped preflight route + AI wrapper parity + selector normalization** (2026-03-19)
   - Finished/cleaned the previously uncommitted scoped-preflight work and shipped it as a coherent product-forward checkpoint.

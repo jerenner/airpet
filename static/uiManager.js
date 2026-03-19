@@ -73,7 +73,7 @@ let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButt
     simSaveHitsCheckbox, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
-    preflightPanel, preflightSummaryLine, preflightIssuesList;
+    preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightIssuesLabel, preflightIssuesList;
 
 // Analysis control variables
 let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
@@ -269,6 +269,9 @@ export function initUI(cb) {
     simStatusDisplay = document.getElementById('sim_status_display');
     preflightPanel = document.getElementById('preflight_panel');
     preflightSummaryLine = document.getElementById('preflight_summary_line');
+    preflightScopeLine = document.getElementById('preflight_scope_line');
+    preflightDeltaLine = document.getElementById('preflight_delta_line');
+    preflightIssuesLabel = document.getElementById('preflight_issues_label');
     preflightIssuesList = document.getElementById('preflight_issues_list');
 
     simOptionsModal = document.getElementById('simOptionsModal');
@@ -2307,6 +2310,17 @@ export function clearPreflightReport() {
         preflightSummaryLine.textContent = 'Preflight: not run yet.';
         preflightSummaryLine.style.color = '#334155';
     }
+    if (preflightScopeLine) {
+        preflightScopeLine.textContent = '';
+        preflightScopeLine.style.display = 'none';
+    }
+    if (preflightDeltaLine) {
+        preflightDeltaLine.textContent = '';
+        preflightDeltaLine.style.display = 'none';
+    }
+    if (preflightIssuesLabel) {
+        preflightIssuesLabel.textContent = 'Issues';
+    }
     if (preflightIssuesList) {
         preflightIssuesList.innerHTML = '';
         const empty = document.createElement('div');
@@ -2317,8 +2331,13 @@ export function clearPreflightReport() {
     }
 }
 
-export function renderPreflightReport(report) {
+export function renderPreflightReport(report, details = {}) {
     if (!preflightSummaryLine || !preflightIssuesList) return;
+
+    const scope = details?.scope || null;
+    const scopedReport = details?.scopedReport || null;
+    const summaryDelta = details?.summaryDelta || null;
+    const usedScopedPreflight = !!details?.usedScopedPreflight;
 
     const summary = report?.summary || {};
     const errors = summary.errors || 0;
@@ -2330,13 +2349,58 @@ export function renderPreflightReport(report) {
         (canRun ? 'Simulation can run.' : 'Simulation blocked.');
     preflightSummaryLine.style.color = canRun ? '#166534' : '#b91c1c';
 
+    const scopeLabel = scope?.type === 'logical_volume'
+        ? `LV "${scope?.name || ''}"`
+        : (scope?.type === 'assembly' ? `Assembly "${scope?.name || ''}"` : `${scope?.type || ''} "${scope?.name || ''}"`);
+
+    if (preflightScopeLine) {
+        if (usedScopedPreflight && scope && scopedReport?.summary) {
+            const scopedSummary = scopedReport.summary || {};
+            const scopeErrors = scopedSummary.errors || 0;
+            const scopeWarnings = scopedSummary.warnings || 0;
+            const scopeInfos = scopedSummary.infos || 0;
+            const scopeCanRun = !!scopedSummary.can_run;
+            preflightScopeLine.style.display = 'block';
+            preflightScopeLine.textContent = `Scope (${scopeLabel}): ${scopeErrors} error(s), ${scopeWarnings} warning(s), ${scopeInfos} info. ` +
+                (scopeCanRun ? 'Scoped checks pass.' : 'Scoped checks blocked.');
+        } else {
+            preflightScopeLine.textContent = '';
+            preflightScopeLine.style.display = 'none';
+        }
+    }
+
+    if (preflightDeltaLine) {
+        const outsideScope = summaryDelta?.outside_scope;
+        if (usedScopedPreflight && outsideScope) {
+            const outErrors = outsideScope.errors || 0;
+            const outWarnings = outsideScope.warnings || 0;
+            const outInfos = outsideScope.infos || 0;
+            const outIssueCount = outsideScope.issue_count || 0;
+            preflightDeltaLine.style.display = 'block';
+            preflightDeltaLine.textContent = `Outside scope: ${outErrors} error(s), ${outWarnings} warning(s), ${outInfos} info (${outIssueCount} issue(s)).`;
+        } else {
+            preflightDeltaLine.textContent = '';
+            preflightDeltaLine.style.display = 'none';
+        }
+    }
+
+    if (preflightIssuesLabel) {
+        preflightIssuesLabel.textContent = (usedScopedPreflight && scope)
+            ? `Scoped issues (${scopeLabel})`
+            : 'Issues';
+    }
+
     preflightIssuesList.innerHTML = '';
-    const issues = report?.issues || [];
+    const issues = (usedScopedPreflight && Array.isArray(scopedReport?.issues))
+        ? scopedReport.issues
+        : (report?.issues || []);
 
     if (issues.length === 0) {
         const empty = document.createElement('div');
         empty.style.color = '#64748b';
-        empty.textContent = 'No issues detected.';
+        empty.textContent = usedScopedPreflight
+            ? 'No issues detected in the selected scope.'
+            : 'No issues detected.';
         preflightIssuesList.appendChild(empty);
         return;
     }

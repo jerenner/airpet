@@ -2988,21 +2988,131 @@ function formatPreflightIssues(issues, limit = 5) {
     }).join('\n');
 }
 
-async function runAndRenderPreflight({ enforceRunBlocking = false, confirmWarnings = false, showNotification = false } = {}) {
-    UIManager.setPreflightState('running');
-    try {
-        const preflight = await APIService.runPreflightChecks();
-        const report = preflight.preflight_report || {};
-        const summary = report.summary || {};
+function formatPreflightScopeLabel(scope) {
+    if (!scope || !scope.type || !scope.name) return '';
+    const typeLabel = scope.type === 'logical_volume'
+        ? 'LV'
+        : (scope.type === 'assembly' ? 'Assembly' : scope.type);
+    return `${typeLabel} \"${scope.name}\"`;
+}
 
-        UIManager.renderPreflightReport(report);
+function resolveScopedPreflightCandidateFromVolumeRef(volumeRef) {
+    const volumeRefNorm = String(volumeRef || '').trim();
+    if (!volumeRefNorm) return null;
+
+    const state = AppState.currentProjectState || {};
+    const assemblies = state.assemblies || {};
+    if (Object.prototype.hasOwnProperty.call(assemblies, volumeRefNorm)) {
+        return { type: 'assembly', name: volumeRefNorm };
+    }
+
+    const logicalVolumes = state.logical_volumes || {};
+    if (Object.prototype.hasOwnProperty.call(logicalVolumes, volumeRefNorm)) {
+        return { type: 'logical_volume', name: volumeRefNorm };
+    }
+
+    return null;
+}
+
+function resolveScopedPreflightCandidateFromSelectionItem(item) {
+    if (!item || !item.type) return null;
+
+    if (item.type === 'logical_volume' || item.type === 'assembly') {
+        const nameNorm = String(item.name || '').trim();
+        if (!nameNorm) return null;
+        return { type: item.type, name: nameNorm };
+    }
+
+    if (item.type === 'physical_volume') {
+        const volumeRef = item?.selData?.volume_ref ?? item?.data?.volume_ref;
+        return resolveScopedPreflightCandidateFromVolumeRef(volumeRef);
+    }
+
+    return null;
+}
+
+function buildScopedPreflightRequestFromSelection() {
+    const selection = getSelectionContext();
+    if (!Array.isArray(selection) || selection.length === 0) return null;
+
+    const candidates = [];
+    const seen = new Set();
+
+    selection.forEach(item => {
+        const candidate = resolveScopedPreflightCandidateFromSelectionItem(item);
+        if (!candidate) return;
+        const key = `${candidate.type}:${candidate.name}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            candidates.push(candidate);
+        }
+    });
+
+    if (candidates.length !== 1) return null;
+    return candidates[0];
+}
+
+async function runAndRenderPreflight({
+    enforceRunBlocking = false,
+    confirmWarnings = false,
+    showNotification = false,
+    preferScopedSelection = false,
+} = {}) {
+    UIManager.setPreflightState('running');
+
+    let report = null;
+    let scopedReport = null;
+    let scope = null;
+    let summaryDelta = null;
+    let usedScopedPreflight = false;
+
+    try {
+        const scopedSelection = preferScopedSelection ? buildScopedPreflightRequestFromSelection() : null;
+
+        if (scopedSelection) {
+            try {
+                const scopedPayload = await APIService.runScopedPreflightChecks(scopedSelection.type, scopedSelection.name);
+                report = scopedPayload?.preflight_report || {};
+                scopedReport = scopedPayload?.scoped_preflight_report || {};
+                scope = scopedPayload?.scope || scopedSelection;
+                summaryDelta = scopedPayload?.summary_delta || null;
+                usedScopedPreflight = true;
+            } catch (scopeError) {
+                console.warn('Scoped preflight failed; falling back to global preflight:', scopeError);
+            }
+        }
+
+        if (!report) {
+            const preflight = await APIService.runPreflightChecks();
+            report = preflight.preflight_report || {};
+        }
+
+        const summary = report.summary || {};
+        UIManager.renderPreflightReport(report, {
+            scope,
+            scopedReport,
+            summaryDelta,
+            usedScopedPreflight,
+        });
 
         const errors = summary.errors || 0;
         const warnings = summary.warnings || 0;
         const infos = summary.infos || 0;
 
         if (showNotification) {
-            UIManager.showNotification(`Preflight complete: ${errors} error(s), ${warnings} warning(s), ${infos} info.`);
+            if (usedScopedPreflight && scopedReport?.summary) {
+                const scopedSummary = scopedReport.summary || {};
+                const scopeErrors = scopedSummary.errors || 0;
+                const scopeWarnings = scopedSummary.warnings || 0;
+                const scopeInfos = scopedSummary.infos || 0;
+                UIManager.showNotification(
+                    `Scoped preflight (${formatPreflightScopeLabel(scope)}): ` +
+                    `${scopeErrors} error(s), ${scopeWarnings} warning(s), ${scopeInfos} info. ` +
+                    `Full geometry: ${errors}/${warnings}/${infos}.`
+                );
+            } else {
+                UIManager.showNotification(`Preflight complete: ${errors} error(s), ${warnings} warning(s), ${infos} info.`);
+            }
         }
 
         if (enforceRunBlocking && !summary.can_run) {
@@ -3011,7 +3121,7 @@ async function runAndRenderPreflight({ enforceRunBlocking = false, confirmWarnin
                 "Preflight checks failed.\n" +
                 formatPreflightIssues(errorIssues, 8)
             );
-            return { ok: false, report };
+            return { ok: false, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
         }
 
         if (enforceRunBlocking && warnings > 0 && confirmWarnings) {
@@ -3022,14 +3132,14 @@ async function runAndRenderPreflight({ enforceRunBlocking = false, confirmWarnin
                 "\n\nContinue anyway?"
             );
             if (!proceed) {
-                return { ok: false, report };
+                return { ok: false, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
             }
         }
 
-        return { ok: true, report };
+        return { ok: true, report, scope, scopedReport, summaryDelta, usedScopedPreflight };
     } catch (error) {
         UIManager.showError("Failed to run preflight checks: " + error.message);
-        return { ok: false, report: null };
+        return { ok: false, report: null, scope: null, scopedReport: null, summaryDelta: null, usedScopedPreflight: false };
     } finally {
         UIManager.setPreflightState('idle');
     }
@@ -3040,6 +3150,7 @@ async function handleRunPreflight() {
         enforceRunBlocking: false,
         confirmWarnings: false,
         showNotification: true,
+        preferScopedSelection: true,
     });
 }
 

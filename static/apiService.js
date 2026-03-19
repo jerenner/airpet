@@ -1175,6 +1175,26 @@ export async function runPreflightChecks() {
 }
 
 /**
+ * Runs backend scoped preflight checks for a selected LV/assembly.
+ * @param {string} scopeType - Canonical scope type ('logical_volume'|'assembly').
+ * @param {string} scopeName - Scope target name.
+ * @returns {Promise<Object>} A promise resolving to full+scoped preflight reports and summary deltas.
+ */
+export async function runScopedPreflightChecks(scopeType, scopeName) {
+    const response = await fetch(`${API_BASE_URL}/api/preflight/check_scope`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            scope: {
+                type: scopeType,
+                name: scopeName,
+            },
+        }),
+    });
+    return handleResponse(response);
+}
+
+/**
  * Sends a request to the backend to start a new simulation run.
  * @param {object} simParams - An object containing simulation parameters (e.g., {events: 1000}).
  * @returns {Promise<Object>} A promise resolving to the backend's response, including a job_id.

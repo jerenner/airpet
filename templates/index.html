@@ -757,7 +757,27 @@
 
         #preflight_summary_line {
             font-weight: 600;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
+        }
+
+        #preflight_scope_line,
+        #preflight_delta_line {
+            display: none;
+            font-size: 11px;
+            color: #334155;
+            margin-bottom: 4px;
+            line-height: 1.35;
+        }
+
+        #preflight_delta_line {
+            color: #475569;
+        }
+
+        #preflight_issues_label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #334155;
+            margin: 6px 0 4px;
         }
 
         #preflight_issues_list {
@@ -2155,6 +2175,9 @@
                     </div>
                     <div id="preflight_panel">
                         <div id="preflight_summary_line">Preflight: not run yet.</div>
+                        <div id="preflight_scope_line"></div>
+                        <div id="preflight_delta_line"></div>
+                        <div id="preflight_issues_label">Issues</div>
                         <div id="preflight_issues_list">
                             <div id="preflight_empty_line" style="color: #64748b;">Run preflight to see geometry checks and diagnostics.</div>
                         </div>
