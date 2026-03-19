@@ -10226,6 +10226,100 @@ def _extract_openai_assistant_payload(raw_response: Dict[str, Any], fallback_tex
     }
 
 
+def _to_openai_tool_calls(raw_tool_calls: Any, *, id_prefix: str = "call") -> List[Dict[str, Any]]:
+    normalized_calls = _normalize_tool_calls_payload(raw_tool_calls)
+    openai_calls: List[Dict[str, Any]] = []
+
+    for idx, call in enumerate(normalized_calls):
+        tool_name = call.get("name")
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+
+        arguments = call.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = _coerce_tool_arguments(arguments)
+
+        call_id = str(call.get("id") or f"{id_prefix}_{idx}_{tool_name}")
+        openai_calls.append({
+            "id": call_id,
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            },
+        })
+
+    return openai_calls
+
+
+def _build_local_adapter_message_history(chat_history: List[Dict[str, Any]]) -> List[TextMessage]:
+    messages: List[TextMessage] = []
+
+    for msg in chat_history:
+        if not isinstance(msg, dict):
+            continue
+
+        role = str(msg.get("role") or "").strip().lower()
+        if role == "model":
+            role = "assistant"
+        if role not in {"system", "user", "assistant", "tool"}:
+            continue
+
+        content = msg.get("content")
+        if not isinstance(content, str):
+            parts = msg.get("parts")
+            if isinstance(parts, list) and parts:
+                first_part = parts[0]
+                if isinstance(first_part, dict) and isinstance(first_part.get("text"), str):
+                    content = first_part.get("text")
+        if not isinstance(content, str):
+            content = ""
+
+        kwargs: Dict[str, Any] = {}
+
+        if role == "assistant" and isinstance(msg.get("tool_calls"), list):
+            openai_tool_calls = _to_openai_tool_calls(msg.get("tool_calls"), id_prefix="hist")
+            if openai_tool_calls:
+                kwargs["tool_calls"] = tuple(openai_tool_calls)
+
+        if role == "tool":
+            tool_call_id = msg.get("tool_call_id")
+            if tool_call_id is not None and str(tool_call_id).strip():
+                kwargs["tool_call_id"] = str(tool_call_id).strip()
+            tool_name = msg.get("name")
+            if isinstance(tool_name, str) and tool_name.strip():
+                kwargs["name"] = tool_name.strip()
+
+        messages.append(TextMessage(role=role, content=content, **kwargs))
+
+    return messages
+
+
+def _build_executable_tool_calls(parsed_tool_calls: List[Dict[str, Any]], turn: int) -> List[Dict[str, Any]]:
+    executable_calls: List[Dict[str, Any]] = []
+
+    for idx, tool_call in enumerate(parsed_tool_calls):
+        if not isinstance(tool_call, dict):
+            continue
+
+        tool_name = tool_call.get("name")
+        if not isinstance(tool_name, str) or not tool_name:
+            continue
+
+        arguments = tool_call.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = _coerce_tool_arguments(arguments)
+
+        call_id = str(tool_call.get("id") or f"call_{turn}_{idx}_{tool_name}")
+        executable_calls.append({
+            "id": call_id,
+            "name": tool_name,
+            "arguments": arguments,
+        })
+
+    return executable_calls
+
+
 def _infer_local_backend_selector_from_model_id(model_id: Any) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
     if not isinstance(model_id, str):
         return None, None
@@ -12028,14 +12122,19 @@ def ai_chat_route():
             require_streaming = bool((selector_requirements or {}).get("require_streaming", False))
             min_context_tokens = _coerce_optional_int((selector_requirements or {}).get("min_context_tokens"))
 
-            local_messages: List[TextMessage] = [
-                TextMessage(role="system", content=load_system_prompt()),
-                TextMessage(role="user", content=formatted_user_msg),
-            ]
+            # Mirror the working local flow from feature/llama-lmstudio-ui:
+            # keep full sanitized history (assistant tool_calls + tool tool_call_id)
+            # so llama.cpp can continue native function-calling turns reliably.
+            local_messages = _build_local_adapter_message_history(pm.chat_history)
+            if not local_messages:
+                local_messages = [
+                    TextMessage(role="system", content=load_system_prompt()),
+                    TextMessage(role="user", content=formatted_user_msg),
+                ]
 
-            openai_tool_schemas: Optional[Tuple[Dict[str, Any], ...]] = None
-            if require_tools and selected_backend_id == "llama_cpp":
-                openai_tool_schemas = tuple(_build_openai_tool_schema_from_ai_tools())
+            openai_tool_schemas: Tuple[Dict[str, Any], ...] = tuple(_build_openai_tool_schema_from_ai_tools())
+            use_native_tool_loop = bool(selected_backend_id == "llama_cpp")
+            effective_require_tools = bool(require_tools or use_native_tool_loop)
 
             job_id = None
             version_id = None
@@ -12048,12 +12147,12 @@ def ai_chat_route():
             for turn in range(turn_limit):
                 invocation_request = TextGenerationRequest(
                     messages=tuple(local_messages),
-                    require_tools=require_tools,
+                    require_tools=effective_require_tools,
                     require_json_mode=require_json_mode,
                     require_streaming=require_streaming,
                     min_context_tokens=min_context_tokens,
-                    tool_schemas=openai_tool_schemas,
-                    tool_choice="auto" if openai_tool_schemas else None,
+                    tool_schemas=openai_tool_schemas if effective_require_tools else None,
+                    tool_choice="auto" if effective_require_tools else None,
                 )
 
                 adapter_response = invoke_text_request_for_backend(
@@ -12075,6 +12174,13 @@ def ai_chat_route():
                 assistant_text = assistant_payload.get("content") or adapter_response.text or ""
                 parsed_tool_calls = assistant_payload.get("tool_calls") or []
 
+                # Prefer native tool_calls from backend response when present.
+                if not parsed_tool_calls and isinstance(adapter_response.tool_calls, list):
+                    parsed_tool_calls = _normalize_tool_calls_payload(adapter_response.tool_calls)
+
+                executable_tool_calls = _build_executable_tool_calls(parsed_tool_calls, turn)
+                assistant_openai_tool_calls = _to_openai_tool_calls(executable_tool_calls, id_prefix=f"turn_{turn}")
+
                 assistant_history_entry: Dict[str, Any] = {
                     "role": "assistant",
                     "content": assistant_text,
@@ -12083,26 +12189,23 @@ def ai_chat_route():
                         "provider_model": adapter_response.model,
                     },
                 }
-                if parsed_tool_calls:
-                    assistant_history_entry["tool_calls"] = [
-                        {
-                            "id": tc.get("id"),
-                            "function": {
-                                "name": tc.get("name"),
-                                "arguments": tc.get("arguments", {}),
-                            },
-                        }
-                        for tc in parsed_tool_calls
-                    ]
+                if assistant_openai_tool_calls:
+                    assistant_history_entry["tool_calls"] = assistant_openai_tool_calls
 
                 pm.chat_history.append(assistant_history_entry)
-                local_messages.append(TextMessage(role="assistant", content=assistant_text))
+                local_messages.append(
+                    TextMessage(
+                        role="assistant",
+                        content=assistant_text,
+                        tool_calls=tuple(assistant_openai_tool_calls) if assistant_openai_tool_calls else None,
+                    )
+                )
 
                 if backend_selection_payload is not None:
                     backend_selection_payload["execution_mode"] = "local_text_adapter"
                     backend_selection_payload["resolved_model"] = adapter_response.model
 
-                if not parsed_tool_calls:
+                if not executable_tool_calls:
                     final_text = assistant_text or adapter_response.text or "Done."
                     local_extra_payload = dict(chat_extra_payload or {})
                     local_extra_payload["backend_execution"] = last_execution_payload
@@ -12116,7 +12219,7 @@ def ai_chat_route():
                         return jsonify(res_json)
                     return res_obj
 
-                for tool_call in parsed_tool_calls:
+                for tool_call in executable_tool_calls:
                     tool_name = tool_call.get("name")
                     if not tool_name:
                         continue
@@ -12125,18 +12228,28 @@ def ai_chat_route():
                     print(f"Local Adapter AI Calling Tool: {tool_name}")
                     result = dispatch_ai_tool(pm, tool_name, args)
 
-                    if "job_id" in result:
-                        job_id = result["job_id"]
-                    if "version_id" in result:
-                        version_id = result["version_id"]
+                    if isinstance(result, dict):
+                        if "job_id" in result:
+                            job_id = result["job_id"]
+                        if "version_id" in result:
+                            version_id = result["version_id"]
 
                     tool_result_payload = json.dumps(result)
+                    tool_call_id = str(tool_call.get("id") or f"call_{turn}_{tool_name}")
                     pm.chat_history.append({
                         "role": "tool",
                         "name": tool_name,
                         "content": tool_result_payload,
+                        "tool_call_id": tool_call_id,
                     })
-                    local_messages.append(TextMessage(role="tool", content=tool_result_payload))
+                    local_messages.append(
+                        TextMessage(
+                            role="tool",
+                            content=tool_result_payload,
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        )
+                    )
 
             pm.end_transaction("AI Timeout")
             timeout_extra_payload = dict(chat_extra_payload or {})

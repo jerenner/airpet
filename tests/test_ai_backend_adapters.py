@@ -330,6 +330,22 @@ def test_llama_cpp_adapter_builds_openai_chat_payload_for_text_first_json_mode()
     assert payload["temperature"] == 0.1
 
 
+def test_text_message_serializes_tool_fields_for_openai_history():
+    msg = TextMessage(
+        role="tool",
+        content='{"success": true}',
+        tool_call_id="call_123",
+        name="manage_define",
+    )
+
+    assert msg.as_openai_message() == {
+        "role": "tool",
+        "content": '{"success": true}',
+        "tool_call_id": "call_123",
+        "name": "manage_define",
+    }
+
+
 def test_llama_cpp_adapter_includes_tool_schema_when_tool_calls_required():
     adapter = LlamaCppTextAdapter(
         LlamaCppAdapterConfig(
@@ -360,6 +376,7 @@ def test_llama_cpp_adapter_includes_tool_schema_when_tool_calls_required():
 
     assert payload["tools"][0]["function"]["name"] == "manage_define"
     assert payload["tool_choice"] == "auto"
+    assert "response_format" not in payload
 
 
 def test_lm_studio_adapter_builds_openai_chat_payload_for_text_first_json_mode():
@@ -513,6 +530,8 @@ def test_llama_cpp_adapter_accepts_tool_only_assistant_messages():
     response = adapter.invoke(request, http_post=fake_post)
     assert response.backend_id == "llama_cpp"
     assert response.text == ""
+    assert isinstance(response.tool_calls, list)
+    assert response.tool_calls[0]["function"]["name"] == "manage_define"
 
 
 def test_lm_studio_adapter_retries_then_returns_normalized_response():

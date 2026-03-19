@@ -310,6 +310,10 @@ def test_ai_chat_local_llama_executes_tool_calls_from_json_fallback(client):
         assert called_tool_name == "manage_define"
         assert called_tool_args == {"name": "SiPM_spacing", "value": "10"}
 
+        second_turn_request = MockInvokeAdapter.call_args_list[1].args[1]
+        assert any(msg.role == "assistant" and msg.tool_calls for msg in second_turn_request.messages)
+        assert any(msg.role == "tool" and msg.tool_call_id for msg in second_turn_request.messages)
+
 
 def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_payload(client):
     with patch('app.get_project_manager_for_session') as MockPMGetter, \

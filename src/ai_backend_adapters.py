@@ -90,9 +90,19 @@ class AdapterSelection:
 class TextMessage:
     role: str
     content: str
+    tool_calls: Optional[Tuple[Dict[str, Any], ...]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
-    def as_openai_message(self) -> Dict[str, str]:
-        return {"role": self.role, "content": self.content}
+    def as_openai_message(self) -> Dict[str, Any]:
+        message: Dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            message["tool_calls"] = [dict(tc) for tc in self.tool_calls]
+        if self.tool_call_id:
+            message["tool_call_id"] = self.tool_call_id
+        if self.name:
+            message["name"] = self.name
+        return message
 
 
 @dataclass(frozen=True)
@@ -118,6 +128,7 @@ class TextGenerationResponse:
     raw_response: Dict[str, Any]
     model: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass(frozen=True)
@@ -174,9 +185,11 @@ class LlamaCppTextAdapter:
             payload["max_tokens"] = request.max_output_tokens
         if request.stop:
             payload["stop"] = list(request.stop)
-        if request.require_json_mode:
+
+        using_tools = bool(request.require_tools and request.tool_schemas)
+        if request.require_json_mode and not using_tools:
             payload["response_format"] = {"type": "json_object"}
-        if request.require_tools and request.tool_schemas:
+        if using_tools:
             payload["tools"] = list(request.tool_schemas)
             payload["tool_choice"] = request.tool_choice or "auto"
         return payload
@@ -226,6 +239,7 @@ class LlamaCppTextAdapter:
                     raw_response=body,
                     model=body.get("model") if isinstance(body, dict) else None,
                     usage=body.get("usage") if isinstance(body, dict) else None,
+                    tool_calls=tool_calls if isinstance(tool_calls, list) else None,
                 )
             except Exception as err:
                 last_error = err
@@ -293,9 +307,11 @@ class LMStudioTextAdapter:
             payload["max_tokens"] = request.max_output_tokens
         if request.stop:
             payload["stop"] = list(request.stop)
-        if request.require_json_mode:
+
+        using_tools = bool(request.require_tools and request.tool_schemas)
+        if request.require_json_mode and not using_tools:
             payload["response_format"] = {"type": "json_object"}
-        if request.require_tools and request.tool_schemas:
+        if using_tools:
             payload["tools"] = list(request.tool_schemas)
             payload["tool_choice"] = request.tool_choice or "auto"
         return payload
@@ -345,6 +361,7 @@ class LMStudioTextAdapter:
                     raw_response=body,
                     model=body.get("model") if isinstance(body, dict) else None,
                     usage=body.get("usage") if isinstance(body, dict) else None,
+                    tool_calls=tool_calls if isinstance(tool_calls, list) else None,
                 )
             except Exception as err:
                 last_error = err
