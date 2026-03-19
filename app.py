@@ -12443,6 +12443,7 @@ def ai_chat_route():
             }
 
             for turn in range(turn_limit):
+                print(f"\n=== Turn {turn + 1}/{turn_limit} ===")
                 invocation_request = TextGenerationRequest(
                     messages=tuple(local_messages),
                     require_tools=effective_require_tools,
