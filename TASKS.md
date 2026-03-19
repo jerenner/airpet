@@ -7,19 +7,40 @@
     - Scoped preflight is now integrated into the normal simulation-panel UX, so the next high-impact step is confidence hardening for scoped-vs-global drift behavior.
     - This aligns with north-star priority (Geant4 compatibility confidence) while following a product-forward UX checkpoint.
   - Checkpoints (2–5 plan):
-    1. **Current checkpoint:** add first scoped-drift parity fixture path that pins mismatch classification/delta behavior when scoped edits regress overlap/replica-like constraints in one subtree.
-    2. add deterministic issue-family correlation expectations for scoped drift (`scope` vs `outside_scope`) in parity outputs.
+    1. ✅ add first scoped-drift parity fixture path that pins mismatch classification/delta behavior when scoped edits regress overlap/replica-like constraints in one subtree.
+    2. **Current checkpoint:** add deterministic issue-family correlation expectations for scoped drift (`scope` vs `outside_scope`) in parity outputs.
     3. add representative examples/docs for scoped-drift parity diagnostics.
   - Definition of done (current checkpoint):
-    - at least one scoped-drift regression fixture deterministically exercises mismatch-class behavior.
-    - assertions lock scoped/global delta semantics (`summary_delta.scope` and `summary_delta.outside_scope`) for that fixture.
-    - tests are reproducible and pass in targeted suite execution.
+    - fixture matrix covers at least one mixed transition where scoped and outside-scope issue families diverge.
+    - parity assertions lock deterministic family-correlation output ordering and counts.
+    - targeted scoped-preflight + AI parity suites pass reproducibly.
   - Next checkpoint after current:
-    - broaden fixture matrix to include mixed scoped issue-family transitions and correlation hints.
+    - add representative examples/docs for scoped-drift parity diagnostics.
   - Risks/blockers:
-    - selecting realistic scoped-drift fixtures may require careful geometry seeding to avoid brittle test setup.
+    - extending family-correlation expectations may require introducing deterministic normalization for future metadata fields.
 
 ## Recently Completed
+
+- **Geant4 confidence checkpoint completed (checkpoint 1/3): first scoped-drift parity fixture path for replica/overlap regression + locked scope/outside-scope deltas** (2026-03-19)
+  - Added deterministic scoped-drift fixture seeding in both test suites:
+    - `tests/test_preflight.py::_seed_scoped_preflight_drift_replica_overlap_fixture`
+    - `tests/test_ai_api.py::_seed_scoped_preflight_drift_replica_overlap_fixture`
+  - Fixture intentionally induces scoped subtree drift (replica bounds/reference errors + overlap warning) while preserving one outside-scope global regression (`unknown_material_reference`) to pin delta partitioning.
+  - Added new regression coverage:
+    - `tests/test_preflight.py::test_preflight_scope_route_drift_fixture_locks_scope_and_outside_scope_delta_semantics`
+    - `tests/test_ai_api.py::test_preflight_scope_route_and_ai_wrappers_lock_scoped_drift_delta_parity`
+  - Assertions now lock deterministic scoped/full delta semantics for this drift fixture:
+    - `summary_delta.scope == {errors: 4, warnings: 1, infos: 0, issue_count: 5}`
+    - `summary_delta.outside_scope == {errors: 1, warnings: 0, infos: 0, issue_count: 1}`
+    - scoped issue-code set is parity-locked for route↔AI responses.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile tests/test_preflight.py tests/test_ai_api.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "scope_route"` (4 passed, 107 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_api.py -k "run_preflight_scope or scoped_drift_delta_parity or scope_route_and_ai_wrappers_share_success_payloads or scope_route_and_ai_wrappers_share_validation_error_payloads"` (4 passed, 121 deselected)
+  - Checkpoint finished:
+    - ✔ first scoped-drift parity fixture path is now in place and deterministic.
+    - ✔ scoped vs outside-scope summary delta semantics are regression-locked.
+    - ✔ route and AI scoped-preflight outputs remain parity-aligned on the new drift fixture.
 
 - **Scoped-geometry follow-on checkpoint completed: scoped-vs-global interpretation polish + quick issue-list toggle in Simulation panel** (2026-03-19)
   - Polished scoped preflight interpretation UX in `static/uiManager.js` and `templates/index.html`:

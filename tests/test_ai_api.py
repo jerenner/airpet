@@ -312,6 +312,96 @@ def _seed_preflight_global_selector_stale_route_ai_parity_fixture(pm, tmp_path):
     }
 
 
+def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
+    scope_name = 'scope_drift_container_LV'
+
+    scope_container, err = pm.add_logical_volume(scope_name, 'box_solid', 'G4_Galactic')
+    assert err is None
+    assert scope_container['name'] == scope_name
+
+    scope_leaf, err = pm.add_logical_volume('scope_drift_leaf_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    replica_host, err = pm.add_logical_volume('scope_drift_replica_host_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        'box_LV',
+        'scope_drift_container_PV',
+        scope_name,
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_overlap_pv_a',
+        scope_leaf['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_overlap_pv_b',
+        scope_leaf['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_replica_host_pv',
+        replica_host['name'],
+        {'x': '1000', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    replica_lv = pm.current_geometry_state.logical_volumes[replica_host['name']]
+    replica_lv.content_type = 'replica'
+    replica_lv.content = ReplicaVolume(
+        name='scope_drift_bad_replica',
+        volume_ref='MissingScopedReplicaTarget',
+        number='0',
+        direction={'x': '0', 'y': '0', 'z': '0'},
+        width='0',
+        offset='0',
+    )
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingOutsideScopeMaterial'
+
+    return {
+        'scope_name': scope_name,
+        'expected_scope_summary_delta': {
+            'errors': 4,
+            'warnings': 1,
+            'infos': 0,
+            'issue_count': 5,
+        },
+        'expected_outside_scope_summary_delta': {
+            'errors': 1,
+            'warnings': 0,
+            'infos': 0,
+            'issue_count': 1,
+        },
+        'expected_scoped_issue_codes': [
+            'invalid_replica_direction',
+            'invalid_replica_instance_count',
+            'invalid_replica_width',
+            'possible_overlap_aabb',
+            'unknown_procedural_volume_reference',
+        ],
+    }
+
+
 def _seed_preflight_corpus_missing_world_volume_reference(pm):
     pm.current_geometry_state.world_volume_ref = ''
 
@@ -652,6 +742,41 @@ def test_preflight_scope_route_and_ai_wrappers_share_success_payloads(pm):
             'type': 'logical_volume',
             'name': 'box_LV',
         }, case['name']
+
+
+def test_preflight_scope_route_and_ai_wrappers_lock_scoped_drift_delta_parity(pm):
+    fixture = _seed_scoped_preflight_drift_replica_overlap_fixture(pm)
+
+    payload = {
+        'scope': {
+            'type': 'logical_volume',
+            'name': fixture['scope_name'],
+        },
+    }
+
+    status_code, route_data = _call_preflight_route_with_pm(
+        pm,
+        '/api/preflight/check_scope',
+        payload,
+    )
+    ai_data = dispatch_ai_tool(pm, 'run_preflight_scope', payload)
+
+    assert status_code == 200
+    assert route_data == ai_data
+
+    assert route_data['summary_delta']['scope'] == fixture['expected_scope_summary_delta']
+    assert route_data['summary_delta']['outside_scope'] == fixture['expected_outside_scope_summary_delta']
+
+    scoped_report = route_data['scoped_preflight_report']
+    full_report = route_data['preflight_report']
+
+    scoped_codes = sorted(issue['code'] for issue in scoped_report['issues'])
+    assert scoped_codes == fixture['expected_scoped_issue_codes']
+
+    outside_scope_issue_count = route_data['summary_delta']['outside_scope']['issue_count']
+    assert full_report['summary']['issue_count'] == (
+        scoped_report['summary']['issue_count'] + outside_scope_issue_count
+    )
 
 
 def test_preflight_scope_route_and_ai_wrappers_share_validation_error_payloads(pm):

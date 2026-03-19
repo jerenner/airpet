@@ -121,6 +121,96 @@ def _seed_preflight_corpus_logical_volume_cycle(pm):
     assert err is None
 
 
+def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
+    scope_name = 'scope_drift_container_LV'
+
+    scope_container, err = pm.add_logical_volume(scope_name, 'box_solid', 'G4_Galactic')
+    assert err is None
+    assert scope_container['name'] == scope_name
+
+    scope_leaf, err = pm.add_logical_volume('scope_drift_leaf_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    replica_host, err = pm.add_logical_volume('scope_drift_replica_host_LV', 'box_solid', 'G4_Galactic')
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        'box_LV',
+        'scope_drift_container_PV',
+        scope_name,
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_overlap_pv_a',
+        scope_leaf['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_overlap_pv_b',
+        scope_leaf['name'],
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    _, err = pm.add_physical_volume(
+        scope_name,
+        'scope_drift_replica_host_pv',
+        replica_host['name'],
+        {'x': '1000', 'y': '0', 'z': '0'},
+        {'x': '0', 'y': '0', 'z': '0'},
+        {'x': '1', 'y': '1', 'z': '1'},
+    )
+    assert err is None
+
+    replica_lv = pm.current_geometry_state.logical_volumes[replica_host['name']]
+    replica_lv.content_type = 'replica'
+    replica_lv.content = ReplicaVolume(
+        name='scope_drift_bad_replica',
+        volume_ref='MissingScopedReplicaTarget',
+        number='0',
+        direction={'x': '0', 'y': '0', 'z': '0'},
+        width='0',
+        offset='0',
+    )
+
+    pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingOutsideScopeMaterial'
+
+    return {
+        'scope_name': scope_name,
+        'expected_scope_summary_delta': {
+            'errors': 4,
+            'warnings': 1,
+            'infos': 0,
+            'issue_count': 5,
+        },
+        'expected_outside_scope_summary_delta': {
+            'errors': 1,
+            'warnings': 0,
+            'infos': 0,
+            'issue_count': 1,
+        },
+        'expected_scoped_issue_codes': [
+            'invalid_replica_direction',
+            'invalid_replica_instance_count',
+            'invalid_replica_width',
+            'possible_overlap_aabb',
+            'unknown_procedural_volume_reference',
+        ],
+    }
+
+
 def test_preflight_topology_reference_issue_corpus_signatures_are_deterministic():
     cases = [
         {
@@ -1026,6 +1116,36 @@ def test_preflight_scope_route_filters_to_logical_volume():
             refs = issue.get('object_refs', [])
             assert any(str(ref) in ('box_LV', 'LV:box_LV') for ref in refs)
         assert data['summary_delta']['scope']['errors'] == scoped_report['summary']['errors']
+
+
+def test_preflight_scope_route_drift_fixture_locks_scope_and_outside_scope_delta_semantics():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        fixture = _seed_scoped_preflight_drift_replica_overlap_fixture(pm)
+
+        with patch('app.get_project_manager_for_session', return_value=pm):
+            resp = client.post('/api/preflight/check_scope', json={
+                'scope': {'type': 'logical_volume', 'name': fixture['scope_name']},
+            })
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['success'] is True
+
+        assert data['summary_delta']['scope'] == fixture['expected_scope_summary_delta']
+        assert data['summary_delta']['outside_scope'] == fixture['expected_outside_scope_summary_delta']
+
+        scoped_report = data['scoped_preflight_report']
+        full_report = data['preflight_report']
+
+        scoped_codes = sorted(issue['code'] for issue in scoped_report['issues'])
+        assert scoped_codes == fixture['expected_scoped_issue_codes']
+
+        outside_scope_issue_count = data['summary_delta']['outside_scope']['issue_count']
+        assert full_report['summary']['issue_count'] == (
+            scoped_report['summary']['issue_count'] + outside_scope_issue_count
+        )
 
 
 def test_preflight_scope_route_invalid_scope_name():
