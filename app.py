@@ -10027,6 +10027,175 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": body.get('error', f"Could not fetch simulation analysis (status {status_code}).")}
             return {"success": True, "analysis": body.get('analysis', {})}
 
+        elif tool_name == "create_parameter_registry":
+            param_name = args.get('param_name')
+            target_type = args.get('target_type')
+            target_ref = args.get('target_ref')
+            bounds = args.get('bounds')
+            default = args.get('default')
+
+            if not param_name or not target_type or not isinstance(target_ref, dict) or not isinstance(bounds, dict):
+                return {"success": False, "error": "Missing/invalid required fields: param_name, target_type, target_ref(object), bounds(object)."}
+
+            # PM validation requires numeric default; if absent, default to midpoint.
+            if default is None:
+                try:
+                    min_v = float(bounds.get('min'))
+                    max_v = float(bounds.get('max'))
+                    default = 0.5 * (min_v + max_v)
+                except Exception:
+                    return {"success": False, "error": "bounds.min and bounds.max must be numeric when default is omitted."}
+
+            entry = {
+                'target_type': target_type,
+                'target_ref': target_ref,
+                'bounds': bounds,
+                'default': default,
+                'units': args.get('units', ''),
+                'enabled': args.get('enabled', True),
+                'constraint_group': args.get('constraint_group'),
+            }
+
+            result, err = pm.upsert_parameter_registry_entry(param_name, entry)
+            if err:
+                return {"success": False, "error": err}
+            return {"success": True, "parameter": result}
+
+        elif tool_name == "setup_param_study":
+            study_name = args.get('study_name')
+            parameters = args.get('parameters')
+            objectives = args.get('objectives')
+            mode = (args.get('mode') or ('random' if args.get('random') else 'grid')).strip().lower() if isinstance(args.get('mode') or ('random' if args.get('random') else 'grid'), str) else 'grid'
+
+            if not study_name or not isinstance(parameters, list) or not parameters or not isinstance(objectives, list) or not objectives:
+                return {"success": False, "error": "Missing/invalid required fields: study_name, parameters(non-empty list), objectives(non-empty list)."}
+
+            config = {
+                'mode': mode,
+                'parameters': parameters,
+                'objectives': objectives,
+                'grid': args.get('grid') if isinstance(args.get('grid'), dict) else {},
+                'random': args.get('random') if isinstance(args.get('random'), dict) else {},
+            }
+
+            result, err = pm.upsert_param_study(study_name, config)
+            if err:
+                return {"success": False, "error": err}
+            return {"success": True, "study": result}
+
+        elif tool_name == "run_optimization":
+            study_name = args.get('study_name')
+            method = (args.get('method') or '').strip().lower()
+
+            if not study_name or not method:
+                return {"success": False, "error": "Missing required fields: study_name, method."}
+
+            try:
+                budget = int(args.get('budget', 20))
+            except Exception:
+                return {"success": False, "error": "budget must be an integer."}
+
+            payload = {
+                'study_name': study_name,
+                'method': method,
+                'budget': budget,
+                'seed': args.get('seed', 42),
+                'objective_name': args.get('objective_name'),
+                'direction': args.get('direction'),
+            }
+
+            cmaes_config = args.get('cmaes_config')
+            if isinstance(cmaes_config, dict):
+                payload['cmaes'] = cmaes_config
+
+            surrogate_config = args.get('surrogate_config')
+            if isinstance(surrogate_config, dict):
+                payload['surrogate'] = surrogate_config
+
+            sim_params = args.get('sim_params') if isinstance(args.get('sim_params'), dict) else {}
+            if not sim_params and (args.get('sim_events') is not None or args.get('sim_threads') is not None):
+                sim_params = {
+                    'events': args.get('sim_events', 1),
+                    'threads': args.get('sim_threads', 1),
+                }
+            if sim_params:
+                payload['sim_params'] = sim_params
+
+            if args.get('max_wall_time_seconds') is not None:
+                payload['max_wall_time_seconds'] = args.get('max_wall_time_seconds')
+
+            if isinstance(args.get('context'), dict):
+                payload['context'] = args.get('context')
+            if isinstance(args.get('candidate_runs_root'), str):
+                payload['candidate_runs_root'] = args.get('candidate_runs_root')
+            if args.get('keep_candidate_runs') is not None:
+                payload['keep_candidate_runs'] = bool(args.get('keep_candidate_runs'))
+
+            simulation_in_loop = bool(args.get('simulation_in_loop', False) or args.get('sim_objectives') is not None)
+            if simulation_in_loop:
+                sim_objectives = args.get('sim_objectives')
+                if not isinstance(sim_objectives, list) or not sim_objectives:
+                    return {"success": False, "error": "simulation_in_loop=true requires sim_objectives as a non-empty list."}
+                payload['sim_objectives'] = sim_objectives
+
+                status_code, body = call_route_json(param_optimizer_run_simulation_in_loop_route, payload=payload)
+            else:
+                if method == 'surrogate_gp':
+                    status_code, body = call_route_json(param_optimizer_run_surrogate_route, payload=payload)
+                else:
+                    status_code, body = call_route_json(param_optimizer_run_route, payload=payload)
+
+            if status_code >= 400 or body.get('success') is False:
+                return {
+                    "success": False,
+                    "error": body.get('error', f"Optimization failed (status {status_code})."),
+                    "details": body.get('details'),
+                }
+
+            response = {
+                "success": True,
+                "optimization_result": body.get('optimizer_result'),
+            }
+            if body.get('preflight_summary') is not None:
+                response['preflight_summary'] = body.get('preflight_summary')
+            if body.get('run_policy') is not None:
+                response['run_policy'] = body.get('run_policy')
+            return response
+
+        elif tool_name == "apply_best_result":
+            run_id = args.get('run_id')
+            apply_to_project = args.get('apply_to_project', True)
+
+            if not run_id:
+                return {"success": False, "error": "Missing required field: run_id"}
+
+            result, err = pm.replay_optimizer_best_candidate(run_id, apply_to_project=apply_to_project)
+            if err:
+                return {"success": False, "error": err}
+            return {"success": True, "result": result}
+
+        elif tool_name == "list_optimizer_runs":
+            study_name = args.get('study_name')
+            limit = args.get('limit', 50)
+
+            try:
+                runs = pm.list_optimizer_runs(study_name=study_name, limit=limit)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+            return {"success": True, "runs": runs}
+
+        elif tool_name == "verify_best_candidate":
+            run_id = args.get('run_id')
+            repeats = args.get('repeats', 3)
+
+            if not run_id:
+                return {"success": False, "error": "Missing required field: run_id"}
+
+            result, err = pm.verify_optimizer_best_candidate(run_id, repeats=repeats)
+            if err:
+                return {"success": False, "error": err}
+            return {"success": True, "verification": result}
+
         return {"success": False, "error": f"Unknown tool: {tool_name}"}
     except Exception as e:
         traceback.print_exc()

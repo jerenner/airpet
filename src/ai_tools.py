@@ -509,6 +509,111 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "create_parameter_registry",
+        "description": "Register a project parameter for optimization by linking it to a component property (e.g., define, solid parameter, source field).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "param_name": {"type": "string", "description": "Unique name for this parameter in the registry."},
+                "target_type": {"type": "string", "enum": ["define", "solid", "source", "sim_option"], "description": "Type of component to modify."},
+                "target_ref": {"type": "object", "description": "Reference to the target component and property."},
+                "bounds": {"type": "object", "description": "Min/max bounds for optimization."},
+                "default": {"type": "number", "description": "Default value for the parameter."}
+            },
+            "required": ["param_name", "target_type", "target_ref", "bounds"]
+        }
+    },
+    {
+        "name": "setup_param_study",
+        "description": "Create a parameter study configuration for optimization. Define which parameters to vary and what objectives to optimize.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "study_name": {"type": "string", "description": "Unique name for this parameter study."},
+                "mode": {"type": "string", "enum": ["grid", "random"], "description": "Study mode: 'grid' for systematic sweeps, 'random' for random sampling."},
+                "parameters": {"type": "array", "items": {"type": "string"}, "description": "List of parameter names from the registry to include."},
+                "objectives": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Objective name (e.g., 'efficiency', 'timing_resolution')."},
+                            "direction": {"type": "string", "enum": ["maximize", "minimize"]},
+                            "metric": {"type": "string", "description": "Metric to compute (for grid/random mode studies)."},
+                            "weight": {"type": "number", "description": "Weight for multi-objective optimization."}
+                        }
+                    },
+                    "description": "Objectives to optimize. At least one required for optimizer runs."
+                },
+                "grid": {"type": "object", "description": "Grid-specific settings (steps, per_parameter_steps)."},
+                "random": {"type": "object", "description": "Random-specific settings (samples, seed)."}
+            },
+            "required": ["study_name", "mode", "parameters", "objectives"]
+        }
+    },
+    {
+        "name": "run_optimization",
+        "description": "Run an optimizer on an existing parameter study. Supports regular optimization and optional simulation-in-loop optimization.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "study_name": {"type": "string", "description": "Name of the parameter study to optimize."},
+                "method": {"type": "string", "enum": ["random_search", "cmaes", "surrogate_gp"], "description": "Optimization algorithm to use."},
+                "budget": {"type": "integer", "description": "Maximum number of candidate evaluations (policy-capped)."},
+                "seed": {"type": "integer", "description": "Random seed for reproducibility."},
+                "objective_name": {"type": "string", "description": "Which objective to optimize (if study has multiple)."},
+                "direction": {"type": "string", "enum": ["maximize", "minimize"], "description": "Optimization direction."},
+                "cmaes_config": {"type": "object", "description": "CMA-ES specific configuration (population_size, sigma, etc.)."},
+                "surrogate_config": {"type": "object", "description": "Surrogate model config (warmup_runs, candidate_pool_size, exploration_beta, gp_noise)."},
+                "simulation_in_loop": {"type": "boolean", "description": "If true, run simulation-in-loop optimization."},
+                "sim_objectives": {"type": "array", "items": {"type": "object"}, "description": "Required when simulation_in_loop=true. Objective extraction specs for simulation output."},
+                "sim_params": {"type": "object", "description": "Simulation runtime params (events, threads)."},
+                "sim_events": {"type": "integer", "description": "Legacy alias for sim_params.events."},
+                "sim_threads": {"type": "integer", "description": "Legacy alias for sim_params.threads."},
+                "max_wall_time_seconds": {"type": "integer", "description": "Optional run wall-time budget."},
+                "context": {"type": "object", "description": "Optional static context exposed to simulation objective extraction formulas."},
+                "keep_candidate_runs": {"type": "boolean", "description": "If true, persist per-candidate simulation output folders."},
+                "candidate_runs_root": {"type": "string", "description": "Directory where per-candidate run artifacts are stored when keep_candidate_runs=true."}
+            },
+            "required": ["study_name", "method", "budget"]
+        }
+    },
+    {
+        "name": "apply_best_result",
+        "description": "Apply the best parameters from an optimization run to the current geometry.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "ID of the optimization run."},
+                "apply_to_project": {"type": "boolean", "description": "If true, permanently apply to project. If false, just preview."}
+            },
+            "required": ["run_id"]
+        }
+    },
+    {
+        "name": "list_optimizer_runs",
+        "description": "List past optimization runs, optionally filtered by study name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "study_name": {"type": "string", "description": "Filter runs by study name."},
+                "limit": {"type": "integer", "description": "Maximum number of runs to return."}
+            }
+        }
+    },
+    {
+        "name": "verify_best_candidate",
+        "description": "Verify an optimization result by re-running the best candidate multiple times to check consistency.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "ID of the optimization run."},
+                "repeats": {"type": "integer", "description": "Number of verification runs (max 100)."}
+            },
+            "required": ["run_id"]
+        }
+    },
+    {
         "name": "set_volume_appearance",
         "description": "Set the visual color and opacity of a logical volume.",
         "parameters": {
