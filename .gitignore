@@ -10,3 +10,4 @@ tmp/
 build/
 geant4_app/build/
 tests/__pycache__/
+ai_debug_payload.json
