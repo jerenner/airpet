@@ -4,22 +4,41 @@
 
 - **Geant4 confidence follow-on (multi-heartbeat): scoped preflight shared-code family-correlation hardening** (started 2026-03-20)
   - Why this task now:
-    - Scoped drift diagnostics now have deterministic family-correlation payloads plus docs/examples, so the next confidence step is to decide whether a dedicated shared-code fixture is needed.
-    - This directly targets Geant4-facing confidence in scoped-vs-global drift interpretation.
+    - Scoped drift diagnostics now include deterministic shared-code correlation coverage, so the next confidence step is to harden malformed selector failure contracts around the same scoped route↔AI surface.
+    - This directly targets Geant4-facing confidence in scoped-vs-global drift interpretation and deterministic automation behavior.
   - Checkpoints (2–5 plan):
-    1. **Current checkpoint:** evaluate and, if warranted, add a deterministic scoped-drift fixture where at least one issue code has non-zero counts in both `scope` and `outside_scope` (`correlation == shared`).
-    2. extend route↔AI parity assertions to lock shared-count semantics and ordering in `entries`.
-    3. add/update representative docs/examples if fixture behavior expands.
+    1. ✅ completed: evaluate and add a deterministic scoped-drift fixture where at least one issue code is non-zero in both `scope` and `outside_scope` (`correlation == shared`).
+    2. **Current checkpoint:** expand malformed scoped-selector route↔AI parity assertions (canonical-null precedence, unsupported aliases, mixed malformed fallback paths) with metadata-clean 400 envelope guarantees.
+    3. add/update representative docs/examples if failure-contract behavior expands.
   - Definition of done (current checkpoint):
-    - clear decision recorded (fixture required vs not required) with rationale tied to observed drift risk.
-    - if required, one deterministic shared-code fixture path exists in both route and AI parity suites.
+    - route and AI wrappers share deterministic metadata-clean 400 envelopes across the malformed scoped-selector matrix.
+    - canonical-vs-alias precedence and malformed-first-choice semantics are explicitly regression-locked.
     - targeted scoped-preflight parity suites remain green.
   - Next checkpoint after current:
-    - add explicit failure-envelope coverage for malformed scoped selector inputs that still exercise shared-code fixture seeding safely.
+    - add/update representative docs/examples if expanded failure-contract semantics merit operator-facing examples.
   - Risks/blockers:
-    - shared-code fixtures must remain deterministic across route and AI wrappers and avoid overfitting to ordering artifacts.
+    - malformed-selector matrices can overfit current implementation details if not expressed as stable contract-level assertions.
 
 ## Recently Completed
+
+- **Geant4 confidence checkpoint completed (checkpoint 1/3): scoped-drift shared-code fixture decision + deterministic parity lock** (2026-03-20)
+  - Decision/rationale:
+    - a dedicated shared-code fixture was required because prior scoped-drift coverage only exercised `scope` and `outside_scope`-only correlation classes, leaving `correlation == shared` behavior unpinned.
+  - Expanded deterministic scoped-drift fixture seeding in both test suites:
+    - `tests/test_preflight.py::_seed_scoped_preflight_drift_replica_overlap_fixture`
+    - `tests/test_ai_api.py::_seed_scoped_preflight_drift_replica_overlap_fixture`
+    - fixture now introduces one in-scope plus one outside-scope `unknown_material_reference`, yielding shared-code counts (`scope_count=1`, `outside_scope_count=1`) for the same issue code.
+  - Updated scoped parity expectations (route and AI):
+    - scoped summary delta now includes the in-scope material-reference regression.
+    - `issue_family_correlations.shared_issue_codes` now deterministically includes `unknown_material_reference`.
+    - `entries` now lock `unknown_material_reference` as `correlation: "shared"` with stable counts/order.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile tests/test_preflight.py tests/test_ai_api.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "preflight_scope_route"` (4 passed, 107 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_api.py -k "run_preflight_scope or scoped_drift_delta_parity or scope_route_and_ai_wrappers_share_success_payloads or scope_route_and_ai_wrappers_share_validation_error_payloads"` (4 passed, 121 deselected)
+  - Checkpoint finished:
+    - ✔ shared issue-code correlation semantics are now deterministic and regression-locked in both route and AI scoped-preflight fixtures.
+    - ✔ scoped/fulls summary-delta contracts remain green after shared-correlation fixture expansion.
 
 - **Geant4 confidence checkpoint completed (checkpoint 3/3): scoped-drift parity diagnostics docs + representative example payload** (2026-03-20)
   - Added scoped preflight diagnostics reference doc:
@@ -1416,22 +1435,17 @@
 
 ## Next Candidates
 
-1. **Scoped-preflight follow-on: explicit shared-code drift fixture + parity lock**
-   - Add a deterministic scoped drift fixture where at least one issue code has non-zero counts in both `scope` and `outside_scope`.
-   - Lock `shared_issue_codes` and `entries[].correlation == "shared"` behavior across route and AI wrapper outputs.
-   - Impact: high (closes the remaining scoped family-correlation edge case).
-
-2. **Scoped-preflight reliability follow-on: malformed scope selector failure-envelope parity**
+1. **Scoped-preflight reliability follow-on: malformed scope selector failure-envelope parity**
    - Expand route↔AI parity tests for malformed scoped selectors (canonical-null precedence, unsupported aliases, mixed malformed fallback paths).
    - Assert deterministic metadata-clean 400 envelopes for all covered invalid selector shapes.
    - Impact: medium-high (keeps scoped API contracts robust for automation).
 
-3. **Local-model optionality follow-on: operator-facing capability override diagnostics in backend readiness/chat payloads**
+2. **Local-model optionality follow-on: operator-facing capability override diagnostics in backend readiness/chat payloads**
    - Surface effective capability overrides (`supports_tools` etc.) in diagnostics payloads so users can audit why a backend was/was not selected.
    - Add deterministic remediation guidance when override config contradicts probed backend behavior.
    - Impact: medium-high (reduces confusion while adopting local backends across diverse model servers).
 
-4. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
+3. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
    - Add a compact route/AI reproducibility artifact that shows selector input, scoped output, and deterministic drift diagnostics in one flow.
    - Include docs pointers for debugging scoped-vs-global divergence in daily geometry iteration.
    - Impact: medium (improves operator onboarding and repeatable debugging).

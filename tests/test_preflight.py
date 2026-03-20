@@ -185,15 +185,16 @@ def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
         offset='0',
     )
 
+    pm.current_geometry_state.logical_volumes[scope_leaf['name']].material_ref = 'MissingScopedMaterial'
     pm.current_geometry_state.logical_volumes['box_LV'].material_ref = 'MissingOutsideScopeMaterial'
 
     return {
         'scope_name': scope_name,
         'expected_scope_summary_delta': {
-            'errors': 4,
+            'errors': 5,
             'warnings': 1,
             'infos': 0,
-            'issue_count': 5,
+            'issue_count': 6,
         },
         'expected_outside_scope_summary_delta': {
             'errors': 1,
@@ -206,16 +207,18 @@ def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
             'invalid_replica_instance_count',
             'invalid_replica_width',
             'possible_overlap_aabb',
+            'unknown_material_reference',
             'unknown_procedural_volume_reference',
         ],
         'expected_issue_family_correlations': {
             'scope': {
-                'issue_count': 5,
+                'issue_count': 6,
                 'issue_codes': [
                     'invalid_replica_direction',
                     'invalid_replica_instance_count',
                     'invalid_replica_width',
                     'possible_overlap_aabb',
+                    'unknown_material_reference',
                     'unknown_procedural_volume_reference',
                 ],
                 'counts_by_code': {
@@ -223,6 +226,7 @@ def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
                     'invalid_replica_instance_count': 1,
                     'invalid_replica_width': 1,
                     'possible_overlap_aabb': 1,
+                    'unknown_material_reference': 1,
                     'unknown_procedural_volume_reference': 1,
                 },
             },
@@ -240,8 +244,8 @@ def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
                 'possible_overlap_aabb',
                 'unknown_procedural_volume_reference',
             ],
-            'outside_scope_only_issue_codes': ['unknown_material_reference'],
-            'shared_issue_codes': [],
+            'outside_scope_only_issue_codes': [],
+            'shared_issue_codes': ['unknown_material_reference'],
             'entries': [
                 {
                     'issue_code': 'invalid_replica_direction',
@@ -269,8 +273,8 @@ def _seed_scoped_preflight_drift_replica_overlap_fixture(pm):
                 },
                 {
                     'issue_code': 'unknown_material_reference',
-                    'correlation': 'outside_scope',
-                    'scope_count': 0,
+                    'correlation': 'shared',
+                    'scope_count': 1,
                     'outside_scope_count': 1,
                 },
                 {
