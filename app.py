@@ -8435,6 +8435,11 @@ AI_TOOL_ARG_ALIASES = {
 # Defaults used to keep tool calls resilient when small/fast models omit fields.
 AI_TOOL_DEFAULTS = {
     "manage_define": {"define_type": "constant"},
+    "create_primitive_solid": {
+        "solid_type_defaults": {
+            "cone": {"startphi": "0*deg", "deltaphi": "360*deg"}
+        }
+    },
     "create_detector_ring": {
         "parent_lv_name": "World",
         "num_detectors": "10",
@@ -8502,8 +8507,14 @@ PRIMITIVE_SOLID_PARAM_ALIASES = {
         "outerradius1": "rmax1",
         "innerradius2": "rmin2",
         "outerradius2": "rmax2",
+        "rmin": "rmin1",
+        "rmax": "rmax1",
+        "dz": "z",
         "halfz": "z",
         "halflength": "z",
+        "zlen": "z",
+        "sphi": "startphi",
+        "dphi": "deltaphi",
         "startangle": "startphi",
         "spanangle": "deltaphi"
     },
@@ -8585,6 +8596,13 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
         mapped[k] = _coerce_unit_expr_if_bare_number(mapped[k])
         if _normalize_param_alias_key(k) in ANGLE_PARAM_NAMES:
             mapped[k] = _coerce_angle_expr_if_bare_number(mapped[k])
+
+    # 4) Apply solid-type specific defaults
+    if st == "cone":
+        if "startphi" not in mapped:
+            mapped["startphi"] = "0*deg"
+        if "deltaphi" not in mapped:
+            mapped["deltaphi"] = "360*deg"
 
     return mapped
 
@@ -8710,8 +8728,11 @@ def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, 
 
 
 def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]:
+    import sys
     solid_type = args.get('solid_type')
     params = args.get('params')
+
+    print(f"[VALIDATE] solid_type={solid_type}, params keys={list(params.keys()) if isinstance(params, dict) else 'not dict'}", flush=True, file=sys.stderr)
 
     if not isinstance(params, dict):
         return "Tool 'create_primitive_solid' expects 'params' to be an object."
@@ -8726,11 +8747,14 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     normalized_params = normalize_primitive_solid_params(solid_type, params)
     args['params'] = normalized_params
 
+    print(f"[VALIDATE] normalized params={normalized_params}", flush=True, file=sys.stderr)
+
     required_params = spec.get('required', [])
     missing = [
         key for key in required_params
         if key not in normalized_params or normalized_params.get(key) in (None, "")
     ]
+    print(f"[VALIDATE] required={required_params}, missing={missing}", flush=True, file=sys.stderr)
     if not missing:
         return None
 
@@ -8895,6 +8919,8 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
 
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
+    import sys
+    print(f"[DISPATCH] tool_name={tool_name}", flush=True, file=sys.stderr)
 
     # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
     def to_vec_dict(val, default_val='0'):
@@ -9013,6 +9039,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 "density_expr": args.get('density'),
                 "Z_expr": args.get('z') if args.get('z') is not None else args.get('Z'),
                 "A_expr": args.get('a') if args.get('a') is not None else args.get('A'),
+                "state": args.get('state'),
                 "components": args.get('components')
             }
             props = {k: v for k, v in props.items() if v is not None}
@@ -9029,19 +9056,53 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
-            stype = args.get('solid_type')
-            p = args.get('params')
+            import sys
+            try:
+                print(">>> CREATE_PRIMITIVE_SOLID CALLED <<<", flush=True, file=sys.stderr)
+                stype = args.get('solid_type')
+                p = args.get('params')
 
-            if isinstance(p, list) and len(p) == 3:
-                p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
+                print(f"  [create_primitive_solid] solid_type={stype}, params={p}", flush=True, file=sys.stderr)
 
-            p = normalize_primitive_solid_params(stype, p)
+                if isinstance(p, list) and len(p) == 3:
+                    p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
 
-            res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
-            if res:
-                pm.recalculate_geometry_state()
-                return {"success": True, "message": f"Solid '{res['name']}' created."}
-            return {"success": False, "error": error}
+                # Validate parameters against the solid type spec
+                if isinstance(p, dict):
+                    spec = PRIMITIVE_SOLID_PARAM_SPECS.get(stype, {})
+                    valid_params = set(spec.get('properties', {}).keys())
+                    required_params = set(spec.get('required', []))
+                    
+                    # Filter out invalid parameters and warn
+                    invalid_params = set(p.keys()) - valid_params
+                    if invalid_params:
+                        print(f"  [create_primitive_solid] WARNING: Ignoring invalid params for {stype}: {invalid_params}", flush=True, file=sys.stderr)
+                        p = {k: v for k, v in p.items() if k in valid_params}
+                    
+                    # Check required parameters
+                    missing_params = required_params - set(p.keys())
+                    if missing_params:
+                        error_msg = f"Missing required parameters for {stype}: {missing_params}. Required: {required_params}"
+                        print(f"  [create_primitive_solid] ERROR: {error_msg}", flush=True, file=sys.stderr)
+                        return {"success": False, "error": error_msg}
+
+                p = normalize_primitive_solid_params(stype, p)
+
+                print(f"  [create_primitive_solid] normalized params={p}", flush=True, file=sys.stderr)
+
+                res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
+                if res:
+                    pm.recalculate_geometry_state()
+                    print(f"  [create_primitive_solid] SUCCESS: {res['name']}", flush=True, file=sys.stderr)
+                    return {"success": True, "message": f"Solid '{res['name']}' created."}
+                print(f"  [create_primitive_solid] ERROR: {error}", flush=True, file=sys.stderr)
+                return {"success": False, "error": error}
+                
+            except Exception as e:
+                import traceback
+                print(f"  [create_primitive_solid] EXCEPTION: {e}", flush=True, file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                return {"success": False, "error": str(e)}
 
         elif tool_name == "modify_solid":
             success, error = pm.update_solid(args['name'], args['params'])
@@ -9103,7 +9164,8 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 parent, args.get('name'), placed,
                 to_vec_dict(args.get('position', {'x': '0', 'y': '0', 'z': '0'})),
                 to_vec_dict(args.get('rotation', {'x': '0', 'y': '0', 'z': '0'})),
-                to_vec_dict(args.get('scale', {'x': '1', 'y': '1', 'z': '1'}))
+                to_vec_dict(args.get('scale', {'x': '1', 'y': '1', 'z': '1'})),
+                args.get('copy_number_expr', "0")
             )
             if res:
                 return {"success": True, "message": f"Volume placed as '{res['name']}'."}
@@ -13020,6 +13082,11 @@ def ai_chat_route():
                 )
 
                 print(f"  Calling llama.cpp...", flush=True)
+                import json
+                print(f"  Tool schemas being sent: {len(openai_tool_schemas)} tools", flush=True)
+                if turn == 0:
+                    for ts in openai_tool_schemas[:1]:  # Just log first tool as sample
+                        print(f"    Sample tool: {ts.get('name')} with {len(ts.get('function', {}).get('parameters', {}).get('properties', {}))} params", flush=True)
                 adapter_response = invoke_text_request_for_backend(
                     selected_backend_id,
                     invocation_request,
@@ -13043,7 +13110,12 @@ def ai_chat_route():
                 if not parsed_tool_calls and isinstance(adapter_response.tool_calls, list):
                     parsed_tool_calls = _normalize_tool_calls_payload(adapter_response.tool_calls)
 
+                print(f"  Parsed {len(parsed_tool_calls)} tool calls", flush=True)
+                for tc in parsed_tool_calls:
+                    print(f"    Tool call: {tc.get('name')} args: {json.dumps(tc.get('arguments'))[:200]}", flush=True)
+
                 executable_tool_calls = _build_executable_tool_calls(parsed_tool_calls, turn)
+                print(f"  Executable tool calls: {len(executable_tool_calls)}", flush=True)
                 assistant_openai_tool_calls = _to_openai_tool_calls(executable_tool_calls, id_prefix=f"turn_{turn}")
 
                 assistant_history_entry: Dict[str, Any] = {

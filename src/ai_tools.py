@@ -68,15 +68,15 @@ PRIMITIVE_SOLID_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
         }
     },
     "cone": {
-        "required": ["rmin1", "rmax1", "rmin2", "rmax2", "z", "startphi", "deltaphi"],
+        "required": ["rmin1", "rmax1", "rmin2", "rmax2", "z"],
         "properties": {
             "rmin1": _expr_param("Inner radius at -Z side (mm)"),
             "rmax1": _expr_param("Outer radius at -Z side (mm)"),
             "rmin2": _expr_param("Inner radius at +Z side (mm)"),
             "rmax2": _expr_param("Outer radius at +Z side (mm)"),
             "z": _expr_param("Half-length in Z (mm)"),
-            "startphi": _expr_param("Start angle (e.g., 0*deg)"),
-            "deltaphi": _expr_param("Span angle (e.g., 360*deg)")
+            "startphi": _expr_param("Start angle (e.g., 0*deg, default: 0)"),
+            "deltaphi": _expr_param("Span angle (e.g., 360*deg, default: 360)")
         }
     },
     "sphere": {
@@ -364,6 +364,7 @@ AI_GEOMETRY_TOOLS = [
                 "density": {"type": "string", "description": "Density expression in g/cm3"},
                 "Z": {"type": "string", "description": "Atomic number expression"},
                 "A": {"type": "string", "description": "Atomic mass expression"},
+                "state": {"type": "string", "description": "Material state: 'solid' (default), 'liquid', or 'gas'."},
                 "components": {
                     "type": "array",
                     "description": "Array of component elements for compound materials. Each component has 'ref' (element name like 'nickel' or 'oxygen'), 'fraction' (weight fraction as string), and optionally 'natoms'.",
@@ -448,7 +449,8 @@ AI_GEOMETRY_TOOLS = [
                 "name": {"type": "string", "description": "Optional name for the placement."},
                 "position": {"type": "object"},
                 "rotation": {"type": "object"},
-                "scale": {"type": "object"}
+                "scale": {"type": "object"},
+                "copy_number_expr": {"type": "string", "description": "Expression or define name for copy number (e.g., '10' or 'num_copies')."}
             },
             "required": ["parent_lv_name", "placed_lv_ref"]
         }
