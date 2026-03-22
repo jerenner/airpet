@@ -58,13 +58,13 @@ PRIMITIVE_SOLID_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
         }
     },
     "tube": {
-        "required": ["rmin", "rmax", "z", "startphi", "deltaphi"],
+        "required": ["rmin", "rmax", "z"],
         "properties": {
             "rmin": _expr_param("Inner radius (mm)"),
             "rmax": _expr_param("Outer radius (mm)"),
             "z": _expr_param("Half-length in Z (mm)"),
-            "startphi": _expr_param("Start angle (e.g., 0*deg)"),
-            "deltaphi": _expr_param("Span angle (e.g., 360*deg)")
+            "startphi": _expr_param("Start angle (e.g., 0*deg, default: 0)"),
+            "deltaphi": _expr_param("Span angle (e.g., 360*deg, default: 360)")
         }
     },
     "cone": {
@@ -118,19 +118,19 @@ PRIMITIVE_SOLID_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
         }
     },
     "trap": {
-        "required": ["z", "theta", "phi", "y1", "x1", "x2", "alpha1", "y2", "x3", "x4", "alpha2"],
+        "required": ["z", "y1", "x1", "x2", "y2", "x3", "x4"],
         "properties": {
             "z": _expr_param("Full Z length (mm)"),
-            "theta": _expr_param("Theta angle"),
-            "phi": _expr_param("Phi angle"),
+            "theta": _expr_param("Theta angle (default: 0*deg)"),
+            "phi": _expr_param("Phi angle (default: 0*deg)"),
             "y1": _expr_param("Y length at -Z side (mm)"),
             "x1": _expr_param("X1 at -Z side (mm)"),
             "x2": _expr_param("X2 at -Z side (mm)"),
-            "alpha1": _expr_param("Alpha1 angle"),
+            "alpha1": _expr_param("Alpha1 angle (default: 0*deg)"),
             "y2": _expr_param("Y length at +Z side (mm)"),
             "x3": _expr_param("X3 at +Z side (mm)"),
             "x4": _expr_param("X4 at +Z side (mm)"),
-            "alpha2": _expr_param("Alpha2 angle")
+            "alpha2": _expr_param("Alpha2 angle (default: 0*deg)")
         }
     },
     "hype": {

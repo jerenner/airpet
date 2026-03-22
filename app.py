@@ -8437,7 +8437,8 @@ AI_TOOL_DEFAULTS = {
     "manage_define": {"define_type": "constant"},
     "create_primitive_solid": {
         "solid_type_defaults": {
-            "cone": {"startphi": "0*deg", "deltaphi": "360*deg"}
+            "cone": {"startphi": "0*deg", "deltaphi": "360*deg"},
+            "tube": {"startphi": "0*deg", "deltaphi": "360*deg"}
         }
     },
     "create_detector_ring": {
@@ -8499,6 +8500,7 @@ PRIMITIVE_SOLID_PARAM_ALIASES = {
         "outerradius": "rmax",
         "halfz": "z",
         "halflength": "z",
+        "zlen": "z",
         "startangle": "startphi",
         "spanangle": "deltaphi"
     },
@@ -8603,6 +8605,76 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
             mapped["startphi"] = "0*deg"
         if "deltaphi" not in mapped:
             mapped["deltaphi"] = "360*deg"
+    
+    if st == "trap":
+        # Make angle parameters optional with defaults (Geant4 G4Trap defaults)
+        if "theta" not in mapped:
+            mapped["theta"] = "0*deg"
+        if "phi" not in mapped:
+            mapped["phi"] = "0*deg"
+        if "alpha1" not in mapped:
+            mapped["alpha1"] = "0*deg"
+        if "alpha2" not in mapped:
+            mapped["alpha2"] = "0*deg"
+        
+        # Auto-populate missing required parameters with sensible defaults
+        # This helps when AI provides incomplete parameters
+        if "z" not in mapped:
+            mapped["z"] = "100"
+            print(f"[VALIDATE] Auto-populated default z=100 for trap", flush=True, file=sys.stderr)
+        if "y1" not in mapped:
+            mapped["y1"] = "20"
+            print(f"[VALIDATE] Auto-populated default y1=20 for trap", flush=True, file=sys.stderr)
+        if "x1" not in mapped:
+            mapped["x1"] = "10"
+            print(f"[VALIDATE] Auto-populated default x1=10 for trap", flush=True, file=sys.stderr)
+        if "x2" not in mapped:
+            mapped["x2"] = "10"
+            print(f"[VALIDATE] Auto-populated default x2=10 for trap", flush=True, file=sys.stderr)
+        if "y2" not in mapped:
+            mapped["y2"] = "20"
+            print(f"[VALIDATE] Auto-populated default y2=20 for trap", flush=True, file=sys.stderr)
+        if "x3" not in mapped:
+            mapped["x3"] = "10"
+            print(f"[VALIDATE] Auto-populated default x3=10 for trap", flush=True, file=sys.stderr)
+        if "x4" not in mapped:
+            mapped["x4"] = "10"
+            print(f"[VALIDATE] Auto-populated default x4=10 for trap", flush=True, file=sys.stderr)
+
+    # 5) Auto-convert common AI mistakes: xtru-style sections -> rzpoints for genericPolyhedra/genericPolycone
+    # AI often confuses these solid types and provides sections (for xtru) instead of rzpoints
+    if st in ("genericPolyhedra", "genericPolycone") and "sections" in mapped and "rzpoints" not in mapped:
+        # Convert xtru-style sections to rzpoints format
+        # sections: [{zOrder, zPosition, xOffset, yOffset, scalingFactor}, ...]
+        # rzpoints: [{r, z}, ...]
+        sections = mapped.get("sections", [])
+        if isinstance(sections, list) and len(sections) > 0:
+            rzpoints = []
+            for sec in sections:
+                if isinstance(sec, dict):
+                    # Use zPosition as z, and calculate r from scalingFactor (assuming base radius from context)
+                    z_val = sec.get("zPosition", "0")
+                    # For genericPolyhedra/Polycone, we need r values. If scalingFactor is provided, use it as r
+                    # Otherwise, we can't properly convert - but we try our best
+                    r_val = sec.get("scalingFactor", sec.get("xOffset", "0"))
+                    rzpoints.append({"r": r_val, "z": z_val})
+            if rzpoints:
+                mapped["rzpoints"] = rzpoints
+                print(f"[VALIDATE] Auto-converted sections->rzpoints for {st}: {rzpoints}", flush=True, file=sys.stderr)
+        elif isinstance(sections, list) and len(sections) == 0:
+            # AI provided empty sections - provide sensible defaults
+            # This is a common AI mistake when it doesn't know what values to use
+            if st == "genericPolyhedra":
+                # Default: tapered cylinder (small radius at -z, large at +z)
+                mapped["rzpoints"] = [{"r": "10", "z": "-50"}, {"r": "50", "z": "50"}]
+                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+            elif st == "genericPolycone":
+                # Default: cone (zero radius at -z, expanding to +z)
+                mapped["rzpoints"] = [{"r": "0", "z": "-50"}, {"r": "50", "z": "50"}]
+                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+        # Remove the useless empty sections key
+        if "sections" in mapped and not mapped["sections"]:
+            del mapped["sections"]
 
     return mapped
 
@@ -8724,6 +8796,17 @@ def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, 
         if normalized.get(key) is None:
             normalized[key] = value
 
+    # Apply solid_type_defaults for create_primitive_solid tool.
+    if tool_name == "create_primitive_solid":
+        solid_type = normalized.get("solid_type")
+        params = normalized.get("params", {})
+        if solid_type and isinstance(params, dict):
+            solid_defaults = AI_TOOL_DEFAULTS.get("create_primitive_solid", {}).get("solid_type_defaults", {}).get(solid_type, {})
+            for key, value in solid_defaults.items():
+                if params.get(key) is None:
+                    params[key] = value
+            normalized["params"] = params
+
     return normalized, None
 
 
@@ -8768,11 +8851,20 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
         alias_hint = f" Common aliases accepted: {rendered}."
 
     provided_keys = sorted(params.keys()) if isinstance(params, dict) else []
-
+    
+    # Detect common confusion: AI providing wrong solid type's parameters
+    wrong_param_hint = ""
+    if solid_type == "genericPolyhedra" and "sections" in params:
+        wrong_param_hint = " NOTE: 'sections' is for 'xtru' solids, not 'genericPolyhedra'. For genericPolyhedra, use 'rzpoints' as array of {r, z} objects like [{r: '10', z: '-50'}, {r: '50', z: '50'}]."
+    elif solid_type == "genericPolycone" and "sections" in params:
+        wrong_param_hint = " NOTE: 'sections' is for 'xtru' solids, not 'genericPolycone'. For genericPolycone, use 'rzpoints' as array of {r, z} objects."
+    elif solid_type == "trap" and ("rzpoints" in params or "sections" in params or "numsides" in params):
+        wrong_param_hint = " NOTE: 'trap' does NOT use 'rzpoints', 'sections', or 'numsides'. Those are for other solid types. trap requires: z, theta, phi, y1, x1, x2, alpha1, y2, x3, x4, alpha2."
+    
     return (
         f"Tool 'create_primitive_solid' for solid_type='{solid_type}' is missing required param(s): {missing}. "
         f"Use canonical params: {canonical_names}. "
-        f"Provided keys: {provided_keys}.{alias_hint}"
+        f"Provided keys: {provided_keys}.{alias_hint}{wrong_param_hint}"
     )
 
 
@@ -12748,7 +12840,7 @@ def ai_chat_stream_route():
     data = request.get_json() or {}
     user_message = data.get('message')
     model_id = data.get('model', 'models/gemini-2.0-flash-exp')
-    turn_limit = data.get('turn_limit', 10)
+    turn_limit = data.get('turn_limit', 20)  # Increased from 10 to give AI more chances for complex tasks
 
     if not user_message:
         return Response(f"data: {json.dumps({'type': 'error', 'message': 'No message provided.'})}\n\n", mimetype='text/event-stream')
@@ -12875,7 +12967,8 @@ def ai_chat_route():
     data = request.get_json() or {}
     user_message = data.get('message')
     model_id = data.get('model', 'models/gemini-2.0-flash-exp')
-    turn_limit = data.get('turn_limit', 10)
+    turn_limit = data.get('turn_limit', 20)  # Increased from 10 to give AI more chances for complex tasks
+    print(f"[CHAT] Received turn_limit: {turn_limit}", flush=True, file=sys.stderr)
 
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
@@ -13068,7 +13161,6 @@ def ai_chat_route():
             }
 
             for turn in range(turn_limit):
-                import sys
                 print(f"\n=== Turn {turn + 1}/{turn_limit} ===", flush=True)
                 print(f"  Messages: {len(local_messages)}, Tools: {effective_require_tools}", flush=True)
                 invocation_request = TextGenerationRequest(
