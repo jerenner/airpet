@@ -8773,10 +8773,20 @@ def _normalize_tool_args(tool_name: str, args: Any) -> tuple[Optional[Dict[str, 
         return None, f"Tool '{tool_name}' arguments must be an object/dict, got {type(args).__name__}."
 
     # Normalize top-level keys (camelCase -> snake_case).
+    # Preserve canonical-key precedence when both canonical and camelCase
+    # variants are supplied in the same payload.
     normalized: Dict[str, Any] = {}
     for key, value in args.items():
         key_str = str(key)
-        normalized[_camel_to_snake(key_str)] = _parse_json_like(value)
+        canonical_key = _camel_to_snake(key_str)
+        parsed_value = _parse_json_like(value)
+
+        if canonical_key in normalized and key_str != canonical_key:
+            # Do not let a camelCase variant overwrite an already-present
+            # canonical snake_case key.
+            continue
+
+        normalized[canonical_key] = parsed_value
 
     # Apply per-tool aliases.
     for old_key, canonical_key in AI_TOOL_ARG_ALIASES.get(tool_name, {}).items():

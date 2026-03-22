@@ -8,18 +8,39 @@
     - This directly targets Geant4-facing confidence in scoped-vs-global drift interpretation and deterministic automation behavior.
   - Checkpoints (2–5 plan):
     1. ✅ completed: evaluate and add a deterministic scoped-drift fixture where at least one issue code is non-zero in both `scope` and `outside_scope` (`correlation == shared`).
-    2. **Current checkpoint:** expand malformed scoped-selector route↔AI parity assertions (canonical-null precedence, unsupported aliases, mixed malformed fallback paths) with metadata-clean 400 envelope guarantees.
-    3. add/update representative docs/examples if failure-contract behavior expands.
+    2. ✅ completed: expand malformed scoped-selector route↔AI parity assertions (canonical-null precedence, unsupported aliases, mixed malformed fallback paths) with metadata-clean 400 envelope guarantees.
+    3. **Current checkpoint:** add/update representative docs/examples for scoped-selector malformed-input semantics, including canonical-key precedence and metadata-clean failure envelopes.
   - Definition of done (current checkpoint):
-    - route and AI wrappers share deterministic metadata-clean 400 envelopes across the malformed scoped-selector matrix.
-    - canonical-vs-alias precedence and malformed-first-choice semantics are explicitly regression-locked.
-    - targeted scoped-preflight parity suites remain green.
+    - operator-facing scoped diagnostics docs/examples include malformed-selector behavior for canonical-null precedence and malformed alias precedence.
+    - examples reflect route↔AI deterministic 400 failure envelope guarantees (`success`/`error` only).
+    - docs align with currently regression-locked selector semantics.
   - Next checkpoint after current:
-    - add/update representative docs/examples if expanded failure-contract semantics merit operator-facing examples.
+    - reassess `Next Candidates` and select the highest-impact post-scoped checkpoint based on north-star impact and recent 70/30 feature-vs-regression balance.
   - Risks/blockers:
-    - malformed-selector matrices can overfit current implementation details if not expressed as stable contract-level assertions.
+    - documenting malformed-selector matrices without overfitting implementation details requires contract-level wording discipline.
 
 ## Recently Completed
+
+- **Geant4 confidence checkpoint completed (checkpoint 2/3): malformed scoped-selector route↔AI parity matrix + metadata-clean 400 envelope hardening** (2026-03-23)
+  - Expanded scoped-selector malformed-input regression matrix in `tests/test_ai_api.py::test_preflight_scope_route_and_ai_wrappers_share_validation_error_payloads`:
+    - canonical-null/blank precedence for `scope.type` and `scope.name`
+    - unsupported alias precedence (`scope_type` vs `scopeType`, including top-level selector aliases)
+    - mixed malformed fallback-path assertions (malformed earlier alias blocks later fallback)
+    - unsupported nested alias-key behavior (`scope_kind`/`scope_label` ignored)
+  - Added scoped failure-envelope contract helper:
+    - `tests/test_ai_api.py::_assert_scoped_preflight_error_payload_excludes_success_metadata`
+    - locks metadata-clean scoped-preflight 400 payloads (`success`/`error` only).
+  - Fixed discovered route↔AI drift in `app.py::_normalize_tool_args(...)`:
+    - camelCase top-level keys no longer overwrite an already-present canonical snake_case key.
+    - preserves canonical-key precedence semantics for mixed payloads (e.g. `scope_type` must win over `scopeType`), matching route behavior.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py tests/test_ai_api.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_api.py -k "run_preflight_scope or preflight_scope_route_and_ai_wrappers"` (4 passed, 121 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "preflight_scope_route"` (4 passed, 107 deselected)
+  - Checkpoint finished:
+    - ✔ malformed scoped-selector route↔AI parity is now regression-locked across canonical-null precedence, unsupported aliases, and mixed fallback-path scenarios.
+    - ✔ scoped preflight validation failures now explicitly guarantee metadata-clean 400 envelopes.
+    - ✔ AI-wrapper selector normalization now preserves canonical-key precedence to match route contracts.
 
 - **Geant4 confidence checkpoint completed (checkpoint 1/3): scoped-drift shared-code fixture decision + deterministic parity lock** (2026-03-20)
   - Decision/rationale:
@@ -1435,17 +1456,17 @@
 
 ## Next Candidates
 
-1. **Scoped-preflight reliability follow-on: malformed scope selector failure-envelope parity**
-   - Expand route↔AI parity tests for malformed scoped selectors (canonical-null precedence, unsupported aliases, mixed malformed fallback paths).
-   - Assert deterministic metadata-clean 400 envelopes for all covered invalid selector shapes.
-   - Impact: medium-high (keeps scoped API contracts robust for automation).
-
-2. **Local-model optionality follow-on: operator-facing capability override diagnostics in backend readiness/chat payloads**
+1. **Local-model optionality follow-on: operator-facing capability override diagnostics in backend readiness/chat payloads**
    - Surface effective capability overrides (`supports_tools` etc.) in diagnostics payloads so users can audit why a backend was/was not selected.
    - Add deterministic remediation guidance when override config contradicts probed backend behavior.
    - Impact: medium-high (reduces confusion while adopting local backends across diverse model servers).
 
-3. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
+2. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
    - Add a compact route/AI reproducibility artifact that shows selector input, scoped output, and deterministic drift diagnostics in one flow.
    - Include docs pointers for debugging scoped-vs-global divergence in daily geometry iteration.
    - Impact: medium (improves operator onboarding and repeatable debugging).
+
+3. **Geant4 confidence follow-on: scoped selector normalization contract helper extraction**
+   - Consider extracting shared canonical/alias precedence normalization into an explicit helper used by both route and AI normalization layers.
+   - Add focused regression coverage for mixed canonical+camel top-level key collisions to prevent future parity drift.
+   - Impact: medium (reduces future selector-contract regressions).
