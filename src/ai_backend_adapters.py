@@ -424,6 +424,46 @@ DEFAULT_BACKEND_SPECS: Tuple[AdapterSpec, ...] = (
 )
 
 
+LOCAL_RUNTIME_CAPABILITY_FLAGS: Tuple[str, ...] = (
+    "supports_tools",
+    "supports_json_mode",
+    "supports_vision",
+    "supports_streaming",
+)
+
+
+def effective_runtime_capability_overrides_for_backend(
+    backend_id: str,
+    *,
+    runtime_config: Optional[Mapping[str, Any]] = None,
+    specs: Sequence[AdapterSpec] = DEFAULT_BACKEND_SPECS,
+) -> Optional[Dict[str, bool]]:
+    """Return deterministic effective capability flags for one local backend.
+
+    Values reflect defaults after applying runtime overrides (top-level and nested
+    capability override forms).
+    """
+
+    normalized_backend_id = str(backend_id or "").strip()
+    if not normalized_backend_id:
+        return None
+
+    resolved_specs = resolve_specs_with_runtime_overrides(runtime_config, specs=specs)
+    for spec in resolved_specs:
+        if spec.backend_id != normalized_backend_id:
+            continue
+        if spec.adapter_kind != "local":
+            return None
+
+        capabilities = spec.capabilities
+        return {
+            key: bool(getattr(capabilities, key))
+            for key in LOCAL_RUNTIME_CAPABILITY_FLAGS
+        }
+
+    return None
+
+
 def build_capability_matrix(specs: Sequence[AdapterSpec] = DEFAULT_BACKEND_SPECS) -> Dict[str, Any]:
     ordered = sorted(specs, key=lambda s: (s.priority, s.backend_id))
     return {

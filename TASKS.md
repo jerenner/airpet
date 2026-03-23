@@ -5,21 +5,45 @@
 - **Local-model optionality follow-on (multi-heartbeat): capability-override observability in readiness + chat diagnostics** (started 2026-03-23)
   - Why this task now:
     - Recent scoped-selector work completed a regression-heavy streak; next checkpoint should deliberately rebalance toward feature/architecture progress (70/30 policy).
-    - Operators currently lack direct visibility into *effective* runtime capability overrides during backend selection/readiness checks, which slows local-model adoption/debugging.
+    - Checkpoint 1 now exposes effective capability state; next high-value step is converting that visibility into deterministic contradiction guidance.
   - Checkpoints (2–5 plan):
-    1. **Current checkpoint:** extend diagnostics payloads to expose effective capability overrides (`supports_tools`, `supports_json_mode`, `supports_vision`, `supports_streaming`) for local backends in both readiness and chat-failure paths.
-    2. add deterministic contradiction/remediation hints when override claims conflict with observed backend behavior.
+    1. ✅ completed: expose effective capability override flags in readiness + chat failure diagnostics for local backends.
+    2. **Current checkpoint:** add deterministic contradiction/remediation hints when effective capability flags conflict with selector/readiness outcomes.
     3. add route/AI regression coverage + docs/examples for the enriched diagnostics contract.
   - Definition of done (current checkpoint):
-    - backend diagnostics payloads include explicit effective capability-override fields for local backends.
-    - `/api/ai/chat` selector/runtime failure payloads surface the same effective override view.
-    - output shape is deterministic and covered by targeted tests.
+    - contradiction classes are explicit and machine-testable in chat diagnostics/remediation payloads.
+    - remediation action codes differentiate selector-contract mismatch vs runtime-backend mismatch.
+    - deterministic hint ordering/wording is covered by targeted tests.
   - Next checkpoint after current:
-    - implement contradiction-class remediation hints and lock deterministic action-code guidance in tests/docs.
+    - extend docs/examples and broader regression matrix for the enriched diagnostics contract.
   - Risks/blockers:
     - distinguishing configuration intent vs runtime backend-probe reality without noisy false positives may require careful taxonomy wording.
 
 ## Recently Completed
+
+- **Local-model optionality checkpoint completed (checkpoint 1/3): effective capability-override observability in readiness + chat diagnostics** (2026-03-23)
+  - Added deterministic effective capability flag resolver in `src/ai_backend_adapters.py`:
+    - new `effective_runtime_capability_overrides_for_backend(...)` returns runtime-resolved local backend flags (`supports_tools`, `supports_json_mode`, `supports_vision`, `supports_streaming`).
+  - Extended readiness diagnostics in `app.py`:
+    - `build_local_backend_readiness_diagnostic(...)` now attaches `effective_capability_overrides` for local backends.
+    - `/api/ai/backends/diagnostics` now surfaces the same deterministic flag view per backend diagnostic row.
+  - Extended chat failure diagnostics in `app.py`:
+    - `_build_chat_backend_diagnostics(...)` now includes top-level `effective_capability_overrides` and mirrors it into `backend_diagnostics.readiness.effective_capability_overrides` for local backend selector/runtime failures.
+    - includes fallback-safe enrichment even when readiness helper output is mocked/minimal.
+  - Expanded targeted regression coverage:
+    - `tests/test_ai_backend_adapters.py` (effective-override resolver contract + non-local exclusion).
+    - `tests/test_ai_health_check.py` (readiness diagnostics route includes deterministic effective flags + runtime override projection).
+    - `tests/test_ai_integration.py` (chat selector/runtime validation and failure payloads include mirrored effective override view).
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py src/ai_backend_adapters.py tests/test_ai_backend_adapters.py tests/test_ai_health_check.py tests/test_ai_integration.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_backend_adapters.py -k "effective_runtime_capability_overrides_for_backend"` (2 passed, 26 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_health_check.py -k "ai_backend_diagnostics_route"` (3 passed, 2 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_integration.py -k "deterministic_no_fallback_error_for_lm_studio_tools or deterministic_local_invocation_error_payload or rejects_local_model_prefix_without_model_name"` (3 passed, 13 deselected)
+  - Checkpoint finished:
+    - ✔ backend readiness diagnostics now expose deterministic effective local capability flags.
+    - ✔ `/api/ai/chat` failure payloads surface the same capability view at both diagnostic and readiness levels.
+    - ✔ regression tests lock output shape and runtime override projection behavior.
+
 
 - **Geant4 confidence follow-on checkpoint completed (checkpoint 3/3): scoped-selector malformed-input docs/examples + metadata-clean 400 envelope reference matrix** (2026-03-23)
   - Added scoped-selector normalization + failure-envelope contract documentation in `docs/PREFLIGHT_SCOPED_DIAGNOSTICS.md`:

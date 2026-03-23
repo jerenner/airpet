@@ -155,9 +155,21 @@ def test_ai_backend_diagnostics_route_reports_healthy_and_timeout_statuses(clien
     assert by_backend['llama_cpp']['status'] == 'healthy'
     assert by_backend['llama_cpp']['readiness_code'] == 'ok'
     assert by_backend['llama_cpp']['models'] == ['llama-3.2']
+    assert by_backend['llama_cpp']['effective_capability_overrides'] == {
+        'supports_tools': True,
+        'supports_json_mode': True,
+        'supports_vision': False,
+        'supports_streaming': True,
+    }
 
     assert by_backend['lm_studio']['status'] == 'timeout'
     assert by_backend['lm_studio']['readiness_code'] == 'backend_timeout'
+    assert by_backend['lm_studio']['effective_capability_overrides'] == {
+        'supports_tools': False,
+        'supports_json_mode': True,
+        'supports_vision': False,
+        'supports_streaming': True,
+    }
 
 
 def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(client):
@@ -182,5 +194,54 @@ def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(c
 
     assert by_backend['llama_cpp']['status'] == 'misconfigured'
     assert by_backend['llama_cpp']['readiness_code'] == 'backend_models_endpoint_not_found'
+    assert by_backend['llama_cpp']['effective_capability_overrides'] == {
+        'supports_tools': True,
+        'supports_json_mode': True,
+        'supports_vision': False,
+        'supports_streaming': True,
+    }
     assert by_backend['lm_studio']['status'] == 'unreachable'
     assert by_backend['lm_studio']['readiness_code'] == 'backend_unreachable'
+    assert by_backend['lm_studio']['effective_capability_overrides'] == {
+        'supports_tools': False,
+        'supports_json_mode': True,
+        'supports_vision': False,
+        'supports_streaming': True,
+    }
+
+
+def test_ai_backend_diagnostics_route_surfaces_runtime_capability_overrides(client):
+    def fake_get(url, timeout=0):
+        if url == 'http://lm.local/v1/models':
+            return StubResponse(payload={'data': [{'id': 'qwen-local'}]}, ok=True, status_code=200)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    with patch('app.requests.get', side_effect=fake_get), \
+         patch('app.LMStudioAdapterConfig.from_runtime_config', return_value=SimpleNamespace(base_url='http://lm.local', timeout_seconds=1.0)):
+
+        response = client.post('/api/ai/backends/diagnostics', json={
+            'backends': ['lm_studio'],
+            'runtime_config': {
+                'backends': {
+                    'lm_studio': {
+                        'supports_tools': True,
+                        'supports_json_mode': False,
+                        'capabilities': {
+                            'supports_streaming': False,
+                            'supports_vision': True,
+                        },
+                    },
+                },
+            },
+        })
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['success'] is True
+    assert data['diagnostics'][0]['backend_id'] == 'lm_studio'
+    assert data['diagnostics'][0]['effective_capability_overrides'] == {
+        'supports_tools': True,
+        'supports_json_mode': False,
+        'supports_vision': True,
+        'supports_streaming': False,
+    }

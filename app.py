@@ -52,6 +52,7 @@ from src.ai_backend_adapters import (
     LMStudioAdapterConfig,
     TextGenerationRequest,
     TextMessage,
+    effective_runtime_capability_overrides_for_backend,
     invoke_text_request_for_backend,
     select_backend_for_text_request,
 )
@@ -7750,6 +7751,30 @@ LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION = "2026-03-15.local-backend-diagnostics
 LOCAL_BACKEND_STATUS_VALUES = ("healthy", "timeout", "unreachable", "misconfigured")
 
 
+def _resolve_effective_local_capability_overrides(
+    backend_id: Optional[str],
+    *,
+    runtime_config: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, bool]]:
+    if backend_id not in {"llama_cpp", "lm_studio"}:
+        return None
+
+    resolved = effective_runtime_capability_overrides_for_backend(
+        backend_id,
+        runtime_config=runtime_config,
+    )
+    if not isinstance(resolved, dict):
+        return None
+
+    # Deterministic flag ordering in diagnostics output.
+    return {
+        "supports_tools": bool(resolved.get("supports_tools", False)),
+        "supports_json_mode": bool(resolved.get("supports_json_mode", False)),
+        "supports_vision": bool(resolved.get("supports_vision", False)),
+        "supports_streaming": bool(resolved.get("supports_streaming", False)),
+    }
+
+
 def _normalize_model_names(raw_names: List[Any]) -> List[str]:
     normalized: List[str] = []
     seen = set()
@@ -7954,6 +7979,14 @@ def build_local_backend_readiness_diagnostic(
         requests_get=requests_get,
     )
     diagnostic["schema_version"] = LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION
+
+    effective_capability_overrides = _resolve_effective_local_capability_overrides(
+        backend_id,
+        runtime_config=runtime_config,
+    )
+    if effective_capability_overrides is not None:
+        diagnostic["effective_capability_overrides"] = effective_capability_overrides
+
     return diagnostic
 
 
@@ -12474,11 +12507,20 @@ def _build_chat_backend_diagnostics(
     if message:
         diagnostics["message"] = message
 
-    if backend_id in {"llama_cpp", "lm_studio"}:
-        readiness = build_local_backend_readiness_diagnostic(
+    local_backend_ids = {"llama_cpp", "lm_studio"}
+    effective_capability_overrides = _resolve_effective_local_capability_overrides(
+        backend_id,
+        runtime_config=runtime_config,
+    )
+
+    if backend_id in local_backend_ids:
+        readiness_raw = build_local_backend_readiness_diagnostic(
             backend_id,
             runtime_config=runtime_config,
         )
+        readiness = dict(readiness_raw) if isinstance(readiness_raw, dict) else {}
+        readiness.setdefault("schema_version", LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION)
+        readiness.setdefault("backend_id", backend_id)
     else:
         readiness = {
             "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
@@ -12488,6 +12530,10 @@ def _build_chat_backend_diagnostics(
             "message": "Readiness probe is only available for local text-first backends.",
             "backend_id": backend_id,
         }
+
+    if effective_capability_overrides is not None:
+        readiness["effective_capability_overrides"] = effective_capability_overrides
+        diagnostics["effective_capability_overrides"] = effective_capability_overrides
 
     diagnostics["readiness"] = readiness
     diagnostics["remediation"] = _build_chat_backend_remediation(

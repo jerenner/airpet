@@ -196,6 +196,18 @@ def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error_for_lm
         assert data["backend_diagnostics"]["failure_stage"] == "selector_requirements"
         assert data["backend_diagnostics"]["error_code"] == "backend_selection_failed"
         assert data["backend_diagnostics"]["readiness"]["status"] == "healthy"
+        assert data["backend_diagnostics"]["effective_capability_overrides"] == {
+            "supports_tools": False,
+            "supports_json_mode": True,
+            "supports_vision": False,
+            "supports_streaming": True,
+        }
+        assert data["backend_diagnostics"]["readiness"]["effective_capability_overrides"] == {
+            "supports_tools": False,
+            "supports_json_mode": True,
+            "supports_vision": False,
+            "supports_streaming": True,
+        }
         assert data["backend_diagnostics"]["remediation"]["summary"] == "Selected backend cannot satisfy the requested capabilities."
         assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
             "review_backend_requirements",
@@ -419,7 +431,13 @@ def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_p
                     "backends": {
                         "lm_studio": {
                             "enabled": True,
-                            "base_url": "http://localhost:1234"
+                            "base_url": "http://localhost:1234",
+                            "supports_tools": True,
+                            "supports_json_mode": True,
+                            "capabilities": {
+                                "supports_vision": True,
+                                "supports_streaming": False,
+                            },
                         }
                     }
                 },
@@ -442,6 +460,18 @@ def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_p
         assert data["backend_diagnostics"]["failure_stage"] == "backend_runtime"
         assert data["backend_diagnostics"]["error_code"] == "local_backend_invocation_failed"
         assert data["backend_diagnostics"]["readiness"]["status"] == "unreachable"
+        assert data["backend_diagnostics"]["effective_capability_overrides"] == {
+            "supports_tools": True,
+            "supports_json_mode": True,
+            "supports_vision": True,
+            "supports_streaming": False,
+        }
+        assert data["backend_diagnostics"]["readiness"]["effective_capability_overrides"] == {
+            "supports_tools": True,
+            "supports_json_mode": True,
+            "supports_vision": True,
+            "supports_streaming": False,
+        }
         assert data["backend_diagnostics"]["remediation"]["summary"] == "LM Studio is unreachable from AIRPET."
         assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
             "start_local_backend_service",
@@ -514,6 +544,18 @@ def test_ai_chat_rejects_local_model_prefix_without_model_name(client):
         assert data["backend_diagnostics"]["failure_stage"] == "selector_validation"
         assert data["backend_diagnostics"]["error_code"] == "invalid_local_model_selector"
         assert data["backend_diagnostics"]["readiness"]["backend_id"] == "llama_cpp"
+        assert data["backend_diagnostics"]["effective_capability_overrides"] == {
+            "supports_tools": True,
+            "supports_json_mode": True,
+            "supports_vision": False,
+            "supports_streaming": True,
+        }
+        assert data["backend_diagnostics"]["readiness"]["effective_capability_overrides"] == {
+            "supports_tools": True,
+            "supports_json_mode": True,
+            "supports_vision": False,
+            "supports_streaming": True,
+        }
         assert data["backend_diagnostics"]["remediation"]["summary"] == "Local model selector is malformed."
         assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
             "use_backend_model_selector_format",

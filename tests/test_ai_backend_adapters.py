@@ -16,6 +16,7 @@ from src.ai_backend_adapters import (
     TextGenerationRequest,
     TextMessage,
     build_capability_matrix,
+    effective_runtime_capability_overrides_for_backend,
     invoke_text_request_for_backend,
     resolve_specs_with_runtime_overrides,
     select_backend,
@@ -126,6 +127,36 @@ def test_runtime_overrides_can_override_backend_capability_flags_from_nested_cap
 
     assert rows_by_id["llama_cpp"].capabilities.supports_tools is False
     assert rows_by_id["llama_cpp"].capabilities.max_context_tokens == 4096
+
+
+def test_effective_runtime_capability_overrides_for_backend_reports_deterministic_local_flags():
+    runtime_config = {
+        "backends": {
+            "lm_studio": {
+                "supports_tools": True,
+                "capabilities": {
+                    "supports_streaming": False,
+                    "supports_vision": True,
+                },
+            },
+        }
+    }
+
+    resolved = effective_runtime_capability_overrides_for_backend(
+        "lm_studio",
+        runtime_config=runtime_config,
+    )
+
+    assert resolved == {
+        "supports_tools": True,
+        "supports_json_mode": True,
+        "supports_vision": True,
+        "supports_streaming": False,
+    }
+
+
+def test_effective_runtime_capability_overrides_for_backend_ignores_non_local_backends():
+    assert effective_runtime_capability_overrides_for_backend("gemini_remote") is None
 
 
 def test_select_backend_prefers_explicit_backend_when_it_satisfies_requirements():
