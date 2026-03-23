@@ -4,22 +4,50 @@
 
 - **Local-model optionality follow-on (multi-heartbeat): capability-override observability in readiness + chat diagnostics** (started 2026-03-23)
   - Why this task now:
-    - Recent scoped-selector work completed a regression-heavy streak; next checkpoint should deliberately rebalance toward feature/architecture progress (70/30 policy).
-    - Checkpoint 1 now exposes effective capability state; next high-value step is converting that visibility into deterministic contradiction guidance.
-  - Checkpoints (2–5 plan):
+    - Recent scoped-selector work completed a regression-heavy streak; this lane rebalances toward feature/architecture progress (70/30 policy).
+    - Checkpoint 2 shipped deterministic contradiction/remediation signals; next step is to lock and publish that enriched contract.
+  - Checkpoints (3 plan):
     1. ✅ completed: expose effective capability override flags in readiness + chat failure diagnostics for local backends.
-    2. **Current checkpoint:** add deterministic contradiction/remediation hints when effective capability flags conflict with selector/readiness outcomes.
-    3. add route/AI regression coverage + docs/examples for the enriched diagnostics contract.
+    2. ✅ completed: add deterministic contradiction/remediation hints when effective capability flags conflict with selector/readiness outcomes.
+    3. **Current checkpoint:** extend route/AI regression matrix + docs/examples for the enriched diagnostics contract.
   - Definition of done (current checkpoint):
-    - contradiction classes are explicit and machine-testable in chat diagnostics/remediation payloads.
-    - remediation action codes differentiate selector-contract mismatch vs runtime-backend mismatch.
-    - deterministic hint ordering/wording is covered by targeted tests.
+    - docs/examples include representative selector-contract-mismatch and runtime-mismatch payloads.
+    - route/AI regression coverage locks contradiction payload shape, class ordering, and remediation-code stability.
+    - operator guidance clearly differentiates selector-contract mismatch vs runtime-backend mismatch remediation paths.
   - Next checkpoint after current:
-    - extend docs/examples and broader regression matrix for the enriched diagnostics contract.
+    - close the local-capability diagnostics mini-epic and select the next highest-impact local-model optionality milestone.
   - Risks/blockers:
-    - distinguishing configuration intent vs runtime backend-probe reality without noisy false positives may require careful taxonomy wording.
+    - need to keep new contradiction taxonomy concise enough for operators while still machine-actionable.
 
 ## Recently Completed
+
+- **Local-model optionality checkpoint completed (checkpoint 2/3): deterministic contradiction/remediation hints for capability-override conflicts** (2026-03-23)
+  - Added deterministic contradiction taxonomy in `app.py` chat diagnostics flow:
+    - new `_build_chat_backend_contradictions(...)` emits machine-testable contradiction objects with stable fields (`code`, `contradiction_class`, `summary`, `details`).
+    - currently covered contradiction classes:
+      - `selector_contract_mismatch` via `selector_requirement_capability_mismatch`
+      - `runtime_backend_mismatch` via `runtime_failure_despite_healthy_readiness`
+  - Extended chat diagnostics payload contract in `app.py`:
+    - `_build_chat_backend_diagnostics(...)` now includes normalized `selector_requirements` (when present) and deterministic `contradictions` list.
+    - contradiction/remediation logic now runs with effective capability overrides + readiness status in one place.
+  - Extended remediation contract in `app.py`:
+    - `_build_chat_backend_remediation(...)` now emits contradiction-aware fields:
+      - `primary_contradiction_class`
+      - `contradiction_classes`
+      - `contradiction_codes`
+    - action-code sets now explicitly differentiate selector-contract mismatch vs runtime-backend mismatch classes.
+  - Expanded regression coverage in `tests/test_ai_integration.py`:
+    - selector requirement mismatch path now asserts deterministic contradiction payload shape + contradiction-aware remediation codes.
+    - local runtime invocation failure path now asserts normalized selector-requirements pass-through and explicit no-contradiction behavior when readiness is unreachable.
+    - added healthy-readiness runtime-failure test to lock `runtime_backend_mismatch` contradiction/remediation ordering and wording.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py tests/test_ai_integration.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_integration.py -k "deterministic_no_fallback_error_for_lm_studio_tools or deterministic_local_invocation_error_payload or runtime_backend_mismatch_when_readiness_is_healthy or rejects_local_model_prefix_without_model_name"` (4 passed, 13 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_health_check.py -k "ai_backend_diagnostics_route"` (3 passed, 2 deselected)
+  - Checkpoint finished:
+    - ✔ contradiction classes are explicit and machine-testable in chat diagnostics payloads.
+    - ✔ remediation action codes now differentiate selector-contract mismatch vs runtime-backend mismatch.
+    - ✔ deterministic contradiction/remediation ordering + wording is regression-locked in targeted tests.
 
 - **Local-model optionality checkpoint completed (checkpoint 1/3): effective capability-override observability in readiness + chat diagnostics** (2026-03-23)
   - Added deterministic effective capability flag resolver in `src/ai_backend_adapters.py`:

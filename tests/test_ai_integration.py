@@ -208,11 +208,39 @@ def test_ai_chat_backend_selector_returns_deterministic_no_fallback_error_for_lm
             "supports_vision": False,
             "supports_streaming": True,
         }
-        assert data["backend_diagnostics"]["remediation"]["summary"] == "Selected backend cannot satisfy the requested capabilities."
+        assert data["backend_diagnostics"]["selector_requirements"] == {
+            "require_tools": True,
+            "require_json_mode": True,
+            "require_vision": False,
+            "require_streaming": False,
+            "min_context_tokens": None,
+        }
+        assert data["backend_diagnostics"]["contradictions"] == [
+            {
+                "code": "selector_requirement_capability_mismatch",
+                "contradiction_class": "selector_contract_mismatch",
+                "summary": "Selector-required capabilities are disabled in effective backend capability overrides.",
+                "details": {
+                    "required_capability_flags": ["supports_tools", "supports_json_mode"],
+                    "unsatisfied_capability_flags": ["supports_tools"],
+                    "effective_capability_overrides": {
+                        "supports_tools": False,
+                        "supports_json_mode": True,
+                        "supports_vision": False,
+                        "supports_streaming": True,
+                    },
+                },
+            },
+        ]
+        assert data["backend_diagnostics"]["remediation"]["summary"] == "Selector requirements conflict with effective backend capability overrides."
+        assert data["backend_diagnostics"]["remediation"]["primary_contradiction_class"] == "selector_contract_mismatch"
+        assert data["backend_diagnostics"]["remediation"]["contradiction_codes"] == [
+            "selector_requirement_capability_mismatch",
+        ]
         assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
-            "review_backend_requirements",
-            "allow_backend_fallback",
-            "switch_backend_for_missing_capabilities",
+            "align_selector_requirements_with_effective_capabilities",
+            "update_runtime_capability_overrides_for_selected_backend",
+            "allow_fallback_or_choose_capability_compatible_backend",
         ]
 
 
@@ -472,11 +500,82 @@ def test_ai_chat_backend_selector_returns_deterministic_local_invocation_error_p
             "supports_vision": True,
             "supports_streaming": False,
         }
+        assert data["backend_diagnostics"]["selector_requirements"] == {
+            "require_tools": False,
+            "require_json_mode": True,
+            "require_vision": False,
+            "require_streaming": False,
+            "min_context_tokens": None,
+        }
+        assert data["backend_diagnostics"]["contradictions"] == []
         assert data["backend_diagnostics"]["remediation"]["summary"] == "LM Studio is unreachable from AIRPET."
+        assert data["backend_diagnostics"]["remediation"]["primary_contradiction_class"] is None
         assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
             "start_local_backend_service",
             "verify_backend_base_url_and_port",
             "verify_models_endpoint_reachable",
+        ]
+
+
+def test_ai_chat_backend_selector_surfaces_runtime_backend_mismatch_when_readiness_is_healthy(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('tool call parse failure')), \
+         patch('app.build_local_backend_readiness_diagnostic', return_value={
+             'backend_id': 'lm_studio',
+             'status': 'healthy',
+             'readiness_code': 'ok',
+             'ready': True,
+         }):
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        payload = {
+            "message": "Apply local tool flow.",
+            "backend_selector": {
+                "preferred_backend_id": "lm_studio",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "lm_studio": {
+                            "enabled": True,
+                            "supports_tools": True,
+                            "supports_json_mode": True,
+                        }
+                    }
+                },
+                "requirements": {
+                    "require_tools": True,
+                    "require_json_mode": True,
+                }
+            }
+        }
+
+        response = client.post("/api/ai/chat", json=payload)
+
+        assert response.status_code == 502
+        data = response.get_json()
+        assert data["success"] is False
+        assert data["backend_diagnostics"]["failure_stage"] == "backend_runtime"
+        assert data["backend_diagnostics"]["readiness"]["status"] == "healthy"
+        assert data["backend_diagnostics"]["contradictions"] == [
+            {
+                "code": "runtime_failure_despite_healthy_readiness",
+                "contradiction_class": "runtime_backend_mismatch",
+                "summary": "Runtime invocation failed even though backend readiness probe reported healthy status.",
+                "details": {
+                    "readiness_status": "healthy",
+                    "readiness_code": "ok",
+                },
+            },
+        ]
+        assert data["backend_diagnostics"]["remediation"]["summary"] == "LM Studio failed at runtime despite a healthy readiness probe."
+        assert data["backend_diagnostics"]["remediation"]["primary_contradiction_class"] == "runtime_backend_mismatch"
+        assert data["backend_diagnostics"]["remediation"]["action_codes"] == [
+            "capture_runtime_backend_request_context",
+            "inspect_backend_runtime_logs",
+            "reprobe_backend_after_runtime_failure",
         ]
 
 

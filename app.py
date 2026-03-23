@@ -12381,18 +12381,117 @@ def _infer_local_backend_id_from_model_prefix(model_id: Any) -> Optional[str]:
     return None
 
 
+LOCAL_SELECTOR_REQUIREMENT_TO_CAPABILITY_FLAG: Tuple[Tuple[str, str], ...] = (
+    ("require_tools", "supports_tools"),
+    ("require_json_mode", "supports_json_mode"),
+    ("require_vision", "supports_vision"),
+    ("require_streaming", "supports_streaming"),
+)
+
+
+def _normalize_chat_selector_requirements(
+    selector_requirements: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not isinstance(selector_requirements, dict):
+        return {}
+
+    return {
+        "require_tools": bool(selector_requirements.get("require_tools", False)),
+        "require_json_mode": bool(selector_requirements.get("require_json_mode", False)),
+        "require_vision": bool(selector_requirements.get("require_vision", False)),
+        "require_streaming": bool(selector_requirements.get("require_streaming", False)),
+        "min_context_tokens": _coerce_optional_int(selector_requirements.get("min_context_tokens")),
+    }
+
+
+def _build_chat_backend_contradictions(
+    *,
+    failure_stage: str,
+    readiness: Optional[Dict[str, Any]],
+    effective_capability_overrides: Optional[Dict[str, bool]],
+    selector_requirements: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    readiness_payload = readiness if isinstance(readiness, dict) else {}
+    readiness_status = str(readiness_payload.get("status") or "unknown").lower()
+    readiness_code = str(readiness_payload.get("readiness_code") or "unknown")
+
+    normalized_requirements = _normalize_chat_selector_requirements(selector_requirements)
+    normalized_effective_capabilities = {
+        "supports_tools": bool((effective_capability_overrides or {}).get("supports_tools", False)),
+        "supports_json_mode": bool((effective_capability_overrides or {}).get("supports_json_mode", False)),
+        "supports_vision": bool((effective_capability_overrides or {}).get("supports_vision", False)),
+        "supports_streaming": bool((effective_capability_overrides or {}).get("supports_streaming", False)),
+    }
+
+    contradictions: List[Dict[str, Any]] = []
+
+    if failure_stage == "selector_requirements" and effective_capability_overrides is not None:
+        required_capability_flags: List[str] = []
+        unsatisfied_capability_flags: List[str] = []
+
+        for requirement_key, capability_flag in LOCAL_SELECTOR_REQUIREMENT_TO_CAPABILITY_FLAG:
+            if not normalized_requirements.get(requirement_key, False):
+                continue
+            required_capability_flags.append(capability_flag)
+            if not normalized_effective_capabilities.get(capability_flag, False):
+                unsatisfied_capability_flags.append(capability_flag)
+
+        if unsatisfied_capability_flags:
+            contradictions.append({
+                "code": "selector_requirement_capability_mismatch",
+                "contradiction_class": "selector_contract_mismatch",
+                "summary": "Selector-required capabilities are disabled in effective backend capability overrides.",
+                "details": {
+                    "required_capability_flags": required_capability_flags,
+                    "unsatisfied_capability_flags": unsatisfied_capability_flags,
+                    "effective_capability_overrides": normalized_effective_capabilities,
+                },
+            })
+
+    if failure_stage == "backend_runtime" and readiness_status == "healthy":
+        contradictions.append({
+            "code": "runtime_failure_despite_healthy_readiness",
+            "contradiction_class": "runtime_backend_mismatch",
+            "summary": "Runtime invocation failed even though backend readiness probe reported healthy status.",
+            "details": {
+                "readiness_status": readiness_status,
+                "readiness_code": readiness_code,
+            },
+        })
+
+    return contradictions
+
+
 def _build_chat_backend_remediation(
     *,
     failure_stage: str,
     error_code: str,
     backend_id: Optional[str],
     readiness: Optional[Dict[str, Any]],
+    contradictions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     readiness_status = str((readiness or {}).get("status") or "unknown").lower()
     backend_label = {
         "llama_cpp": "llama.cpp",
         "lm_studio": "LM Studio",
     }.get(backend_id, backend_id or "local backend")
+
+    contradiction_items = [
+        item for item in (contradictions or [])
+        if isinstance(item, dict)
+    ]
+
+    contradiction_codes: List[str] = []
+    contradiction_classes: List[str] = []
+    for item in contradiction_items:
+        code = str(item.get("code") or "").strip()
+        contradiction_class = str(item.get("contradiction_class") or "").strip()
+        if code and code not in contradiction_codes:
+            contradiction_codes.append(code)
+        if contradiction_class and contradiction_class not in contradiction_classes:
+            contradiction_classes.append(contradiction_class)
+
+    primary_contradiction_class = contradiction_classes[0] if contradiction_classes else None
 
     action_codes: List[str]
     actions: List[str]
@@ -12408,6 +12507,18 @@ def _build_chat_backend_remediation(
             "Use '<backend>::<model_name>' for local models (for example 'llama_cpp::llama-3.2-local').",
             "Pick a local model option from the model dropdown so selector fields are auto-filled.",
         ]
+    elif primary_contradiction_class == "selector_contract_mismatch":
+        summary = "Selector requirements conflict with effective backend capability overrides."
+        action_codes = [
+            "align_selector_requirements_with_effective_capabilities",
+            "update_runtime_capability_overrides_for_selected_backend",
+            "allow_fallback_or_choose_capability_compatible_backend",
+        ]
+        actions = [
+            "Align selector requirements (tools/json/vision/streaming) with the backend's effective capability flags.",
+            "Update runtime capability overrides if the backend actually supports the blocked capability.",
+            "Allow fallback or switch to a backend that satisfies the requested capabilities.",
+        ]
     elif failure_stage == "selector_requirements":
         summary = "Selected backend cannot satisfy the requested capabilities."
         action_codes = [
@@ -12419,6 +12530,18 @@ def _build_chat_backend_remediation(
             "Review backend selector requirements (tools/json/streaming/context) and align them with the selected backend.",
             "Set allow_fallback=true if automatic fallback to another backend is acceptable.",
             "If a capability is missing, switch to a backend that supports it (for example Gemini for vision-heavy tasks).",
+        ]
+    elif primary_contradiction_class == "runtime_backend_mismatch":
+        summary = f"{backend_label} failed at runtime despite a healthy readiness probe."
+        action_codes = [
+            "capture_runtime_backend_request_context",
+            "inspect_backend_runtime_logs",
+            "reprobe_backend_after_runtime_failure",
+        ]
+        actions = [
+            "Capture the failing runtime request payload and response metadata for this backend.",
+            "Inspect local backend logs for model-runtime errors (model load, tool-call parsing, or context overflow).",
+            "Re-run backend diagnostics immediately after the failure to detect transient readiness drift.",
         ]
     else:
         if readiness_status == "timeout":
@@ -12479,6 +12602,9 @@ def _build_chat_backend_remediation(
         "summary": summary,
         "action_codes": action_codes,
         "actions": actions,
+        "primary_contradiction_class": primary_contradiction_class,
+        "contradiction_classes": contradiction_classes,
+        "contradiction_codes": contradiction_codes,
     }
 
 
@@ -12488,6 +12614,7 @@ def _build_chat_backend_diagnostics(
     error_code: str,
     backend_id: Optional[str] = None,
     runtime_config: Optional[Dict[str, Any]] = None,
+    selector_requirements: Optional[Dict[str, Any]] = None,
     message: Optional[str] = None,
 ) -> Dict[str, Any]:
     stage_to_error_class = {
@@ -12535,12 +12662,25 @@ def _build_chat_backend_diagnostics(
         readiness["effective_capability_overrides"] = effective_capability_overrides
         diagnostics["effective_capability_overrides"] = effective_capability_overrides
 
+    normalized_selector_requirements = _normalize_chat_selector_requirements(selector_requirements)
+    if normalized_selector_requirements:
+        diagnostics["selector_requirements"] = normalized_selector_requirements
+
+    contradictions = _build_chat_backend_contradictions(
+        failure_stage=failure_stage,
+        readiness=readiness,
+        effective_capability_overrides=effective_capability_overrides,
+        selector_requirements=normalized_selector_requirements,
+    )
+
     diagnostics["readiness"] = readiness
+    diagnostics["contradictions"] = contradictions
     diagnostics["remediation"] = _build_chat_backend_remediation(
         failure_stage=failure_stage,
         error_code=error_code,
         backend_id=backend_id,
         readiness=readiness,
+        contradictions=contradictions,
     )
 
     return diagnostics
@@ -13126,6 +13266,7 @@ def ai_chat_route():
                     error_code="backend_selection_failed",
                     backend_id=preferred_backend_id if preferred_backend_id in {"llama_cpp", "lm_studio"} else None,
                     runtime_config=runtime_config,
+                    selector_requirements=requirements_payload,
                     message="Backend selector requirements could not be satisfied by the preferred backend configuration.",
                 ),
             }), 400
@@ -13352,6 +13493,7 @@ def ai_chat_route():
                     error_code="local_backend_invocation_failed",
                     backend_id=selected_backend_id,
                     runtime_config=selector_runtime_config,
+                    selector_requirements=selector_requirements,
                     message="Local backend invocation failed after selection succeeded.",
                 ),
             }
