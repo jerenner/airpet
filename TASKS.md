@@ -3,9 +3,36 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-24).**
-  - Recommended starting point next heartbeat: scope a compact reproducibility artifact for scoped-preflight route↔AI workflow replay (current Next Candidate #2).
+  - Recommended starting point next heartbeat: extract scoped selector normalization into an explicit shared helper used by both route and AI normalization paths (current Next Candidate #1).
 
 ## Recently Completed
+
+- **Reproducibility follow-on completed: compact scoped-preflight route↔AI workflow replay artifact + docs/test lock** (2026-03-24)
+  - Added a new reproducibility artifact:
+    - `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`
+    - captures one deterministic replay flow with:
+      - route payload + AI args
+      - route status + route↔AI payload-identical success contract
+      - scoped-vs-outside `summary_delta`
+      - scoped issue-code set
+      - deterministic `issue_family_correlations`
+      - debugging pointers for scoped-vs-global divergence triage.
+  - Updated scoped diagnostics docs in `docs/PREFLIGHT_SCOPED_DIAGNOSTICS.md`:
+    - added replay artifact reference under representative examples.
+    - added a compact replay recipe and debugging guidance for selector normalization vs downstream preflight drift analysis.
+  - Added regression lock in `tests/test_ai_api.py`:
+    - `test_scoped_preflight_route_ai_workflow_replay_artifact_matches_fixture`
+    - loads the artifact, replays route + AI calls, and asserts contract parity + deterministic excerpt fields against fixture-backed expectations.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m json.tool examples/preflight/scoped_preflight_route_ai_workflow_replay.json > /tmp/scoped_preflight_route_ai_workflow_replay.pretty.json`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile tests/test_ai_api.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_api.py -k "run_preflight_scope_returns_scoped_report_and_summary_delta or preflight_scope_route_and_ai_wrappers_share_success_payloads or preflight_scope_route_and_ai_wrappers_lock_scoped_drift_delta_parity or scoped_preflight_route_ai_workflow_replay_artifact_matches_fixture or preflight_scope_route_and_ai_wrappers_share_validation_error_payloads"` (5 passed, 121 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "preflight_scope_route"` (4 passed, 107 deselected)
+  - Checkpoint finished:
+    - ✔ scoped route↔AI reproducibility now has a single compact replay artifact.
+    - ✔ docs now point operators to one deterministic replay recipe for scoped drift debugging.
+    - ✔ artifact fields are now regression-locked against fixture-backed route/AI parity behavior.
+
 
 - **Local-model optionality follow-on completed: stream error diagnostics are now surfaced with chat-parity runtime/remediation context in the AI panel** (2026-03-24)
   - Fixed SSE error handling in `static/apiService.js` for `/api/ai/chat/stream`:
@@ -1688,17 +1715,17 @@
 
 ## Next Candidates
 
-1. **Local-model optionality follow-on: surface stream runtime diagnostics in AI panel UI**
-   - Wire `/api/ai/chat/stream` SSE `type=error` payload handling to consume `backend_diagnostics` + `backend_selection` and render the same contradiction/remediation/runtime-profile detail surfaces used by `/api/ai/chat` failures.
-   - Add focused frontend regression tests for deterministic stream-error rendering (runtime-profile source chip + remediation/action-code list parity).
-   - Impact: medium-high (turns newly exposed stream diagnostics metadata into operator-visible troubleshooting UX).
+1. **Geant4 confidence follow-on: scoped selector normalization contract helper extraction**
+   - Extract canonical/alias scope-selector precedence logic into an explicit shared helper used by both route and AI normalization call paths.
+   - Add focused regression coverage for mixed canonical + camelCase top-level collisions to prevent future route↔AI selector drift.
+   - Impact: medium-high (reduces recurring scoped selector contract regressions on a high-traffic workflow).
 
-2. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
-   - Add a compact route/AI reproducibility artifact that shows selector input, scoped output, and deterministic drift diagnostics in one flow.
-   - Include docs pointers for debugging scoped-vs-global divergence in daily geometry iteration.
-   - Impact: medium (improves operator onboarding and repeatable debugging).
+2. **Reproducibility follow-on: executable replay harness for scoped workflow artifact**
+   - Add a small scriptable replay harness that runs the scoped route/AI replay artifact and emits a compact pass/fail diff for CI or local triage.
+   - Keep output deterministic and aligned with `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`.
+   - Impact: medium (faster operator debugging and repeatable route↔AI parity checks outside pytest).
 
-3. **Geant4 confidence follow-on: scoped selector normalization contract helper extraction**
-   - Consider extracting shared canonical/alias precedence normalization into an explicit helper used by both route and AI normalization layers.
-   - Add focused regression coverage for mixed canonical+camel top-level key collisions to prevent future parity drift.
-   - Impact: medium (reduces future selector-contract regressions).
+3. **Scoped-workflow UX follow-on: surface issue-family correlation buckets in Simulation panel**
+   - Expose `scope_only_issue_codes` / `outside_scope_only_issue_codes` / `shared_issue_codes` summaries directly in the preflight panel when scoped runs are active.
+   - Add focused frontend regression coverage for deterministic bucket rendering and fallback behavior when scoped payloads are unavailable.
+   - Impact: medium (improves scoped diagnostics interpretability during daily geometry iteration).

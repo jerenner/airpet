@@ -91,5 +91,31 @@ Success-only scoped fields are excluded from failure envelopes:
   - `examples/preflight/scoped_preflight_drift_issue_family_correlations.json`
 - Scoped selector malformed-input parity matrix (route ↔ AI, metadata-clean 400 envelopes):
   - `examples/preflight/scoped_preflight_selector_validation_error_matrix.json`
+- End-to-end route↔AI scoped workflow replay artifact:
+  - `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`
 
 The malformed-input matrix includes canonical-null precedence and malformed-alias-precedence cases to document deterministic route/AI failure parity.
+
+## Route↔AI scoped workflow replay (compact reproducibility flow)
+
+Use `examples/preflight/scoped_preflight_route_ai_workflow_replay.json` when you need one compact artifact that captures:
+
+- selector input (route + AI wrapper forms)
+- expected scoped-vs-outside summary deltas
+- expected issue-family correlation partitioning
+- route↔AI payload-identical success contract
+
+Replay recipe:
+
+1. Seed a known scoped-drift fixture (same shape as `_seed_scoped_preflight_drift_replica_overlap_fixture(...)`).
+2. Run route request (`POST /api/preflight/check_scope`) with the artifact `workflow.route_payload`.
+3. Run AI wrapper (`run_preflight_scope`) with `workflow.ai_args`.
+4. Verify:
+   - HTTP route status is `200`
+   - route and AI payloads are identical
+   - `summary_delta`, scoped issue-code set, and `issue_family_correlations` match the artifact `expected_response_excerpt`.
+
+Debugging guidance:
+
+- If scoped-vs-global divergence looks suspicious, check `summary_delta.outside_scope` against `full.summary - scoped.summary` first.
+- If route↔AI outputs diverge, inspect scoped selector normalization precedence (`_normalize_preflight_scope_input(...)`) before checking downstream preflight logic.

@@ -1,3 +1,4 @@
+import json
 import os
 import pytest
 from unittest.mock import MagicMock, patch
@@ -871,6 +872,50 @@ def test_preflight_scope_route_and_ai_wrappers_lock_scoped_drift_delta_parity(pm
     )
 
     assert route_data['issue_family_correlations'] == fixture['expected_issue_family_correlations']
+
+
+def test_scoped_preflight_route_ai_workflow_replay_artifact_matches_fixture(pm):
+    fixture = _seed_scoped_preflight_drift_replica_overlap_fixture(pm)
+
+    artifact_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            '..',
+            'examples',
+            'preflight',
+            'scoped_preflight_route_ai_workflow_replay.json',
+        )
+    )
+    with open(artifact_path, 'r', encoding='utf-8') as handle:
+        artifact = json.load(handle)
+
+    route_payload = artifact['workflow']['route_payload']
+    ai_args = artifact['workflow']['ai_args']
+    expected_contract = artifact['workflow']['expected_contract']
+    expected_excerpt = artifact['expected_response_excerpt']
+
+    status_code, route_data = _call_preflight_route_with_pm(
+        pm,
+        '/api/preflight/check_scope',
+        route_payload,
+    )
+    ai_data = dispatch_ai_tool(pm, 'run_preflight_scope', ai_args)
+
+    assert status_code == expected_contract['route_status_code']
+    if expected_contract['route_ai_payload_identical']:
+        assert route_data == ai_data
+
+    assert route_data['success'] is expected_excerpt['success']
+    assert route_data['scope'] == expected_excerpt['scope']
+    assert route_data['summary_delta'] == expected_excerpt['summary_delta']
+
+    scoped_issue_codes = sorted(issue['code'] for issue in route_data['scoped_preflight_report']['issues'])
+    assert scoped_issue_codes == expected_excerpt['scoped_issue_codes']
+    assert route_data['issue_family_correlations'] == expected_excerpt['issue_family_correlations']
+
+    # Guard that the replay artifact remains anchored to the deterministic fixture contract.
+    assert route_data['summary_delta']['scope'] == fixture['expected_scope_summary_delta']
+    assert route_data['summary_delta']['outside_scope'] == fixture['expected_outside_scope_summary_delta']
 
 
 def test_preflight_scope_route_and_ai_wrappers_share_validation_error_payloads(pm):
