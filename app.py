@@ -12825,6 +12825,8 @@ def _build_chat_backend_diagnostics(
     error_code: str,
     backend_id: Optional[str] = None,
     runtime_config: Optional[Dict[str, Any]] = None,
+    session_runtime_config: Optional[Dict[str, Any]] = None,
+    request_runtime_config: Optional[Dict[str, Any]] = None,
     selector_requirements: Optional[Dict[str, Any]] = None,
     message: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -12845,6 +12847,13 @@ def _build_chat_backend_diagnostics(
     if message:
         diagnostics["message"] = message
 
+    runtime_profile = _build_backend_runtime_profile_usage(
+        str(backend_id or ""),
+        session_runtime_config=session_runtime_config,
+        request_runtime_config=request_runtime_config,
+    )
+    diagnostics["runtime_profile"] = runtime_profile
+
     local_backend_ids = {"llama_cpp", "lm_studio"}
     effective_capability_overrides = _resolve_effective_local_capability_overrides(
         backend_id,
@@ -12855,10 +12864,13 @@ def _build_chat_backend_diagnostics(
         readiness_raw = build_local_backend_readiness_diagnostic(
             backend_id,
             runtime_config=runtime_config,
+            session_runtime_config=session_runtime_config,
+            request_runtime_config=request_runtime_config,
         )
         readiness = dict(readiness_raw) if isinstance(readiness_raw, dict) else {}
         readiness.setdefault("schema_version", LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION)
         readiness.setdefault("backend_id", backend_id)
+        readiness.setdefault("runtime_profile", runtime_profile)
     else:
         readiness = {
             "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
@@ -12868,6 +12880,8 @@ def _build_chat_backend_diagnostics(
             "message": "Readiness probe is only available for local text-first backends.",
             "backend_id": backend_id,
         }
+
+    readiness.setdefault("runtime_profile", runtime_profile)
 
     if effective_capability_overrides is not None:
         readiness["effective_capability_overrides"] = effective_capability_overrides
@@ -12897,7 +12911,7 @@ def _build_chat_backend_diagnostics(
     return diagnostics
 
 
-def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_selection_payload, selector_runtime_config, selector_requirements, use_local_text_adapter, is_gemini, chat_extra_payload, client_instance=None):
+def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_selection_payload, selector_runtime_config, selector_session_runtime_config, selector_request_runtime_config, selector_requirements, use_local_text_adapter, is_gemini, chat_extra_payload, client_instance=None):
     """Generator function for streaming AI chat progress via SSE."""
     import time
     
@@ -13079,7 +13093,28 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
             import traceback
             traceback.print_exc()
             pm.end_transaction(f"AI Error: {user_message[:50]}")
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Stream processing error: {str(stream_err)}'})}\n\n"
+
+            err_payload = {
+                "type": "error",
+                "success": False,
+                "message": f"Stream processing error: {str(stream_err)}",
+                "error": f"AI backend invocation failed ({selected_backend_id}): {stream_err}",
+                "backend_diagnostics": _build_chat_backend_diagnostics(
+                    failure_stage="backend_runtime",
+                    error_code="local_backend_invocation_failed",
+                    backend_id=selected_backend_id,
+                    runtime_config=selector_runtime_config,
+                    session_runtime_config=selector_session_runtime_config,
+                    request_runtime_config=selector_request_runtime_config,
+                    selector_requirements=selector_requirements,
+                    message="Local backend invocation failed after selection succeeded.",
+                ),
+            }
+            if backend_selection_payload:
+                backend_selection_payload["execution_mode"] = "local_text_adapter"
+                err_payload["backend_selection"] = backend_selection_payload
+
+            yield f"data: {json.dumps(err_payload)}\n\n"
         finally:
             if pm._is_transaction_open:
                 pm.end_transaction(f"AI: {user_message[:50]}")
@@ -13254,6 +13289,8 @@ def ai_chat_stream_route():
 
     backend_selection_payload = None
     selector_runtime_config = None
+    selector_session_runtime_config = None
+    selector_request_runtime_config = None
     selector_requirements = None
 
     selector_cfg_raw = data.get("backend_selector")
@@ -13277,8 +13314,18 @@ def ai_chat_stream_route():
         runtime_config_raw = selector_cfg.get("runtime_config")
         if runtime_config_raw is not None and not isinstance(runtime_config_raw, dict):
             runtime_config_raw = None
-        runtime_config = _resolve_effective_runtime_config(runtime_config_raw)
+
+        request_runtime_config = (
+            _normalize_runtime_config_payload(runtime_config_raw)
+            if runtime_config_raw is not None
+            else None
+        )
+        session_runtime_config = _get_session_local_backend_runtime_config()
+        runtime_config = _resolve_effective_runtime_config(request_runtime_config)
+
         selector_runtime_config = runtime_config
+        selector_session_runtime_config = session_runtime_config
+        selector_request_runtime_config = request_runtime_config
 
         preferred_backend_id = (
             selector_cfg.get("preferred_backend_id")
@@ -13362,8 +13409,15 @@ def ai_chat_stream_route():
     def generate():
         yield from _stream_ai_chat_response(
             pm, user_message, model_id, turn_limit,
-            backend_selection_payload, selector_runtime_config, selector_requirements,
-            use_local_text_adapter, is_gemini, chat_extra_payload, gemini_client
+            backend_selection_payload,
+            selector_runtime_config,
+            selector_session_runtime_config,
+            selector_request_runtime_config,
+            selector_requirements,
+            use_local_text_adapter,
+            is_gemini,
+            chat_extra_payload,
+            gemini_client,
         )
 
     return Response(generate(), mimetype='text/event-stream')
@@ -13383,6 +13437,8 @@ def ai_chat_route():
 
     backend_selection_payload = None
     selector_runtime_config = None
+    selector_session_runtime_config = None
+    selector_request_runtime_config = None
     selector_requirements = None
 
     selector_cfg_raw = data.get("backend_selector")
@@ -13427,8 +13483,18 @@ def ai_chat_route():
         runtime_config_raw = selector_cfg.get("runtime_config")
         if runtime_config_raw is not None and not isinstance(runtime_config_raw, dict):
             runtime_config_raw = None
-        runtime_config = _resolve_effective_runtime_config(runtime_config_raw)
+
+        request_runtime_config = (
+            _normalize_runtime_config_payload(runtime_config_raw)
+            if runtime_config_raw is not None
+            else None
+        )
+        session_runtime_config = _get_session_local_backend_runtime_config()
+        runtime_config = _resolve_effective_runtime_config(request_runtime_config)
+
         selector_runtime_config = runtime_config
+        selector_session_runtime_config = session_runtime_config
+        selector_request_runtime_config = request_runtime_config
 
         preferred_backend_id = (
             selector_cfg.get("preferred_backend_id")
@@ -13479,6 +13545,8 @@ def ai_chat_route():
                     error_code="backend_selection_failed",
                     backend_id=preferred_backend_id if preferred_backend_id in {"llama_cpp", "lm_studio"} else None,
                     runtime_config=runtime_config,
+                    session_runtime_config=selector_session_runtime_config,
+                    request_runtime_config=selector_request_runtime_config,
                     selector_requirements=requirements_payload,
                     message="Backend selector requirements could not be satisfied by the preferred backend configuration.",
                 ),
@@ -13706,6 +13774,8 @@ def ai_chat_route():
                     error_code="local_backend_invocation_failed",
                     backend_id=selected_backend_id,
                     runtime_config=selector_runtime_config,
+                    session_runtime_config=selector_session_runtime_config,
+                    request_runtime_config=selector_request_runtime_config,
                     selector_requirements=selector_requirements,
                     message="Local backend invocation failed after selection succeeded.",
                 ),

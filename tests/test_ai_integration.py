@@ -739,6 +739,245 @@ def test_ai_chat_model_prefix_uses_session_runtime_config_defaults(client):
         assert llama_cfg['model'] == 'qwen-local'
 
 
+def _parse_sse_data_events(response):
+    events = []
+    for line in response.get_data(as_text=True).splitlines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[len("data: "):].strip()
+        if not payload:
+            continue
+        events.append(json.loads(payload))
+    return events
+
+
+@pytest.mark.parametrize(
+    "route_path",
+    [
+        "/api/ai/chat",
+        "/api/ai/chat/stream",
+    ],
+)
+def test_local_selector_runtime_profile_merge_is_identical_for_chat_and_stream_routes(client, route_path):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend') as MockInvokeAdapter:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        with client.session_transaction() as sess:
+            sess[LOCAL_BACKEND_RUNTIME_CONFIG_SESSION_KEY] = {
+                'backends': {
+                    'llama_cpp': {
+                        'base_url': 'http://session-llama',
+                        'timeout_seconds': 33,
+                        'enabled': False,
+                        'headers': {'Authorization': 'Bearer session-token'},
+                    }
+                }
+            }
+
+        MockInvokeAdapter.return_value = MagicMock(
+            backend_id='llama_cpp',
+            model='llama-3.2-local',
+            text='{"status":"ok"}',
+            usage={'prompt_tokens': 7, 'completion_tokens': 3},
+            raw_response={},
+        )
+
+        payload = {
+            "message": "Return compact JSON only.",
+            "model": "models/gemini-2.0-flash-exp",
+            "backend_selector": {
+                "preferred_backend_id": "llama_cpp",
+                "allow_fallback": False,
+                "runtime_config": {
+                    "backends": {
+                        "llama_cpp": {
+                            "enabled": True,
+                            "model": "llama-3.2-local",
+                            "timeout_seconds": 12,
+                            "headers": {
+                                "X-Request-Id": "hb-runtime-profile"
+                            },
+                        }
+                    }
+                },
+                "requirements": {
+                    "require_tools": False,
+                    "require_json_mode": True,
+                    "require_streaming": False,
+                },
+            },
+        }
+
+        response = client.post(route_path, json=payload)
+
+        if route_path == "/api/ai/chat":
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data["success"] is True
+            assert data["backend_selection"]["resolved_backend_id"] == "llama_cpp"
+        else:
+            assert response.status_code == 200
+            events = _parse_sse_data_events(response)
+            complete_events = [evt for evt in events if evt.get("type") == "complete"]
+            assert complete_events, events
+            assert complete_events[-1]["success"] is True
+
+        runtime_config = MockInvokeAdapter.call_args.kwargs["runtime_config"]
+        llama_cfg = runtime_config["backends"]["llama_cpp"]
+
+        assert llama_cfg["base_url"] == "http://session-llama"
+        assert llama_cfg["enabled"] is True
+        assert llama_cfg["model"] == "llama-3.2-local"
+        assert llama_cfg["timeout_seconds"] == 12
+        assert llama_cfg["headers"] == {
+            "Authorization": "Bearer session-token",
+            "X-Request-Id": "hb-runtime-profile",
+        }
+
+
+def test_ai_chat_runtime_failure_payload_includes_runtime_profile_source_and_precedence(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('connection refused')), \
+         patch('app.build_local_backend_readiness_diagnostic') as MockReadiness:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockReadiness.return_value = {
+            'backend_id': 'llama_cpp',
+            'status': 'unreachable',
+            'readiness_code': 'backend_unreachable',
+            'ready': False,
+        }
+
+        with client.session_transaction() as sess:
+            sess[LOCAL_BACKEND_RUNTIME_CONFIG_SESSION_KEY] = {
+                'backends': {
+                    'llama_cpp': {
+                        'base_url': 'http://session-llama',
+                        'timeout_seconds': 33,
+                        'enabled': False,
+                    }
+                }
+            }
+
+        response = client.post('/api/ai/chat', json={
+            'message': 'Return compact JSON.',
+            'model': 'models/gemini-2.0-flash-exp',
+            'backend_selector': {
+                'preferred_backend_id': 'llama_cpp',
+                'allow_fallback': False,
+                'runtime_config': {
+                    'backends': {
+                        'llama_cpp': {
+                            'enabled': True,
+                            'model': 'llama-3.2-local',
+                            'timeout_seconds': 9,
+                        }
+                    }
+                },
+                'requirements': {
+                    'require_tools': False,
+                    'require_json_mode': True,
+                    'require_streaming': False,
+                },
+            },
+        })
+
+        assert response.status_code == 502
+        data = response.get_json()
+        assert data['success'] is False
+
+        runtime_profile = data['backend_diagnostics']['runtime_profile']
+        assert runtime_profile['source'] == 'session_profile_plus_request_overrides'
+        assert runtime_profile['uses_session_profile'] is True
+        assert runtime_profile['uses_request_overrides'] is True
+
+        readiness_runtime_profile = data['backend_diagnostics']['readiness']['runtime_profile']
+        assert readiness_runtime_profile['source'] == 'session_profile_plus_request_overrides'
+
+        readiness_kwargs = MockReadiness.call_args.kwargs
+        assert readiness_kwargs['session_runtime_config']['backends']['llama_cpp']['base_url'] == 'http://session-llama'
+        assert readiness_kwargs['request_runtime_config']['backends']['llama_cpp']['timeout_seconds'] == 9
+
+
+def test_ai_chat_stream_runtime_failure_payload_includes_runtime_profile_source_and_precedence(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend', side_effect=RuntimeError('stream runtime failure')), \
+         patch('app.build_local_backend_readiness_diagnostic') as MockReadiness:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockReadiness.return_value = {
+            'backend_id': 'llama_cpp',
+            'status': 'unreachable',
+            'readiness_code': 'backend_unreachable',
+            'ready': False,
+        }
+
+        with client.session_transaction() as sess:
+            sess[LOCAL_BACKEND_RUNTIME_CONFIG_SESSION_KEY] = {
+                'backends': {
+                    'llama_cpp': {
+                        'base_url': 'http://session-llama',
+                        'timeout_seconds': 33,
+                        'enabled': False,
+                    }
+                }
+            }
+
+        response = client.post('/api/ai/chat/stream', json={
+            'message': 'Return compact JSON.',
+            'model': 'models/gemini-2.0-flash-exp',
+            'backend_selector': {
+                'preferred_backend_id': 'llama_cpp',
+                'allow_fallback': False,
+                'runtime_config': {
+                    'backends': {
+                        'llama_cpp': {
+                            'enabled': True,
+                            'model': 'llama-3.2-local',
+                            'timeout_seconds': 9,
+                        }
+                    }
+                },
+                'requirements': {
+                    'require_tools': False,
+                    'require_json_mode': True,
+                    'require_streaming': False,
+                },
+            },
+        })
+
+        assert response.status_code == 200
+        events = _parse_sse_data_events(response)
+        error_events = [evt for evt in events if evt.get('type') == 'error']
+        assert error_events, events
+
+        err = error_events[-1]
+        assert err['success'] is False
+        assert err['backend_selection']['execution_mode'] == 'local_text_adapter'
+
+        runtime_profile = err['backend_diagnostics']['runtime_profile']
+        assert runtime_profile['source'] == 'session_profile_plus_request_overrides'
+        assert runtime_profile['uses_session_profile'] is True
+        assert runtime_profile['uses_request_overrides'] is True
+
+        readiness_runtime_profile = err['backend_diagnostics']['readiness']['runtime_profile']
+        assert readiness_runtime_profile['source'] == 'session_profile_plus_request_overrides'
+
+        readiness_kwargs = MockReadiness.call_args.kwargs
+        assert readiness_kwargs['session_runtime_config']['backends']['llama_cpp']['base_url'] == 'http://session-llama'
+        assert readiness_kwargs['request_runtime_config']['backends']['llama_cpp']['timeout_seconds'] == 9
+
+
 def test_ai_chat_rejects_local_model_prefix_without_model_name(client):
     with patch('app.get_project_manager_for_session') as MockPMGetter, \
          patch('app.build_local_backend_readiness_diagnostic', return_value={

@@ -24,6 +24,13 @@
     "error_code": "local_backend_invocation_failed",
     "backend_id": "lm_studio",
     "message": "Local backend invocation failed after selection succeeded.",
+    "runtime_profile": {
+      "source": "session_profile_plus_request_overrides",
+      "uses_session_profile": true,
+      "uses_request_overrides": true,
+      "label": "using saved profile + request overrides",
+      "message": "Saved session defaults are active, with request-level runtime overrides taking precedence for this check."
+    },
     "effective_capability_overrides": {
       "supports_tools": true,
       "supports_json_mode": true,
@@ -49,6 +56,13 @@
         "supports_json_mode": true,
         "supports_vision": true,
         "supports_streaming": false
+      },
+      "runtime_profile": {
+        "source": "session_profile_plus_request_overrides",
+        "uses_session_profile": true,
+        "uses_request_overrides": true,
+        "label": "using saved profile + request overrides",
+        "message": "Saved session defaults are active, with request-level runtime overrides taking precedence for this check."
       }
     },
     "contradictions": [],

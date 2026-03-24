@@ -213,10 +213,11 @@ Current status at Checkpoint 5:
 
 ## 8) Local-backend readiness diagnostics (Checkpoint 3 follow-on)
 
-To reduce ambiguity for local text-first paths, AIRPET now emits machine-readable readiness diagnostics in two places:
+To reduce ambiguity for local text-first paths, AIRPET now emits machine-readable readiness diagnostics in three places:
 
 - `GET|POST /api/ai/backends/diagnostics`
 - `/api/ai/chat` error payloads under `backend_diagnostics`
+- `/api/ai/chat/stream` SSE `type=error` events under `backend_diagnostics`
 
 ### Readiness statuses
 
@@ -236,6 +237,12 @@ Each diagnostic entry includes:
 - `models_endpoint` (`<base_url>/v1/models` probe target)
 - `http_status` (when available)
 - `models` / `model_count` (when probe succeeds)
+- `runtime_profile` source metadata (`source`, `uses_session_profile`, `uses_request_overrides`)
+
+For local-selector chat failures (`/api/ai/chat` and `/api/ai/chat/stream`), `backend_diagnostics.runtime_profile` and `backend_diagnostics.readiness.runtime_profile` are aligned and reflect the same merge provenance:
+
+1. saved session runtime profile defaults
+2. request-level `backend_selector.runtime_config` overrides (request keys win)
 
 ### `/api/ai/chat` failure-stage distinction
 

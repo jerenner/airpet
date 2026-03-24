@@ -3,9 +3,35 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-24).**
-  - Recommended starting point next heartbeat: pick one high-impact follow-on from `Next Candidates` and open a new 2–5 checkpoint plan.
+  - Recommended starting point next heartbeat: scope a short 2–3 checkpoint frontend follow-on to surface new `/api/ai/chat/stream` `backend_diagnostics` error payloads in the AI panel.
 
 ## Recently Completed
+
+- **Local-model optionality follow-on completed: `/api/ai/chat` + `/api/ai/chat/stream` runtime-profile merge parity + failure provenance diagnostics lock** (2026-03-24)
+  - Extended local-selector runtime-config plumbing in `app.py` so both chat routes now carry explicit:
+    - `session_runtime_config` (saved session profile defaults)
+    - `request_runtime_config` (per-request `backend_selector.runtime_config` overrides)
+    - deterministic merged `runtime_config` passed into selection/invocation.
+  - Enriched local runtime failure diagnostics payloads:
+    - `_build_chat_backend_diagnostics(...)` now emits `runtime_profile` source metadata and mirrors it into `readiness.runtime_profile`.
+    - `/api/ai/chat` local invocation failure payloads now preserve session-vs-request runtime profile provenance.
+    - `/api/ai/chat/stream` SSE `type=error` payloads now include deterministic `backend_diagnostics` + `backend_selection` context for local runtime failures.
+  - Expanded regression coverage in `tests/test_ai_integration.py`:
+    - route-parity matrix test proving merged runtime profile behavior is identical across `/api/ai/chat` and `/api/ai/chat/stream` local selector paths.
+    - deterministic chat failure assertions for runtime-profile source/precedence metadata (`session_profile_plus_request_overrides`).
+    - deterministic stream SSE failure assertions for runtime-profile source/precedence metadata and `execution_mode` context.
+  - Updated docs/examples:
+    - `docs/AI_BACKEND_ADAPTER_CONTRACT.md` now documents stream SSE error diagnostics surface + chat failure runtime-profile provenance semantics.
+    - `examples/ai_backends/chat_error_backend_runtime_unreachable.json` now includes representative `runtime_profile` metadata at both diagnostic and readiness levels.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py tests/test_ai_integration.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_integration.py -k "local_selector_runtime_profile_merge_is_identical_for_chat_and_stream_routes or runtime_failure_payload_includes_runtime_profile_source_and_precedence"` (4 passed, 19 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_integration.py -k "backend_selector or local_model_prefix or runtime_profile"` (14 passed, 9 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m json.tool examples/ai_backends/chat_error_backend_runtime_unreachable.json > /tmp/chat_error_backend_runtime_unreachable.pretty.json`
+  - Follow-on finished:
+    - ✔ chat and stream local selector paths now share deterministic runtime-profile merge behavior.
+    - ✔ local runtime failure payloads now expose source/precedence provenance for operator/debug tooling.
+    - ✔ stream runtime failures now expose parity diagnostics metadata instead of message-only SSE errors.
 
 - **Local-model optionality checkpoint completed (checkpoint 4/4): runtime-profile API/operator docs + representative diagnostics payload examples** (2026-03-24)
   - Updated operator/API contract docs in `docs/AI_BACKEND_ADAPTER_CONTRACT.md`:
@@ -1640,10 +1666,10 @@
 
 ## Next Candidates
 
-1. **Local-model optionality follow-on: end-to-end runtime-profile reproducibility matrix for chat + stream routes**
-   - Add focused route-level regression coverage that proves session profile defaults and request overrides are resolved identically across `/api/ai/chat` and `/api/ai/chat/stream` local selector paths.
-   - Include deterministic diagnostics assertions for source/precedence metadata in failure payloads when local runtime invocation fails.
-   - Impact: medium-high (locks operator trust that saved runtime profiles behave identically across diagnostics and both chat execution paths).
+1. **Local-model optionality follow-on: surface stream runtime diagnostics in AI panel UI**
+   - Wire `/api/ai/chat/stream` SSE `type=error` payload handling to consume `backend_diagnostics` + `backend_selection` and render the same contradiction/remediation/runtime-profile detail surfaces used by `/api/ai/chat` failures.
+   - Add focused frontend regression tests for deterministic stream-error rendering (runtime-profile source chip + remediation/action-code list parity).
+   - Impact: medium-high (turns newly exposed stream diagnostics metadata into operator-visible troubleshooting UX).
 
 2. **Reproducibility follow-on: end-to-end scoped preflight example workflow artifact**
    - Add a compact route/AI reproducibility artifact that shows selector input, scoped output, and deterministic drift diagnostics in one flow.
