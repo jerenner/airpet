@@ -225,13 +225,15 @@ async function loadRuntimeConfigProfile({ quiet = false } = {}) {
         runtimeConfigLoaded = true;
 
         if (hasSessionRuntimeOverrides(runtimeConfig)) {
-            setRuntimeConfigStatus('Runtime profile: custom session settings active.', 'ok');
+            setRuntimeConfigStatus('Runtime profile: using saved profile (session-scoped; request overrides win).', 'ok');
         } else {
-            setRuntimeConfigStatus('Runtime profile: using built-in defaults.', 'info');
+            setRuntimeConfigStatus('Runtime profile: using built-in defaults (no saved session profile).', 'info');
         }
 
+        await refreshRuntimeConfigDiagnostics();
+
         if (!quiet) {
-            setRuntimeConfigError('Runtime profile reloaded from the current session.', 'ok');
+            setRuntimeConfigError('Runtime profile reloaded from this session. Saved defaults are session-scoped, and request overrides still take precedence.', 'ok');
         }
     } catch (err) {
         const message = `Failed to load runtime profile: ${err.message || err}`;
@@ -260,8 +262,8 @@ async function handleSaveRuntimeConfigProfile() {
         applyRuntimeConfigFormState(runtimeConfigToFormState(runtimeConfig));
         runtimeConfigLoaded = true;
 
-        setRuntimeConfigStatus('Runtime profile: saved for this session.', 'ok');
-        setRuntimeConfigError('Saved. These settings are now reused by diagnostics and chat for this session.', 'ok');
+        setRuntimeConfigStatus('Runtime profile: using saved profile (session-scoped; request overrides win).', 'ok');
+        setRuntimeConfigError('Saved. These defaults now apply to diagnostics/chat for this session unless a request sends explicit runtime overrides.', 'ok');
 
         await refreshRuntimeConfigDiagnostics();
     } catch (err) {
@@ -287,8 +289,8 @@ async function handleClearRuntimeConfigProfile() {
         applyRuntimeConfigFormState(runtimeConfigToFormState(runtimeConfig));
         runtimeConfigLoaded = true;
 
-        setRuntimeConfigStatus('Runtime profile: cleared (defaults active).', 'info');
-        setRuntimeConfigError('Saved session profile cleared. Built-in backend defaults are now active.', 'ok');
+        setRuntimeConfigStatus('Runtime profile: using built-in defaults (saved session profile cleared).', 'info');
+        setRuntimeConfigError('Saved session profile cleared. Built-in backend defaults are now active for diagnostics/chat.', 'ok');
 
         await refreshRuntimeConfigDiagnostics();
     } catch (err) {

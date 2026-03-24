@@ -35,6 +35,9 @@ test('selector badge copy + tooltip copy remain stable for local model options',
         readiness_code: 'backend_timeout',
         message: 'Timed out while probing local model list.',
         models_endpoint: 'http://127.0.0.1:1234/v1/models',
+        runtime_profile: {
+            source: 'session_profile',
+        },
     };
 
     assert.equal(formatLocalModelOptionLabel('mistral-small', diagnostic), '🟠 mistral-small');
@@ -43,6 +46,8 @@ test('selector badge copy + tooltip copy remain stable for local model options',
     assert.ok(tooltip.includes('LM Studio readiness: timeout'));
     assert.ok(tooltip.includes('Code: backend_timeout'));
     assert.ok(tooltip.includes('Timed out while probing local model list.'));
+    assert.ok(tooltip.includes('Runtime profile: using saved profile'));
+    assert.ok(tooltip.includes('Saved profile is session-scoped and reused by diagnostics/chat unless request overrides are sent.'));
     assert.ok(tooltip.includes('Probe: http://127.0.0.1:1234/v1/models'));
 });
 
@@ -53,12 +58,18 @@ test('status-chip transitions cover no-model, cloud, and local readiness states'
             status: 'healthy',
             readiness_code: 'ok',
             message: 'ready',
+            runtime_profile: {
+                source: 'session_profile',
+            },
         },
         lm_studio: {
             backend_id: 'lm_studio',
             status: 'unreachable',
             readiness_code: 'backend_unreachable',
             message: 'connection refused',
+            runtime_profile: {
+                source: 'built_in_defaults',
+            },
         },
     };
 
@@ -77,19 +88,20 @@ test('status-chip transitions cover no-model, cloud, and local readiness states'
     });
 
     const healthyChip = buildBackendStatusChip('llama_cpp::qwen2.5', diagnosticsById);
-    assert.equal(healthyChip.text, '🟢 llama.cpp: healthy');
+    assert.equal(healthyChip.text, '🟢 llama.cpp: healthy · saved profile');
     assert.equal(healthyChip.statusClass, 'status-healthy');
 
     const unreachableChip = buildBackendStatusChip('lm_studio::llama-3.1-8b', diagnosticsById);
-    assert.equal(unreachableChip.text, '🔴 LM Studio: unreachable');
+    assert.equal(unreachableChip.text, '🔴 LM Studio: unreachable · built-in defaults');
     assert.equal(unreachableChip.statusClass, 'status-unreachable');
 
     const fakeEl = createFakeStatusChipElement();
     applyBackendStatusChip(fakeEl, unreachableChip);
     assert.equal(fakeEl.className, 'ai-model-info ai-backend-status');
     assert.ok(fakeEl.classList.has('status-unreachable'));
-    assert.equal(fakeEl.textContent, '🔴 LM Studio: unreachable');
+    assert.equal(fakeEl.textContent, '🔴 LM Studio: unreachable · built-in defaults');
     assert.ok(fakeEl.title.includes('LM Studio readiness: unreachable'));
+    assert.ok(fakeEl.title.includes('Runtime profile: using built-in defaults'));
 });
 
 test('chat remediation rendering keeps deterministic stage/readiness and next-step copy', () => {

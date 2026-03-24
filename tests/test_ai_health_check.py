@@ -152,6 +152,11 @@ def test_ai_backend_diagnostics_route_reports_healthy_and_timeout_statuses(clien
     assert data['success'] is True
     by_backend = {item['backend_id']: item for item in data['diagnostics']}
 
+    assert data['runtime_profile']['source'] == 'built_in_defaults'
+    assert data['runtime_profile']['session_profile_active'] is False
+    assert data['runtime_profile']['request_overrides_active'] is False
+    assert data['runtime_profile']['merge_precedence'] == 'request_overrides_win_over_session_profile'
+
     assert by_backend['llama_cpp']['status'] == 'healthy'
     assert by_backend['llama_cpp']['readiness_code'] == 'ok'
     assert by_backend['llama_cpp']['models'] == ['llama-3.2']
@@ -161,6 +166,7 @@ def test_ai_backend_diagnostics_route_reports_healthy_and_timeout_statuses(clien
         'supports_vision': False,
         'supports_streaming': True,
     }
+    assert by_backend['llama_cpp']['runtime_profile']['source'] == 'built_in_defaults'
 
     assert by_backend['lm_studio']['status'] == 'timeout'
     assert by_backend['lm_studio']['readiness_code'] == 'backend_timeout'
@@ -170,6 +176,7 @@ def test_ai_backend_diagnostics_route_reports_healthy_and_timeout_statuses(clien
         'supports_vision': False,
         'supports_streaming': True,
     }
+    assert by_backend['lm_studio']['runtime_profile']['source'] == 'built_in_defaults'
 
 
 def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(client):
@@ -192,6 +199,8 @@ def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(c
     assert data['success'] is True
     by_backend = {item['backend_id']: item for item in data['diagnostics']}
 
+    assert data['runtime_profile']['source'] == 'built_in_defaults'
+
     assert by_backend['llama_cpp']['status'] == 'misconfigured'
     assert by_backend['llama_cpp']['readiness_code'] == 'backend_models_endpoint_not_found'
     assert by_backend['llama_cpp']['effective_capability_overrides'] == {
@@ -200,6 +209,7 @@ def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(c
         'supports_vision': False,
         'supports_streaming': True,
     }
+    assert by_backend['llama_cpp']['runtime_profile']['source'] == 'built_in_defaults'
     assert by_backend['lm_studio']['status'] == 'unreachable'
     assert by_backend['lm_studio']['readiness_code'] == 'backend_unreachable'
     assert by_backend['lm_studio']['effective_capability_overrides'] == {
@@ -208,6 +218,7 @@ def test_ai_backend_diagnostics_route_classifies_unreachable_and_misconfigured(c
         'supports_vision': False,
         'supports_streaming': True,
     }
+    assert by_backend['lm_studio']['runtime_profile']['source'] == 'built_in_defaults'
 
 
 def test_ai_backend_diagnostics_route_surfaces_runtime_capability_overrides(client):
@@ -238,6 +249,8 @@ def test_ai_backend_diagnostics_route_surfaces_runtime_capability_overrides(clie
     assert response.status_code == 200
     data = response.get_json()
     assert data['success'] is True
+    assert data['runtime_profile']['source'] == 'request_overrides'
+    assert data['runtime_profile']['request_overrides_active'] is True
     assert data['diagnostics'][0]['backend_id'] == 'lm_studio'
     assert data['diagnostics'][0]['effective_capability_overrides'] == {
         'supports_tools': True,
@@ -245,6 +258,7 @@ def test_ai_backend_diagnostics_route_surfaces_runtime_capability_overrides(clie
         'supports_vision': True,
         'supports_streaming': False,
     }
+    assert data['diagnostics'][0]['runtime_profile']['source'] == 'request_overrides'
 
 
 def test_ai_backend_runtime_config_route_supports_get_set_and_clear(client):
@@ -310,6 +324,10 @@ def test_ai_backend_diagnostics_route_merges_session_runtime_config_with_request
     data = response.get_json()
     assert data['success'] is True
     assert data['diagnostics'][0]['models'] == ['llama-from-request']
+    assert data['runtime_profile']['source'] == 'session_profile_plus_request_overrides'
+    assert data['runtime_profile']['session_profile_active'] is True
+    assert data['runtime_profile']['request_overrides_active'] is True
+    assert data['diagnostics'][0]['runtime_profile']['source'] == 'session_profile_plus_request_overrides'
 
 
 def test_ai_health_check_uses_session_runtime_config_for_local_backends(client):
@@ -338,3 +356,5 @@ def test_ai_health_check_uses_session_runtime_config_for_local_backends(client):
     data = response.get_json()
     assert data['models']['llama_cpp'] == ['llama-session-model']
     assert data['models']['lm_studio'] == ['lm-session-model']
+    assert data['local_backend_diagnostics']['llama_cpp']['runtime_profile']['source'] == 'session_profile'
+    assert data['local_backend_diagnostics']['lm_studio']['runtime_profile']['source'] == 'session_profile'

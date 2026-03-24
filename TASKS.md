@@ -14,17 +14,46 @@
   - Checkpoints (4 plan):
     1. ✅ completed: add backend/session runtime-profile plumbing + deterministic merge semantics across diagnostics, health checks, and chat selector routes (with regression coverage).
     2. ✅ completed: add frontend controls to read/write these runtime profiles (settings UX + validation/error surfacing).
-    3. **Current checkpoint:** thread the saved profile into local backend diagnostics panels with explicit "using saved profile" visibility.
-    4. publish docs/examples for runtime-profile API + operator flow.
+    3. ✅ completed: thread the saved profile into local backend diagnostics panels with explicit "using saved profile" visibility.
+    4. **Current checkpoint:** publish docs/examples for runtime-profile API + operator flow.
   - Definition of done (current checkpoint):
-    - diagnostics/status surfaces clearly show whether session defaults are active vs built-in defaults.
-    - local-backend readiness views can be refreshed after runtime-profile updates without manual page reloads.
-    - copy explicitly clarifies session-scope behavior and request-override precedence where users see diagnostics.
+    - runtime-profile diagnostics payload shape and source/precedence semantics are explicitly documented.
+    - examples include representative built-in-default, session-profile, and session+request-override diagnostics payloads.
+    - operator-facing docs explain session scope and request-override precedence with API/UI touchpoints.
   - Risks/blockers:
     - avoiding confusing precedence between saved profile defaults and one-off request overrides.
     - keeping session payload size bounded while allowing useful auth/header config.
 
 ## Recently Completed
+
+- **Local-model optionality checkpoint completed (checkpoint 3/4): diagnostics/runtime-profile visibility + precedence-aware status copy** (2026-03-24)
+  - Extended backend diagnostics payload contract in `app.py`:
+    - added deterministic per-backend `runtime_profile` metadata (`source`, `label`, `message`, session/request flags).
+    - added top-level diagnostics `runtime_profile` summary with explicit merge precedence (`request_overrides_win_over_session_profile`).
+    - wired diagnostics route and health-check route to preserve session-profile vs request-override provenance.
+  - Updated operator-facing diagnostics UI in `static/backendDiagnosticsUi.js`:
+    - backend tooltips now explicitly show runtime-profile source (`using built-in defaults`, `using saved profile`, etc.).
+    - tooltips now include precedence-aware detail copy for session-scope and request-override behavior.
+    - local backend status chip now surfaces readiness + runtime-profile source in one line.
+  - Updated runtime profile panel copy/refresh behavior in `static/aiAssistant.js`:
+    - status and feedback copy now explicitly clarifies session scope and request-override precedence.
+    - runtime-profile reload now refreshes diagnostics views so profile-source indicators stay in sync.
+  - Expanded regression coverage:
+    - `tests/test_ai_health_check.py` now locks runtime-profile source metadata for built-in defaults, session profile, request overrides, and merged session+request override paths.
+    - `tests/js/backend_diagnostics_panels.test.mjs` now locks runtime-profile tooltip copy and status-chip source suffixes.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/backendDiagnosticsUi.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/aiAssistant.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check tests/js/backend_diagnostics_panels.test.mjs`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/backend_diagnostics_panels.test.mjs tests/js/ai_runtime_config_ui.test.mjs` (8 passed)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/backend_diagnostics_panels.test.mjs tests/js/replica_inspector_bindings.test.mjs tests/js/division_inspector_bindings.test.mjs tests/js/ai_runtime_config_ui.test.mjs` (18 passed)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py tests/test_ai_health_check.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_health_check.py -k "ai_backend_diagnostics_route or ai_backend_runtime_config_route or ai_health_check_uses_session_runtime_config"` (6 passed, 2 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_health_check.py tests/test_ai_integration.py -k "runtime_config or backend_diagnostics"` (7 passed, 20 deselected)
+  - Checkpoint finished:
+    - ✔ diagnostics/status surfaces now explicitly distinguish built-in defaults vs saved session profile usage.
+    - ✔ diagnostics refresh flow keeps runtime-profile source indicators current after runtime-profile reload/save/clear actions.
+    - ✔ operator copy now states session-scope behavior and request-override precedence at the point of diagnostics use.
 
 - **Local-model optionality checkpoint completed (checkpoint 2/4): operator-facing runtime-profile UI controls + validation feedback** (2026-03-24)
   - Added session runtime-profile client APIs in `static/apiService.js`:

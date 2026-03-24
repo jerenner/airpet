@@ -34,6 +34,27 @@ const REMEDIATION_ACTION_LABELS = Object.freeze({
     refresh_backend_diagnostics: 'Refresh backend diagnostics and retry.',
 });
 
+const RUNTIME_PROFILE_LABELS = Object.freeze({
+    built_in_defaults: 'using built-in defaults',
+    session_profile: 'using saved profile',
+    request_overrides: 'using request overrides',
+    session_profile_plus_request_overrides: 'using saved profile + request overrides',
+});
+
+const RUNTIME_PROFILE_CHIP_SUFFIX = Object.freeze({
+    built_in_defaults: 'built-in defaults',
+    session_profile: 'saved profile',
+    request_overrides: 'request overrides',
+    session_profile_plus_request_overrides: 'saved profile + request overrides',
+});
+
+const RUNTIME_PROFILE_DETAIL_LINES = Object.freeze({
+    built_in_defaults: 'Session profile not set; built-in backend defaults are active.',
+    session_profile: 'Saved profile is session-scoped and reused by diagnostics/chat unless request overrides are sent.',
+    request_overrides: 'Request-level runtime overrides are active for this check.',
+    session_profile_plus_request_overrides: 'Saved session profile is active; request overrides take precedence for this check.',
+});
+
 export function getBackendFailureStageLabel(stage) {
     return BACKEND_FAILURE_STAGE_LABELS[stage] || 'backend diagnostics error';
 }
@@ -173,18 +194,51 @@ export function getReadinessLabel(status) {
     }
 }
 
+function normalizeRuntimeProfileSource(runtimeProfile) {
+    const source = String(runtimeProfile?.source || '').trim().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(RUNTIME_PROFILE_LABELS, source)
+        ? source
+        : 'built_in_defaults';
+}
+
+function getRuntimeProfileLabel(runtimeProfile) {
+    if (runtimeProfile?.label) {
+        return String(runtimeProfile.label).trim();
+    }
+    return RUNTIME_PROFILE_LABELS[normalizeRuntimeProfileSource(runtimeProfile)] || RUNTIME_PROFILE_LABELS.built_in_defaults;
+}
+
+function getRuntimeProfileDetail(runtimeProfile) {
+    if (runtimeProfile?.message) {
+        return String(runtimeProfile.message).trim();
+    }
+    return RUNTIME_PROFILE_DETAIL_LINES[normalizeRuntimeProfileSource(runtimeProfile)] || '';
+}
+
+function getRuntimeProfileChipSuffix(runtimeProfile) {
+    const source = normalizeRuntimeProfileSource(runtimeProfile);
+    return RUNTIME_PROFILE_CHIP_SUFFIX[source] || RUNTIME_PROFILE_CHIP_SUFFIX.built_in_defaults;
+}
+
 export function buildLocalBackendTooltip(backendId, diagnostic) {
     const backendLabel = getBackendDisplayName(backendId);
     const status = getReadinessLabel(diagnostic?.status);
     const readinessCode = diagnostic?.readiness_code || 'n/a';
     const message = diagnostic?.message || 'No readiness diagnostics available yet.';
     const endpoint = diagnostic?.models_endpoint;
+    const runtimeProfile = diagnostic?.runtime_profile;
 
     const lines = [
         `${backendLabel} readiness: ${status}`,
         `Code: ${readinessCode}`,
         message,
+        `Runtime profile: ${getRuntimeProfileLabel(runtimeProfile)}`,
     ];
+
+    const runtimeProfileDetail = getRuntimeProfileDetail(runtimeProfile);
+    if (runtimeProfileDetail) {
+        lines.push(runtimeProfileDetail);
+    }
 
     if (endpoint) {
         lines.push(`Probe: ${endpoint}`);
@@ -218,9 +272,10 @@ export function buildBackendStatusChip(selectedModel, diagnosticsById = {}) {
     const diagnostic = diagnosticsById[backendId] || null;
     const status = getReadinessLabel(diagnostic?.status);
     const badge = getReadinessBadge(diagnostic?.status);
+    const runtimeSuffix = getRuntimeProfileChipSuffix(diagnostic?.runtime_profile);
 
     return {
-        text: `${badge} ${getBackendDisplayName(backendId)}: ${status}`,
+        text: `${badge} ${getBackendDisplayName(backendId)}: ${status} · ${runtimeSuffix}`,
         title: buildLocalBackendTooltip(backendId, diagnostic),
         statusClass: `status-${status}`,
     };

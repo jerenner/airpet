@@ -7751,6 +7751,13 @@ def get_defines_by_type_route():
 LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION = "2026-03-15.local-backend-diagnostics.checkpoint3"
 LOCAL_BACKEND_STATUS_VALUES = ("healthy", "timeout", "unreachable", "misconfigured")
 LOCAL_BACKEND_RUNTIME_CONFIG_SESSION_KEY = "airpet_local_backend_runtime_config"
+LOCAL_BACKEND_RUNTIME_PROFILE_SOURCE_VALUES = (
+    "built_in_defaults",
+    "session_profile",
+    "request_overrides",
+    "session_profile_plus_request_overrides",
+)
+LOCAL_BACKEND_RUNTIME_PROFILE_BACKEND_IDS = ("llama_cpp", "lm_studio")
 
 
 def _normalize_runtime_config_payload(value: Any) -> Optional[Dict[str, Any]]:
@@ -7801,6 +7808,96 @@ def _resolve_effective_runtime_config(runtime_config: Optional[Dict[str, Any]] =
     if isinstance(session_cfg, dict):
         return session_cfg
     return None
+
+
+def _runtime_backend_config(runtime_config: Optional[Dict[str, Any]], backend_id: str) -> Dict[str, Any]:
+    if not isinstance(runtime_config, dict):
+        return {}
+
+    backends_map = runtime_config.get("backends")
+    if isinstance(backends_map, dict):
+        cfg = backends_map.get(backend_id)
+        if isinstance(cfg, dict):
+            return cfg
+
+    legacy_cfg = runtime_config.get(backend_id)
+    if isinstance(legacy_cfg, dict):
+        return legacy_cfg
+
+    return {}
+
+
+def _backend_has_runtime_overrides(runtime_config: Optional[Dict[str, Any]], backend_id: str) -> bool:
+    return bool(_runtime_backend_config(runtime_config, backend_id))
+
+
+def _build_backend_runtime_profile_usage(
+    backend_id: str,
+    *,
+    session_runtime_config: Optional[Dict[str, Any]] = None,
+    request_runtime_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    using_session_profile = _backend_has_runtime_overrides(session_runtime_config, backend_id)
+    using_request_overrides = _backend_has_runtime_overrides(request_runtime_config, backend_id)
+
+    if using_session_profile and using_request_overrides:
+        source = "session_profile_plus_request_overrides"
+        label = "using saved profile + request overrides"
+        message = (
+            "Saved session defaults are active, with request-level runtime overrides taking precedence for this check."
+        )
+    elif using_request_overrides:
+        source = "request_overrides"
+        label = "using request overrides"
+        message = "Request-level runtime overrides are active for this diagnostics check."
+    elif using_session_profile:
+        source = "session_profile"
+        label = "using saved profile"
+        message = "Using saved session runtime profile defaults for this backend."
+    else:
+        source = "built_in_defaults"
+        label = "using built-in defaults"
+        message = "No saved session runtime profile overrides found; built-in defaults are active."
+
+    return {
+        "source": source,
+        "uses_session_profile": using_session_profile,
+        "uses_request_overrides": using_request_overrides,
+        "label": label,
+        "message": message,
+    }
+
+
+def _build_runtime_profile_summary(
+    *,
+    session_runtime_config: Optional[Dict[str, Any]] = None,
+    request_runtime_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    session_profile_active = any(
+        _backend_has_runtime_overrides(session_runtime_config, backend_id)
+        for backend_id in LOCAL_BACKEND_RUNTIME_PROFILE_BACKEND_IDS
+    )
+    request_overrides_active = any(
+        _backend_has_runtime_overrides(request_runtime_config, backend_id)
+        for backend_id in LOCAL_BACKEND_RUNTIME_PROFILE_BACKEND_IDS
+    )
+
+    if session_profile_active and request_overrides_active:
+        source = "session_profile_plus_request_overrides"
+    elif request_overrides_active:
+        source = "request_overrides"
+    elif session_profile_active:
+        source = "session_profile"
+    else:
+        source = "built_in_defaults"
+
+    return {
+        "source": source,
+        "session_profile_active": session_profile_active,
+        "request_overrides_active": request_overrides_active,
+        "merge_precedence": "request_overrides_win_over_session_profile",
+        "supported_sources": list(LOCAL_BACKEND_RUNTIME_PROFILE_SOURCE_VALUES),
+    }
 
 
 def _resolve_effective_local_capability_overrides(
@@ -8020,6 +8117,8 @@ def build_local_backend_readiness_diagnostic(
     backend_id: str,
     *,
     runtime_config: Optional[Dict[str, Any]] = None,
+    session_runtime_config: Optional[Dict[str, Any]] = None,
+    request_runtime_config: Optional[Dict[str, Any]] = None,
     requests_get=None,
 ) -> Dict[str, Any]:
     probe_cfg = _resolve_local_backend_probe_config(backend_id, runtime_config=runtime_config)
@@ -8039,6 +8138,12 @@ def build_local_backend_readiness_diagnostic(
     if effective_capability_overrides is not None:
         diagnostic["effective_capability_overrides"] = effective_capability_overrides
 
+    diagnostic["runtime_profile"] = _build_backend_runtime_profile_usage(
+        backend_id,
+        session_runtime_config=session_runtime_config,
+        request_runtime_config=request_runtime_config,
+    )
+
     return diagnostic
 
 
@@ -8046,6 +8151,8 @@ def _build_local_backend_diagnostics_payload(
     *,
     backend_ids: Optional[List[str]] = None,
     runtime_config: Optional[Dict[str, Any]] = None,
+    session_runtime_config: Optional[Dict[str, Any]] = None,
+    request_runtime_config: Optional[Dict[str, Any]] = None,
     requests_get=None,
 ) -> Dict[str, Any]:
     normalized_backend_ids = backend_ids or ["llama_cpp", "lm_studio"]
@@ -8058,6 +8165,8 @@ def _build_local_backend_diagnostics_payload(
             build_local_backend_readiness_diagnostic(
                 backend_id,
                 runtime_config=runtime_config,
+                session_runtime_config=session_runtime_config,
+                request_runtime_config=request_runtime_config,
                 requests_get=requests_get,
             )
         )
@@ -8079,6 +8188,10 @@ def _build_local_backend_diagnostics_payload(
         "schema_version": LOCAL_BACKEND_DIAGNOSTICS_SCHEMA_VERSION,
         "diagnostics": diagnostics,
         "summary": summary,
+        "runtime_profile": _build_runtime_profile_summary(
+            session_runtime_config=session_runtime_config,
+            request_runtime_config=request_runtime_config,
+        ),
     }
 
 
@@ -8135,12 +8248,17 @@ def ai_backend_diagnostics_route():
     runtime_config_raw = payload.get('runtime_config')
     if runtime_config_raw is not None and not isinstance(runtime_config_raw, dict):
         return jsonify({"success": False, "error": "runtime_config must be an object when provided."}), 400
-    runtime_config = _resolve_effective_runtime_config(runtime_config_raw)
+
+    request_runtime_config = _normalize_runtime_config_payload(runtime_config_raw) if runtime_config_raw is not None else None
+    session_runtime_config = _get_session_local_backend_runtime_config()
+    runtime_config = _resolve_effective_runtime_config(request_runtime_config)
 
     try:
         diagnostics_payload = _build_local_backend_diagnostics_payload(
             backend_ids=backend_ids,
             runtime_config=runtime_config,
+            session_runtime_config=session_runtime_config,
+            request_runtime_config=request_runtime_config,
         )
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
@@ -8183,8 +8301,10 @@ def ai_health_check_route():
         response_data["error_ollama"] = str(e)
 
     # 2. Check local OpenAI-compatible model servers (llama.cpp + LM Studio)
+    session_runtime_config = _get_session_local_backend_runtime_config()
     local_diag_payload = _build_local_backend_diagnostics_payload(
         runtime_config=_resolve_effective_runtime_config(),
+        session_runtime_config=session_runtime_config,
     )
     diagnostics_by_id = {
         item["backend_id"]: item
