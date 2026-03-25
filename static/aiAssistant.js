@@ -319,8 +319,10 @@ async function loadHistory(force = false) {
             historyLoaded = true;
         }
         
+        // Only load unsaved messages from localStorage if history is empty (no server data)
+        // Otherwise, messages are already in the server history and will be rendered below
         const savedMessages = localStorage.getItem('airpet_unsaved_messages');
-        if (savedMessages) {
+        if (savedMessages && history.length === 0) {
             try {
                 localUnsavedMessages = JSON.parse(savedMessages);
                 localUnsavedMessages.forEach(msg => {
@@ -331,6 +333,9 @@ async function loadHistory(force = false) {
             } catch (e) {
                 console.error('Failed to parse unsaved messages:', e);
             }
+        } else if (savedMessages && history.length > 0) {
+            // Clear localStorage since messages are now on the server
+            localStorage.removeItem('airpet_unsaved_messages');
         }
     } catch (err) {
         console.error("Failed to load chat history:", err);
