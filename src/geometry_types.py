@@ -756,6 +756,7 @@ class ParticleSource:
             "type": self.type,
             "gps_commands": self.gps_commands,
             "position": self.position,
+            "rotation": self.rotation,
             "activity": self.activity,
             "confine_to_pv": self.confine_to_pv,
             "volume_link_id": self.volume_link_id,
