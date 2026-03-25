@@ -115,6 +115,14 @@ Replay recipe:
    - route and AI payloads are identical
    - `summary_delta`, scoped issue-code set, and `issue_family_correlations` match the artifact `expected_response_excerpt`.
 
+Executable harness (preferred for CI/local triage):
+
+```bash
+source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python scripts/run_scoped_preflight_replay.py --artifact examples/preflight/scoped_preflight_route_ai_workflow_replay.json
+```
+
+The harness emits a compact PASS/FAIL report and a bounded unified diff when any contract field drifts.
+
 Debugging guidance:
 
 - If scoped-vs-global divergence looks suspicious, check `summary_delta.outside_scope` against `full.summary - scoped.summary` first.

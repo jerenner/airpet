@@ -3,9 +3,31 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
-  - Recommended starting point next heartbeat: build the executable scoped-workflow replay harness from Next Candidate #1 (`examples/preflight/scoped_preflight_route_ai_workflow_replay.json` → compact pass/fail diff command).
+  - Recommended starting point next heartbeat: implement bucket-aware issue-code chips with one-click list focus in scoped preflight diagnostics (`scope-only` / `outside-scope-only` / `shared`).
 
 ## Recently Completed
+
+- **Reproducibility follow-on completed: executable scoped-workflow replay harness now provides a deterministic route↔AI pass/fail diff outside pytest** (2026-03-25)
+  - Added reusable replay harness core in `src/scoped_preflight_replay.py`:
+    - deterministic in-memory fixture seeding for scoped-drift replica/overlap scenario.
+    - route replay (`POST /api/preflight/check_scope`) + AI wrapper replay (`run_preflight_scope`) against artifact-provided payloads.
+    - compact contract checks for route status, route↔AI payload parity, excerpt field locks, and fixture-anchor summary-delta guards.
+    - bounded unified diff output for fast triage when contract fields drift.
+  - Added script entrypoint `scripts/run_scoped_preflight_replay.py`:
+    - supports `--artifact`, `--max-diff-lines`, and `--json` report output for CI/local automation.
+    - exits non-zero on replay contract failures for easy pipeline wiring.
+  - Added focused regression tests in `tests/test_scoped_preflight_replay_harness.py`:
+    - default artifact PASS path stays green.
+    - contract mismatch path emits deterministic failure/report signals.
+  - Updated `docs/PREFLIGHT_SCOPED_DIAGNOSTICS.md` with the executable harness command and expected PASS/FAIL diff behavior.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile src/scoped_preflight_replay.py scripts/run_scoped_preflight_replay.py tests/test_scoped_preflight_replay_harness.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_scoped_preflight_replay_harness.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python scripts/run_scoped_preflight_replay.py --artifact examples/preflight/scoped_preflight_route_ai_workflow_replay.json`
+  - Checkpoint finished:
+    - ✔ operators now have a single executable replay command (not just pytest) for scoped route↔AI drift checks.
+    - ✔ replay failures now include bounded, deterministic diffs for quick diagnosis.
+    - ✔ artifact-driven reproducibility is now directly CI-friendly.
 
 - **Scoped-workflow UX follow-on completed: issue list now supports actionable bucket pivots (`scope-only`, `outside-scope-only`, `shared`) after scoped preflight runs** (2026-03-25)
   - Extended scoped diagnostics UI helpers in `static/preflightScopedDiagnosticsUi.js`:
@@ -1782,13 +1804,13 @@
 
 ## Next Candidates
 
-1. **Reproducibility follow-on: executable replay harness for scoped workflow artifact**
-   - Add a small scriptable replay harness that runs the scoped route/AI replay artifact and emits a compact pass/fail diff for CI or local triage.
-   - Keep output deterministic and aligned with `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`.
-   - Impact: medium (faster operator debugging and repeatable route↔AI parity checks outside pytest).
-
-2. **Scoped-workflow UX follow-on: bucket-aware issue-code chips with one-click list focus**
+1. **Scoped-workflow UX follow-on: bucket-aware issue-code chips with one-click list focus**
    - Add compact clickable issue-code chips under each bucket so users can jump directly to a single issue-code slice (within the active scoped/global issue mode).
    - Keep deterministic fallback behavior when `issue_family_correlations` metadata is absent.
    - Add focused frontend regression coverage for chip selection precedence and deterministic empty-state copy.
    - Impact: medium-high (faster scoped-debugging loops when bucket counts are large).
+
+2. **Reproducibility follow-on: optional replay harness mode for malformed-selector matrix (`--artifact` against validation failure corpus)**
+   - Extend `scripts/run_scoped_preflight_replay.py` to support replaying the selector-validation matrix artifact(s) and summarizing route↔AI 400-envelope parity in one compact report.
+   - Keep machine-readable output deterministic so CI can gate on validation-envelope drift.
+   - Impact: medium (broadens reproducibility guardrails from success-path scoped drift into malformed-input parity).
