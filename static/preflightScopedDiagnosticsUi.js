@@ -213,3 +213,42 @@ export function buildScopedIssueCodeChips(issues, correlations, selection = 'all
         chips,
     };
 }
+
+function normalizeNonNegativeInt(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.trunc(parsed));
+}
+
+export function buildScopedIssueFilterContextCopyText(options = {}) {
+    const scopeLabel = String(options.scopeLabel || '').trim();
+    if (!scopeLabel) return '';
+
+    const hasBucketMetadata = !!options.hasBucketMetadata;
+    const bucketSelection = hasBucketMetadata
+        ? normalizeScopedBucketFilterSelection(options.bucketSelection)
+        : 'all';
+    const bucketDescriptor = hasBucketMetadata
+        ? `${bucketSelection} (${getScopedIssueBucketDisplayLabel(bucketSelection)})`
+        : 'metadata_unavailable';
+
+    const issueCodeFocus = normalizeIssueCode(options.issueCodeFocus);
+    const visibleIssueCount = normalizeNonNegativeInt(options.visibleIssueCount);
+    const totalScopedIssueCount = normalizeNonNegativeInt(options.totalScopedIssueCount);
+
+    const parts = [
+        'Scoped preflight filter context',
+        `scope=${scopeLabel}`,
+        `bucket=${bucketDescriptor}`,
+        `issue_code=${issueCodeFocus || 'all'}`,
+    ];
+
+    if (visibleIssueCount !== null) {
+        parts.push(`visible_issues=${visibleIssueCount}`);
+    }
+    if (totalScopedIssueCount !== null) {
+        parts.push(`total_scoped_issues=${totalScopedIssueCount}`);
+    }
+
+    return parts.join('; ');
+}

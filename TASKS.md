@@ -3,9 +3,30 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
-  - Recommended starting point next heartbeat: add a tiny scoped diagnostics "copy active filter context" action (scope + bucket + issue-code focus) to speed bug-report handoff.
+  - Recommended starting point next heartbeat: add a scoped diagnostics “copy issue excerpt” action that includes the active scope filter context plus the currently visible issue list lines for faster ticket handoff.
 
 ## Recently Completed
+
+- **Scoped-workflow UX follow-on completed: preflight panel now provides one-click “copy active filter context” handoff text for scoped diagnostics** (2026-03-25)
+  - Extended scoped diagnostics helper module `static/preflightScopedDiagnosticsUi.js`:
+    - added deterministic `buildScopedIssueFilterContextCopyText(...)` builder for scope + bucket + issue-code focus context strings.
+    - copy text now includes stable machine-readable fields (`scope`, `bucket`, `issue_code`) and optional visible/total scoped issue counts.
+  - Updated Simulation preflight panel UI in `templates/index.html` + `static/uiManager.js`:
+    - added scoped context action row (`#preflight_scope_context_row`) with `Copy filter context` button + inline status chip.
+    - wired scoped-render state so copy text tracks active scope, bucket selection, and issue-code focus automatically.
+    - added clipboard fallback path (`navigator.clipboard` → hidden textarea + `document.execCommand('copy')`) to preserve compatibility.
+  - Expanded frontend regression coverage in `tests/js/preflight_scoped_diagnostics_ui.test.mjs`:
+    - deterministic scoped copy-context text with normalized bucket/code input.
+    - metadata-absent fallback contract and empty-scope guard behavior.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/preflightScopedDiagnosticsUi.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/uiManager.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/preflight_scoped_diagnostics_ui.test.mjs`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/preflight_scoped_diagnostics_ui.test.mjs tests/js/backend_diagnostics_panels.test.mjs tests/js/replica_inspector_bindings.test.mjs tests/js/division_inspector_bindings.test.mjs tests/js/ai_runtime_config_ui.test.mjs` (29 passed)
+  - Checkpoint finished:
+    - ✔ scoped preflight filter state can now be copied directly for bug-report/ticket handoff.
+    - ✔ copy output is deterministic and regression-locked.
+    - ✔ UI behavior stays clean when scoped metadata is unavailable.
 
 - **Scoped-workflow UX follow-on completed: scoped diagnostics now expose bucket-aware issue-code chips with one-click list focus** (2026-03-25)
   - Extended scoped diagnostics helpers in `static/preflightScopedDiagnosticsUi.js`:

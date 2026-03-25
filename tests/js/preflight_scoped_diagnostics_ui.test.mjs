@@ -6,6 +6,7 @@ import {
     buildScopedIssueFamilyBucketSummary,
     filterScopedIssuesByBucket,
     buildScopedIssueCodeChips,
+    buildScopedIssueFilterContextCopyText,
     getScopedIssueBucketDisplayLabel,
     normalizeScopedBucketFilterSelection,
 } from '../../static/preflightScopedDiagnosticsUi.js';
@@ -175,4 +176,35 @@ test('issue-code chips fall back gracefully when scoped bucket metadata is absen
             bucketLabel: '',
         },
     ]);
+});
+
+test('copy-context helper emits deterministic scoped bucket/code context text', () => {
+    const text = buildScopedIssueFilterContextCopyText({
+        scopeLabel: 'LV "detector_module"',
+        hasBucketMetadata: true,
+        bucketSelection: ' SHARED ',
+        issueCodeFocus: ' possible_overlap_aabb ',
+        visibleIssueCount: 2,
+        totalScopedIssueCount: 5,
+    });
+
+    assert.equal(
+        text,
+        'Scoped preflight filter context; scope=LV "detector_module"; bucket=shared (Shared issues); issue_code=possible_overlap_aabb; visible_issues=2; total_scoped_issues=5',
+    );
+});
+
+test('copy-context helper falls back cleanly when bucket metadata/focus are unavailable', () => {
+    const text = buildScopedIssueFilterContextCopyText({
+        scopeLabel: 'Assembly "wheel"',
+        hasBucketMetadata: false,
+        bucketSelection: 'scope_only',
+        issueCodeFocus: '',
+    });
+
+    assert.equal(
+        text,
+        'Scoped preflight filter context; scope=Assembly "wheel"; bucket=metadata_unavailable; issue_code=all',
+    );
+    assert.equal(buildScopedIssueFilterContextCopyText({}), '');
 });

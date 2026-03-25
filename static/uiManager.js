@@ -22,6 +22,7 @@ import {
 import {
     buildScopedIssueFamilyBucketSummary,
     buildScopedIssueCodeChips,
+    buildScopedIssueFilterContextCopyText,
     filterScopedIssuesByBucket,
     getScopedIssueBucketDisplayLabel,
 } from './preflightScopedDiagnosticsUi.js';
@@ -83,6 +84,7 @@ let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButt
     preflightScopeBucketsLine, preflightScopeBucketFilterRow,
     preflightBucketAllBtn, preflightBucketScopeOnlyBtn, preflightBucketOutsideOnlyBtn, preflightBucketSharedBtn,
     preflightIssueCodeChipRow,
+    preflightScopeContextRow, preflightCopyScopeContextBtn, preflightScopeContextStatus,
     preflightIssueToggleRow, preflightShowScopeIssuesBtn, preflightShowGlobalIssuesBtn,
     preflightIssuesLabel, preflightIssuesList;
 
@@ -91,6 +93,7 @@ let preflightLastRenderState = null;
 let preflightIssueDisplayMode = 'auto'; // auto | scoped | global
 let preflightScopedBucketFilter = 'all'; // all | scope_only | outside_scope_only | shared
 let preflightScopedIssueCodeFocus = ''; // active scoped issue-code focus chip
+let preflightLastScopedContextCopyText = '';
 
 // Analysis control variables
 let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
@@ -296,6 +299,9 @@ export function initUI(cb) {
     preflightBucketOutsideOnlyBtn = document.getElementById('preflight_bucket_outside_only_btn');
     preflightBucketSharedBtn = document.getElementById('preflight_bucket_shared_btn');
     preflightIssueCodeChipRow = document.getElementById('preflight_issue_code_chip_row');
+    preflightScopeContextRow = document.getElementById('preflight_scope_context_row');
+    preflightCopyScopeContextBtn = document.getElementById('preflight_copy_scope_context_btn');
+    preflightScopeContextStatus = document.getElementById('preflight_scope_context_status');
     preflightIssueToggleRow = document.getElementById('preflight_issue_toggle_row');
     preflightShowScopeIssuesBtn = document.getElementById('preflight_show_scope_issues_btn');
     preflightShowGlobalIssuesBtn = document.getElementById('preflight_show_global_issues_btn');
@@ -601,6 +607,22 @@ export function initUI(cb) {
             }
         });
     });
+
+    if (preflightCopyScopeContextBtn) {
+        preflightCopyScopeContextBtn.addEventListener('click', async () => {
+            if (!preflightLastScopedContextCopyText) {
+                setPreflightScopeContextStatus('Nothing to copy yet.', 'warning');
+                return;
+            }
+
+            const copied = await copyTextToClipboard(preflightLastScopedContextCopyText);
+            if (copied) {
+                setPreflightScopeContextStatus('Copied context.', 'success');
+            } else {
+                setPreflightScopeContextStatus('Copy failed.', 'error');
+            }
+        });
+    }
 
     simOptionsButton.addEventListener('click', callbacks.onSimOptionsClicked);
     saveSimOptionsButton.addEventListener('click', callbacks.onSaveSimOptions);
@@ -2508,11 +2530,94 @@ function renderPreflightIssueCodeChips({ showRow = false, chips = [], activeCode
     }
 }
 
+async function copyTextToClipboard(value) {
+    const text = String(value ?? '');
+    if (!text) return false;
+
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return !!copied;
+    } catch (_error) {
+        return false;
+    }
+}
+
+function setPreflightScopeContextStatus(message = '', type = 'info') {
+    if (!preflightScopeContextStatus) return;
+
+    const text = String(message || '').trim();
+    if (!text) {
+        preflightScopeContextStatus.textContent = '';
+        preflightScopeContextStatus.style.display = 'none';
+        return;
+    }
+
+    const colors = {
+        info: '#64748b',
+        success: '#166534',
+        warning: '#92400e',
+        error: '#b91c1c',
+    };
+
+    preflightScopeContextStatus.textContent = text;
+    preflightScopeContextStatus.style.display = 'inline';
+    preflightScopeContextStatus.style.color = colors[type] || colors.info;
+}
+
+function updatePreflightScopeContextCopyState({
+    showRow = false,
+    scopeLabel = '',
+    hasBucketMetadata = false,
+    bucketSelection = 'all',
+    issueCodeFocus = '',
+    visibleIssueCount = null,
+    totalScopedIssueCount = null,
+} = {}) {
+    const copyText = showRow
+        ? buildScopedIssueFilterContextCopyText({
+            scopeLabel,
+            hasBucketMetadata,
+            bucketSelection,
+            issueCodeFocus,
+            visibleIssueCount,
+            totalScopedIssueCount,
+        })
+        : '';
+
+    preflightLastScopedContextCopyText = copyText;
+
+    if (preflightScopeContextRow) {
+        preflightScopeContextRow.style.display = copyText ? 'flex' : 'none';
+    }
+    if (preflightCopyScopeContextBtn) {
+        preflightCopyScopeContextBtn.disabled = !copyText;
+        preflightCopyScopeContextBtn.title = copyText
+            ? 'Copy active scoped preflight filters for bug-report handoff.'
+            : 'Run scoped preflight and pick filters to enable copy.';
+    }
+
+    setPreflightScopeContextStatus('');
+}
+
 export function clearPreflightReport() {
     preflightLastRenderState = null;
     preflightIssueDisplayMode = 'auto';
     preflightScopedBucketFilter = 'all';
     preflightScopedIssueCodeFocus = '';
+    preflightLastScopedContextCopyText = '';
 
     if (preflightSummaryLine) {
         preflightSummaryLine.textContent = 'Preflight: not run yet.';
@@ -2537,6 +2642,7 @@ export function clearPreflightReport() {
     updatePreflightIssueToggleState({ showToggle: false, activeMode: 'global' });
     updatePreflightBucketFilterState({ showRow: false, activeBucket: 'all' });
     renderPreflightIssueCodeChips({ showRow: false });
+    updatePreflightScopeContextCopyState({ showRow: false });
 
     if (preflightIssuesLabel) {
         preflightIssuesLabel.textContent = 'Issues';
@@ -2710,6 +2816,16 @@ export function renderPreflightReport(report, details = {}) {
     const focusedIssues = activeScopedIssueCodeFocus
         ? issues.filter((issue) => normalizePreflightIssueCode(issue?.code) === activeScopedIssueCodeFocus)
         : issues;
+
+    updatePreflightScopeContextCopyState({
+        showRow: hasScopedIssueSet && activeIssueMode === 'scoped',
+        scopeLabel,
+        hasBucketMetadata: showBucketFilterRow,
+        bucketSelection: preflightScopedBucketFilter,
+        issueCodeFocus: activeScopedIssueCodeFocus,
+        visibleIssueCount: focusedIssues.length,
+        totalScopedIssueCount: Array.isArray(scopedReport?.issues) ? scopedReport.issues.length : null,
+    });
 
     if (focusedIssues.length === 0) {
         const empty = document.createElement('div');

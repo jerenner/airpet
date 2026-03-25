@@ -1110,6 +1110,7 @@
 
         #preflight_scope_bucket_filter_row,
         #preflight_issue_code_chip_row,
+        #preflight_scope_context_row,
         #preflight_issue_toggle_row {
             display: none;
             align-items: center;
@@ -1148,6 +1149,12 @@
 
         .preflight_issue_code_chip_clear {
             margin-left: 2px;
+        }
+
+        #preflight_scope_context_status {
+            display: none;
+            font-size: 10px;
+            color: #64748b;
         }
 
         #preflight_issues_label {
@@ -2571,6 +2578,10 @@
                             <button id="preflight_bucket_shared_btn" class="preflight_toggle_btn" type="button">Shared</button>
                         </div>
                         <div id="preflight_issue_code_chip_row"></div>
+                        <div id="preflight_scope_context_row">
+                            <button id="preflight_copy_scope_context_btn" class="preflight_toggle_btn" type="button">Copy filter context</button>
+                            <span id="preflight_scope_context_status"></span>
+                        </div>
                         <div id="preflight_issue_toggle_row">
                             <button id="preflight_show_scope_issues_btn" class="preflight_toggle_btn" type="button">Scoped issues</button>
                             <button id="preflight_show_global_issues_btn" class="preflight_toggle_btn" type="button">Full-geometry issues</button>
