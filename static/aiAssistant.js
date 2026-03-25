@@ -306,11 +306,14 @@ async function handleClearRuntimeConfigProfile() {
 async function loadHistory(force = false) {
     // Prevent duplicate loading on initial page load
     if (!force && historyLoaded) {
+        console.log('loadHistory: skipped (already loaded)');
         return;
     }
     
     try {
+        console.log('loadHistory: fetching history...', { force, historyLoaded });
         const res = await APIService.getAiChatHistory();
+        console.log('loadHistory: received history with', res.history?.length || 0, 'messages');
         if (res.history) {
             renderHistory(res.history);
             historyLoaded = true;
@@ -341,6 +344,7 @@ export function reloadHistory() {
 }
 
 function renderHistory(history) {
+    console.log('renderHistory: called with', history.length, 'messages');
     messageList.innerHTML = '';
     // Skip the first two messages (system instructions)
     if (history.length <= 2) {
