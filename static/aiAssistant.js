@@ -21,6 +21,7 @@ let runtimeConfigModal, runtimeConfigErrorEl;
 let runtimeConfigReloadBtn, runtimeConfigClearBtn, runtimeConfigCancelBtn, runtimeConfigSaveBtn;
 let runtimeConfigFormEls = {};
 let runtimeConfigLoaded = false;
+let historyLoaded = false;
 
 export function init(callbacks) {
     messageList = document.getElementById('ai_message_list');
@@ -302,11 +303,17 @@ async function handleClearRuntimeConfigProfile() {
     }
 }
 
-async function loadHistory() {
+async function loadHistory(force = false) {
+    // Prevent duplicate loading on initial page load
+    if (!force && historyLoaded) {
+        return;
+    }
+    
     try {
         const res = await APIService.getAiChatHistory();
         if (res.history) {
             renderHistory(res.history);
+            historyLoaded = true;
         }
         
         const savedMessages = localStorage.getItem('airpet_unsaved_messages');
@@ -330,7 +337,7 @@ async function loadHistory() {
 }
 
 export function reloadHistory() {
-    loadHistory();
+    loadHistory(true);
 }
 
 function renderHistory(history) {
@@ -444,6 +451,7 @@ async function handleClear() {
         await APIService.clearAiChatHistory();
         messageList.innerHTML = '';
         addMessageToUI('system', "History cleared.");
+        historyLoaded = false;
     } catch (err) {
         UIManager.showError("Failed to clear history: " + err.message);
     } finally {
