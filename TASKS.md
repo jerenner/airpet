@@ -3,9 +3,33 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
-  - Recommended starting point next heartbeat: build the executable scoped-workflow replay harness from Next Candidate #2 (`examples/preflight/scoped_preflight_route_ai_workflow_replay.json` → compact pass/fail diff command).
+  - Recommended starting point next heartbeat: build the executable scoped-workflow replay harness from Next Candidate #1 (`examples/preflight/scoped_preflight_route_ai_workflow_replay.json` → compact pass/fail diff command).
 
 ## Recently Completed
+
+- **Scoped-workflow UX follow-on completed: issue list now supports actionable bucket pivots (`scope-only`, `outside-scope-only`, `shared`) after scoped preflight runs** (2026-03-25)
+  - Extended scoped diagnostics UI helpers in `static/preflightScopedDiagnosticsUi.js`:
+    - added deterministic bucket-selection normalization (`all|scope_only|outside_scope_only|shared`) and human-readable labels.
+    - added deterministic `filterScopedIssuesByBucket(...)` filtering contract used by the Simulation panel, including metadata-absent fallback-to-all behavior.
+    - added bucket-specific empty-result messaging for scoped issue views.
+  - Updated Simulation panel rendering + controls in `templates/index.html` + `static/uiManager.js`:
+    - added a dedicated scoped bucket filter row in preflight (`All scoped`, `Scope-only`, `Outside-scope-only`, `Shared`).
+    - preserved sticky bucket selection across rerenders while scoped data remains active.
+    - kept deterministic fallback to the existing scoped/global issue toggles when bucket metadata is unavailable.
+    - scoped issue label now reflects active bucket context when a bucket filter is applied.
+  - Added focused frontend regression coverage in `tests/js/preflight_scoped_diagnostics_ui.test.mjs`:
+    - bucket-selection normalization + display-label stability.
+    - metadata-present selection preservation and metadata-absent fallback behavior.
+    - deterministic empty-result messaging for bucket-filtered scoped issue lists.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/preflightScopedDiagnosticsUi.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/uiManager.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/main.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/preflight_scoped_diagnostics_ui.test.mjs tests/js/backend_diagnostics_panels.test.mjs tests/js/replica_inspector_bindings.test.mjs tests/js/division_inspector_bindings.test.mjs tests/js/ai_runtime_config_ui.test.mjs` (25 passed)
+  - Checkpoint finished:
+    - ✔ scoped diagnostics summaries are now directly actionable via in-panel bucket pivots.
+    - ✔ bucket filter behavior is deterministic and regression-locked, including fallback and empty-result UX.
+    - ✔ existing scoped/global issue toggles remain intact when scoped bucket metadata is absent.
 
 - **Geant4 confidence follow-on completed: scoped selector normalization is now centralized in a shared precedence helper (route + AI parity lock for mixed top-level collisions)** (2026-03-25)
   - Added shared scoped selector helper in `app.py`:
@@ -1763,8 +1787,8 @@
    - Keep output deterministic and aligned with `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`.
    - Impact: medium (faster operator debugging and repeatable route↔AI parity checks outside pytest).
 
-2. **Scoped-workflow UX follow-on: make bucket summaries actionable from the Simulation panel**
-   - Add lightweight in-panel actions to pivot the issue list view by bucket (`scope-only`, `outside-scope-only`, `shared`) after scoped runs.
-   - Preserve deterministic fallback to current scoped/global issue toggles when bucket metadata is absent.
-   - Add focused frontend regression coverage for bucket-filter selection state and empty-result messaging.
-   - Impact: medium-high (turns scoped diagnostics summaries into faster debugging workflows).
+2. **Scoped-workflow UX follow-on: bucket-aware issue-code chips with one-click list focus**
+   - Add compact clickable issue-code chips under each bucket so users can jump directly to a single issue-code slice (within the active scoped/global issue mode).
+   - Keep deterministic fallback behavior when `issue_family_correlations` metadata is absent.
+   - Add focused frontend regression coverage for chip selection precedence and deterministic empty-state copy.
+   - Impact: medium-high (faster scoped-debugging loops when bucket counts are large).

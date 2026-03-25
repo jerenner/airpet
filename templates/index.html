@@ -1086,7 +1086,8 @@
 
         #preflight_scope_line,
         #preflight_delta_line,
-        #preflight_scope_hint_line {
+        #preflight_scope_hint_line,
+        #preflight_scope_buckets_line {
             display: none;
             font-size: 11px;
             color: #334155;
@@ -1103,11 +1104,17 @@
             font-style: italic;
         }
 
+        #preflight_scope_buckets_line {
+            color: #334155;
+        }
+
+        #preflight_scope_bucket_filter_row,
         #preflight_issue_toggle_row {
             display: none;
             align-items: center;
             gap: 6px;
             margin: 4px 0 2px;
+            flex-wrap: wrap;
         }
 
         .preflight_toggle_btn {
@@ -2541,6 +2548,12 @@
                         <div id="preflight_delta_line"></div>
                         <div id="preflight_scope_hint_line"></div>
                         <div id="preflight_scope_buckets_line"></div>
+                        <div id="preflight_scope_bucket_filter_row">
+                            <button id="preflight_bucket_all_btn" class="preflight_toggle_btn active" type="button">All scoped</button>
+                            <button id="preflight_bucket_scope_only_btn" class="preflight_toggle_btn" type="button">Scope-only</button>
+                            <button id="preflight_bucket_outside_only_btn" class="preflight_toggle_btn" type="button">Outside-scope-only</button>
+                            <button id="preflight_bucket_shared_btn" class="preflight_toggle_btn" type="button">Shared</button>
+                        </div>
                         <div id="preflight_issue_toggle_row">
                             <button id="preflight_show_scope_issues_btn" class="preflight_toggle_btn" type="button">Scoped issues</button>
                             <button id="preflight_show_global_issues_btn" class="preflight_toggle_btn" type="button">Full-geometry issues</button>
