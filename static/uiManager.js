@@ -448,11 +448,16 @@ export function initUI(cb) {
     // Tools dropdown toggle
     const toolsDropdownButton = document.getElementById('toolsDropdownButton');
     const toolsDropdownContent = document.getElementById('toolsDropdownContent');
+    console.log('Tools dropdown button:', toolsDropdownButton);
+    console.log('Tools dropdown content:', toolsDropdownContent);
     if (toolsDropdownButton && toolsDropdownContent) {
         toolsDropdownButton.addEventListener('click', (e) => {
             e.stopPropagation();
+            console.log('Tools button clicked');
             const dropdown = toolsDropdownButton.parentElement;
+            console.log('Dropdown element:', dropdown);
             dropdown.classList.toggle('show');
+            console.log('Show class:', dropdown.classList.contains('show'));
         });
 
         // Close dropdown when clicking outside
