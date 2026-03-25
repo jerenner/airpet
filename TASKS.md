@@ -2,10 +2,34 @@
 
 ## In Progress
 
-- **Next milestone selection pending (last in-progress milestone completed 2026-03-24).**
+- **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
   - Recommended starting point next heartbeat: extract scoped selector normalization into an explicit shared helper used by both route and AI normalization paths (current Next Candidate #1).
 
 ## Recently Completed
+
+- **Scoped-workflow UX follow-on completed: scoped issue-family correlation buckets are now surfaced in the Simulation panel** (2026-03-25)
+  - Added a new shared scoped-diagnostics UI helper module: `static/preflightScopedDiagnosticsUi.js`.
+    - normalizes/deduplicates/sorts scoped issue-family bucket code lists.
+    - emits deterministic summary copy with compact overflow handling for long code lists.
+  - Updated Simulation panel rendering in `static/uiManager.js` + `templates/index.html`:
+    - added a dedicated `#preflight_scope_buckets_line` row in the preflight panel.
+    - scoped runs now show `scope_only_issue_codes` / `outside_scope_only_issue_codes` / `shared_issue_codes` bucket summaries directly in-panel.
+    - gracefully hides the bucket row when scoped payloads are unavailable.
+  - Updated scoped preflight wiring in `static/main.js`:
+    - now forwards `issue_family_correlations` from `/api/preflight/check_scope` payloads into panel rendering details.
+  - Added focused frontend regression coverage in `tests/js/preflight_scoped_diagnostics_ui.test.mjs`:
+    - deterministic normalization and deduplication of bucket code lists.
+    - deterministic summary text contract.
+    - fallback behavior when scoped payload is missing plus overflow formatting for large lists.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/preflightScopedDiagnosticsUi.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/uiManager.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --check static/main.js`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/preflight_scoped_diagnostics_ui.test.mjs tests/js/backend_diagnostics_panels.test.mjs tests/js/replica_inspector_bindings.test.mjs tests/js/division_inspector_bindings.test.mjs tests/js/ai_runtime_config_ui.test.mjs` (22 passed)
+  - Checkpoint finished:
+    - ✔ scoped preflight runs now expose issue-family buckets directly in the Simulation panel without inspecting raw payloads.
+    - ✔ bucket rendering behavior is deterministic and regression-locked in focused frontend tests.
+    - ✔ fallback behavior stays quiet/clean when scoped payloads are unavailable.
 
 - **Reproducibility follow-on completed: compact scoped-preflight route↔AI workflow replay artifact + docs/test lock** (2026-03-24)
   - Added a new reproducibility artifact:
@@ -1725,7 +1749,8 @@
    - Keep output deterministic and aligned with `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`.
    - Impact: medium (faster operator debugging and repeatable route↔AI parity checks outside pytest).
 
-3. **Scoped-workflow UX follow-on: surface issue-family correlation buckets in Simulation panel**
-   - Expose `scope_only_issue_codes` / `outside_scope_only_issue_codes` / `shared_issue_codes` summaries directly in the preflight panel when scoped runs are active.
-   - Add focused frontend regression coverage for deterministic bucket rendering and fallback behavior when scoped payloads are unavailable.
-   - Impact: medium (improves scoped diagnostics interpretability during daily geometry iteration).
+3. **Scoped-workflow UX follow-on: make bucket summaries actionable from the Simulation panel**
+   - Add lightweight in-panel actions to pivot the issue list view by bucket (`scope-only`, `outside-scope-only`, `shared`) after scoped runs.
+   - Preserve deterministic fallback to current scoped/global issue toggles when bucket metadata is absent.
+   - Add focused frontend regression coverage for bucket-filter selection state and empty-result messaging.
+   - Impact: medium-high (turns scoped diagnostics summaries into faster debugging workflows).

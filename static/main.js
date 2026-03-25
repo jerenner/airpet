@@ -3072,6 +3072,7 @@ async function runAndRenderPreflight({
     let scopedReport = null;
     let scope = null;
     let summaryDelta = null;
+    let issueFamilyCorrelations = null;
     let usedScopedPreflight = false;
     let scopedSelectionReason = null;
     let scopedSelectionCandidateCount = 0;
@@ -3092,6 +3093,7 @@ async function runAndRenderPreflight({
                 scopedReport = scopedPayload?.scoped_preflight_report || {};
                 scope = scopedPayload?.scope || scopedSelection;
                 summaryDelta = scopedPayload?.summary_delta || null;
+                issueFamilyCorrelations = scopedPayload?.issue_family_correlations || null;
                 usedScopedPreflight = true;
             } catch (scopeError) {
                 scopedFallbackError = String(scopeError?.message || scopeError || 'unknown_error');
@@ -3109,6 +3111,7 @@ async function runAndRenderPreflight({
             scope,
             scopedReport,
             summaryDelta,
+            issueFamilyCorrelations,
             usedScopedPreflight,
             preferScopedSelection,
             scopedSelectionReason,
@@ -3148,6 +3151,7 @@ async function runAndRenderPreflight({
                 scope,
                 scopedReport,
                 summaryDelta,
+                issueFamilyCorrelations,
                 usedScopedPreflight,
                 scopedSelectionReason,
                 scopedSelectionCandidateCount,
@@ -3169,6 +3173,7 @@ async function runAndRenderPreflight({
                     scope,
                     scopedReport,
                     summaryDelta,
+                    issueFamilyCorrelations,
                     usedScopedPreflight,
                     scopedSelectionReason,
                     scopedSelectionCandidateCount,
@@ -3183,6 +3188,7 @@ async function runAndRenderPreflight({
             scope,
             scopedReport,
             summaryDelta,
+            issueFamilyCorrelations,
             usedScopedPreflight,
             scopedSelectionReason,
             scopedSelectionCandidateCount,
@@ -3196,6 +3202,7 @@ async function runAndRenderPreflight({
             scope: null,
             scopedReport: null,
             summaryDelta: null,
+            issueFamilyCorrelations: null,
             usedScopedPreflight: false,
             scopedSelectionReason: null,
             scopedSelectionCandidateCount: 0,

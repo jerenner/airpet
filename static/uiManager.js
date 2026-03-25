@@ -19,6 +19,9 @@ import {
     getDivisionInspectorEditableFieldSpecs,
     buildDivisionInspectorPropertyUpdateArgs,
 } from './divisionInspectorBindings.js';
+import {
+    buildScopedIssueFamilyBucketSummary,
+} from './preflightScopedDiagnosticsUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -74,7 +77,7 @@ let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButt
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
     preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightScopeHintLine,
-    preflightIssueToggleRow, preflightShowScopeIssuesBtn, preflightShowGlobalIssuesBtn,
+    preflightScopeBucketsLine, preflightIssueToggleRow, preflightShowScopeIssuesBtn, preflightShowGlobalIssuesBtn,
     preflightIssuesLabel, preflightIssuesList;
 
 // Sticky preflight panel view state for scoped/global issue toggling
@@ -278,6 +281,7 @@ export function initUI(cb) {
     preflightScopeLine = document.getElementById('preflight_scope_line');
     preflightDeltaLine = document.getElementById('preflight_delta_line');
     preflightScopeHintLine = document.getElementById('preflight_scope_hint_line');
+    preflightScopeBucketsLine = document.getElementById('preflight_scope_buckets_line');
     preflightIssueToggleRow = document.getElementById('preflight_issue_toggle_row');
     preflightShowScopeIssuesBtn = document.getElementById('preflight_show_scope_issues_btn');
     preflightShowGlobalIssuesBtn = document.getElementById('preflight_show_global_issues_btn');
@@ -2419,6 +2423,10 @@ export function clearPreflightReport() {
         preflightScopeHintLine.textContent = '';
         preflightScopeHintLine.style.display = 'none';
     }
+    if (preflightScopeBucketsLine) {
+        preflightScopeBucketsLine.textContent = '';
+        preflightScopeBucketsLine.style.display = 'none';
+    }
     updatePreflightIssueToggleState({ showToggle: false, activeMode: 'global' });
 
     if (preflightIssuesLabel) {
@@ -2442,6 +2450,7 @@ export function renderPreflightReport(report, details = {}) {
     const scope = details?.scope || null;
     const scopedReport = details?.scopedReport || null;
     const summaryDelta = details?.summaryDelta || null;
+    const issueFamilyCorrelations = details?.issueFamilyCorrelations || null;
     const usedScopedPreflight = !!details?.usedScopedPreflight;
 
     const summary = report?.summary || {};
@@ -2499,6 +2508,19 @@ export function renderPreflightReport(report, details = {}) {
         } else {
             preflightScopeHintLine.textContent = '';
             preflightScopeHintLine.style.display = 'none';
+        }
+    }
+
+    if (preflightScopeBucketsLine) {
+        const bucketSummary = usedScopedPreflight
+            ? buildScopedIssueFamilyBucketSummary(issueFamilyCorrelations)
+            : '';
+        if (bucketSummary) {
+            preflightScopeBucketsLine.style.display = 'block';
+            preflightScopeBucketsLine.textContent = bucketSummary;
+        } else {
+            preflightScopeBucketsLine.textContent = '';
+            preflightScopeBucketsLine.style.display = 'none';
         }
     }
 
