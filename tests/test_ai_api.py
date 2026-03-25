@@ -805,6 +805,21 @@ def test_preflight_scope_route_and_ai_wrappers_share_success_payloads(pm):
             },
         },
         {
+            'name': 'top_level_canonical_keys_win_over_camel_case_conflicts',
+            'route_payload': {
+                'scope_type': 'logical_volume',
+                'scopeType': 'assembly',
+                'scope_name': 'box_LV',
+                'scopeName': 'missing_scope_name',
+            },
+            'ai_args': {
+                'scope_type': 'logical_volume',
+                'scopeType': 'assembly',
+                'scope_name': 'box_LV',
+                'scopeName': 'missing_scope_name',
+            },
+        },
+        {
             'name': 'nested_camel_case_scope_alias_fields',
             'route_payload': {
                 'scope': {
@@ -1045,6 +1060,34 @@ def test_preflight_scope_route_and_ai_wrappers_share_validation_error_payloads(p
                 'scope_name': 'box_LV',
             },
             'expected_error': "Unsupported scope type 'volume_group'.",
+        },
+        {
+            'name': 'top_level_null_scope_type_blocks_scopeType_fallback',
+            'route_payload': {
+                'scope_type': None,
+                'scopeType': 'logical_volume',
+                'scope_name': 'box_LV',
+            },
+            'ai_args': {
+                'scope_type': None,
+                'scopeType': 'logical_volume',
+                'scope_name': 'box_LV',
+            },
+            'expected_error': 'Scope type and name are required for scoped preflight.',
+        },
+        {
+            'name': 'top_level_null_scope_name_blocks_scopeName_fallback',
+            'route_payload': {
+                'scope_type': 'logical_volume',
+                'scope_name': None,
+                'scopeName': 'box_LV',
+            },
+            'ai_args': {
+                'scope_type': 'logical_volume',
+                'scope_name': None,
+                'scopeName': 'box_LV',
+            },
+            'expected_error': 'Scope type and name are required for scoped preflight.',
         },
         {
             'name': 'malformed_scope_name_alias_prevents_later_scopeName_fallback',

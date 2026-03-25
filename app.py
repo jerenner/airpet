@@ -2598,33 +2598,57 @@ def list_preflight_versions(
 
 
 
+def _resolve_scoped_selector_value(
+    payload_obj: Dict[str, Any],
+    scope_obj: Dict[str, Any],
+    *,
+    canonical_nested_key: str,
+    nested_alias_keys: Tuple[str, ...],
+    canonical_top_level_key: str,
+    top_level_alias_keys: Tuple[str, ...],
+) -> Any:
+    """Resolve one scoped selector value with deterministic precedence.
+
+    Precedence order is strictly key-presence based (not value-based):
+    1) nested canonical key
+    2) nested aliases in listed order
+    3) top-level canonical key
+    4) top-level aliases in listed order
+
+    If a higher-precedence key is present with null/blank data, fallback is blocked.
+    """
+    for key in (canonical_nested_key, *nested_alias_keys):
+        if key in scope_obj:
+            return scope_obj.get(key)
+
+    for key in (canonical_top_level_key, *top_level_alias_keys):
+        if key in payload_obj:
+            return payload_obj.get(key)
+
+    return None
+
+
+
 def _normalize_preflight_scope_input(payload: Any) -> tuple[str, str]:
     payload_obj = payload if isinstance(payload, dict) else {}
     scope = payload_obj.get('scope') if isinstance(payload_obj.get('scope'), dict) else {}
 
-    # Canonical nested `scope.{type,name}` keys take precedence.
-    # If present (even null/blank), do not fall back to aliases.
-    if 'type' in scope:
-        scope_type_raw = scope.get('type')
-    elif 'scope_type' in scope:
-        scope_type_raw = scope.get('scope_type')
-    elif 'scopeType' in scope:
-        scope_type_raw = scope.get('scopeType')
-    else:
-        scope_type_raw = payload_obj.get('scope_type')
-        if scope_type_raw is None:
-            scope_type_raw = payload_obj.get('scopeType')
-
-    if 'name' in scope:
-        scope_name_raw = scope.get('name')
-    elif 'scope_name' in scope:
-        scope_name_raw = scope.get('scope_name')
-    elif 'scopeName' in scope:
-        scope_name_raw = scope.get('scopeName')
-    else:
-        scope_name_raw = payload_obj.get('scope_name')
-        if scope_name_raw is None:
-            scope_name_raw = payload_obj.get('scopeName')
+    scope_type_raw = _resolve_scoped_selector_value(
+        payload_obj,
+        scope,
+        canonical_nested_key='type',
+        nested_alias_keys=('scope_type', 'scopeType'),
+        canonical_top_level_key='scope_type',
+        top_level_alias_keys=('scopeType',),
+    )
+    scope_name_raw = _resolve_scoped_selector_value(
+        payload_obj,
+        scope,
+        canonical_nested_key='name',
+        nested_alias_keys=('scope_name', 'scopeName'),
+        canonical_top_level_key='scope_name',
+        top_level_alias_keys=('scopeName',),
+    )
 
     scope_type_norm = str(scope_type_raw or '').strip().lower()
     scope_name_norm = str(scope_name_raw or '').strip()

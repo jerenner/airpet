@@ -3,9 +3,28 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
-  - Recommended starting point next heartbeat: extract scoped selector normalization into an explicit shared helper used by both route and AI normalization paths (current Next Candidate #1).
+  - Recommended starting point next heartbeat: build the executable scoped-workflow replay harness from Next Candidate #2 (`examples/preflight/scoped_preflight_route_ai_workflow_replay.json` → compact pass/fail diff command).
 
 ## Recently Completed
+
+- **Geant4 confidence follow-on completed: scoped selector normalization is now centralized in a shared precedence helper (route + AI parity lock for mixed top-level collisions)** (2026-03-25)
+  - Added shared scoped selector helper in `app.py`:
+    - `_resolve_scoped_selector_value(...)` now owns deterministic selector precedence resolution for scoped preflight selectors.
+    - precedence is explicitly key-presence based across nested and top-level forms (canonical first, then aliases).
+  - Refactored `_normalize_preflight_scope_input(...)` to consume the shared helper for both selector fields:
+    - scope type (`type` / `scope_type` / `scopeType`, plus top-level aliases)
+    - scope name (`name` / `scope_name` / `scopeName`, plus top-level aliases)
+  - Expanded scoped route↔AI parity regression coverage in `tests/test_ai_api.py`:
+    - added success-path collision case where top-level canonical snake_case selector keys must win over conflicting camelCase keys.
+    - added validation-path collision cases locking that top-level canonical `null` values block fallback to later camelCase aliases (preventing route↔AI drift under mixed-key payloads).
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && python -m py_compile app.py tests/test_ai_api.py`
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_ai_api.py -k "run_preflight_scope_returns_scoped_report_and_summary_delta or preflight_scope_route_and_ai_wrappers_share_success_payloads or preflight_scope_route_and_ai_wrappers_share_validation_error_payloads"` (3 passed, 123 deselected)
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && pytest -q tests/test_preflight.py -k "preflight_scope_route"` (4 passed, 107 deselected)
+  - Checkpoint finished:
+    - ✔ scoped selector precedence logic is now shared/centralized instead of duplicated inline.
+    - ✔ mixed canonical+camelCase top-level collisions now have explicit route↔AI regression coverage.
+    - ✔ scoped preflight success/error contracts remain parity-aligned after helper extraction.
 
 - **Scoped-workflow UX follow-on completed: scoped issue-family correlation buckets are now surfaced in the Simulation panel** (2026-03-25)
   - Added a new shared scoped-diagnostics UI helper module: `static/preflightScopedDiagnosticsUi.js`.
@@ -1739,17 +1758,12 @@
 
 ## Next Candidates
 
-1. **Geant4 confidence follow-on: scoped selector normalization contract helper extraction**
-   - Extract canonical/alias scope-selector precedence logic into an explicit shared helper used by both route and AI normalization call paths.
-   - Add focused regression coverage for mixed canonical + camelCase top-level collisions to prevent future route↔AI selector drift.
-   - Impact: medium-high (reduces recurring scoped selector contract regressions on a high-traffic workflow).
-
-2. **Reproducibility follow-on: executable replay harness for scoped workflow artifact**
+1. **Reproducibility follow-on: executable replay harness for scoped workflow artifact**
    - Add a small scriptable replay harness that runs the scoped route/AI replay artifact and emits a compact pass/fail diff for CI or local triage.
    - Keep output deterministic and aligned with `examples/preflight/scoped_preflight_route_ai_workflow_replay.json`.
    - Impact: medium (faster operator debugging and repeatable route↔AI parity checks outside pytest).
 
-3. **Scoped-workflow UX follow-on: make bucket summaries actionable from the Simulation panel**
+2. **Scoped-workflow UX follow-on: make bucket summaries actionable from the Simulation panel**
    - Add lightweight in-panel actions to pivot the issue list view by bucket (`scope-only`, `outside-scope-only`, `shared`) after scoped runs.
    - Preserve deterministic fallback to current scoped/global issue toggles when bucket metadata is absent.
    - Add focused frontend regression coverage for bucket-filter selection state and empty-result messaging.
