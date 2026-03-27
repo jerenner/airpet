@@ -695,12 +695,69 @@
             gap: 4px;
         }
 
-        .chat-message.thinking-indicator .tool-entry {
-            padding: 4px 8px;
+          .chat-message.thinking-indicator .tool-entry {
             background-color: rgba(255, 193, 7, 0.2);
             border-radius: 4px;
             font-size: 12px;
             border-left: 2px solid #ffc107;
+        }
+
+        .chat-message.thinking-dropdown {
+            align-self: flex-start;
+            background-color: #fffbeb;
+            border: 1px solid #f59e0b;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 4px;
+            max-width: 85%;
+        }
+
+        .thinking-toggle {
+            width: 100%;
+            background-color: #fffbeb;
+            border: none;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #92400e;
+            cursor: pointer;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background-color 0.2s;
+        }
+
+        .thinking-toggle:hover {
+            background-color: #fef3c7;
+        }
+
+        .thinking-content {
+            padding: 10px 14px 14px;
+            background-color: #fef3c7;
+            border-top: 1px solid #f59e0b;
+        }
+
+        .thinking-step {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            background-color: #fff;
+            border-radius: 8px;
+            border-left: 3px solid #f59e0b;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .thinking-step:last-child {
+            margin-bottom: 0;
+        }
+
+        .thinking-tools {
+            margin-top: 8px;
+            padding: 6px 10px;
+            background-color: rgba(0, 0, 0, 0.05);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #666;
         }
 
         .chat-message.markdown-content {
@@ -1273,6 +1330,9 @@
             grid-template-columns: 1fr 1fr;
             gap: 8px 10px;
         }
+        .pr-form-grid[hidden] {
+            display: none !important;
+        }
         .pr-form-grid .property_item {
             margin: 0;
         }
@@ -1720,6 +1780,13 @@
             white-space: nowrap;
             display: inline-flex;
             align-items: center;
+        }
+
+        /* View mode visibility */
+        #psWizardCard[hidden],
+        #psLegacyForm[hidden] {
+            display: none !important;
+        }
             justify-content: center;
             box-sizing: border-box;
             padding: 0 10px;

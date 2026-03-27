@@ -13125,6 +13125,7 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                     "metadata": {
                         "resolved_backend_id": adapter_response.backend_id,
                         "provider_model": adapter_response.model,
+                        "_intermediate": True,  # Mark as intermediate turn (not final response)
                     },
                 }
                 if assistant_openai_tool_calls:
@@ -13315,7 +13316,11 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 if not assistant_parts and getattr(response, 'text', None):
                     assistant_parts = [{"text": response.text}]
                 
-                pm.chat_history.append({"role": response_role, "parts": assistant_parts})
+                pm.chat_history.append({
+                    "role": response_role, 
+                    "parts": assistant_parts,
+                    "metadata": {"_intermediate": True}  # Mark as intermediate turn
+                })
                 
                 tool_names = []
                 has_tool_call = False
@@ -13810,6 +13815,7 @@ def ai_chat_route():
                     "metadata": {
                         "resolved_backend_id": adapter_response.backend_id,
                         "provider_model": adapter_response.model,
+                        "_intermediate": True,  # Mark as intermediate turn (not final response)
                     },
                 }
                 if assistant_openai_tool_calls:
@@ -14156,6 +14162,7 @@ def ai_chat_route():
                 assistant_msg = {
                     "role": getattr(raw_assistant_msg, 'role', 'assistant'),
                     "content": getattr(raw_assistant_msg, 'content', ""),
+                    "metadata": {"_intermediate": True},  # Mark as intermediate turn
                 }
                 if hasattr(raw_assistant_msg, 'tool_calls') and raw_assistant_msg.tool_calls:
                     assistant_msg["tool_calls"] = [

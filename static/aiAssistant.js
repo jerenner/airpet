@@ -348,7 +348,7 @@ export function reloadHistory() {
     loadHistory(true);
 }
 
-function renderHistory(history) {
+  function renderHistory(history) {
     console.log('renderHistory: called with', history.length, 'messages');
     messageList.innerHTML = '';
     // Skip the first two messages (system instructions)
@@ -356,22 +356,59 @@ function renderHistory(history) {
         addMessageToUI('system', "Welcome to AIRPET AI. How can I help you with your detector geometry today?", false);
         return;
     }
+    
+    // Group messages by turn: [user msg, intermediate msgs..., final msg]
+    const turns = [];
+    let currentTurn = [];
+    
     history.slice(2).forEach(msg => {
-        // Gemini API uses 'parts' with 'text', Ollama uses 'content'
-        // Skip tool results and system updates
+        // Skip tool results and system messages
         if (msg.role === 'tool' || msg.role === 'system') return;
         
-        // --- NEW: Use original_message from metadata if available ---
-        let text = "";
-        if (msg.role === 'user' && msg.metadata && msg.metadata.original_message) {
-            text = msg.metadata.original_message;
-        } else {
-            text = msg.parts ? msg.parts.map(p => p.text || '').join('\n').trim() : (msg.content || '').trim();
-        }
+        const isUser = msg.role === 'user';
+        const isIntermediate = (msg.role === 'assistant' || msg.role === 'model') && msg.metadata && msg.metadata._intermediate;
+        const isFinal = (msg.role === 'assistant' || msg.role === 'model') && (!msg.metadata || !msg.metadata._intermediate);
         
-        if (text && !text.startsWith('[System Context Update]')) {
-            addMessageToUI(msg.role === 'user' ? 'user' : 'model', text, false);
+        if (isUser) {
+            // Start new turn with user message
+            if (currentTurn.length > 0) {
+                turns.push(currentTurn);
+            }
+            currentTurn = [{ type: 'user', msg }];
+        } else if (isIntermediate) {
+            // Add intermediate message to current turn
+            currentTurn.push({ type: 'intermediate', msg });
+        } else if (isFinal) {
+            // Add final message and close turn
+            currentTurn.push({ type: 'final', msg });
+            turns.push(currentTurn);
+            currentTurn = [];
         }
+    });
+    
+    // Render each turn
+    turns.forEach(turn => {
+        turn.forEach(item => {
+            let text = "";
+            if (item.msg.role === 'user' && item.msg.metadata && item.msg.metadata.original_message) {
+                text = item.msg.metadata.original_message;
+            } else {
+                text = item.msg.parts ? item.msg.parts.map(p => p.text || '').join('\n').trim() : (item.msg.content || '').trim();
+            }
+            
+            if (text && !text.startsWith('[System Context Update]')) {
+                if (item.type === 'user') {
+                    addMessageToUI('user', text, false);
+                } else if (item.type === 'final') {
+                    addMessageToUI('model', text, false);
+                    // Add thinking dropdown if there were intermediate steps
+                    const intermediates = turn.filter(t => t.type === 'intermediate');
+                    if (intermediates.length > 0) {
+                        addThinkingDropdown(intermediates);
+                    }
+                }
+            }
+        });
     });
 
     // Ensure the model selector is synced if history was loaded
@@ -593,4 +630,53 @@ function removeThinkingIndicator(indicator) {
         indicator.remove();
     }
     currentRecentTools = [];
+}
+
+function addThinkingDropdown(intermediates) {
+    const dropdown = document.createElement('div');
+    dropdown.className = 'chat-message model thinking-dropdown';
+    
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'thinking-toggle';
+    toggleBtn.innerHTML = `🤔 Thinking (${intermediates.length} step${intermediates.length > 1 ? 's' : ''}) ▼`;
+    toggleBtn.onclick = () => toggleThinkingDropdown(dropdown);
+    
+    const content = document.createElement('div');
+    content.className = 'thinking-content';
+    content.style.display = 'none';
+    
+    intermediates.forEach((item, idx) => {
+        const text = item.msg.parts ? item.msg.parts.map(p => p.text || '').join('\n').trim() : (item.msg.content || '').trim();
+        if (text && !text.startsWith('[System Context Update]')) {
+            const step = document.createElement('div');
+            step.className = 'thinking-step';
+            step.innerHTML = `<strong>Step ${idx + 1}:</strong> ${marked.marked.parse(text)}`;
+            content.appendChild(step);
+        }
+        
+        // Show tool calls if any
+        if (item.msg.tool_calls && item.msg.tool_calls.length > 0) {
+            const toolDiv = document.createElement('div');
+            toolDiv.className = 'thinking-tools';
+            toolDiv.innerHTML = `<strong>Tools called:</strong> ${item.msg.tool_calls.map(tc => tc.function?.name || tc.name).join(', ')}`;
+            content.appendChild(toolDiv);
+        }
+    });
+    
+    dropdown.appendChild(toggleBtn);
+    dropdown.appendChild(content);
+    messageList.appendChild(dropdown);
+}
+
+function toggleThinkingDropdown(dropdown) {
+    const content = dropdown.querySelector('.thinking-content');
+    const toggleBtn = dropdown.querySelector('.thinking-toggle');
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        toggleBtn.innerHTML = toggleBtn.innerHTML.replace('▼', '▲');
+    } else {
+        content.style.display = 'none';
+        toggleBtn.innerHTML = toggleBtn.innerHTML.replace('▲', '▼');
+    }
 }

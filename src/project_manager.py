@@ -2952,6 +2952,18 @@ class ProjectManager:
         if not self.current_geometry_state: return None, "No project loaded"
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.materials)
         
+        # Check if this is a NIST material name (starts with G4_)
+        # If it's a NIST name and has no components/Z/A/density, create as NIST material
+        is_nist_name = name_suggestion.startswith("G4_")
+        has_no_components = not properties_dict.get('components')
+        has_no_z = not properties_dict.get('Z_expr') and not properties_dict.get('Z')
+        has_no_a = not properties_dict.get('A_expr') and not properties_dict.get('A')
+        has_no_density = not properties_dict.get('density_expr') and not properties_dict.get('density')
+        
+        if is_nist_name and has_no_components and has_no_z:
+            # Create as NIST material - this tells Geant4 to use the built-in material
+            properties_dict = {**properties_dict, 'mat_type': 'nist'}
+        
         # Auto-create missing elements referenced in components
         components = properties_dict.get('components', [])
         if components:
@@ -4849,21 +4861,39 @@ class ProjectManager:
 
     def _normalize_gps_commands(self, gps_commands):
         """Normalize gps_commands values to strings to prevent [object Object] display issues."""
-        if not gps_commands:
-            return gps_commands
-        
         normalized = {}
-        for key, value in gps_commands.items():
-            if isinstance(value, dict):
-                # Convert {"value": 100, "unit": "keV"} to "100 keV"
-                if 'value' in value and 'unit' in value:
-                    normalized[key] = f"{value['value']} {value['unit']}"
+        
+        if gps_commands:
+            for key, value in gps_commands.items():
+                if isinstance(value, dict):
+                    # Convert {"value": 100, "unit": "keV"} to "100 keV"
+                    if 'value' in value and 'unit' in value:
+                        normalized[key] = f"{value['value']} {value['unit']}"
+                    else:
+                        normalized[key] = str(value)
+                elif value is None:
+                    normalized[key] = ""
                 else:
                     normalized[key] = str(value)
-            elif value is None:
-                normalized[key] = ""
-            else:
-                normalized[key] = str(value)
+        
+        # Set sensible defaults for missing GPS commands
+        # Particle type - default to gamma if not specified
+        if 'particle' not in normalized or not normalized.get('particle'):
+            normalized['particle'] = 'gamma'
+        
+        # Direction mode - default to Direction (not Isotropic) if not specified
+        if 'ang/type' not in normalized or not normalized.get('ang/type'):
+            normalized['ang/type'] = 'Direction'
+        
+        # Energy format - ensure proper Geant4 format with * operator
+        if 'energy' in normalized and normalized['energy']:
+            energy_str = normalized['energy']
+            # Convert "1 GeV" to "1*GeV" format for Geant4
+            if ' ' in energy_str and '*' not in energy_str:
+                parts = energy_str.strip().split()
+                if len(parts) == 2:
+                    normalized['energy'] = f"{parts[0]}*{parts[1]}"
+        
         return normalized
 
     def add_source(self, name_suggestion, gps_commands, position, rotation, activity=1.0, confine_to_pv=None, volume_link_id=None):
