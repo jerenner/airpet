@@ -10,7 +10,7 @@
 #include "G4UIparameter.hh"
 
 RunAction::RunAction()
-    : G4UserRunAction(), fSaveParticles(false), fSaveHits(true),
+    : G4UserRunAction(), fSaveParticles(false), fSaveHits(true), fSaveHitMetadata(true),
       fHitEnergyThreshold(0.0) {
   auto analysisManager = G4AnalysisManager::Instance();
   analysisManager->SetDefaultFileType("hdf5");
@@ -23,6 +23,9 @@ RunAction::RunAction()
   fSaveHitsCmd = new G4UIcommand("/g4pet/run/saveHits", this);
   fSaveHitsCmd->SetParameter(new G4UIparameter("value", 'b', true));
   fSaveHitsCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
+  fSaveHitMetadataCmd = new G4UIcommand("/g4pet/run/saveHitMetadata", this);
+  fSaveHitMetadataCmd->SetParameter(new G4UIparameter("value", 'b', true));
+  fSaveHitMetadataCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
   fHitEnergyThresholdCmd = new G4UIcmdWithADoubleAndUnit("/g4pet/run/hitEnergyThreshold", this);
   fHitEnergyThresholdCmd->SetParameterName("energy", true);
   fHitEnergyThresholdCmd->SetDefaultValue(0.0);
@@ -37,6 +40,8 @@ void RunAction::SetNewValue(G4UIcommand *command, G4String newValue) {
     fSaveParticles = G4UIcommand::ConvertToBool(newValue);
   } else if (command == fSaveHitsCmd) {
     fSaveHits = G4UIcommand::ConvertToBool(newValue);
+  } else if (command == fSaveHitMetadataCmd) {
+    fSaveHitMetadata = G4UIcommand::ConvertToBool(newValue);
   } else if (command == fHitEnergyThresholdCmd) {
     fHitEnergyThreshold = fHitEnergyThresholdCmd->GetNewDoubleValue(newValue);
   }
@@ -76,15 +81,20 @@ void RunAction::BeginOfRunAction(const G4Run * /*aRun*/) {
     G4int hits_ntuple_ID = fSaveParticles ? 1 : 0;
     analysisManager->CreateNtuple("Hits", "Sensitive Detector Hits");
     analysisManager->CreateNtupleIColumn("EventID");
-    analysisManager->CreateNtupleIColumn("CopyNo");
-    analysisManager->CreateNtupleSColumn("ParticleName");
-    analysisManager->CreateNtupleIColumn("TrackID");
-    analysisManager->CreateNtupleIColumn("ParentID");
     analysisManager->CreateNtupleDColumn("Edep");
     analysisManager->CreateNtupleDColumn("PosX");
     analysisManager->CreateNtupleDColumn("PosY");
     analysisManager->CreateNtupleDColumn("PosZ");
     analysisManager->CreateNtupleDColumn("Time");
+    if (fSaveHitMetadata) {
+      analysisManager->CreateNtupleSColumn("SensitiveDetectorName");
+      analysisManager->CreateNtupleSColumn("LogicalVolumeName");
+      analysisManager->CreateNtupleSColumn("PhysicalVolumeName");
+      analysisManager->CreateNtupleIColumn("CopyNo");
+      analysisManager->CreateNtupleSColumn("ParticleName");
+      analysisManager->CreateNtupleIColumn("TrackID");
+      analysisManager->CreateNtupleIColumn("ParentID");
+    }
     analysisManager->FinishNtuple(hits_ntuple_ID);
   }
 }

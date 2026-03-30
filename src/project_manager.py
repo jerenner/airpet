@@ -6644,8 +6644,10 @@ class ProjectManager:
         macro_content.append("# --- N-tuple Saving Control ---")
         save_particles = sim_params.get('save_particles', False)
         save_hits = sim_params.get('save_hits', True)
+        save_hit_metadata = sim_params.get('save_hit_metadata', True)
         macro_content.append(f"/g4pet/run/saveParticles {str(save_particles).lower()}")
         macro_content.append(f"/g4pet/run/saveHits {str(save_hits).lower()}")
+        macro_content.append(f"/g4pet/run/saveHitMetadata {str(save_hit_metadata).lower()}")
         
         # Keep the default low enough that low-energy studies still produce hits.
         hit_threshold = str(sim_params.get('hit_energy_threshold') or '1 eV').strip()

@@ -36,6 +36,7 @@ class AirPetHit : public G4VHit
     void SetPosition(const G4ThreeVector& pos) { fPos = pos; }
     void SetTime(G4double time)         { fTime = time; }
     void SetParticleName(const G4String& name) { fParticleName = name; }
+    void SetSensitiveDetectorName(const G4String& name) { fSensitiveDetectorName = name; }
     void SetVolumeName(const G4String& name)   { fVolumeName = name; }
     void SetPhysicalVolumeName(const G4String& name)   { fPhysicalVolumeName = name; }
     void SetCopyNo(G4int copyNo)        { fCopyNo = copyNo; }
@@ -48,6 +49,7 @@ class AirPetHit : public G4VHit
     G4ThreeVector GetPosition() const   { return fPos; }
     G4double GetTime() const            { return fTime; }
     G4String GetParticleName() const    { return fParticleName; }
+    G4String GetSensitiveDetectorName() const { return fSensitiveDetectorName; }
     G4String GetVolumeName() const      { return fVolumeName; }
     G4String GetPhysicalVolumeName() const { return fPhysicalVolumeName; }
     G4int GetCopyNo() const             { return fCopyNo; }
@@ -59,6 +61,7 @@ class AirPetHit : public G4VHit
     G4ThreeVector fPos;
     G4double      fTime;
     G4String      fParticleName;
+    G4String      fSensitiveDetectorName;
     G4String      fVolumeName;
     G4String      fPhysicalVolumeName;
     G4int         fCopyNo;

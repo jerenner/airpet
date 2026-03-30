@@ -705,6 +705,7 @@ def _objective_builder_example_payload(pm: Optional[ProjectManager], template_id
             'events': 1000,
             'threads': 1,
             'save_hits': True,
+            'save_hit_metadata': True,
             'save_particles': True,
             'hit_energy_threshold': '1 eV',
         },
@@ -964,6 +965,7 @@ def _build_objective_builder_payload(payload, validation):
         'events': 1000,
         'threads': 1,
         'save_hits': True,
+        'save_hit_metadata': True,
         'save_particles': True,
         'hit_energy_threshold': '1 eV',
     }
@@ -4717,8 +4719,75 @@ def get_simulation_analysis(version_id, job_id):
         # Parse query parameters
         energy_bins = request.args.get('energy_bins', default=100, type=int)
         spatial_bins = request.args.get('spatial_bins', default=50, type=int)
+        sensitive_detector = (request.args.get('sensitive_detector') or '').strip()
+        energy_bins = max(int(energy_bins or 100), 1)
+        spatial_bins = max(int(spatial_bins or 50), 1)
 
         analysis_data = {}
+
+        def _finite_numeric_array(values):
+            if values is None:
+                return np.array([], dtype=float)
+            arr = np.asarray(values, dtype=float).reshape(-1)
+            return arr[np.isfinite(arr)]
+
+        def _expanded_range(min_val, max_val):
+            min_val = float(min_val)
+            max_val = float(max_val)
+            if not np.isfinite(min_val) or not np.isfinite(max_val):
+                return None
+            if min_val == max_val:
+                padding = max(abs(min_val) * 1e-9, 1e-12)
+                return (min_val - padding, max_val + padding)
+            return (min_val, max_val)
+
+        def _safe_histogram_1d(values, bins):
+            arr = _finite_numeric_array(values)
+            if arr.size == 0:
+                return np.array([], dtype=int), np.array([], dtype=float)
+
+            value_range = _expanded_range(arr.min(), arr.max())
+            if value_range is None:
+                return np.array([], dtype=int), np.array([], dtype=float)
+
+            hist, bin_edges = np.histogram(arr, bins=max(int(bins), 1), range=value_range)
+            return hist, bin_edges
+
+        def _safe_histogram_2d(x_values, y_values, bins):
+            x_arr = np.asarray(x_values, dtype=float).reshape(-1)
+            y_arr = np.asarray(y_values, dtype=float).reshape(-1)
+            if x_arr.size == 0 or y_arr.size == 0:
+                return np.array([]), np.array([]), np.array([])
+
+            valid_mask = np.isfinite(x_arr) & np.isfinite(y_arr)
+            x_arr = x_arr[valid_mask]
+            y_arr = y_arr[valid_mask]
+            if x_arr.size == 0 or y_arr.size == 0:
+                return np.array([]), np.array([]), np.array([])
+
+            x_range = _expanded_range(x_arr.min(), x_arr.max())
+            y_range = _expanded_range(y_arr.min(), y_arr.max())
+            if x_range is None or y_range is None:
+                return np.array([]), np.array([]), np.array([])
+
+            return np.histogram2d(x_arr, y_arr, bins=max(int(bins), 1), range=(x_range, y_range))
+
+        def _decode_string_array(values):
+            out = []
+            for value in np.asarray(values).reshape(-1):
+                if isinstance(value, bytes):
+                    out.append(value.decode('utf-8'))
+                else:
+                    out.append(str(value))
+            return np.array(out, dtype=object)
+
+        def _apply_mask(values, mask):
+            arr = np.asarray(values)
+            if arr.size == 0:
+                return arr
+            if mask is None or arr.shape[0] != mask.shape[0]:
+                return arr
+            return arr[mask]
 
         with h5py.File(output_path, 'r') as f:
             # Check for Hits ntuple
@@ -4764,10 +4833,45 @@ def get_simulation_analysis(version_id, job_id):
             pos_z = get_col('PosZ')
             copy_no = get_col('CopyNo')
             particle_name_ds = get_col('ParticleName')
-            
+            sensitive_detector_ds = get_col('SensitiveDetectorName')
+
+            available_sensitive_detectors = []
+            selected_sensitive_detector = ''
+            supports_sensitive_detector_filter = len(sensitive_detector_ds) > 0
+            hit_mask = None
+
+            if supports_sensitive_detector_filter:
+                sensitive_detector_names = _decode_string_array(sensitive_detector_ds)
+                available_sensitive_detectors = sorted({
+                    str(name).strip()
+                    for name in sensitive_detector_names
+                    if str(name).strip()
+                })
+
+                if sensitive_detector:
+                    if sensitive_detector not in available_sensitive_detectors:
+                        return jsonify({
+                            "success": False,
+                            "error": f"Sensitive detector '{sensitive_detector}' not found in hits output."
+                        }), 400
+                    selected_sensitive_detector = sensitive_detector
+                    hit_mask = sensitive_detector_names == sensitive_detector
+            elif sensitive_detector:
+                return jsonify({
+                    "success": False,
+                    "error": "This run does not contain sensitive-detector metadata, so detector filtering is unavailable."
+                }), 400
+
+            edep = _apply_mask(edep, hit_mask)
+            pos_x = _apply_mask(pos_x, hit_mask)
+            pos_y = _apply_mask(pos_y, hit_mask)
+            pos_z = _apply_mask(pos_z, hit_mask)
+            copy_no = _apply_mask(copy_no, hit_mask)
+            particle_name_ds = _apply_mask(particle_name_ds, hit_mask)
+             
             # 1. Energy Spectrum
             if len(edep) > 0:
-                hist, bin_edges = np.histogram(edep, bins=energy_bins)
+                hist, bin_edges = _safe_histogram_1d(edep, energy_bins)
                 analysis_data['energy_spectrum'] = {
                     'counts': hist.tolist(),
                     'bin_edges': bin_edges.tolist()
@@ -4779,14 +4883,10 @@ def get_simulation_analysis(version_id, job_id):
             def compute_heatmap(x, y, bins):
                 if len(x) == 0 or len(y) == 0:
                     return {'z': [], 'x_edges': [], 'y_edges': []}
-                # Use np.histogram2d
-                # Note: numpy returns (nx, ny), where x is the first dimension (rows).
-                # Plotly expects z as an array of arrays where z[i] is a row.
-                # So we might need to transpose depending on convention.
-                # Usually: z[y][x].
-                # histogram2d returns H[x, y].
-                # So H.T is H[y, x].
-                h, x_edges, y_edges = np.histogram2d(x, y, bins=bins)
+                # Note: histogram2d returns H[x, y], so we transpose for Plotly.
+                h, x_edges, y_edges = _safe_histogram_2d(x, y, bins)
+                if h.size == 0:
+                    return {'z': [], 'x_edges': [], 'y_edges': []}
                 return {
                     'z': h.T.tolist(), 
                     'x_edges': x_edges.tolist(),
@@ -4830,8 +4930,13 @@ def get_simulation_analysis(version_id, job_id):
                     analysis_data['particle_breakdown'] = {'names': [], 'counts': []}
             else:
                 analysis_data['particle_breakdown'] = {'names': [], 'counts': []}
-            
+
             analysis_data['total_hits'] = len(edep)
+            analysis_data['filtering'] = {
+                'sensitive_detector_supported': supports_sensitive_detector_filter,
+                'available_sensitive_detectors': available_sensitive_detectors,
+                'selected_sensitive_detector': selected_sensitive_detector,
+            }
 
         return jsonify({"success": True, "analysis": analysis_data})
 

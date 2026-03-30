@@ -509,12 +509,42 @@
 
         /* Bottom panel containing AI and simulation options */
         #bottom_panel {
+            --bottom-panel-height: 260px;
             flex-shrink: 0;
             display: flex;
             flex-direction: column;
             border-top: 1px solid #ccc;
             background-color: #f0f2f5;
             min-width: 0;
+            height: var(--bottom-panel-height);
+            min-height: 120px;
+            max-height: calc(100vh - 120px);
+        }
+
+        #bottomPanelResizeHandle {
+            flex-shrink: 0;
+            height: 8px;
+            cursor: ns-resize;
+            background: linear-gradient(to bottom, #dbe2ea, #cfd7e1);
+            border-bottom: 1px solid #c5ced8;
+            position: relative;
+        }
+
+        #bottomPanelResizeHandle::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 56px;
+            height: 2px;
+            border-radius: 999px;
+            background: rgba(71, 85, 105, 0.55);
+        }
+
+        #bottomPanelResizeHandle:hover,
+        #bottom_panel.resizing #bottomPanelResizeHandle {
+            background: linear-gradient(to bottom, #dbeafe, #bfdbfe);
         }
 
         #bottom_panel .tab_navigation {
@@ -522,15 +552,12 @@
         }
 
         #bottom_panel .tab_content_area {
-            /* This container is now just for sizing and overflow */
             flex-grow: 1;
             flex-shrink: 0;
+            flex-basis: 0;
             min-width: 0;
             min-height: 50px;
-            max-height: 300px; /* Increased from 120px */
-            resize: vertical;
             overflow: auto;
-            /* Let the content area itself scroll if needed */
         }
 
         #bottom_panel .tab_pane {
@@ -571,22 +598,26 @@
             background-color: #d8d8d8;
         }
 
-        /* Style for the panel when it is expanded */
-        #bottom_panel.expanded .tab_content_area {
-            /* Use a significant portion of the viewport height */
-            max-height: 60vh;
-            /* Disable manual resizing when in the fixed expanded state */
-            resize: none;
+        #bottom_panel.minimized {
+            height: auto;
+            min-height: 0;
+            max-height: none;
         }
 
-        /* Add a smooth transition for the height change */
-        #bottom_panel .tab_content_area {
-            transition: max-height 0.3s ease-in-out;
+        #bottom_panel.minimized #bottomPanelResizeHandle {
+            height: 0;
+            border-bottom: none;
+            overflow: hidden;
+        }
+
+        #bottom_panel.minimized #bottomPanelResizeHandle::after {
+            display: none;
         }
 
         #bottom_panel.minimized .tab_content_area {
-            max-height: 0;
+            flex-basis: 0;
             min-height: 0;
+            height: 0;
             overflow: hidden;
         }
 
@@ -1191,6 +1222,7 @@
         #stopSimButton,
         #preflightButton,
         #simOptionsButton,
+        #analysisModalButton,
         #reconModalButton {
             font-size: 12px;
             cursor: pointer;
@@ -1629,6 +1661,22 @@
             /* Often useful to make the body a flex container */
             flex-direction: column;
             /* Stack items vertically by default */
+        }
+
+        .sim-options-hint {
+            font-size: 11px;
+            color: #666;
+            line-height: 1.4;
+            text-align: left;
+            margin: 2px 0 10px;
+        }
+
+        .sim-options-hint.checkbox {
+            margin-left: 28px;
+        }
+
+        .sim-options-hint.field {
+            margin-left: 140px;
         }
 
         /* The solid editor has internal panels, so we remove the body's padding
@@ -2755,10 +2803,10 @@
         <div id="selection_box" class="selection-box" style="display:none;"></div>
         <!-- AI PANEL --- -->
         <div id="bottom_panel">
+            <div id="bottomPanelResizeHandle" title="Drag to resize bottom panel"></div>
             <div id="bottom_panel_tabs" class="tab_navigation">
                 <button class="tab_button active" data-tab="tab_ai_panel">AI Assistant</button>
                 <button class="tab_button" data-tab="tab_sim_panel">Simulation</button>
-                <button class="tab_button" data-tab="tab_analysis_panel">Analysis</button>
                 <button id="toggleBottomPanelBtn" title="Minimize Panel">↓</button>
             </div>
             <div id="bottom_panel_content" class="tab_content_area">
@@ -2800,6 +2848,7 @@
                         <button id="stopSimButton" disabled>⏹ Stop</button>
                         <button id="preflightButton">🧪 Preflight</button>
                         <button id="simOptionsButton">⚙️ Options</button>
+                        <button id="analysisModalButton" title="Open quick analysis" disabled>Analysis...</button>
                         <button id="reconModalButton" title="Open PET Reconstruction" disabled>PET Reco</button>
                         <div id="sim_status_display"
                             style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
@@ -2843,29 +2892,6 @@
                     </div>
                 </div>
 
-                <!-- Analysis Panel Content -->
-                <div id="tab_analysis_panel" class="tab_pane">
-                    <div id="analysis_controls"
-                        style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-shrink: 0; padding: 5px;">
-                        <label for="energyBinsInput" style="font-size: 12px; font-weight: bold;">Energy Bins:</label>
-                        <input type="number" id="energyBinsInput" value="100" min="1" step="1" style="width: 50px;">
-                        <label for="spatialBinsInput" style="font-size: 12px; font-weight: bold;">Spatial Bins:</label>
-                        <input type="number" id="spatialBinsInput" value="50" min="1" step="1" style="width: 50px;">
-                        <button id="refreshAnalysisButton" style="font-size: 12px; cursor: pointer;">🔄 Refresh Analysis</button>
-                        <div id="analysis_status"
-                            style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
-                            <span>No analysis data loaded.</span>
-                        </div>
-                    </div>
-                    <div id="analysis_charts_container"
-                        style="flex-grow: 1; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #fff; border-radius: 4px;">
-                        <div id="energy_spectrum_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
-                        <div id="particle_breakdown_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
-                        <div id="xy_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
-                        <div id="xz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
-                        <div id="yz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
@@ -4338,18 +4364,24 @@
                     <label for="simPrintProgress">Print Progress Every:</label>
                     <input type="number" id="simPrintProgress" value="1000000" min="0" step="100">
                 </div>
-                <div style="font-size: 11px; color: #666; text-align: right; margin-top: -8px;">(Set to 0 to disable)
-                </div>
+                <div class="sim-options-hint field">(Set to 0 to disable)</div>
                 <hr>
                 <div class="property_item">
                     <input type="checkbox" id="simSaveHits" style="width: auto;" checked>
                     <label for="simSaveHits" style="width: auto;">Save Hits</label>
                 </div>
                 <div class="property_item">
+                    <input type="checkbox" id="simSaveHitMetadata" style="width: auto;" checked>
+                    <label for="simSaveHitMetadata" style="width: auto;">Save Hit Metadata</label>
+                </div>
+                <div class="sim-options-hint checkbox">
+                    Includes detector and volume names, particle identity, copy number, and track IDs. Turn this off for leaner PET hit files.
+                </div>
+                <div class="property_item">
                     <label for="simHitEnergyThreshold">Hit Energy Threshold:</label>
                     <input type="text" id="simHitEnergyThreshold" value="1 eV" placeholder="e.g., 1 eV, 10 keV, 0 eV">
                 </div>
-                <div style="font-size: 11px; color: #666; text-align: right; margin-top: -8px;">
+                <div class="sim-options-hint field">
                     Sensitive hits below this deposited-energy threshold are not written to the HDF5 output.
                 </div>
                 <div class="property_item">
@@ -4496,6 +4528,40 @@
             </div>
         </div>
     </div>
+    <div id="analysisModal" class="editor-modal">
+        <div class="modal-content" style="width: 90%; max-width: 1200px; height: 80vh;">
+            <div class="modal-header">
+                <h4>Quick Analysis</h4>
+                <span class="close-button" id="closeAnalysisModal">×</span>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 10px; overflow: hidden;">
+                <div id="analysis_controls"
+                    style="display: flex; align-items: center; gap: 10px; flex-shrink: 0; padding: 5px 0; flex-wrap: wrap;">
+                    <label for="energyBinsInput" style="font-size: 12px; font-weight: bold;">Energy Bins:</label>
+                    <input type="number" id="energyBinsInput" value="100" min="1" step="1" style="width: 60px;">
+                    <label for="spatialBinsInput" style="font-size: 12px; font-weight: bold;">Spatial Bins:</label>
+                    <input type="number" id="spatialBinsInput" value="50" min="1" step="1" style="width: 60px;">
+                    <label for="analysisSensitiveDetectorSelect" style="font-size: 12px; font-weight: bold;">Sensitive Detector:</label>
+                    <select id="analysisSensitiveDetectorSelect" style="min-width: 180px; font-size: 12px;">
+                        <option value="">All hits</option>
+                    </select>
+                    <button id="refreshAnalysisButton" style="font-size: 12px; cursor: pointer;">Refresh Analysis</button>
+                    <div id="analysis_status"
+                        style="margin-left: auto; font-size: 11px; color: #555; text-align: right;">
+                        <span>No analysis data loaded.</span>
+                    </div>
+                </div>
+                <div id="analysis_charts_container"
+                    style="flex-grow: 1; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px; background-color: #fff; border-radius: 4px; border: 1px solid #e5e7eb;">
+                    <div id="energy_spectrum_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
+                    <div id="particle_breakdown_chart" style="flex: 1 1 45%; min-width: 300px; height: 300px; border: 1px solid #eee;"></div>
+                    <div id="xy_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
+                    <div id="xz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
+                    <div id="yz_heatmap_chart" style="flex: 1 1 30%; min-width: 250px; height: 280px; border: 1px solid #eee;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
     <!-- Add a full-screen loading overlay -->
     <div id="loading-overlay"
         style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; justify-content: center; align-items: center; flex-direction: column; color: white; font-size: 1.2em;">
@@ -4515,8 +4581,8 @@
             }
         }
     </script>
-    <script type="module" src="{{ url_for('static', filename='aiAssistant.js') }}?v=13"></script>
-    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=13"></script>
+    <script type="module" src="{{ url_for('static', filename='aiAssistant.js') }}?v=20"></script>
+    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=20"></script>
     {% if app_mode != 'local' %}
     <div id="app-footer"
         style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">

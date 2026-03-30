@@ -1569,10 +1569,18 @@ export async function checkLorFile(versionId, jobId) {
  * @param {string} jobId 
  * @param {number} energyBins 
  * @param {number} spatialBins 
+ * @param {string} sensitiveDetector
  * @returns {Promise<Object>}
  */
-export async function fetchSimulationAnalysis(versionId, jobId, energyBins = 100, spatialBins = 50) {
-    const url = `${API_BASE_URL}/api/simulation/analysis/${versionId}/${jobId}?energy_bins=${energyBins}&spatial_bins=${spatialBins}`;
+export async function fetchSimulationAnalysis(versionId, jobId, energyBins = 100, spatialBins = 50, sensitiveDetector = '') {
+    const params = new URLSearchParams({
+        energy_bins: String(energyBins),
+        spatial_bins: String(spatialBins),
+    });
+    if (sensitiveDetector && sensitiveDetector.trim()) {
+        params.set('sensitive_detector', sensitiveDetector.trim());
+    }
+    const url = `${API_BASE_URL}/api/simulation/analysis/${versionId}/${jobId}?${params.toString()}`;
     const response = await fetch(url);
     return handleResponse(response);
 }

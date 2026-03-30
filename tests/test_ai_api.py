@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import h5py
+import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
 from flask import jsonify, session
@@ -5655,6 +5657,7 @@ def test_generate_macro_uses_low_default_hit_energy_threshold(pm, tmp_path):
     macro_text = Path(macro_path).read_text(encoding="utf-8")
 
     assert "/g4pet/run/hitEnergyThreshold 1 eV" in macro_text
+    assert "/g4pet/run/saveHitMetadata true" in macro_text
 
 
 def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
@@ -5672,6 +5675,23 @@ def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
     macro_text = Path(macro_path).read_text(encoding="utf-8")
 
     assert "/g4pet/run/hitEnergyThreshold 25 eV" in macro_text
+
+
+def test_generate_macro_allows_disabling_hit_metadata(pm, tmp_path):
+    version_dir = tmp_path / "version_hit_metadata_override"
+    version_dir.mkdir()
+    (version_dir / "version.json").write_text("{}", encoding="utf-8")
+
+    macro_path = pm.generate_macro_file(
+        "hit-metadata-override",
+        {"events": 1, "save_hit_metadata": False},
+        str(tmp_path),
+        str(tmp_path),
+        str(version_dir),
+    )
+    macro_text = Path(macro_path).read_text(encoding="utf-8")
+
+    assert "/g4pet/run/saveHitMetadata false" in macro_text
 
 
 def test_ai_tool_manage_logical_volume_preserves_sensitivity_when_omitted_on_update(pm):
@@ -5970,6 +5990,81 @@ def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
     assert not target_run_dir.exists()
     assert sibling_run_dir.exists()
     assert Path(pm._get_version_dir(version_id)).exists()
+
+
+def test_simulation_analysis_route_handles_degenerate_histogram_ranges(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_degenerate_project"
+
+    version_id, _ = pm.save_project_version("analysis_case")
+    job_id = "analysis-job"
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_path = run_dir / "output.hdf5"
+
+    with h5py.File(output_path, 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=5)
+        hits.create_dataset('Edep', data=np.full(5, 0.01))
+        hits.create_dataset('PosX', data=np.zeros(5))
+        hits.create_dataset('PosY', data=np.zeros(5))
+        hits.create_dataset('PosZ', data=np.zeros(5))
+        hits.create_dataset('CopyNo', data=np.zeros(5, dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-'] * 5, dtype='S2'))
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            resp = client.get(
+                f'/api/simulation/analysis/{version_id}/{job_id}?energy_bins=100&spatial_bins=50'
+            )
+
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data['success'] is True
+    assert data['analysis']['total_hits'] == 5
+    assert len(data['analysis']['energy_spectrum']['counts']) == 100
+    assert len(data['analysis']['energy_spectrum']['bin_edges']) == 101
+    assert len(data['analysis']['heatmaps']['xy']['z']) == 50
+    assert data['analysis']['filtering']['sensitive_detector_supported'] is False
+    assert data['analysis']['filtering']['available_sensitive_detectors'] == []
+    assert data['analysis']['filtering']['selected_sensitive_detector'] == ''
+
+
+def test_simulation_analysis_route_filters_by_sensitive_detector(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_filter_project"
+
+    version_id, _ = pm.save_project_version("analysis_filter_case")
+    job_id = "analysis-filter-job"
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_path = run_dir / "output.hdf5"
+
+    with h5py.File(output_path, 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=4)
+        hits.create_dataset('Edep', data=np.array([0.01, 0.02, 0.03, 0.04]))
+        hits.create_dataset('PosX', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosY', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosZ', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('CopyNo', data=np.array([0, 1, 2, 3], dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-', b'e-', b'gamma', b'gamma'], dtype='S5'))
+        hits.create_dataset('SensitiveDetectorName', data=np.array([b'SD_A', b'SD_A', b'SD_B', b'SD_B'], dtype='S8'))
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            resp = client.get(
+                f'/api/simulation/analysis/{version_id}/{job_id}?energy_bins=10&spatial_bins=5&sensitive_detector=SD_B'
+            )
+
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data['success'] is True
+    assert data['analysis']['total_hits'] == 2
+    assert data['analysis']['filtering']['sensitive_detector_supported'] is True
+    assert data['analysis']['filtering']['available_sensitive_detectors'] == ['SD_A', 'SD_B']
+    assert data['analysis']['filtering']['selected_sensitive_detector'] == 'SD_B'
+    assert sum(data['analysis']['energy_spectrum']['counts']) == 2
 
 
 def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):

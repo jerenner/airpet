@@ -32,6 +32,7 @@ public:
 
   G4bool GetSaveParticles() const { return fSaveParticles; }
   G4bool GetSaveHits() const { return fSaveHits; }
+  G4bool GetSaveHitMetadata() const { return fSaveHitMetadata; }
   G4double GetHitEnergyThreshold() const { return fHitEnergyThreshold; }
 
 private:
@@ -39,10 +40,12 @@ private:
   G4UIdirectory *fRunDir;
   G4UIcommand *fSaveParticlesCmd;
   G4UIcommand *fSaveHitsCmd;
+  G4UIcommand *fSaveHitMetadataCmd;
   G4UIcmdWithADoubleAndUnit *fHitEnergyThresholdCmd;
 
   G4bool fSaveParticles;
   G4bool fSaveHits;
+  G4bool fSaveHitMetadata;
   G4double fHitEnergyThreshold;
 };
 

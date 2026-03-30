@@ -58,6 +58,7 @@ const AppState = {
         print_progress: 1000,
         hit_energy_threshold: "1 eV",
         save_hits: true,
+        save_hit_metadata: true,
         save_particles: false,
         save_tracks_range: "0-99", // Default to saving the first 100 tracks
     }
@@ -276,6 +277,7 @@ async function initializeApp() {
         onLoadVersionClicked: handleLoadVersion,
         onLoadRunResults: handleLoadRunResults,
         onDeleteRun: handleDeleteRun,
+        onAnalysisModalOpen: handleOpenAnalysisModal,
         // Reconstruction
         onReconModalOpen: handleOpenReconstructionModal,
         onRunReconstruction: handleRunReconstruction,
@@ -1093,11 +1095,7 @@ async function handleNewProject() {
         syncUIWithState(result); // No selection to restore
         AIAssistant.reloadHistory();
 
-        // Clear simulation status
-        AppState.lastSimJobId = null;
-        AppState.lastSimVersionId = null;
-        UIManager.clearSimStatusDisplay();
-        UIManager.setReconModalButtonEnabled(false);
+        clearLoadedSimulationRunState();
 
     } catch (error) { UIManager.showError("Failed to create new project: " + error.message); }
     finally { UIManager.hideLoading(); }
@@ -1162,6 +1160,8 @@ function clearLoadedSimulationRunState() {
     AppState.lastSimVersionId = null;
     AppState.lastSimJobId = null;
     UIManager.clearSimStatusDisplay();
+    UIManager.hideAnalysisModal();
+    UIManager.setAnalysisModalButtonEnabled(false);
     UIManager.setReconModalButtonEnabled(false);
     UIManager.setDownloadButtonEnabled(false);
     UIManager.setReconstructionButtonEnabled(false);
@@ -1175,6 +1175,7 @@ async function handleLoadVersion(projectName, versionId) {
     try {
         const result = await APIService.loadVersion(projectName, versionId);
         syncUIWithState(result);
+        clearLoadedSimulationRunState();
         AIAssistant.reloadHistory();
         UIManager.hideHistoryPanel();
     } catch (error) { UIManager.showError(error.message); }
@@ -1241,6 +1242,7 @@ async function handleLoadRunResults(versionId, jobId) {
 
         // Step 4: Update the UI to reflect the loaded run
         UIManager.updateSimStatusDisplay(jobId, totalEvents);
+        UIManager.setAnalysisModalButtonEnabled(true);
         UIManager.setReconModalButtonEnabled(true); // Enable the Recon button
         UIManager.setDownloadButtonEnabled(true);   // Enable the Download button
 
@@ -3519,6 +3521,7 @@ async function pollSimStatus() {
                 if (status.status === 'Completed') {
                     AppState.lastSimJobId = AppState.currentSimJobId;
                     // Enable the reconstruction and download buttons **
+                    UIManager.setAnalysisModalButtonEnabled(true);
                     UIManager.setReconModalButtonEnabled(true);
                     UIManager.setDownloadButtonEnabled(true);
                     // Update status display on completion
@@ -3608,6 +3611,15 @@ async function handleDrawTracksToggle() {
         // Fetch and draw the requested range
         await fetchAndDrawTracks(AppState.lastSimVersionId, AppState.lastSimJobId, drawOptions.range);
     }
+}
+
+async function handleOpenAnalysisModal() {
+    if (!AppState.lastSimVersionId || !AppState.lastSimJobId) {
+        UIManager.showError("No completed simulation run found.");
+        return;
+    }
+
+    UIManager.showAnalysisModal();
 }
 
 // This handler is now just for opening the modal
@@ -3793,7 +3805,7 @@ async function pollLorStatus() {
  * @param {number} energyBins 
  * @param {number} spatialBins 
  */
-async function handleRefreshAnalysis(energyBins, spatialBins) {
+async function handleRefreshAnalysis(energyBins, spatialBins, sensitiveDetector = '') {
     if (!AppState.lastSimJobId || !AppState.lastSimVersionId) {
         UIManager.showError("No simulation run loaded to analyze.");
         return;
@@ -3807,7 +3819,8 @@ async function handleRefreshAnalysis(energyBins, spatialBins) {
             AppState.lastSimVersionId,
             AppState.lastSimJobId,
             energyBins,
-            spatialBins
+            spatialBins,
+            sensitiveDetector
         );
 
         if (result.success) {

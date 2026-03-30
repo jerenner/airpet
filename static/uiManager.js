@@ -39,7 +39,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
     toggleWireframeButton, toggleGridButton, toggleAxesButton,
     cameraModeOriginButton, cameraModeSelectedButton,
     toggleSnapToGridButton, gridSnapSizeInput, angleSnapSizeInput,
-    bottomPanel, toggleBottomPanelBtn,
+    bottomPanel, bottomPanelResizeHandle, toggleBottomPanelBtn,
     aiPromptInput, aiGenerateButton, aiModelSelect, aiBackendStatusEl,
     setApiKeyButton, apiKeyModal, apiKeyInput, saveApiKeyButton, cancelApiKeyButton,
     currentModeDisplay;
@@ -80,6 +80,10 @@ let historySelectedRunKeys = new Set();
 let historyExpandedVersionIds = new Set();
 let historyLastEntries = [];
 let historyLastProjectName = '';
+let bottomPanelLastExpandedHeight = 260;
+let bottomPanelResizeRefreshHandle = null;
+const BOTTOM_PANEL_MIN_EXPANDED_HEIGHT = 120;
+const BOTTOM_PANEL_COLLAPSE_THRESHOLD = 70;
 
 // Number of items per group for lists
 const ITEMS_PER_GROUP = 100;
@@ -87,7 +91,7 @@ const ITEMS_PER_GROUP = 100;
 // Simulation control variables
 let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
-    simSaveHitsCheckbox, simHitEnergyThresholdInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
+    simSaveHitsCheckbox, simSaveHitMetadataCheckbox, simHitEnergyThresholdInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
     preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightScopeHintLine,
@@ -107,7 +111,8 @@ let preflightLastScopedContextCopyText = '';
 let preflightLastScopedIssueExcerptCopyText = '';
 
 // Analysis control variables
-let energyBinsInput, spatialBinsInput, refreshAnalysisButton, analysisStatusDisplay;
+let analysisModal, closeAnalysisModalBtn, analysisModalButton,
+    energyBinsInput, spatialBinsInput, analysisSensitiveDetectorSelect, refreshAnalysisButton, analysisStatusDisplay;
 
 // Reconstruction
 let reconModal, closeReconModalBtn, cancelReconBtn, runReconstructionBtn,
@@ -177,7 +182,8 @@ let callbacks = {
     onSimOptionsClicked: () => { },
     onSaveSimOptions: () => { },
     onDrawTracksToggle: () => { },
-    onRefreshAnalysisClicked: (energyBins, spatialBins) => { },
+    onAnalysisModalOpen: () => { },
+    onRefreshAnalysisClicked: (energyBins, spatialBins, sensitiveDetector) => { },
     onDownloadSimDataClicked: () => { }
 };
 
@@ -269,6 +275,7 @@ export function initUI(cb) {
 
     // Bottom panel (AI and simulation)
     bottomPanel = document.getElementById('bottom_panel');
+    bottomPanelResizeHandle = document.getElementById('bottomPanelResizeHandle');
     toggleBottomPanelBtn = document.getElementById('toggleBottomPanelBtn');
 
     // AI Panel elements
@@ -336,6 +343,7 @@ export function initUI(cb) {
     simSeed1Input = document.getElementById('simSeed1');
     simSeed2Input = document.getElementById('simSeed2');
     simSaveHitsCheckbox = document.getElementById('simSaveHits');
+    simSaveHitMetadataCheckbox = document.getElementById('simSaveHitMetadata');
     simHitEnergyThresholdInput = document.getElementById('simHitEnergyThreshold');
     simSaveParticlesCheckbox = document.getElementById('simSaveParticles');
     simSaveTracksRangeInput = document.getElementById('simSaveTracksRange');
@@ -346,8 +354,12 @@ export function initUI(cb) {
     simOpticalPhysicsCheckbox = document.getElementById('simOpticalPhysics');
 
     // Analysis elements
+    analysisModal = document.getElementById('analysisModal');
+    closeAnalysisModalBtn = document.getElementById('closeAnalysisModal');
+    analysisModalButton = document.getElementById('analysisModalButton');
     energyBinsInput = document.getElementById('energyBinsInput');
     spatialBinsInput = document.getElementById('spatialBinsInput');
+    analysisSensitiveDetectorSelect = document.getElementById('analysisSensitiveDetectorSelect');
     refreshAnalysisButton = document.getElementById('refreshAnalysisButton');
     analysisStatusDisplay = document.getElementById('analysis_status');
 
@@ -569,18 +581,70 @@ export function initUI(cb) {
     });
 
     // Listener for the bottom panel collapse/restore button (single-click toggle)
-    toggleBottomPanelBtn.addEventListener('click', () => {
-        const isMinimized = bottomPanel.classList.contains('minimized');
-        if (isMinimized) {
-            bottomPanel.classList.remove('minimized');
-            toggleBottomPanelBtn.textContent = '↓';
-            toggleBottomPanelBtn.title = 'Minimize Panel';
-        } else {
-            bottomPanel.classList.add('minimized');
-            toggleBottomPanelBtn.textContent = '↑';
-            toggleBottomPanelBtn.title = 'Restore Panel';
-        }
-    });
+    if (bottomPanel) {
+        requestAnimationFrame(() => {
+            const measuredHeight = Math.round(bottomPanel.getBoundingClientRect().height);
+            if (measuredHeight > 0) {
+                bottomPanelLastExpandedHeight = measuredHeight;
+                bottomPanel.style.height = `${clampBottomPanelHeight(measuredHeight)}px`;
+            }
+            updateBottomPanelToggleButton();
+        });
+    }
+
+    if (toggleBottomPanelBtn) {
+        toggleBottomPanelBtn.addEventListener('click', () => {
+            setBottomPanelMinimizedState(!bottomPanel.classList.contains('minimized'));
+        });
+    }
+
+    if (bottomPanelResizeHandle) {
+        bottomPanelResizeHandle.addEventListener('mousedown', (event) => {
+            if (!bottomPanel || bottomPanel.classList.contains('minimized')) return;
+
+            event.preventDefault();
+            bottomPanel.classList.add('resizing');
+            let collapsedByDrag = false;
+            const previousUserSelect = document.body.style.userSelect;
+            const previousCursor = document.body.style.cursor;
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'ns-resize';
+
+            const handleMouseMove = (moveEvent) => {
+                if (collapsedByDrag) return;
+
+                const parentRect = bottomPanel.parentElement?.getBoundingClientRect();
+                if (!parentRect) return;
+                const desiredHeight = parentRect.bottom - moveEvent.clientY;
+                if (desiredHeight <= BOTTOM_PANEL_COLLAPSE_THRESHOLD) {
+                    collapsedByDrag = true;
+                    setBottomPanelMinimizedState(true);
+                    return;
+                }
+
+                if (bottomPanel.classList.contains('minimized')) {
+                    bottomPanel.classList.remove('minimized');
+                    updateBottomPanelToggleButton();
+                }
+                applyBottomPanelHeight(desiredHeight);
+            };
+
+            const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+                bottomPanel.classList.remove('resizing');
+                document.body.style.userSelect = previousUserSelect;
+                document.body.style.cursor = previousCursor;
+                if (collapsedByDrag) {
+                    setBottomPanelMinimizedState(true);
+                }
+                scheduleBottomPanelLayoutRefresh();
+            };
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+        });
+    }
 
     // AI Panel Listener (removed, handled by aiAssistant.js)
     /*
@@ -682,12 +746,26 @@ export function initUI(cb) {
     drawTracksCheckbox.addEventListener('change', callbacks.onDrawTracksToggle);
     drawTracksRangeInput.addEventListener('change', callbacks.onDrawTracksToggle); // Also trigger on range change
 
+    if (analysisModalButton) {
+        analysisModalButton.addEventListener('click', callbacks.onAnalysisModalOpen);
+    }
+    if (closeAnalysisModalBtn) {
+        closeAnalysisModalBtn.addEventListener('click', hideAnalysisModal);
+    }
+    if (analysisSensitiveDetectorSelect) {
+        analysisSensitiveDetectorSelect.addEventListener('change', () => {
+            const energyBins = parseInt(energyBinsInput.value, 10);
+            const spatialBins = parseInt(spatialBinsInput.value, 10);
+            callbacks.onRefreshAnalysisClicked(energyBins, spatialBins, getSelectedSensitiveDetectorFilter());
+        });
+    }
+
     // Analysis listener
     if (refreshAnalysisButton) {
         refreshAnalysisButton.addEventListener('click', () => {
             const energyBins = parseInt(energyBinsInput.value, 10);
             const spatialBins = parseInt(spatialBinsInput.value, 10);
-            callbacks.onRefreshAnalysisClicked(energyBins, spatialBins);
+            callbacks.onRefreshAnalysisClicked(energyBins, spatialBins, getSelectedSensitiveDetectorFilter());
         });
     }
 
@@ -841,6 +919,58 @@ export function initUI(cb) {
 
 
     console.log("UIManager initialized.");
+}
+
+function clampBottomPanelHeight(heightPx) {
+    if (!bottomPanel) return Math.max(Number(heightPx) || 0, 0);
+
+    const requested = Number.isFinite(Number(heightPx)) ? Number(heightPx) : bottomPanelLastExpandedHeight;
+    const parentHeight = bottomPanel.parentElement?.clientHeight || window.innerHeight;
+    const minHeight = BOTTOM_PANEL_MIN_EXPANDED_HEIGHT;
+    const maxHeight = Math.max(minHeight, parentHeight - 120);
+    return Math.min(Math.max(requested, minHeight), maxHeight);
+}
+
+function applyBottomPanelHeight(heightPx) {
+    if (!bottomPanel) return;
+    const clamped = Math.round(clampBottomPanelHeight(heightPx));
+    bottomPanel.style.height = `${clamped}px`;
+    bottomPanelLastExpandedHeight = clamped;
+    scheduleBottomPanelLayoutRefresh();
+}
+
+function scheduleBottomPanelLayoutRefresh() {
+    if (bottomPanelResizeRefreshHandle !== null) return;
+    bottomPanelResizeRefreshHandle = requestAnimationFrame(() => {
+        bottomPanelResizeRefreshHandle = null;
+        window.dispatchEvent(new Event('resize'));
+    });
+}
+
+function updateBottomPanelToggleButton() {
+    if (!toggleBottomPanelBtn || !bottomPanel) return;
+    const isMinimized = bottomPanel.classList.contains('minimized');
+    toggleBottomPanelBtn.textContent = isMinimized ? '↑' : '↓';
+    toggleBottomPanelBtn.title = isMinimized ? 'Restore Panel' : 'Minimize Panel';
+}
+
+function setBottomPanelMinimizedState(isMinimized) {
+    if (!bottomPanel) return;
+
+    if (isMinimized) {
+        const currentHeight = Math.round(bottomPanel.getBoundingClientRect().height);
+        if (currentHeight > BOTTOM_PANEL_COLLAPSE_THRESHOLD) {
+            bottomPanelLastExpandedHeight = currentHeight;
+        }
+        bottomPanel.classList.add('minimized');
+        bottomPanel.style.removeProperty('height');
+    } else {
+        bottomPanel.classList.remove('minimized');
+        applyBottomPanelHeight(bottomPanelLastExpandedHeight);
+    }
+
+    updateBottomPanelToggleButton();
+    scheduleBottomPanelLayoutRefresh();
 }
 
 export function showTemporaryStatus(message, duration = 2000) {
@@ -3253,6 +3383,21 @@ export function setReconModalButtonEnabled(isEnabled) {
     if (reconModalButton) reconModalButton.disabled = !isEnabled;
 }
 
+export function showAnalysisModal() {
+    if (analysisModal) {
+        analysisModal.style.display = 'block';
+        setTimeout(() => resizeAnalysisCharts(), 0);
+    }
+}
+
+export function hideAnalysisModal() {
+    if (analysisModal) analysisModal.style.display = 'none';
+}
+
+export function setAnalysisModalButtonEnabled(isEnabled) {
+    if (analysisModalButton) analysisModalButton.disabled = !isEnabled;
+}
+
 export function updateReconstructionSlice(imageUrl, sliceNum, maxSlices) {
     if (reconImageView) reconImageView.src = imageUrl;
     if (sliceIndicator) sliceIndicator.textContent = `${sliceNum} / ${maxSlices - 1}`;
@@ -3287,6 +3432,9 @@ export function setSimOptions(options) {
     simSeed1Input.value = options.seed1 || 0;
     simSeed2Input.value = options.seed2 || 0;
     simSaveHitsCheckbox.checked = options.save_hits || false;
+    if (simSaveHitMetadataCheckbox) {
+        simSaveHitMetadataCheckbox.checked = options.save_hit_metadata !== false;
+    }
     simHitEnergyThresholdInput.value = options.hit_energy_threshold || '1 eV';
     simSaveParticlesCheckbox.checked = options.save_particles || false;
     simSaveTracksRangeInput.value = options.save_tracks_range || '';
@@ -3300,6 +3448,7 @@ export function getSimOptions() {
         seed2: parseInt(simSeed2Input.value, 10),
         print_progress: parseInt(simPrintProgressInput.value, 10),
         save_hits: simSaveHitsCheckbox.checked,
+        save_hit_metadata: simSaveHitMetadataCheckbox ? simSaveHitMetadataCheckbox.checked : true,
         hit_energy_threshold: (simHitEnergyThresholdInput.value || '1 eV').trim(),
         save_particles: simSaveParticlesCheckbox.checked,
         save_tracks_range: simSaveTracksRangeInput.value,
@@ -3419,6 +3568,18 @@ export function getSensitivityParams() {
 export function updateAnalysisCharts(data) {
     if (!data || !data.success) return;
     const analysis = data.analysis;
+    const filtering = analysis.filtering || {};
+
+    updateAnalysisSensitiveDetectorOptions(
+        filtering.available_sensitive_detectors || [],
+        filtering.selected_sensitive_detector || '',
+        filtering.sensitive_detector_supported !== false
+    );
+
+    ['energy_spectrum_chart', 'particle_breakdown_chart', 'xy_heatmap_chart', 'xz_heatmap_chart', 'yz_heatmap_chart'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
 
     // 1. Energy Spectrum
     const spectrum = analysis.energy_spectrum;
@@ -3478,8 +3639,14 @@ export function updateAnalysisCharts(data) {
     renderHeatmap('xy_heatmap_chart', 'Hit Distribution (XY)', analysis.heatmaps.xy);
     renderHeatmap('xz_heatmap_chart', 'Hit Distribution (XZ)', analysis.heatmaps.xz);
     renderHeatmap('yz_heatmap_chart', 'Hit Distribution (YZ)', analysis.heatmaps.yz);
-    
-    setAnalysisStatus(`Loaded analysis for ${analysis.total_hits} hits.`);
+
+    const selectedDetector = filtering.selected_sensitive_detector || '';
+    if (selectedDetector) {
+        setAnalysisStatus(`Loaded analysis for ${analysis.total_hits} hits in ${selectedDetector}.`);
+    } else {
+        setAnalysisStatus(`Loaded analysis for ${analysis.total_hits} hits.`);
+    }
+    resizeAnalysisCharts();
 }
 
 export function setAnalysisStatus(message) {
@@ -3493,7 +3660,59 @@ export function clearAnalysisCharts() {
         const el = document.getElementById(id);
         if (el) el.innerHTML = '';
     });
+    updateAnalysisSensitiveDetectorOptions([], '', false);
     setAnalysisStatus('No analysis data loaded.');
+}
+
+export function getAnalysisOptions() {
+    return {
+        energyBins: parseInt(energyBinsInput?.value || '100', 10),
+        spatialBins: parseInt(spatialBinsInput?.value || '50', 10),
+        sensitiveDetector: getSelectedSensitiveDetectorFilter()
+    };
+}
+
+function getSelectedSensitiveDetectorFilter() {
+    return (analysisSensitiveDetectorSelect?.value || '').trim();
+}
+
+function updateAnalysisSensitiveDetectorOptions(detectorNames, selectedDetector, isSupported) {
+    if (!analysisSensitiveDetectorSelect) return;
+
+    const normalizedNames = Array.isArray(detectorNames)
+        ? detectorNames.filter(name => typeof name === 'string' && name.trim()).map(name => name.trim())
+        : [];
+    const currentSelected = typeof selectedDetector === 'string' ? selectedDetector.trim() : '';
+
+    analysisSensitiveDetectorSelect.innerHTML = '';
+
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = 'All hits';
+    analysisSensitiveDetectorSelect.appendChild(allOption);
+
+    normalizedNames.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        analysisSensitiveDetectorSelect.appendChild(option);
+    });
+
+    analysisSensitiveDetectorSelect.value = normalizedNames.includes(currentSelected) ? currentSelected : '';
+    analysisSensitiveDetectorSelect.disabled = !isSupported;
+    analysisSensitiveDetectorSelect.title = isSupported
+        ? 'Filter analysis plots by sensitive detector.'
+        : 'Sensitive-detector filtering is unavailable because this run was saved without hit metadata.';
+}
+
+function resizeAnalysisCharts() {
+    if (typeof Plotly === 'undefined' || !Plotly.Plots || typeof Plotly.Plots.resize !== 'function') return;
+    ['energy_spectrum_chart', 'particle_breakdown_chart', 'xy_heatmap_chart', 'xz_heatmap_chart', 'yz_heatmap_chart'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.data) {
+            Plotly.Plots.resize(el);
+        }
+    });
 }
 
 export function setDownloadButtonEnabled(isEnabled) {

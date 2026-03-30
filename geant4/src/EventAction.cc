@@ -75,16 +75,22 @@ void EventAction::EndOfEventAction(const G4Event *event) {
           for (size_t i = 0; i < hitsCollection->GetSize(); ++i) {
             auto hit = static_cast<AirPetHit *>(hitsCollection->GetHit(i));
             if (hit->GetEdep() < runAction->GetHitEnergyThreshold()) continue;
-            analysisManager->FillNtupleIColumn(hits_ntuple_ID, 0, event->GetEventID());
-            analysisManager->FillNtupleIColumn(hits_ntuple_ID, 1, hit->GetCopyNo());
-            analysisManager->FillNtupleSColumn(hits_ntuple_ID, 2, hit->GetParticleName());
-            analysisManager->FillNtupleIColumn(hits_ntuple_ID, 3, hit->GetTrackID());
-            analysisManager->FillNtupleIColumn(hits_ntuple_ID, 4, hit->GetParentID());
-            analysisManager->FillNtupleDColumn(hits_ntuple_ID, 5, hit->GetEdep());
-            analysisManager->FillNtupleDColumn(hits_ntuple_ID, 6, hit->GetPosition().x());
-            analysisManager->FillNtupleDColumn(hits_ntuple_ID, 7, hit->GetPosition().y());
-            analysisManager->FillNtupleDColumn(hits_ntuple_ID, 8, hit->GetPosition().z());
-            analysisManager->FillNtupleDColumn(hits_ntuple_ID, 9, hit->GetTime());
+            G4int col = 0;
+            analysisManager->FillNtupleIColumn(hits_ntuple_ID, col++, event->GetEventID());
+            analysisManager->FillNtupleDColumn(hits_ntuple_ID, col++, hit->GetEdep());
+            analysisManager->FillNtupleDColumn(hits_ntuple_ID, col++, hit->GetPosition().x());
+            analysisManager->FillNtupleDColumn(hits_ntuple_ID, col++, hit->GetPosition().y());
+            analysisManager->FillNtupleDColumn(hits_ntuple_ID, col++, hit->GetPosition().z());
+            analysisManager->FillNtupleDColumn(hits_ntuple_ID, col++, hit->GetTime());
+            if (runAction->GetSaveHitMetadata()) {
+              analysisManager->FillNtupleSColumn(hits_ntuple_ID, col++, hit->GetSensitiveDetectorName());
+              analysisManager->FillNtupleSColumn(hits_ntuple_ID, col++, hit->GetVolumeName());
+              analysisManager->FillNtupleSColumn(hits_ntuple_ID, col++, hit->GetPhysicalVolumeName());
+              analysisManager->FillNtupleIColumn(hits_ntuple_ID, col++, hit->GetCopyNo());
+              analysisManager->FillNtupleSColumn(hits_ntuple_ID, col++, hit->GetParticleName());
+              analysisManager->FillNtupleIColumn(hits_ntuple_ID, col++, hit->GetTrackID());
+              analysisManager->FillNtupleIColumn(hits_ntuple_ID, col++, hit->GetParentID());
+            }
             analysisManager->AddNtupleRow(hits_ntuple_ID);
           }
         }

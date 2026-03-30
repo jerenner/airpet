@@ -71,6 +71,7 @@ G4bool AirPetSensitiveDetector::ProcessHits(G4Step* aStep, G4TouchableHistory* /
   newHit->SetParticleName(track->GetDefinition()->GetParticleName());
 
   // Get information from the PreStepPoint (where the step started)
+  newHit->SetSensitiveDetectorName(SensitiveDetectorName);
   newHit->SetPhysicalVolumeName(touchable->GetVolume()->GetName());
   newHit->SetVolumeName(touchable->GetVolume()->GetLogicalVolume()->GetName());
   newHit->SetCopyNo(copyNo);

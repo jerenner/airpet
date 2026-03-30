@@ -17,6 +17,7 @@ AirPetHit::AirPetHit()
     fPos(0,0,0),
     fTime(0.),
     fParticleName(""),
+    fSensitiveDetectorName(""),
     fVolumeName(""),
     fPhysicalVolumeName(""),
     fCopyNo(-1)
@@ -32,6 +33,7 @@ AirPetHit::AirPetHit(const AirPetHit& right) : G4VHit()
   fPos = right.fPos;
   fTime = right.fTime;
   fParticleName = right.fParticleName;
+  fSensitiveDetectorName = right.fSensitiveDetectorName;
   fVolumeName = right.fVolumeName;
   fPhysicalVolumeName = right.fPhysicalVolumeName;
   fCopyNo = right.fCopyNo;
@@ -45,6 +47,7 @@ const AirPetHit& AirPetHit::operator=(const AirPetHit& right)
   fPos = right.fPos;
   fTime = right.fTime;
   fParticleName = right.fParticleName;
+  fSensitiveDetectorName = right.fSensitiveDetectorName;
   fVolumeName = right.fVolumeName;
   fPhysicalVolumeName = right.fPhysicalVolumeName;
   fCopyNo = right.fCopyNo;
@@ -75,6 +78,7 @@ void AirPetHit::Draw()
 void AirPetHit::Print()
 {
   G4cout << "  trackID: " << fTrackID << " particle: " << fParticleName
+         << " SD: " << fSensitiveDetectorName
          << " parentID: " << fParentID
          << " phys volume: " << fPhysicalVolumeName
          << " volume: " << fVolumeName << "[" << fCopyNo << "]"
