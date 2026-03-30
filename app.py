@@ -11503,6 +11503,93 @@ def _build_local_adapter_message_history(chat_history: List[Dict[str, Any]]) -> 
     return messages
 
 
+def _normalize_gemini_history_role(role: Any) -> Optional[str]:
+    normalized = str(role or "").strip().lower()
+    if normalized in {"assistant", "model"}:
+        return "model"
+    if normalized in {"user", "tool", "function", "system"}:
+        return "user"
+    return None
+
+
+def _build_gemini_history_parts(msg: Dict[str, Any]) -> List[Any]:
+    if not isinstance(msg, dict):
+        return []
+
+    existing_parts = msg.get("parts")
+    if isinstance(existing_parts, list) and existing_parts:
+        return existing_parts
+
+    role = str(msg.get("role") or "").strip().lower()
+    parts: List[Any] = []
+
+    content = msg.get("content")
+    if isinstance(content, str) and content.strip() and role not in {"tool", "function"}:
+        parts.append({"text": content})
+
+    if role in {"assistant", "model"} and isinstance(msg.get("tool_calls"), list):
+        for call in _normalize_tool_calls_payload(msg.get("tool_calls")):
+            tool_name = call.get("name")
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            arguments = call.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = _coerce_tool_arguments(arguments)
+            parts.append({
+                "function_call": {
+                    "name": tool_name,
+                    "args": arguments,
+                }
+            })
+
+    if role in {"tool", "function"}:
+        tool_name = msg.get("name")
+        if isinstance(tool_name, str) and tool_name.strip():
+            raw_response = msg.get("response", msg.get("content"))
+            response_payload: Any = raw_response
+            if isinstance(raw_response, str):
+                try:
+                    response_payload = json.loads(raw_response)
+                except Exception:
+                    response_payload = {"text": raw_response}
+            elif raw_response is None:
+                response_payload = {}
+
+            parts = [{
+                "function_response": {
+                    "name": tool_name.strip(),
+                    "response": response_payload,
+                }
+            }]
+        elif isinstance(content, str) and content.strip():
+            parts = [{"text": content}]
+
+    return parts
+
+
+def _build_gemini_sdk_history(chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sanitized_history: List[Dict[str, Any]] = []
+
+    for msg in chat_history:
+        if not isinstance(msg, dict):
+            continue
+
+        role = _normalize_gemini_history_role(msg.get("role"))
+        if role is None:
+            continue
+
+        parts = _build_gemini_history_parts(msg)
+        if not parts:
+            continue
+
+        sanitized_history.append({
+            "role": role,
+            "parts": parts,
+        })
+
+    return sanitized_history
+
+
 def _persist_final_stream_reply(
     chat_history: List[Dict[str, Any]],
     *,
@@ -13621,10 +13708,7 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
         pm.begin_transaction()
         
         try:
-            sanitized_history = []
-            for msg in pm.chat_history:
-                sanitized_msg = {"role": msg["role"], "parts": msg["parts"]}
-                sanitized_history.append(sanitized_msg)
+            sanitized_history = _build_gemini_sdk_history(pm.chat_history)
             
             job_id = None
             version_id = None
@@ -14305,13 +14389,7 @@ def ai_chat_route():
 
         try:
             # Sanitize history for Gemini API (remove our custom metadata)
-            sanitized_history = []
-            for msg in pm.chat_history:
-                sanitized_msg = {
-                    "role": msg["role"],
-                    "parts": msg["parts"]
-                }
-                sanitized_history.append(sanitized_msg)
+            sanitized_history = _build_gemini_sdk_history(pm.chat_history)
 
             job_id = None
             version_id = None

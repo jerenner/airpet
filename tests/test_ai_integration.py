@@ -838,6 +838,60 @@ def test_ai_chat_stream_persists_final_reply_in_history_for_gemini(client):
         assert final_messages, history
 
 
+def test_ai_chat_stream_gemini_handles_mixed_history_message_formats(client):
+    final_part = MagicMock()
+    final_part.function_call = None
+    final_part.text = "Gemini reply after mixed history."
+
+    final_response = MagicMock()
+    final_response.candidates = [MagicMock()]
+    final_response.candidates[0].content.parts = [final_part]
+    final_response.candidates[0].content.role = "model"
+    final_response.text = "Gemini reply after mixed history."
+
+    with patch('app.get_gemini_client_for_session') as MockClientGetter, \
+         patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.types.GenerateContentConfig', side_effect=lambda **kwargs: kwargs):
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        pm.chat_history = [
+            {
+                "role": "assistant",
+                "content": "Earlier local assistant reply.",
+                "tool_calls": [
+                    {
+                        "id": "hist_call_1",
+                        "type": "function",
+                        "function": {"name": "manage_define", "arguments": "{\"name\":\"si_thickness\",\"value\":\"0.1\"}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "name": "manage_define",
+                "content": json.dumps({"success": True, "message": "Define updated."}),
+                "tool_call_id": "hist_call_1",
+            },
+        ]
+        MockPMGetter.return_value = pm
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = final_response
+        MockClientGetter.return_value = mock_client
+
+        response = client.post('/api/ai/chat/stream', json={
+            'message': 'Continue from here.',
+            'model': 'models/gemini-2.0-flash-exp',
+        })
+
+        assert response.status_code == 200
+        events = _parse_sse_data_events(response)
+        complete_events = [evt for evt in events if evt.get('type') == 'complete']
+        assert complete_events, events
+        assert complete_events[-1]['message'] == 'Gemini reply after mixed history.'
+
+
 @pytest.mark.parametrize(
     "route_path",
     [

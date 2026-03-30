@@ -1911,6 +1911,73 @@
             align-items: center;
         }
 
+        #paramStudiesModal .ps-section-card {
+            margin-top: 10px;
+            border: 1px solid #dbe2ea;
+            border-radius: 8px;
+            padding: 12px;
+            background: #ffffff;
+        }
+
+        #paramStudiesModal .ps-collapsible {
+            margin-top: 10px;
+            border: 1px solid #dbe2ea;
+            border-radius: 8px;
+            background: #f8fafc;
+            overflow: hidden;
+        }
+
+        #paramStudiesModal .ps-collapsible > summary {
+            list-style: none;
+            cursor: pointer;
+            padding: 10px 12px;
+            font-weight: 600;
+            color: #334155;
+        }
+
+        #paramStudiesModal .ps-collapsible > summary::-webkit-details-marker {
+            display: none;
+        }
+
+        #paramStudiesModal .ps-collapsible > summary::after {
+            content: '+';
+            float: right;
+            color: #64748b;
+            font-weight: 700;
+        }
+
+        #paramStudiesModal .ps-collapsible[open] > summary::after {
+            content: '-';
+        }
+
+        #paramStudiesModal .ps-collapsible-body {
+            padding: 0 12px 12px 12px;
+        }
+
+        #paramStudiesModal .ps-inline-note {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        #paramStudiesModal .ps-example-callout {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: #ffffff;
+            border: 1px solid #bfdbfe;
+            font-size: 12px;
+            color: #334155;
+        }
+
+        #paramStudiesModal .ps-example-callout ol {
+            margin: 6px 0 0 18px;
+            padding: 0;
+        }
+
+        #paramStudiesModal .ps-example-callout li {
+            margin-bottom: 4px;
+        }
+
         /* View mode visibility */
         #psWizardCard[hidden],
         #psLegacyForm[hidden] {
@@ -3003,7 +3070,7 @@
             <div class="modal-body" style="flex-direction: column;">
                 <div id="psNotice" style="display:none; margin: 0 0 8px 0; padding: 8px 10px; border-radius: 4px; font-size: 12px;"></div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; padding:8px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">
-                    <div style="font-size:12px; color:#334155;"><b>View mode:</b> Wizard for guided setup, Basic for manual control, Advanced for diagnostics.</div>
+                    <div style="font-size:12px; color:#334155;"><b>Wizard is the recommended starting point.</b> Switch to Basic for a compact manual form, or Advanced for diagnostics, review, and optimizer internals.</div>
                     <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                         <label for="ps_view_mode" style="margin:0; font-size:12px; color:#334155;">Mode</label>
                         <select id="ps_view_mode">
@@ -3013,36 +3080,51 @@
                         </select>
                     </div>
                 </div>
-                <div id="paramStudiesTableWrap">
-                    <table id="paramStudiesTable">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Mode</th>
-                                <th>Parameters</th>
-                            </tr>
-                        </thead>
-                        <tbody id="paramStudiesTableBody"></tbody>
-                    </table>
-                </div>
+                <details id="psSavedStudiesCard" class="ps-collapsible" data-ps-view="basic,advanced">
+                    <summary>Saved Studies</summary>
+                    <div class="ps-collapsible-body">
+                        <div class="ps-inline-note" style="margin-bottom:8px;">Load an existing study, then edit or run it from the controls below.</div>
+                        <div id="paramStudiesTableWrap" style="margin-top:0;">
+                            <table id="paramStudiesTable">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Mode</th>
+                                        <th>Parameters</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paramStudiesTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </details>
 
                 <!-- Optimization Wizard (Wizard Mode Only) -->
                 <div id="psWizardCard" data-ps-view="wizard" style="margin-top: 10px; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; background: #eff6ff;">
                     <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; color: #1e40af;">
                         <span style="display: inline-block; width: 28px; height: 28px; background: #3b82f6; color: white; border-radius: 50%; text-align: center; line-height: 28px; margin-right: 8px;">✨</span>
-                        Optimization Wizard
+                        Parameter Study Wizard
+                    </div>
+                    <div class="ps-example-callout">
+                        <b>Straightforward example:</b> optimize a silicon slab thickness.
+                        <ol>
+                            <li>Create a define like <code>slab_thick</code> and use it in the slab solid, for example <code>z = slab_thick/2</code>.</li>
+                            <li>Click <b>Auto-Detect</b>, then select <code>slab_thick</code>.</li>
+                            <li>Choose <b>Maximize deposited energy</b> or <b>Trade off energy vs thickness</b>.</li>
+                            <li>Set an evaluation budget, then save the study and run it from Basic or Advanced.</li>
+                        </ol>
                     </div>
                     
                     <!-- Step 1: Select Parameters -->
                     <div id="psWizardStep1">
-                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 1: What to optimize?</div>
-                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Select parameters from your geometry to vary during optimization.</div>
+                        <div style="font-weight: 600; margin: 12px 0 8px 0; color: #334155;">Step 1: Choose what can vary</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Auto-detect works best when your geometry uses named defines like <code>slab_thick</code>, <code>source_z</code>, or <code>crystal_pitch</code>.</div>
                         <div style="display: flex; gap: 8px; margin-bottom: 8px;">
                             <input type="text" id="psWizardParamSearch" placeholder="Search parameters..." style="flex: 1; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                             <button id="psWizardAutoDetectBtn" type="button" style="padding: 6px 12px; background: #22c55e; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto-Detect</button>
                         </div>
                         <div id="psWizardParamList" style="max-height: 180px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: white; margin-bottom: 8px;">
-                            <div style="color: #64748b; font-size: 12px;">Click "Auto-Detect" to discover optimizable parameters from your geometry.</div>
+                            <div style="color: #64748b; font-size: 12px;">Click <b>Auto-Detect</b> to discover tunable geometry parameters from defines, solids, and sources.</div>
                         </div>
                         <div style="display: flex; gap: 8px; justify-content: flex-end;">
                             <div id="psWizardSelectedCount" style="font-size: 12px; color: #64748b; align-self: center;">0 parameters selected</div>
@@ -3052,25 +3134,25 @@
 
                     <!-- Step 2: Define Success -->
                     <div id="psWizardStep2" style="display: none;">
-                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 2: What's success?</div>
-                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Choose what to optimize for. Start with a preset or browse simulation data.</div>
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 2: Choose the goal</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Pick one simple objective to start. You can fine-tune the formula later in Basic or Advanced.</div>
                         
                         <!-- Preset Templates -->
                         <div style="margin-bottom: 12px;">
                             <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px;">Quick Presets:</div>
                             <div id="psWizardPresetList" style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                <button type="button" class="ps-wizard-preset-btn" data-preset="maximize_edep" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">🎯 Maximize Energy Deposition</button>
-                                <button type="button" class="ps-wizard-preset-btn" data-preset="minimize_thickness" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">📏 Minimize Thickness</button>
-                                <button type="button" class="ps-wizard-preset-btn" data-preset="maximize_hits" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">🔴 Maximize Hit Count</button>
-                                <button type="button" class="ps-wizard-preset-btn" data-preset="browse_metrics" style="padding: 6px 12px; background: #f1f5f9; border: 1px solid #94a3b8; border-radius: 4px; cursor: pointer; font-size: 12px;">📊 Browse All Metrics</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="maximize_edep" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">🎯 Maximize Deposited Energy</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="minimize_primary_parameter" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">📏 Favor Smaller Parameter</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="balance_energy_and_parameter" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">⚖️ Trade Off Energy vs Size</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="browse_metrics" style="padding: 6px 12px; background: #f1f5f9; border: 1px solid #94a3b8; border-radius: 4px; cursor: pointer; font-size: 12px;">📊 Browse Datasets</button>
                             </div>
                         </div>
 
                         <!-- Selected Metrics -->
                         <div style="border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: white; margin-bottom: 8px;">
-                            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px;">Optimization Goals:</div>
+                            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px;">Selected Goal:</div>
                             <div id="psWizardMetricsList" style="min-height: 60px;">
-                                <div style="color: #94a3b8; font-size: 12px;">Select a preset or browse metrics to get started.</div>
+                                <div style="color: #94a3b8; font-size: 12px;">Choose one preset or browse a dataset to get started.</div>
                             </div>
                         </div>
 
@@ -3082,8 +3164,8 @@
 
                     <!-- Step 3: Set Budget -->
                     <div id="psWizardStep3" style="display: none;">
-                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 3: How thorough?</div>
-                        <div style="font-size: 12px; color: #64748b; margin-bottom: 12px;">More evaluations = better results but longer runtime.</div>
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 3: Choose a study budget</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 12px;">More evaluations usually gives a better search, but it also means more simulation work later.</div>
                         
                         <div style="margin-bottom: 16px;">
                             <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
@@ -3106,8 +3188,8 @@
                         <div style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
                             <button id="psWizardStep3BackBtn" type="button" style="padding: 8px 16px; background: #e2e8f0; color: #334155; border: none; border-radius: 4px; cursor: pointer;">← Back</button>
                             <div style="display: flex; gap: 8px;">
-                                <button id="psWizardPreviewBtn" type="button" style="padding: 8px 16px; background: #8b5cf6; color: white; border: none; border-radius: 4px; cursor: pointer;">👁️ Preview in Basic</button>
-                                <button id="psWizardCreateBtn" type="button" style="padding: 8px 16px; background: #22c55e; color: white; border: none; border-radius: 4px; cursor: pointer;">🚀 Create & Run</button>
+                                <button id="psWizardPreviewBtn" type="button" style="padding: 8px 16px; background: #8b5cf6; color: white; border: none; border-radius: 4px; cursor: pointer;">👁️ Review in Basic</button>
+                                <button id="psWizardCreateBtn" type="button" style="padding: 8px 16px; background: #22c55e; color: white; border: none; border-radius: 4px; cursor: pointer;">💾 Save Study</button>
                             </div>
                         </div>
                     </div>
@@ -3116,7 +3198,10 @@
                 <!-- Legacy Form (Basic and Advanced Mode) -->
                 <div class="pr-form-grid" id="psLegacyForm" data-ps-view="basic,advanced">
                     <div class="property_item" style="grid-column: 1 / span 2; padding: 8px; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 4px; font-size: 12px; color: #92400e;">
-                        <b>💡 Tip:</b> Use the <b>Wizard</b> view for guided optimization setup, or fill in these fields manually for more control.
+                        <b>Basic mode</b> keeps the manual setup compact. Use <b>Advanced</b> when you want diagnostics, optimizer review, or apply/rollback controls.
+                    </div>
+                    <div class="property_item" style="grid-column: 1 / span 2; padding: 8px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; font-size: 12px; color: #1e3a8a;">
+                        <b>Example:</b> for a silicon slab study, pick <code>slab_thick</code> as the parameter, set the dataset path to <code>default_ntuples/Hits/Edep</code>, and start with a score expression of <code>edep_sum</code>.
                     </div>
                     <div class="property_item">
                         <label for="ps_name">Name:</label>
@@ -3206,7 +3291,7 @@
                                 <div style="font-size:12px; color:#64748b; margin-top:4px;">Used only when <b>Keep candidate run artifacts</b> is enabled.</div>
                                 <div id="psObRunsDirStatus" style="font-size:12px; color:#334155; margin-top:4px;">Artifacts directory: not persisted (keep disabled).</div>
                             </div>
-                            <div class="property_item" style="grid-column: 1 / span 2; border:1px solid #e2e8f0; border-radius:4px; padding:8px; background:#fff;">
+                            <div class="property_item" style="grid-column: 1 / span 2; border:1px solid #e2e8f0; border-radius:4px; padding:8px; background:#fff;" data-ps-view="advanced">
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px 12px; font-size:12px; color:#334155;">
                                     <div><b>Status:</b> <span id="psObStatus">idle</span></div>
                                     <div><b>Last Stage:</b> <span id="psObStage">-</span></div>
@@ -3248,8 +3333,9 @@
                     </div>
                 </div>
 
-                <div id="psOptimizerSummaryCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Optimizer Summary</div>
+                <details id="psOptimizerSummaryCard" class="ps-collapsible" data-ps-view="advanced" open>
+                    <summary>Optimizer Summary</summary>
+                    <div class="ps-collapsible-body">
                     <div id="psOptimizerSummaryGrid" style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color: #334155;">
                         <div><b>Status:</b> <span id="psSummaryStatus">No optimizer run yet</span></div>
                         <div><b>Method:</b> <span id="psSummaryMethod">-</span></div>
@@ -3258,10 +3344,12 @@
                         <div><b>Objective:</b> <span id="psSummaryObjective">-</span></div>
                         <div><b>Best score:</b> <span id="psSummaryBestScore">-</span></div>
                     </div>
-                </div>
+                    </div>
+                </details>
 
-                <div id="psRunTimelineCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Run Timeline &amp; Status</div>
+                <details id="psRunTimelineCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Run Timeline &amp; Status</summary>
+                    <div class="ps-collapsible-body">
                     <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 10px; color: #334155;">
                         <div><b>Status:</b> <span id="psRunStatus">idle</span></div>
                         <div><b>Action:</b> <span id="psRunAction">-</span></div>
@@ -3274,10 +3362,12 @@
                     <ul id="psRunTimelineList" style="margin:4px 0 0 18px; max-height:120px; overflow:auto; color:#334155;">
                         <li style="color:#64748b;">No run activity yet.</li>
                     </ul>
-                </div>
+                    </div>
+                </details>
 
-                <div id="psRunReviewCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Run Review &amp; Apply</div>
+                <details id="psRunReviewCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Run Review &amp; Apply</summary>
+                    <div class="ps-collapsible-body">
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color: #334155;">
                         <div><b>Run ID:</b> <span id="psReviewRunId">-</span></div>
                         <div><b>Verification:</b> <span id="psReviewGateStatus">not verified</span></div>
@@ -3345,14 +3435,23 @@
                             <textarea id="psReviewAuditDetails" rows="4" readonly style="margin-top:6px; width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
                         </div>
                     </div>
-                </div>
+                    </div>
+                </details>
 
-                <div class="property_item" style="margin-top: 10px;" data-ps-view="advanced">
-                    <label for="ps_run_output">Last run output:</label>
-                    <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
-                </div>
+                <details class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Run Output</summary>
+                    <div class="ps-collapsible-body">
+                        <div class="property_item" style="margin-top: 0;">
+                            <label for="ps_run_output">Last run output:</label>
+                            <textarea id="ps_run_output" rows="8" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
+                        </div>
+                    </div>
+                </details>
 
-                <div class="pr-form-grid" style="margin-top: 10px;" data-ps-view="advanced">
+                <details class="ps-collapsible" data-ps-view="advanced" open>
+                    <summary>Ranking, Methods, and Results</summary>
+                    <div class="ps-collapsible-body">
+                <div class="pr-form-grid" style="margin-top: 0;">
                     <div class="property_item">
                         <label for="ps_rank_objective">Ranking Objective:</label>
                         <select id="ps_rank_objective"></select>
@@ -3393,7 +3492,7 @@
                         <input type="number" id="ps_opt_stag" min="1" step="1" placeholder="12">
                     </div>
                 </div>
-                <div id="psRankingTableWrap">
+                <div id="psRankingTableWrap" style="margin-top: 10px;">
                     <table id="psRankingTable">
                         <thead>
                             <tr>
@@ -3409,9 +3508,12 @@
                         </tbody>
                     </table>
                 </div>
+                    </div>
+                </details>
 
-                <div id="psDecompositionCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Candidate Decomposition (Top Ranked)</div>
+                <details id="psDecompositionCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Candidate Decomposition</summary>
+                    <div class="ps-collapsible-body">
                     <table id="psDecompositionTable" style="width:100%; border-collapse: collapse; font-size:12px;">
                         <thead>
                             <tr>
@@ -3426,11 +3528,14 @@
                             <tr><td colspan="5" style="color:#64748b; padding:6px;">Run optimizer to populate decomposition.</td></tr>
                         </tbody>
                     </table>
-                </div>
+                    </div>
+                </details>
 
-                <div id="psCandidateCompareCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
+                <details id="psCandidateCompareCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Top Candidate Compare</summary>
+                    <div class="ps-collapsible-body">
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-                        <div style="font-weight: 600;">Top Candidate Compare</div>
+                        <div style="font-weight: 600;">Compare shortlisted candidates</div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <label for="psCompareTopN" style="margin:0; font-size:12px; color:#334155;">Top N:</label>
                             <select id="psCompareTopN">
@@ -3445,16 +3550,20 @@
                     <div id="psCompareTableWrap" style="overflow:auto; border:1px solid #e2e8f0; border-radius:4px; background:#fff;">
                         <div style="padding:6px; color:#64748b;">Run optimizer to compare candidates.</div>
                     </div>
-                </div>
+                    </div>
+                </details>
 
-                <div id="psWhySelectedCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Why Selected</div>
+                <details id="psWhySelectedCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Why This Candidate Was Selected</summary>
+                    <div class="ps-collapsible-body">
                     <div id="psWhySelectedSummary" style="color:#334155; margin-bottom:6px;">No optimizer selection yet.</div>
                     <textarea id="psWhySelectedDetails" rows="5" readonly style="width:100%; font-family: ui-monospace, Menlo, monospace;"></textarea>
-                </div>
+                    </div>
+                </details>
 
-                <div id="psFailureDiagnosticsCard" data-ps-view="advanced" style="margin-top: 10px; border: 1px solid #dbe2ea; border-radius: 4px; padding: 8px; background: #f8fafc; font-size: 12px;">
-                    <div style="font-weight: 600; margin-bottom: 6px;">Failure Diagnostics</div>
+                <details id="psFailureDiagnosticsCard" class="ps-collapsible" data-ps-view="advanced">
+                    <summary>Failure Diagnostics</summary>
+                    <div class="ps-collapsible-body">
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; color:#334155; margin-bottom:6px;">
                         <div><b>Failed runs:</b> <span id="psFailureCount">0</span></div>
                         <div><b>Unique failure groups:</b> <span id="psFailureGroupsCount">0</span></div>
@@ -3466,7 +3575,8 @@
                     <ul id="psFailureHints" style="margin:4px 0 0 18px; color:#334155;">
                         <li style="color:#64748b;">No hints yet.</li>
                     </ul>
-                </div>
+                    </div>
+                </details>
             </div>
             <div class="modal-footer">
                 <button id="psRefreshBtn" class="ps-footer-btn">Refresh</button>
@@ -4582,7 +4692,7 @@
         }
     </script>
     <script type="module" src="{{ url_for('static', filename='aiAssistant.js') }}?v=20"></script>
-    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=20"></script>
+    <script type="module" src="{{ url_for('static', filename='main.js') }}?v=23"></script>
     {% if app_mode != 'local' %}
     <div id="app-footer"
         style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">

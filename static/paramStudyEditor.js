@@ -33,8 +33,8 @@ let wizardPresetList, wizardMetricsList, wizardBudgetSlider, wizardBudgetValue, 
 // Wizard state
 let wizardState = {
     step: 1,
-    selectedParams: new Map(), // paramName -> { min, max, current, object, field }
-    selectedMetrics: [], // { path, weight, direction, label }
+    selectedParams: new Map(), // paramName -> parameter metadata for registry upsert
+    selectedMetrics: [], // single-item goal list used by the wizard summary/preview flow
     budget: 20,
     discoveredParams: [],
 };
@@ -173,6 +173,150 @@ function _extractFormulaIdentifiers(expr) {
     return [...new Set(matches)];
 }
 
+function _safeWizardParamId(name) {
+    return String(name || '').replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function _coerceFiniteNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+function _formatWizardNumber(value) {
+    const num = _coerceFiniteNumber(value);
+    if (num == null) return String(value ?? '');
+    const abs = Math.abs(num);
+    if ((abs > 0 && abs < 0.01) || abs >= 1000) {
+        return num.toExponential(3);
+    }
+    return num.toFixed(3);
+}
+
+function _friendlyWizardTargetSummary(entry = {}) {
+    const targetType = entry?.target_type;
+    const targetRef = entry?.target_ref || {};
+    if (targetType === 'define') return `Saved parameter bound to define '${targetRef.name || '?'}'`;
+    if (targetType === 'solid') return `Saved parameter bound to solid '${targetRef.name || '?'}' → ${targetRef.param || '?'}`;
+    if (targetType === 'source') return `Saved parameter bound to source '${targetRef.name || '?'}' → ${targetRef.field || '?'}`;
+    if (targetType === 'sim_option') return `Saved parameter bound to simulation option '${targetRef.key || '?'}'`;
+    return 'Saved parameter';
+}
+
+function _extractDefineRefsFromText(text, knownDefineNames) {
+    if (typeof text !== 'string' || !text.trim() || !(knownDefineNames instanceof Set) || knownDefineNames.size === 0) {
+        return [];
+    }
+    const ids = text.match(/[A-Za-z_][A-Za-z0-9_]*/g) || [];
+    return [...new Set(ids.filter(id => knownDefineNames.has(id)))];
+}
+
+function _walkWizardValue(value, visitor) {
+    if (value == null) return;
+    if (Array.isArray(value)) {
+        value.forEach(item => _walkWizardValue(item, visitor));
+        return;
+    }
+    if (typeof value === 'object') {
+        Object.values(value).forEach(item => _walkWizardValue(item, visitor));
+        return;
+    }
+    visitor(value);
+}
+
+function _buildWizardBounds(current, options = {}) {
+    const currentNum = _coerceFiniteNumber(current);
+    const name = String(options.name || '').toLowerCase();
+    const units = String(options.units || '').toLowerCase();
+    const positiveByHint = /(thick|thickness|radius|diam|width|height|depth|size|pitch|gap|length|activity|energy|count|budget|steps|samples)/.test(name);
+    const positiveByUnit = ['mm', 'cm', 'm', 'um', 'nm', 'kev', 'mev', 'gev', 'tev', 'ev', 'bq'].includes(units);
+    const positiveOnly = positiveByHint || positiveByUnit;
+
+    if (currentNum == null) {
+        return { min: 0, max: 1 };
+    }
+
+    if (currentNum === 0) {
+        let span = 1;
+        if (['mm', 'cm', 'm', 'um', 'nm'].includes(units)) span = 10;
+        else if (['rad', 'deg'].includes(units)) span = units === 'deg' ? 30 : 0.5;
+        else if (['kev', 'mev', 'gev', 'tev', 'ev'].includes(units)) span = 10;
+        return positiveOnly ? { min: 0, max: span } : { min: -span, max: span };
+    }
+
+    if (positiveOnly && currentNum > 0) {
+        return {
+            min: Math.max(currentNum * 0.5, 0),
+            max: currentNum * 2.0,
+        };
+    }
+
+    const span = Math.max(Math.abs(currentNum) * 0.75, 1e-6);
+    return {
+        min: currentNum - span,
+        max: currentNum + span,
+    };
+}
+
+function _buildWizardStudyName(params = [], goal = null) {
+    const slug = (value, fallback = 'study') => {
+        const out = String(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+        return out || fallback;
+    };
+
+    const paramPart = params.slice(0, 2).map(p => slug(p.name, 'param')).join('_');
+    const goalPart = slug(goal?.shortName || goal?.label || 'scan', 'scan');
+    const base = `${paramPart || 'study'}_${goalPart}`;
+
+    let candidate = base;
+    let suffix = 2;
+    while (currentStudies?.[candidate]) {
+        candidate = `${base}_${suffix}`;
+        suffix += 1;
+    }
+    return candidate;
+}
+
+function _registerWizardCandidate(candidateMap, candidate) {
+    const name = String(candidate?.name || '').trim();
+    if (!name) return;
+
+    const normalized = {
+        usageSummary: '',
+        fromRegistry: false,
+        units: '',
+        ...candidate,
+        name,
+    };
+
+    const existing = candidateMap.get(name);
+    if (!existing) {
+        candidateMap.set(name, normalized);
+        return;
+    }
+
+    const merged = { ...existing, ...normalized };
+    if (existing.fromRegistry && !normalized.fromRegistry) {
+        merged.targetType = existing.targetType;
+        merged.targetRef = existing.targetRef;
+        merged.min = existing.min;
+        merged.max = existing.max;
+        merged.current = existing.current;
+        merged.units = existing.units;
+    }
+    const usageBits = [existing.usageSummary, normalized.usageSummary].filter(Boolean);
+    merged.usageSummary = [...new Set(usageBits)].join(' · ');
+    merged.fromRegistry = !!(existing.fromRegistry || normalized.fromRegistry);
+    candidateMap.set(name, merged);
+}
+
+function _renderWizardEmptyState(message) {
+    wizardParamList.innerHTML = `<div style="color: #64748b; font-size: 12px;">${message}</div>`;
+    _updateWizardStep1NextButton();
+}
+
 function _getSelectedParameters() {
     if (!paramsInput) return [];
     if (paramsInput.tagName === 'SELECT') {
@@ -212,7 +356,9 @@ function _refreshParameterPicker() {
     if (names.length === 0) {
         const opt = document.createElement('option');
         opt.value = '';
-        opt.textContent = '(no registry parameters)';
+        opt.textContent = selected.size > 0
+            ? '(no additional registry parameters available)'
+            : '(no registry parameters yet)';
         paramPickerInput.appendChild(opt);
         paramPickerInput.disabled = true;
         if (paramAddBtn) paramAddBtn.disabled = true;
@@ -399,6 +545,14 @@ function _objectiveBuilderPayloadFromForm() {
     }
     if (studyParameters.length === 0) {
         throw new Error('Objective Builder requires at least one study parameter.');
+    }
+
+    const missingParams = studyParameters.filter(name => !currentParameterRegistry?.[name]);
+    if (missingParams.length > 0) {
+        throw new Error(
+            `Parameter '${missingParams[0]}' is listed in the study but is not registered yet. ` +
+            `Use Wizard Auto-Detect/Save, or add it in the Parameter Registry first.`
+        );
     }
 
     const datasetPath = (obDatasetPathInput?.value || '').trim() || 'default_ntuples/Hits/Edep';
@@ -2845,7 +2999,7 @@ export function init(newCallbacks = {}) {
     if (obCopyBuildBtn) obCopyBuildBtn.addEventListener('click', _handleCopyObjectiveBuilderBuild);
     if (obCopyLaunchBtn) obCopyLaunchBtn.addEventListener('click', _handleCopyObjectiveBuilderLaunch);
 
-    _setParamStudiesViewMode(viewModeInput?.value || 'basic');
+    _setParamStudiesViewMode(viewModeInput?.value || 'wizard');
     _renderRunsDirStatusFromForm();
 
     // Populate schema-driven UI hints/caps/templates.
@@ -2876,7 +3030,7 @@ function _captureModalState() {
             method: optMethodInput?.value || 'surrogate_gp',
             budget: optBudgetInput?.value || '20',
             optSeed: optSeedInput?.value || '42',
-            viewMode: viewModeInput?.value || 'basic',
+            viewMode: viewModeInput?.value || 'wizard',
         },
         selectedRankedRunIndex: selectedRankedRun?.run?.run_index ?? null,
         lastRunResult,
@@ -2914,8 +3068,8 @@ function _restoreModalState(state) {
     if (optBudgetInput) optBudgetInput.value = state.form?.budget || '20';
     if (optSeedInput) optSeedInput.value = state.form?.optSeed || '42';
 
-    if (viewModeInput) viewModeInput.value = state.form?.viewMode || 'basic';
-    _setParamStudiesViewMode(viewModeInput?.value || 'basic');
+    if (viewModeInput) viewModeInput.value = state.form?.viewMode || 'wizard';
+    _setParamStudiesViewMode(viewModeInput?.value || 'wizard');
 
     lastRunResult = state.lastRunResult || null;
     lastVerificationResult = state.lastVerificationResult || null;
@@ -2970,12 +3124,16 @@ export async function show(initialStudies = {}) {
         runTimelineEvents = [];
 
         _setForm();
-        if (viewModeInput) viewModeInput.value = 'basic';
-        _setParamStudiesViewMode('basic');
+        if (viewModeInput) viewModeInput.value = 'wizard';
+        _setParamStudiesViewMode('wizard');
+        _clearWizardState();
         runOutput.value = '';
         if (obOutput) obOutput.value = '';
         _showNotice('', 'info', 0);
         _renderObjectiveBuilderFeedback('idle', { success: true, validation: { errors: [], warnings: [] } });
+    } else {
+        if (viewModeInput) viewModeInput.value = 'wizard';
+        _setParamStudiesViewMode('wizard');
     }
 
     _renderFormulaVariableHints();
@@ -3043,79 +3201,172 @@ async function _wizardAutoDetectParams() {
     wizardAutoDetectBtn.textContent = 'Detecting...';
     
     try {
-        // Get all solids and sources from geometry
         const geometry = await callbacks.onGetGeometryState?.();
         if (!geometry) {
-            wizardParamList.innerHTML = '<div style="color: #dc2626; font-size: 12px;">No geometry found. Please create some objects first.</div>';
+            _renderWizardEmptyState('No geometry found. Please create some objects first.');
             return;
         }
-        
-        const discovered = [];
-        
-        // Extract parameters from solids
-        for (const [name, solid] of Object.entries(geometry.solids || {})) {
-            const params = solid.raw_parameters || {};
-            
-            // Look for dimensional parameters
-            for (const [key, value] of Object.entries(params)) {
-                if (typeof value === 'number' && !key.startsWith('_')) {
-                    discovered.push({
-                        name: `${name}.${key}`,
-                        object: name,
-                        objectType: 'solid',
-                        field: key,
-                        current: value,
-                        min: value * 0.5,
-                        max: value * 2.0,
-                        hint: `${key} of ${name}`
+
+        await _refreshParameterRegistryFromServer();
+
+        const candidateMap = new Map();
+        const fallbackCandidateMap = new Map();
+        const knownDefineNames = new Set(Object.keys(geometry.defines || {}));
+        const defineUsage = new Map();
+        const addUsage = (defineName, usageText) => {
+            if (!defineName || !usageText) return;
+            if (!defineUsage.has(defineName)) defineUsage.set(defineName, new Set());
+            defineUsage.get(defineName).add(usageText);
+        };
+        const scanForDefineRefs = (value, usageText) => {
+            _walkWizardValue(value, (leaf) => {
+                if (typeof leaf !== 'string') return;
+                _extractDefineRefsFromText(leaf, knownDefineNames).forEach((defineName) => addUsage(defineName, usageText));
+            });
+        };
+
+        Object.entries(currentParameterRegistry || {}).forEach(([paramName, entry]) => {
+            const current = _coerceFiniteNumber(entry?.default);
+            if (current == null) return;
+            _registerWizardCandidate(candidateMap, {
+                name: paramName,
+                targetType: entry?.target_type,
+                targetRef: entry?.target_ref,
+                current,
+                min: _coerceFiniteNumber(entry?.bounds?.min) ?? current,
+                max: _coerceFiniteNumber(entry?.bounds?.max) ?? current + 1,
+                units: entry?.units || '',
+                hint: `${paramName} (saved parameter)`,
+                usageSummary: _friendlyWizardTargetSummary(entry),
+                fromRegistry: true,
+            });
+        });
+
+        Object.entries(geometry.solids || {}).forEach(([solidName, solid]) => {
+            Object.entries(solid?.raw_parameters || {}).forEach(([paramName, rawValue]) => {
+                if (String(paramName).startsWith('_')) return;
+                const usageText = `Used by solid ${solidName}.${paramName}`;
+                scanForDefineRefs(rawValue, usageText);
+                const directCurrent = _coerceFiniteNumber(solid?._evaluated_parameters?.[paramName] ?? rawValue);
+                const refs = typeof rawValue === 'string' ? _extractDefineRefsFromText(rawValue, knownDefineNames) : [];
+                if (directCurrent == null || refs.length > 0) return;
+                const bounds = _buildWizardBounds(directCurrent, { name: paramName });
+                _registerWizardCandidate(fallbackCandidateMap, {
+                    name: `${solidName}.${paramName}`,
+                    targetType: 'solid',
+                    targetRef: { name: solidName, param: paramName },
+                    current: directCurrent,
+                    min: bounds.min,
+                    max: bounds.max,
+                    units: '',
+                    hint: `${solidName}.${paramName}`,
+                    usageSummary: usageText,
+                });
+            });
+        });
+
+        Object.entries(geometry.sources || {}).forEach(([sourceName, source]) => {
+            const activity = _coerceFiniteNumber(source?.activity);
+            if (activity != null) {
+                const bounds = _buildWizardBounds(activity, { name: `${sourceName}.activity`, units: 'bq' });
+                _registerWizardCandidate(fallbackCandidateMap, {
+                    name: `${sourceName}.activity`,
+                    targetType: 'source',
+                    targetRef: { name: sourceName, field: 'activity' },
+                    current: activity,
+                    min: bounds.min,
+                    max: bounds.max,
+                    units: 'Bq',
+                    hint: `${sourceName}.activity`,
+                    usageSummary: `Controls source activity for ${sourceName}`,
+                });
+            }
+
+            ['position', 'rotation'].forEach((groupName) => {
+                Object.entries(source?.[groupName] || {}).forEach(([axis, rawValue]) => {
+                    const usageText = `Used by source ${sourceName}.${groupName}.${axis}`;
+                    scanForDefineRefs(rawValue, usageText);
+                    const refs = typeof rawValue === 'string' ? _extractDefineRefsFromText(rawValue, knownDefineNames) : [];
+                    const current = _coerceFiniteNumber(rawValue);
+                    if (current == null || refs.length > 0) return;
+                    const units = groupName === 'rotation' ? 'rad' : 'mm';
+                    const bounds = _buildWizardBounds(current, { name: `${sourceName}.${groupName}.${axis}`, units });
+                    _registerWizardCandidate(fallbackCandidateMap, {
+                        name: `${sourceName}.${groupName}.${axis}`,
+                        targetType: 'source',
+                        targetRef: { name: sourceName, field: `${groupName}.${axis}` },
+                        current,
+                        min: bounds.min,
+                        max: bounds.max,
+                        units,
+                        hint: `${sourceName}.${groupName}.${axis}`,
+                        usageSummary: usageText,
                     });
-                }
-            }
+                });
+            });
+        });
+
+        Object.entries(geometry.logical_volumes || {}).forEach(([lvName, lv]) => {
+            if (!Array.isArray(lv?.content)) return;
+            lv.content.forEach((placement, index) => {
+                const childName = placement?.volume_ref || placement?.child_lv || `child_${index + 1}`;
+                scanForDefineRefs(placement?.position, `Used by placement ${lvName} → ${childName} position`);
+                scanForDefineRefs(placement?.rotation, `Used by placement ${lvName} → ${childName} rotation`);
+                scanForDefineRefs(placement?.scale, `Used by placement ${lvName} → ${childName} scale`);
+            });
+        });
+
+        const scalarDefines = Object.entries(geometry.defines || {}).filter(([, defineObj]) => {
+            const value = defineObj?.value;
+            return _coerceFiniteNumber(value) != null && !['position', 'rotation', 'scale', 'matrix'].includes(String(defineObj?.type || '').toLowerCase());
+        });
+
+        const addDefineCandidates = (onlyUsed) => {
+            scalarDefines.forEach(([defineName, defineObj]) => {
+                const current = _coerceFiniteNumber(defineObj?.value);
+                if (current == null) return;
+                const usageHints = [...(defineUsage.get(defineName) || [])];
+                if (onlyUsed && usageHints.length === 0 && !currentParameterRegistry?.[defineName]) return;
+                const units = defineObj?.unit || (String(defineObj?.type || '').toLowerCase() === 'rotation' ? 'rad' : '');
+                const bounds = _buildWizardBounds(current, { name: defineName, units });
+                _registerWizardCandidate(candidateMap, {
+                    name: defineName,
+                    targetType: 'define',
+                    targetRef: { name: defineName },
+                    current,
+                    min: bounds.min,
+                    max: bounds.max,
+                    units,
+                    hint: defineName,
+                    usageSummary: usageHints.length > 0
+                        ? usageHints.slice(0, 2).join(' · ')
+                        : 'Scalar define available for tuning',
+                });
+            });
+        };
+
+        addDefineCandidates(true);
+        if (candidateMap.size === 0) {
+            addDefineCandidates(false);
         }
-        
-        // Extract parameters from sources
-        for (const [name, source] of Object.entries(geometry.sentence_sources || {})) {
-            const params = source.raw_parameters || {};
-            
-            for (const [key, value] of Object.entries(params)) {
-                if (typeof value === 'number' && !key.startsWith('_')) {
-                    discovered.push({
-                        name: `${name}.${key}`,
-                        object: name,
-                        objectType: 'source',
-                        field: key,
-                        current: value,
-                        min: value * 0.1,
-                        max: value * 10.0,
-                        hint: `${key} of ${name}`
-                    });
-                }
-            }
+        if (candidateMap.size === 0) {
+            fallbackCandidateMap.forEach((candidate, name) => {
+                _registerWizardCandidate(candidateMap, { ...candidate, name });
+            });
         }
-        
-        // Extract from placements (positions/orientations)
-        for (const [name, lv] of Object.entries(geometry.logical_volumes || {})) {
-            for (const placement of lv.content || []) {
-                if (placement.translation) {
-                    for (const [axis, value] of Object.entries(placement.translation)) {
-                        if (typeof value === 'number') {
-                            discovered.push({
-                                name: `${name}_${placement.child_lv}.${axis}`,
-                                object: `${name}/${placement.child_lv}`,
-                                objectType: 'placement',
-                                field: `${axis}_position`,
-                                current: value,
-                                min: value - 100,
-                                max: value + 100,
-                                hint: `${axis} position of ${placement.child_lv}`
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        
+
+        const discovered = [...candidateMap.values()].sort((a, b) => {
+            if (a.fromRegistry !== b.fromRegistry) return a.fromRegistry ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        const previousSelections = new Set(wizardState.selectedParams.keys());
         wizardState.discoveredParams = discovered;
+        wizardState.selectedParams = new Map(
+            discovered
+                .filter(param => previousSelections.has(param.name))
+                .map(param => [param.name, param])
+        );
         _renderWizardParamList(discovered);
         
     } catch (err) {
@@ -3129,20 +3380,21 @@ async function _wizardAutoDetectParams() {
 
 function _renderWizardParamList(params) {
     if (params.length === 0) {
-        wizardParamList.innerHTML = '<div style="color: #64748b; font-size: 12px;">No optimizable parameters found.</div>';
+        _renderWizardEmptyState('No tunable parameters were found. Try driving geometry with named defines like <code>slab_thick</code> or switch to Basic and add parameters manually.');
         _updateWizardStep1NextButton();
         return;
     }
     
     const html = params.map(p => `
         <div style="display: flex; align-items: center; gap: 8px; padding: 6px; border-bottom: 1px solid #f1f5f9;">
-            <input type="checkbox" id="psWizardParam_${p.name}" data-param="${p.name}" 
+            <input type="checkbox" id="psWizardParam_${_safeWizardParamId(p.name)}" data-param="${p.name}" ${wizardState.selectedParams.has(p.name) ? 'checked' : ''}
                    style="cursor: pointer;">
-            <label for="psWizardParam_${p.name}" style="flex: 1; font-size: 12px; cursor: pointer;">
+            <label for="psWizardParam_${_safeWizardParamId(p.name)}" style="flex: 1; font-size: 12px; cursor: pointer;">
                 <strong>${p.hint}</strong>
                 <div style="color: #64748b; font-size: 11px;">
-                    Current: ${p.current.toFixed(3)} | Range: ${p.min.toFixed(3)} - ${p.max.toFixed(3)}
+                    Current: ${_formatWizardNumber(p.current)}${p.units ? ` ${p.units}` : ''} | Suggested range: ${_formatWizardNumber(p.min)} - ${_formatWizardNumber(p.max)}${p.units ? ` ${p.units}` : ''}
                 </div>
+                ${p.usageSummary ? `<div style="color: #94a3b8; font-size: 11px; margin-top: 2px;">${p.usageSummary}</div>` : ''}
             </label>
         </div>
     `).join('');
@@ -3190,22 +3442,49 @@ function _filterWizardParams() {
 }
 
 function _wizardSelectPreset(preset) {
-    wizardState.selectedMetrics = [];
-    
+    const selectedParams = Array.from(wizardState.selectedParams.values());
+    const primaryParam = selectedParams[0] || null;
+
     switch (preset) {
         case 'maximize_edep':
             wizardState.selectedMetrics = [
-                { path: 'default_ntuples/Hits/Edep', weight: 1.0, direction: 'maximize', label: 'Total Energy Deposition', reduce: 'sum' }
+                {
+                    shortName: 'edep',
+                    label: 'Maximize deposited energy',
+                    datasetPath: 'default_ntuples/Hits/Edep',
+                    scoreExpr: 'edep_sum',
+                    helpText: 'Uses the sum of default_ntuples/Hits/Edep as the score.',
+                }
             ];
             break;
-        case 'minimize_thickness':
+        case 'minimize_primary_parameter':
+            if (!primaryParam) {
+                _showNotice('Select at least one parameter first so the wizard knows what to minimize.', 'warning', 3000);
+                return;
+            }
             wizardState.selectedMetrics = [
-                { path: 'geometry/solid_thickness', weight: 1.0, direction: 'minimize', label: 'Detector Thickness', reduce: 'mean' }
+                {
+                    shortName: 'smaller_parameter',
+                    label: `Favor smaller ${primaryParam.name}`,
+                    datasetPath: 'default_ntuples/Hits/Edep',
+                    scoreExpr: `-${primaryParam.name}`,
+                    helpText: `Maximizes the negative of ${primaryParam.name}, which favors smaller values.`,
+                }
             ];
             break;
-        case 'maximize_hits':
+        case 'balance_energy_and_parameter':
+            if (!primaryParam) {
+                _showNotice('Select at least one parameter first so the wizard can build a trade-off score.', 'warning', 3000);
+                return;
+            }
             wizardState.selectedMetrics = [
-                { path: 'default_ntuples/Hits/Count', weight: 1.0, direction: 'maximize', label: 'Total Hit Count', reduce: 'sum' }
+                {
+                    shortName: 'tradeoff',
+                    label: `Trade off deposited energy vs ${primaryParam.name}`,
+                    datasetPath: 'default_ntuples/Hits/Edep',
+                    scoreExpr: `edep_sum - 0.15*${primaryParam.name}`,
+                    helpText: `Starts with energy deposition, then applies a small penalty to ${primaryParam.name}.`,
+                }
             ];
             break;
         case 'browse_metrics':
@@ -3252,11 +3531,6 @@ function _renderWizardMetricsBrowser(metrics) {
                             style="padding: 4px 8px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 3px; cursor: pointer; font-size: 11px; flex: 1; text-align: left;">
                         ${m.label || m.path}
                     </button>
-                    <select onchange="window.setWizardMetricDirection(this, '${m.path}')" 
-                            style="padding: 2px; font-size: 11px; border-radius: 3px;">
-                        <option value="maximize">Maximize</option>
-                        <option value="minimize">Minimize</option>
-                    </select>
                 </div>
             `).join('')}
         </div>
@@ -3271,24 +3545,23 @@ function _renderWizardMetricsBrowser(metrics) {
 
 function _renderWizardMetricsList() {
     if (wizardState.selectedMetrics.length === 0) {
-        wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">No metrics selected.</div>';
+        wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">No goal selected.</div>';
         _updateWizardStep2NextButton();
         return;
     }
     
     const html = wizardState.selectedMetrics.map((m, i) => `
-        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
-            <span style="flex: 1; font-size: 12px;">${m.label || m.path}</span>
-            <select onchange="window.updateWizardMetricDirection(${i}, this.value)" 
-                    style="padding: 2px; font-size: 11px; border-radius: 3px; width: 90px;">
-                <option value="maximize" ${m.direction === 'maximize' ? 'selected' : ''}>Maximize</option>
-                <option value="minimize" ${m.direction === 'minimize' ? 'selected' : ''}>Minimize</option>
-            </select>
-            <input type="number" step="0.1" min="0.1" max="1.0" value="${m.weight}" 
-                   onchange="window.updateWizardMetricWeight(${i}, this.value)"
-                   style="width: 60px; padding: 2px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 3px;">
-            <button type="button" onclick="window.removeWizardMetric(${i})" 
-                    style="padding: 2px 6px; background: #fecaca; border: none; border-radius: 3px; cursor: pointer; color: #dc2626; font-size: 11px;">×</button>
+        <div style="padding: 8px; border: 1px solid #dbeafe; border-radius: 6px; background: #eff6ff;">
+            <div style="display:flex; align-items:flex-start; gap:8px;">
+                <div style="flex:1;">
+                    <div style="font-size: 12px; font-weight: 600; color: #1e3a8a;">${m.label}</div>
+                    <div style="font-size: 11px; color: #475569; margin-top: 4px;">Dataset: <code>${m.datasetPath || 'default_ntuples/Hits/Edep'}</code></div>
+                    <div style="font-size: 11px; color: #475569; margin-top: 2px;">Score expression: <code>${m.scoreExpr || 'edep_sum'}</code></div>
+                    ${m.helpText ? `<div style="font-size: 11px; color: #64748b; margin-top: 4px;">${m.helpText}</div>` : ''}
+                </div>
+                <button type="button" onclick="window.removeWizardMetric(${i})" 
+                        style="padding: 2px 6px; background: #fecaca; border: none; border-radius: 3px; cursor: pointer; color: #dc2626; font-size: 11px;">×</button>
+            </div>
         </div>
     `).join('');
     
@@ -3310,66 +3583,78 @@ function _updateWizardBudget() {
 
 function _updateWizardSummary() {
     const params = Array.from(wizardState.selectedParams.values());
-    const metrics = wizardState.selectedMetrics;
+    const goal = wizardState.selectedMetrics[0] || null;
     
     const html = `
-        <div style="margin-bottom: 4px;"><strong>Parameters:</strong> ${params.length} (${params.map(p => p.hint).join(', ').substring(0, 60)}${params.length > 2 ? '...' : ''})</div>
-        <div style="margin-bottom: 4px;"><strong>Objectives:</strong> ${metrics.map(m => `${m.direction === 'maximize' ? '↑' : '↓'} ${m.label}`).join(', ')}</div>
+        <div style="margin-bottom: 4px;"><strong>Parameters:</strong> ${params.length > 0 ? params.map(p => p.name).join(', ') : 'none selected'}</div>
+        <div style="margin-bottom: 4px;"><strong>Goal:</strong> ${goal ? goal.label : 'none selected'}</div>
+        <div style="margin-bottom: 4px;"><strong>Score:</strong> <code>${goal?.scoreExpr || 'edep_sum'}</code></div>
         <div><strong>Budget:</strong> ${wizardState.budget} evaluations</div>
     `;
     
     wizardSummary.innerHTML = html;
 }
 
+async function _ensureWizardParametersRegistered(params = []) {
+    for (const p of params) {
+        await callbacks.onUpsertParameter?.({
+            name: p.name,
+            target_type: p.targetType,
+            target_ref: p.targetRef,
+            bounds: { min: p.min, max: p.max },
+            default: p.current,
+            units: p.units || '',
+            enabled: true,
+        });
+    }
+    if (params.length > 0) {
+        await _refreshParameterRegistryFromServer();
+    }
+}
+
 async function _wizardCreateStudy() {
     wizardCreateBtn.disabled = true;
-    wizardCreateBtn.textContent = 'Creating...';
+    wizardCreateBtn.textContent = 'Saving...';
     
     try {
         const params = Array.from(wizardState.selectedParams.values());
-        const studyName = `opt_${Date.now()}`;
+        const goal = wizardState.selectedMetrics[0] || null;
+        if (params.length === 0) {
+            throw new Error('Select at least one parameter before saving the study.');
+        }
+        if (!goal) {
+            throw new Error('Choose a goal before saving the study.');
+        }
+        const studyName = _buildWizardStudyName(params, goal);
         
-        // Build parameter study payload
         const studyPayload = {
+            name: studyName,
             mode: 'random',
             parameters: params.map(p => p.name),
-            samples: wizardState.budget,
-            seed: 42,
-            objectives: wizardState.selectedMetrics.map(m => ({
-                metric: m.path,
-                name: m.label || m.path,
-                direction: m.direction,
-                reduce: m.reduce || 'sum'
-            }))
+            objectives: [],
+            grid: {
+                steps: Number(gridStepsInput?.value || 3),
+                per_parameter_steps: {},
+            },
+            random: {
+                samples: wizardState.budget,
+                seed: Number(seedInput?.value || 42),
+            },
         };
         
-        // Register parameters first
-        for (const p of params) {
-            await callbacks.onUpsertParameter?.(p.name, {
-                target_type: p.objectType,
-                target_ref: p.object,
-                bounds: { min: p.min, max: p.max },
-                default: p.current,
-                units: '',
-                enabled: true
-            });
-        }
+        await _ensureWizardParametersRegistered(params);
         
-        // Sync wizard state to legacy form
-        _syncWizardToLegacyForm(studyName, studyPayload);
+        _syncWizardToLegacyForm(studyName, studyPayload, goal);
         
-        // Create the study
-        const result = await callbacks.onUpsertParamStudy?.(studyName, studyPayload);
+        const builderPayload = _objectiveBuilderPayloadFromForm();
+        const result = await callbacks.onObjectiveBuilderUpsert?.(builderPayload);
         
         if (result && result.success) {
-            _showNotice('Optimization study created successfully! Switch to Basic/Advanced view to see details.', 'success', 6000);
-            // Switch to basic view to show the form
-            setTimeout(() => {
-                if (viewModeInput) viewModeInput.value = 'basic';
-                _setParamStudiesViewMode('basic');
-            }, 1000);
-            // Refresh the table
-            await callbacks.onRefresh?.();
+            activeName = studyName;
+            _showNotice('Study saved. You can now review it in Basic or run it from Advanced.', 'success', 6000);
+            await _refreshAndRender();
+            if (viewModeInput) viewModeInput.value = 'basic';
+            _setParamStudiesViewMode('basic');
         } else {
             _showNotice(`Failed to create study: ${result?.error || 'Unknown error'}`, 'error', 5000);
         }
@@ -3379,52 +3664,41 @@ async function _wizardCreateStudy() {
         _showNotice(`Error creating study: ${err.message}`, 'error', 5000);
     } finally {
         wizardCreateBtn.disabled = false;
-        wizardCreateBtn.textContent = '🚀 Create & Run';
+        wizardCreateBtn.textContent = '💾 Save Study';
     }
 }
 
-function _syncWizardToLegacyForm(studyName, studyPayload) {
-    // Populate name field
+function _syncWizardToLegacyForm(studyName, studyPayload, goal = null) {
     if (nameInput) nameInput.value = studyName;
-    
-    // Populate mode field
     if (modeInput) modeInput.value = studyPayload.mode;
-    
-    // Populate parameters
+
     if (paramsInput && studyPayload.parameters) {
-        if (paramsInput.tagName === 'SELECT') {
-            // For select, we need to rebuild options
-            paramsInput.innerHTML = '';
-            studyPayload.parameters.forEach(paramName => {
-                const option = document.createElement('option');
-                option.value = paramName;
-                option.textContent = paramName;
-                option.selected = true;
-                paramsInput.appendChild(option);
-            });
-        } else {
-            paramsInput.value = studyPayload.parameters.join(', ');
-        }
+        _setSelectedParameters(studyPayload.parameters);
+        _refreshParameterPicker();
     }
-    
-    // Populate samples/budget
+
     if (samplesInput && studyPayload.samples) {
         samplesInput.value = studyPayload.samples;
     }
-    
-    // Sync objectives to objective builder if available
-    if (studyPayload.objectives && studyPayload.objectives.length > 0) {
-        // Build a formula from objectives for the objective builder
-        const objectiveNames = studyPayload.objectives.map((obj, idx) => {
-            const dir = obj.direction === 'minimize' ? '-' : '';
-            const weight = obj.reduce || 'sum';
-            return `${dir}${weight}(${obj.metric})`;
-        }).join(' + ');
-        
-        if (obFormulaInput) {
-            obFormulaInput.value = objectiveNames;
-        }
+    if (samplesInput && studyPayload.random?.samples) {
+        samplesInput.value = studyPayload.random.samples;
     }
+    if (gridStepsInput && studyPayload.grid?.steps) {
+        gridStepsInput.value = studyPayload.grid.steps;
+    }
+    if (optBudgetInput) {
+        optBudgetInput.value = String(wizardState.budget);
+    }
+    if (obDatasetPathInput && goal?.datasetPath) {
+        obDatasetPathInput.value = goal.datasetPath;
+    }
+    if (obScoreExprInput && goal?.scoreExpr) {
+        obScoreExprInput.value = goal.scoreExpr;
+    }
+    if (obCostKeyInput && !goal?.scoreExpr?.includes('cost_norm')) {
+        obCostKeyInput.value = '';
+    }
+    _renderFormulaVariableHints();
 }
 
 function _clearWizardState() {
@@ -3438,8 +3712,8 @@ function _clearWizardState() {
     if (wizardStep1) wizardStep1.style.display = 'block';
     if (wizardStep2) wizardStep2.style.display = 'none';
     if (wizardStep3) wizardStep3.style.display = 'none';
-    if (wizardParamList) wizardParamList.innerHTML = '<div style="color: #64748b; font-size: 12px;">Click "Auto-Detect" to discover optimizable parameters from your geometry.</div>';
-    if (wizardMetricsList) wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">Select a preset or browse metrics to get started.</div>';
+    if (wizardParamList) wizardParamList.innerHTML = '<div style="color: #64748b; font-size: 12px;">Click <b>Auto-Detect</b> to discover tunable geometry parameters from defines, solids, and sources.</div>';
+    if (wizardMetricsList) wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">Choose one preset or browse a dataset to get started.</div>';
     if (wizardSelectedCount) wizardSelectedCount.textContent = '0 parameters selected';
     if (wizardStep1NextBtn) { wizardStep1NextBtn.disabled = true; wizardStep1NextBtn.style.cursor = 'not-allowed'; }
     if (wizardStep2NextBtn) { wizardStep2NextBtn.disabled = true; wizardStep2NextBtn.style.cursor = 'not-allowed'; }
@@ -3448,57 +3722,55 @@ function _clearWizardState() {
     if (wizardSummary) wizardSummary.innerHTML = '';
 }
 
-function _wizardPreviewInBasic() {
-    // Build a temporary study payload to preview
+async function _wizardPreviewInBasic() {
     const params = Array.from(wizardState.selectedParams.values());
+    const goal = wizardState.selectedMetrics[0] || null;
     if (params.length === 0) {
         _showNotice('Select at least one parameter first!', 'error', 3000);
+        return;
+    }
+    if (!goal) {
+        _showNotice('Choose a goal first so the preview has something meaningful to show.', 'error', 3000);
         return;
     }
     
     const studyPayload = {
         mode: 'random',
         parameters: params.map(p => p.name),
-        samples: wizardState.budget,
-        objectives: wizardState.selectedMetrics.map(m => ({
-            metric: m.path,
-            name: m.label || m.path,
-            direction: m.direction,
-            reduce: m.reduce || 'sum'
-        }))
+        objectives: [],
+        random: {
+            samples: wizardState.budget,
+            seed: Number(seedInput?.value || 42),
+        },
+        grid: {
+            steps: Number(gridStepsInput?.value || 3),
+            per_parameter_steps: {},
+        },
     };
     
-    // Sync to form
-    _syncWizardToLegacyForm(`preview_${Date.now()}`, studyPayload);
-    
-    // Switch to basic view
+    await _ensureWizardParametersRegistered(params);
+    _syncWizardToLegacyForm(_buildWizardStudyName(params, goal), studyPayload, goal);
     if (viewModeInput) viewModeInput.value = 'basic';
     _setParamStudiesViewMode('basic');
     
-    _showNotice('Preview shown in Basic view. You can edit fields or switch back to Wizard.', 'success', 4000);
+    _showNotice('Preview shown in Basic view. You can edit the study there or switch back to Wizard.', 'success', 4000);
 }
 
 // Global functions for onclick handlers
 window.addWizardMetric = function(path, label) {
-    // Check if already added
-    if (wizardState.selectedMetrics.some(m => m.path === path)) return;
-    
-    wizardState.selectedMetrics.push({
-        path,
-        label,
-        weight: 1.0,
-        direction: 'maximize',
-        reduce: 'sum'
-    });
-    
+    wizardState.selectedMetrics = [{
+        shortName: 'custom_dataset',
+        label: `Optimize ${label}`,
+        datasetPath: path,
+        scoreExpr: 'edep_sum',
+        helpText: `Uses the summed values from ${path} as the score.`,
+    }];
     _renderWizardMetricsList();
 };
 
 window.setWizardMetricDirection = function(select, path) {
-    const metric = wizardState.selectedMetrics.find(m => m.path === path);
-    if (metric) {
-        metric.direction = select.value;
-    }
+    void select;
+    void path;
 };
 
 window.closeWizardMetricsBrowser = function() {
@@ -3506,15 +3778,13 @@ window.closeWizardMetricsBrowser = function() {
 };
 
 window.updateWizardMetricDirection = function(index, direction) {
-    if (wizardState.selectedMetrics[index]) {
-        wizardState.selectedMetrics[index].direction = direction;
-    }
+    void index;
+    void direction;
 };
 
 window.updateWizardMetricWeight = function(index, weight) {
-    if (wizardState.selectedMetrics[index]) {
-        wizardState.selectedMetrics[index].weight = parseFloat(weight);
-    }
+    void index;
+    void weight;
 };
 
 window.removeWizardMetric = function(index) {
