@@ -3,9 +3,26 @@
 ## In Progress
 
 - **Next milestone selection pending (last in-progress milestone completed 2026-03-25).**
-  - Recommended starting point next heartbeat: add a scoped diagnostics “copy issue excerpt as JSON” action (same active scope filter context + currently visible issue lines) so bug trackers/automation can consume deterministic structured payloads directly.
+  - Recommended starting point next heartbeat: add a scoped diagnostics docs/example follow-on that shows both human-readable excerpt text and structured excerpt JSON handoff paths in one replayable workflow.
 
 ## Recently Completed
+
+- **Scoped-workflow UX follow-on completed: preflight panel now provides one-click structured “copy issue excerpt JSON” handoff alongside existing text copy actions** (2026-03-25 18:24 Europe/Madrid)
+  - Extended scoped diagnostics helper module `static/preflightScopedDiagnosticsUi.js`:
+    - added deterministic `buildScopedIssueExcerptCopyJson(...)` builder with a stable schema/version marker.
+    - JSON payload includes the active scoped filter context (`scope`, bucket metadata/fallback, issue-code focus, context text), visible issue lines, optional counts, and deterministic truncation markers.
+  - Updated Simulation preflight panel wiring in `templates/index.html` + `static/uiManager.js`:
+    - added `Copy issue excerpt JSON` button in `#preflight_scope_context_row`.
+    - wired scoped render state so JSON payload tracks active scope, bucket selection, issue-code focus, and currently visible issue lines exactly like the text copy path.
+    - added clipboard success/error feedback and enabled/disabled guardrails for the JSON action.
+  - Expanded frontend regression coverage in `tests/js/preflight_scoped_diagnostics_ui.test.mjs`:
+    - deterministic JSON payload contract for metadata-present scoped views, including truncation behavior.
+    - metadata-absent fallback + empty-visible-issues contract locking.
+  - Checks run:
+    - `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda activate airpet && node --test tests/js/preflight_scoped_diagnostics_ui.test.mjs`
+  - Checkpoint finished:
+    - ✔ scoped diagnostics now support both human-readable and machine-readable copy handoff from the same active panel filters.
+    - ✔ JSON handoff format is deterministic and regression-locked for bug tracker/automation consumers.
 
 - **Scoped-workflow UX follow-on completed: preflight panel now provides one-click “copy issue excerpt” handoff text with active scoped filters + currently visible issue lines** (2026-03-25)
   - Extended scoped diagnostics helper module `static/preflightScopedDiagnosticsUi.js`:

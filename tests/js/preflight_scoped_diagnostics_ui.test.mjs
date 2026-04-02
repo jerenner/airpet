@@ -8,6 +8,7 @@ import {
     buildScopedIssueCodeChips,
     buildScopedIssueFilterContextCopyText,
     buildScopedIssueExcerptCopyText,
+    buildScopedIssueExcerptCopyJson,
     getScopedIssueBucketDisplayLabel,
     normalizeScopedBucketFilterSelection,
 } from '../../static/preflightScopedDiagnosticsUi.js';
@@ -286,4 +287,92 @@ test('copy-excerpt helper handles empty issue views and deterministic truncation
     );
 
     assert.equal(buildScopedIssueExcerptCopyText({}), '');
+});
+
+test('copy-excerpt JSON helper returns deterministic structured payload with truncation markers', () => {
+    const payloadText = buildScopedIssueExcerptCopyJson({
+        scopeLabel: 'LV "detector_module"',
+        hasBucketMetadata: true,
+        bucketSelection: 'scope_only',
+        issueCodeFocus: 'invalid_replica_width',
+        visibleIssueCount: 3,
+        totalScopedIssueCount: 5,
+        maxIssueLines: 2,
+        visibleIssues: [
+            {
+                severity: 'ERROR',
+                code: 'invalid_replica_width',
+                message: 'Replica width is invalid; expected > 0',
+                hint: 'Set width to positive value',
+            },
+            {
+                severity: 'warning',
+                code: 'invalid_replica_width',
+                message: 'Replica count mismatches width sum',
+            },
+            {
+                severity: 'info',
+                code: 'invalid_replica_width',
+                message: 'Ignored due to maxIssueLines',
+            },
+        ],
+    });
+
+    assert.deepEqual(JSON.parse(payloadText), {
+        schema_version: '2026-03-25.scoped-preflight-issue-excerpt-json.v1',
+        kind: 'scoped_preflight_issue_excerpt',
+        filter_context: {
+            scope: 'LV "detector_module"',
+            bucket: 'scope_only',
+            bucket_label: 'Scope-only issues',
+            issue_code: 'invalid_replica_width',
+            context_text: 'Scoped preflight filter context; scope=LV "detector_module"; bucket=scope_only (Scope-only issues); issue_code=invalid_replica_width; visible_issues=3; total_scoped_issues=5',
+        },
+        visible_issues: [
+            {
+                line: 1,
+                severity: 'error',
+                code: 'invalid_replica_width',
+                message: 'Replica width is invalid, expected > 0',
+                hint: 'Set width to positive value',
+            },
+            {
+                line: 2,
+                severity: 'warning',
+                code: 'invalid_replica_width',
+                message: 'Replica count mismatches width sum',
+            },
+        ],
+        visible_issue_count: 3,
+        total_scoped_issue_count: 5,
+        truncated_issue_lines: 1,
+    });
+});
+
+test('copy-excerpt JSON helper preserves metadata-absent fallback and empty issue lists', () => {
+    const payloadText = buildScopedIssueExcerptCopyJson({
+        scopeLabel: 'Assembly "wheel"',
+        hasBucketMetadata: false,
+        issueCodeFocus: '',
+        visibleIssueCount: 0,
+        totalScopedIssueCount: 0,
+        visibleIssues: [],
+    });
+
+    assert.deepEqual(JSON.parse(payloadText), {
+        schema_version: '2026-03-25.scoped-preflight-issue-excerpt-json.v1',
+        kind: 'scoped_preflight_issue_excerpt',
+        filter_context: {
+            scope: 'Assembly "wheel"',
+            bucket: 'metadata_unavailable',
+            bucket_label: '',
+            issue_code: 'all',
+            context_text: 'Scoped preflight filter context; scope=Assembly "wheel"; bucket=metadata_unavailable; issue_code=all; visible_issues=0; total_scoped_issues=0',
+        },
+        visible_issues: [],
+        visible_issue_count: 0,
+        total_scoped_issue_count: 0,
+    });
+
+    assert.equal(buildScopedIssueExcerptCopyJson({}), '');
 });

@@ -314,3 +314,60 @@ export function buildScopedIssueExcerptCopyText(options = {}) {
 
     return lines.join('\n');
 }
+
+export function buildScopedIssueExcerptCopyJson(options = {}) {
+    const contextText = buildScopedIssueFilterContextCopyText(options);
+    if (!contextText) return '';
+
+    const scopeLabel = String(options.scopeLabel || '').trim();
+    const hasBucketMetadata = !!options.hasBucketMetadata;
+    const bucketSelection = hasBucketMetadata
+        ? normalizeScopedBucketFilterSelection(options.bucketSelection)
+        : 'all';
+    const bucketLabel = hasBucketMetadata ? getScopedIssueBucketDisplayLabel(bucketSelection) : '';
+    const issueCodeFocus = normalizeIssueCode(options.issueCodeFocus);
+
+    const visibleIssueCount = normalizeNonNegativeInt(options.visibleIssueCount);
+    const totalScopedIssueCount = normalizeNonNegativeInt(options.totalScopedIssueCount);
+
+    const visibleIssues = Array.isArray(options.visibleIssues) ? options.visibleIssues : [];
+    const maxIssueLines = normalizeIssueExcerptLimit(options.maxIssueLines);
+    const excerptIssues = visibleIssues.slice(0, maxIssueLines);
+
+    const payload = {
+        schema_version: '2026-03-25.scoped-preflight-issue-excerpt-json.v1',
+        kind: 'scoped_preflight_issue_excerpt',
+        filter_context: {
+            scope: scopeLabel,
+            bucket: hasBucketMetadata ? bucketSelection : 'metadata_unavailable',
+            bucket_label: bucketLabel,
+            issue_code: issueCodeFocus || 'all',
+            context_text: contextText,
+        },
+        visible_issues: excerptIssues.map((issue, idx) => {
+            const normalizedIssue = {
+                line: idx + 1,
+                severity: normalizeIssueSeverity(issue?.severity),
+                code: normalizeIssueCode(issue?.code) || 'none',
+                message: normalizeIssueTextFragment(issue?.message, 'Unknown preflight issue'),
+            };
+            const hint = normalizeIssueTextFragment(issue?.hint, '');
+            if (hint) {
+                normalizedIssue.hint = hint;
+            }
+            return normalizedIssue;
+        }),
+    };
+
+    if (visibleIssueCount !== null) {
+        payload.visible_issue_count = visibleIssueCount;
+    }
+    if (totalScopedIssueCount !== null) {
+        payload.total_scoped_issue_count = totalScopedIssueCount;
+    }
+    if (visibleIssues.length > excerptIssues.length) {
+        payload.truncated_issue_lines = visibleIssues.length - excerptIssues.length;
+    }
+
+    return JSON.stringify(payload, null, 2);
+}
