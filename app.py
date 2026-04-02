@@ -6570,6 +6570,98 @@ def param_study_list_route():
     return jsonify({"success": True, "param_studies": studies})
 
 
+@app.route('/api/param_study/simulation_metrics', methods=['GET'])
+def param_study_simulation_metrics_route():
+    """
+    Lists available simulation metrics from HDF5 files for use in optimization objectives.
+    Scans common simulation output directories and extracts dataset paths.
+    """
+    import os
+    import h5py
+    
+    metrics = []
+    
+    # Common simulation output directories
+    search_dirs = [
+        'simulation_output',
+        'simulation_output/default',
+        'ntuples',
+        'default_ntuples',
+        '.'  # Current directory
+    ]
+    
+    seen_paths = set()
+    
+    for search_dir in search_dirs:
+        if not os.path.exists(search_dir):
+            continue
+        
+        # Walk through directory looking for HDF5 files
+        for root, dirs, files in os.walk(search_dir):
+            for filename in files:
+                if filename.endswith(('.h5', '.hdf5')):
+                    filepath = os.path.join(root, filename)
+                    try:
+                        with h5py.File(filepath, 'r') as f:
+                            # Collect all dataset paths
+                            dataset_paths = []
+                            f.visititems(lambda name, obj: dataset_paths.append(name) if isinstance(obj, h5py.Dataset) else None)
+                            
+                            for ds_path in dataset_paths:
+                                full_path = f"{search_dir}/{filename}:{ds_path}" if search_dir != '.' else f"{filename}:{ds_path}"
+                                
+                                if full_path not in seen_paths:
+                                    seen_paths.add(full_path)
+                                    
+                                    # Try to get some metadata about the dataset
+                                    try:
+                                        ds = f[ds_path]
+                                        metrics.append({
+                                            'path': ds_path,
+                                            'label': ds_path.split('/')[-1],  # Use dataset name as label
+                                            'file': filepath,
+                                            'shape': list(ds.shape) if ds.ndim > 0 else [],
+                                            'dtype': str(ds.dtype),
+                                            # Try to infer what this metric represents
+                                            'category': _infer_metric_category(ds_path)
+                                        })
+                                    except Exception:
+                                        metrics.append({
+                                            'path': ds_path,
+                                            'label': ds_path.split('/')[-1],
+                                            'file': filepath,
+                                            'category': 'unknown'
+                                        })
+                    except Exception as e:
+                        print(f"Warning: Could not read HDF5 file {filepath}: {e}")
+                        continue
+    
+    # Sort by category and label
+    metrics.sort(key=lambda m: (m.get('category', 'unknown'), m.get('label', '')))
+    
+    return jsonify({"success": True, "metrics": metrics})
+
+
+def _infer_metric_category(ds_path):
+    """Infer the category of a metric based on its path/name."""
+    path_lower = ds_path.lower()
+    
+    if 'edep' in path_lower or 'energy' in path_lower:
+        return 'energy'
+    elif 'hit' in path_lower or 'count' in path_lower:
+        return 'hits'
+    elif 'track' in path_lower or 'length' in path_lower:
+        return 'tracks'
+    elif 'position' in path_lower or 'x' in path_lower or 'y' in path_lower or 'z' in path_lower:
+        return 'position'
+    elif 'time' in path_lower:
+        return 'time'
+    elif 'momentum' in path_lower or 'p' in path_lower:
+        return 'momentum'
+    else:
+        return 'other'
+
+
 @app.route('/api/param_study/upsert', methods=['POST'])
 def param_study_upsert_route():
     pm = get_project_manager_for_session()
@@ -13033,6 +13125,7 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                     "metadata": {
                         "resolved_backend_id": adapter_response.backend_id,
                         "provider_model": adapter_response.model,
+                        "_intermediate": True,  # Mark as intermediate turn (not final response)
                     },
                 }
                 if assistant_openai_tool_calls:
@@ -13223,7 +13316,11 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 if not assistant_parts and getattr(response, 'text', None):
                     assistant_parts = [{"text": response.text}]
                 
-                pm.chat_history.append({"role": response_role, "parts": assistant_parts})
+                pm.chat_history.append({
+                    "role": response_role, 
+                    "parts": assistant_parts,
+                    "metadata": {"_intermediate": True}  # Mark as intermediate turn
+                })
                 
                 tool_names = []
                 has_tool_call = False
@@ -13718,6 +13815,7 @@ def ai_chat_route():
                     "metadata": {
                         "resolved_backend_id": adapter_response.backend_id,
                         "provider_model": adapter_response.model,
+                        "_intermediate": True,  # Mark as intermediate turn (not final response)
                     },
                 }
                 if assistant_openai_tool_calls:
@@ -14064,6 +14162,7 @@ def ai_chat_route():
                 assistant_msg = {
                     "role": getattr(raw_assistant_msg, 'role', 'assistant'),
                     "content": getattr(raw_assistant_msg, 'content', ""),
+                    "metadata": {"_intermediate": True},  # Mark as intermediate turn
                 }
                 if hasattr(raw_assistant_msg, 'tool_calls') and raw_assistant_msg.tool_calls:
                     assistant_msg["tool_calls"] = [

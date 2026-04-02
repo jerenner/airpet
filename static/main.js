@@ -125,6 +125,10 @@ function ensureParamStudyEditorInit() {
         onObjectiveBuilderBuild: handleObjectiveBuilderBuild,
         onObjectiveBuilderUpsert: handleObjectiveBuilderUpsert,
         onObjectiveBuilderLaunch: handleObjectiveBuilderLaunch,
+        onGetGeometryState: handleWizardGetGeometryState,
+        onGetSimulationMetrics: handleWizardGetSimulationMetrics,
+        onUpsertParameter: handleParameterRegistrySave,
+        onUpsertParamStudy: handleParamStudySave,
     });
     paramStudyEditorInitialized = true;
 }
@@ -2717,6 +2721,22 @@ async function handleParamStudyApplyCandidate(studyName, values) {
         throw error;
     } finally {
         UIManager.hideLoading();
+    }
+}
+
+// --- Wizard Handlers ---
+
+function handleWizardGetGeometryState() {
+    return AppState.currentProjectState || {};
+}
+
+async function handleWizardGetSimulationMetrics() {
+    try {
+        const result = await APIService.getSimulationMetrics();
+        return result.metrics || [];
+    } catch (error) {
+        UIManager.showError('Failed to load simulation metrics: ' + error.message);
+        return [];
     }
 }
 

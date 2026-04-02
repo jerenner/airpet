@@ -1143,14 +1143,14 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "manage_particle_source",
-        "description": "Create or update a particle source (GPS commands, transform, activity, confinement). All gps_commands values must be strings with units (e.g., 'energy' -> '100 keV', 'particle' -> 'electron').",
+        "description": "Create or update a particle source (GPS commands, transform, activity, confinement). All gps_commands values must be strings with units. Energy format: use '100*keV' or '1*GeV' (with * operator). Defaults: particle='gamma', ang/type='Direction' (not 'Isotropic').",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["create", "update", "update_transform"]},
                 "source_id": {"type": "string", "description": "Required for update/update_transform."},
                 "name": {"type": "string"},
-                "gps_commands": {"type": "object", "description": "GPS commands as key-value pairs. ALL values must be strings with units. Examples: {'particle': 'electron', 'energy': '100 keV', 'pos/type': 'Point'}. Never use objects like {'value': 100, 'unit': 'keV'}."},
+                "gps_commands": {"type": "object", "description": "GPS commands as key-value pairs. ALL values must be strings. Use energy format '100*keV' or '1*GeV'. Examples: {'particle': 'gamma', 'energy': '511*keV', 'pos/type': 'Point', 'ang/type': 'Direction', 'ang/dir1': '0 0 1'}. Common particles: gamma, electron, positron, proton. Direction modes: 'Direction' (specify ang/dir1 vector) or 'Isotropic'."},
                 "position": {"type": "object"},
                 "rotation": {"type": "object"},
                 "activity": {"type": "number"},

@@ -308,6 +308,11 @@ export async function runParamStudy(name, maxRuns = null) {
     return handleResponse(response);
 }
 
+export async function getSimulationMetrics() {
+    const response = await fetch(`${API_BASE_URL}/api/param_study/simulation_metrics`);
+    return handleResponse(response);
+}
+
 export async function listParamOptimizerRuns(studyName = null, limit = 50) {
     const params = new URLSearchParams();
     if (studyName) params.set('study_name', studyName);

@@ -23,6 +23,22 @@ let obLoadExampleBtn, obValidateBtn, obBuildBtn, obUpsertBtn, obLaunchDryRunBtn,
 let obCopyOutputBtn, obCopyBuildBtn, obCopyLaunchBtn;
 let obStatusEl, obStageEl, obErrorsList, obWarningsList;
 
+// Wizard elements
+let wizardCard, wizardStep1, wizardStep2, wizardStep3;
+let wizardParamSearch, wizardAutoDetectBtn, wizardParamList, wizardSelectedCount;
+let wizardStep1NextBtn, wizardStep2BackBtn, wizardStep2NextBtn;
+let wizardStep3BackBtn, wizardCreateBtn, wizardPreviewBtn;
+let wizardPresetList, wizardMetricsList, wizardBudgetSlider, wizardBudgetValue, wizardSummary;
+
+// Wizard state
+let wizardState = {
+    step: 1,
+    selectedParams: new Map(), // paramName -> { min, max, current, object, field }
+    selectedMetrics: [], // { path, weight, direction, label }
+    budget: 20,
+    discoveredParams: [],
+};
+
 const ALLOWED_OBJECTIVE_METRICS = new Set([
     'success_flag',
     'solids_count',
@@ -126,16 +142,28 @@ function _setLegacyObjectivesVisible(visible) {
     if (legacyObjectivesToggleInput) legacyObjectivesToggleInput.checked = !!visible;
 }
 
-function _setParamStudiesViewMode(mode = 'basic') {
-    const normalized = String(mode || 'basic').toLowerCase() === 'advanced' ? 'advanced' : 'basic';
-    if (viewModeInput && viewModeInput.value !== normalized) {
-        viewModeInput.value = normalized;
+function _setParamStudiesViewMode(mode = 'wizard') {
+    const normalized = String(mode || 'wizard').toLowerCase();
+    const validModes = ['wizard', 'basic', 'advanced'];
+    const finalMode = validModes.includes(normalized) ? normalized : 'wizard';
+    const currentMode = viewModeInput?.value || 'wizard';
+    
+    if (viewModeInput && viewModeInput.value !== finalMode) {
+        viewModeInput.value = finalMode;
     }
     if (!modal) return;
 
-    const advancedEls = modal.querySelectorAll('[data-ps-view="advanced"]');
-    advancedEls.forEach((el) => {
-        el.hidden = normalized !== 'advanced';
+    // Clear wizard state when leaving wizard mode (optional - gives clean slate)
+    if (currentMode === 'wizard' && finalMode !== 'wizard') {
+        // Don't clear - keep wizard state in case user wants to go back
+    }
+    
+    // Handle elements with data-ps-view attribute (can be comma-separated)
+    const allViewEls = modal.querySelectorAll('[data-ps-view]');
+    allViewEls.forEach((el) => {
+        const viewAttr = el.getAttribute('data-ps-view');
+        const views = viewAttr.split(',').map(v => v.trim());
+        el.hidden = !views.includes(finalMode);
     });
 }
 
@@ -2612,6 +2640,27 @@ export function init(newCallbacks = {}) {
     viewModeInput = document.getElementById('ps_view_mode');
     tableBody = document.getElementById('paramStudiesTableBody');
 
+    // Wizard elements
+    wizardCard = document.getElementById('psWizardCard');
+    wizardStep1 = document.getElementById('psWizardStep1');
+    wizardStep2 = document.getElementById('psWizardStep2');
+    wizardStep3 = document.getElementById('psWizardStep3');
+    wizardParamSearch = document.getElementById('psWizardParamSearch');
+    wizardAutoDetectBtn = document.getElementById('psWizardAutoDetectBtn');
+    wizardParamList = document.getElementById('psWizardParamList');
+    wizardSelectedCount = document.getElementById('psWizardSelectedCount');
+    wizardStep1NextBtn = document.getElementById('psWizardStep1NextBtn');
+    wizardStep2BackBtn = document.getElementById('psWizardStep2BackBtn');
+    wizardStep2NextBtn = document.getElementById('psWizardStep2NextBtn');
+    wizardStep3BackBtn = document.getElementById('psWizardStep3BackBtn');
+    wizardCreateBtn = document.getElementById('psWizardCreateBtn');
+    wizardPreviewBtn = document.getElementById('psWizardPreviewBtn');
+    wizardPresetList = document.getElementById('psWizardPresetList');
+    wizardMetricsList = document.getElementById('psWizardMetricsList');
+    wizardBudgetSlider = document.getElementById('psWizardBudgetSlider');
+    wizardBudgetValue = document.getElementById('psWizardBudgetValue');
+    wizardSummary = document.getElementById('psWizardSummary');
+
     nameInput = document.getElementById('ps_name');
     modeInput = document.getElementById('ps_mode');
     paramPickerInput = document.getElementById('ps_param_picker');
@@ -2757,6 +2806,22 @@ export function init(newCallbacks = {}) {
             _setParamStudiesViewMode(viewModeInput.value);
         });
     }
+
+    // Wizard event handlers
+    if (wizardAutoDetectBtn) wizardAutoDetectBtn.addEventListener('click', _wizardAutoDetectParams);
+    if (wizardParamSearch) wizardParamSearch.addEventListener('input', _filterWizardParams);
+    if (wizardStep1NextBtn) wizardStep1NextBtn.addEventListener('click', () => _wizardGoToStep(2));
+    if (wizardStep2BackBtn) wizardStep2BackBtn.addEventListener('click', () => _wizardGoToStep(1));
+    if (wizardStep2NextBtn) wizardStep2NextBtn.addEventListener('click', () => _wizardGoToStep(3));
+    if (wizardStep3BackBtn) wizardStep3BackBtn.addEventListener('click', () => _wizardGoToStep(2));
+    if (wizardCreateBtn) wizardCreateBtn.addEventListener('click', _wizardCreateStudy);
+    if (wizardPreviewBtn) wizardPreviewBtn.addEventListener('click', _wizardPreviewInBasic);
+    if (wizardBudgetSlider) wizardBudgetSlider.addEventListener('input', _updateWizardBudget);
+    if (wizardPresetList) wizardPresetList.addEventListener('click', (e) => {
+        if (e.target.classList.contains('ps-wizard-preset-btn')) {
+            _wizardSelectPreset(e.target.dataset.preset);
+        }
+    });
 
     if (paramsInput) {
         const ev = paramsInput.tagName === 'SELECT' ? 'change' : 'input';
@@ -2951,3 +3016,508 @@ export function hide() {
     _resetRollbackConfirmation();
     _showNotice('', 'info', 0);
 }
+
+// ============================================
+// WIZARD FUNCTIONS
+// ============================================
+
+function _wizardGoToStep(step) {
+    wizardState.step = step;
+    
+    // Hide all steps
+    wizardStep1.style.display = 'none';
+    wizardStep2.style.display = 'none';
+    wizardStep3.style.display = 'none';
+    
+    // Show current step
+    if (step === 1) wizardStep1.style.display = 'block';
+    else if (step === 2) wizardStep2.style.display = 'block';
+    else if (step === 3) {
+        wizardStep3.style.display = 'block';
+        _updateWizardSummary();
+    }
+}
+
+async function _wizardAutoDetectParams() {
+    wizardAutoDetectBtn.disabled = true;
+    wizardAutoDetectBtn.textContent = 'Detecting...';
+    
+    try {
+        // Get all solids and sources from geometry
+        const geometry = await callbacks.onGetGeometryState?.();
+        if (!geometry) {
+            wizardParamList.innerHTML = '<div style="color: #dc2626; font-size: 12px;">No geometry found. Please create some objects first.</div>';
+            return;
+        }
+        
+        const discovered = [];
+        
+        // Extract parameters from solids
+        for (const [name, solid] of Object.entries(geometry.solids || {})) {
+            const params = solid.raw_parameters || {};
+            
+            // Look for dimensional parameters
+            for (const [key, value] of Object.entries(params)) {
+                if (typeof value === 'number' && !key.startsWith('_')) {
+                    discovered.push({
+                        name: `${name}.${key}`,
+                        object: name,
+                        objectType: 'solid',
+                        field: key,
+                        current: value,
+                        min: value * 0.5,
+                        max: value * 2.0,
+                        hint: `${key} of ${name}`
+                    });
+                }
+            }
+        }
+        
+        // Extract parameters from sources
+        for (const [name, source] of Object.entries(geometry.sentence_sources || {})) {
+            const params = source.raw_parameters || {};
+            
+            for (const [key, value] of Object.entries(params)) {
+                if (typeof value === 'number' && !key.startsWith('_')) {
+                    discovered.push({
+                        name: `${name}.${key}`,
+                        object: name,
+                        objectType: 'source',
+                        field: key,
+                        current: value,
+                        min: value * 0.1,
+                        max: value * 10.0,
+                        hint: `${key} of ${name}`
+                    });
+                }
+            }
+        }
+        
+        // Extract from placements (positions/orientations)
+        for (const [name, lv] of Object.entries(geometry.logical_volumes || {})) {
+            for (const placement of lv.content || []) {
+                if (placement.translation) {
+                    for (const [axis, value] of Object.entries(placement.translation)) {
+                        if (typeof value === 'number') {
+                            discovered.push({
+                                name: `${name}_${placement.child_lv}.${axis}`,
+                                object: `${name}/${placement.child_lv}`,
+                                objectType: 'placement',
+                                field: `${axis}_position`,
+                                current: value,
+                                min: value - 100,
+                                max: value + 100,
+                                hint: `${axis} position of ${placement.child_lv}`
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        wizardState.discoveredParams = discovered;
+        _renderWizardParamList(discovered);
+        
+    } catch (err) {
+        console.error('Wizard auto-detect error:', err);
+        wizardParamList.innerHTML = `<div style="color: #dc2626; font-size: 12px;">Error detecting parameters: ${err.message}</div>`;
+    } finally {
+        wizardAutoDetectBtn.disabled = false;
+        wizardAutoDetectBtn.textContent = 'Auto-Detect';
+    }
+}
+
+function _renderWizardParamList(params) {
+    if (params.length === 0) {
+        wizardParamList.innerHTML = '<div style="color: #64748b; font-size: 12px;">No optimizable parameters found.</div>';
+        _updateWizardStep1NextButton();
+        return;
+    }
+    
+    const html = params.map(p => `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 6px; border-bottom: 1px solid #f1f5f9;">
+            <input type="checkbox" id="psWizardParam_${p.name}" data-param="${p.name}" 
+                   style="cursor: pointer;">
+            <label for="psWizardParam_${p.name}" style="flex: 1; font-size: 12px; cursor: pointer;">
+                <strong>${p.hint}</strong>
+                <div style="color: #64748b; font-size: 11px;">
+                    Current: ${p.current.toFixed(3)} | Range: ${p.min.toFixed(3)} - ${p.max.toFixed(3)}
+                </div>
+            </label>
+        </div>
+    `).join('');
+    
+    wizardParamList.innerHTML = html;
+    
+    // Add click handlers
+    wizardParamList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', _handleWizardParamToggle);
+    });
+    
+    _updateWizardStep1NextButton();
+}
+
+function _handleWizardParamToggle(e) {
+    const paramName = e.target.dataset.param;
+    const param = wizardState.discoveredParams.find(p => p.name === paramName);
+    
+    if (e.target.checked && param) {
+        wizardState.selectedParams.set(paramName, param);
+    } else {
+        wizardState.selectedParams.delete(paramName);
+    }
+    
+    _updateWizardStep1NextButton();
+}
+
+function _updateWizardStep1NextButton() {
+    const count = wizardState.selectedParams.size;
+    wizardSelectedCount.textContent = `${count} parameter${count !== 1 ? 's' : ''} selected`;
+    wizardStep1NextBtn.disabled = count === 0;
+    wizardStep1NextBtn.style.cursor = count === 0 ? 'not-allowed' : 'pointer';
+    wizardStep1NextBtn.style.background = count === 0 ? '#cbd5e1' : '#3b82f6';
+}
+
+function _filterWizardParams() {
+    const query = wizardParamSearch.value.toLowerCase();
+    const checkboxes = wizardParamList.querySelectorAll('input[type="checkbox"]');
+    
+    checkboxes.forEach(cb => {
+        const label = cb.parentElement.querySelector('label');
+        const text = label.textContent.toLowerCase();
+        cb.parentElement.style.display = text.includes(query) ? 'flex' : 'none';
+    });
+}
+
+function _wizardSelectPreset(preset) {
+    wizardState.selectedMetrics = [];
+    
+    switch (preset) {
+        case 'maximize_edep':
+            wizardState.selectedMetrics = [
+                { path: 'default_ntuples/Hits/Edep', weight: 1.0, direction: 'maximize', label: 'Total Energy Deposition', reduce: 'sum' }
+            ];
+            break;
+        case 'minimize_thickness':
+            wizardState.selectedMetrics = [
+                { path: 'geometry/solid_thickness', weight: 1.0, direction: 'minimize', label: 'Detector Thickness', reduce: 'mean' }
+            ];
+            break;
+        case 'maximize_hits':
+            wizardState.selectedMetrics = [
+                { path: 'default_ntuples/Hits/Count', weight: 1.0, direction: 'maximize', label: 'Total Hit Count', reduce: 'sum' }
+            ];
+            break;
+        case 'browse_metrics':
+            _wizardBrowseMetrics();
+            return; // Don't update UI yet
+        default:
+            return;
+    }
+    
+    _renderWizardMetricsList();
+    _updateWizardStep2NextButton();
+}
+
+async function _wizardBrowseMetrics() {
+    wizardMetricsList.innerHTML = '<div style="color: #3b82f6; font-size: 12px;">Loading available metrics...</div>';
+    
+    try {
+        const metrics = await callbacks.onGetSimulationMetrics?.();
+        _renderWizardMetricsBrowser(metrics || []);
+    } catch (err) {
+        console.error('Wizard browse metrics error:', err);
+        wizardMetricsList.innerHTML = `<div style="color: #dc2626; font-size: 12px;">Error loading metrics: ${err.message}</div>`;
+    }
+}
+
+function _renderWizardMetricsBrowser(metrics) {
+    if (metrics.length === 0) {
+        wizardMetricsList.innerHTML = `
+            <div style="color: #64748b; font-size: 12px;">
+                No simulation data found. Run a simulation first to see available metrics.
+                <br><br>
+                Or use a preset above to get started.
+            </div>
+        `;
+        return;
+    }
+    
+    const html = `
+        <div style="max-height: 200px; overflow-y: auto;">
+            ${metrics.map(m => `
+                <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f1f5f9;">
+                    <button type="button" 
+                            onclick="window.addWizardMetric('${m.path}', '${m.label || m.path}')"
+                            style="padding: 4px 8px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 3px; cursor: pointer; font-size: 11px; flex: 1; text-align: left;">
+                        ${m.label || m.path}
+                    </button>
+                    <select onchange="window.setWizardMetricDirection(this, '${m.path}')" 
+                            style="padding: 2px; font-size: 11px; border-radius: 3px;">
+                        <option value="maximize">Maximize</option>
+                        <option value="minimize">Minimize</option>
+                    </select>
+                </div>
+            `).join('')}
+        </div>
+        <div style="margin-top: 8px; display: flex; gap: 6px;">
+            <button type="button" onclick="window.closeWizardMetricsBrowser()" 
+                    style="padding: 4px 8px; background: #e2e8f0; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;">Done</button>
+        </div>
+    `;
+    
+    wizardMetricsList.innerHTML = html;
+}
+
+function _renderWizardMetricsList() {
+    if (wizardState.selectedMetrics.length === 0) {
+        wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">No metrics selected.</div>';
+        _updateWizardStep2NextButton();
+        return;
+    }
+    
+    const html = wizardState.selectedMetrics.map((m, i) => `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 4px 0;">
+            <span style="flex: 1; font-size: 12px;">${m.label || m.path}</span>
+            <select onchange="window.updateWizardMetricDirection(${i}, this.value)" 
+                    style="padding: 2px; font-size: 11px; border-radius: 3px; width: 90px;">
+                <option value="maximize" ${m.direction === 'maximize' ? 'selected' : ''}>Maximize</option>
+                <option value="minimize" ${m.direction === 'minimize' ? 'selected' : ''}>Minimize</option>
+            </select>
+            <input type="number" step="0.1" min="0.1" max="1.0" value="${m.weight}" 
+                   onchange="window.updateWizardMetricWeight(${i}, this.value)"
+                   style="width: 60px; padding: 2px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 3px;">
+            <button type="button" onclick="window.removeWizardMetric(${i})" 
+                    style="padding: 2px 6px; background: #fecaca; border: none; border-radius: 3px; cursor: pointer; color: #dc2626; font-size: 11px;">×</button>
+        </div>
+    `).join('');
+    
+    wizardMetricsList.innerHTML = html;
+    _updateWizardStep2NextButton();
+}
+
+function _updateWizardStep2NextButton() {
+    const hasMetrics = wizardState.selectedMetrics.length > 0;
+    wizardStep2NextBtn.disabled = !hasMetrics;
+    wizardStep2NextBtn.style.cursor = hasMetrics ? 'pointer' : 'not-allowed';
+    wizardStep2NextBtn.style.background = hasMetrics ? '#3b82f6' : '#cbd5e1';
+}
+
+function _updateWizardBudget() {
+    wizardState.budget = parseInt(wizardBudgetSlider.value);
+    wizardBudgetValue.textContent = wizardState.budget;
+}
+
+function _updateWizardSummary() {
+    const params = Array.from(wizardState.selectedParams.values());
+    const metrics = wizardState.selectedMetrics;
+    
+    const html = `
+        <div style="margin-bottom: 4px;"><strong>Parameters:</strong> ${params.length} (${params.map(p => p.hint).join(', ').substring(0, 60)}${params.length > 2 ? '...' : ''})</div>
+        <div style="margin-bottom: 4px;"><strong>Objectives:</strong> ${metrics.map(m => `${m.direction === 'maximize' ? '↑' : '↓'} ${m.label}`).join(', ')}</div>
+        <div><strong>Budget:</strong> ${wizardState.budget} evaluations</div>
+    `;
+    
+    wizardSummary.innerHTML = html;
+}
+
+async function _wizardCreateStudy() {
+    wizardCreateBtn.disabled = true;
+    wizardCreateBtn.textContent = 'Creating...';
+    
+    try {
+        const params = Array.from(wizardState.selectedParams.values());
+        const studyName = `opt_${Date.now()}`;
+        
+        // Build parameter study payload
+        const studyPayload = {
+            mode: 'random',
+            parameters: params.map(p => p.name),
+            samples: wizardState.budget,
+            seed: 42,
+            objectives: wizardState.selectedMetrics.map(m => ({
+                metric: m.path,
+                name: m.label || m.path,
+                direction: m.direction,
+                reduce: m.reduce || 'sum'
+            }))
+        };
+        
+        // Register parameters first
+        for (const p of params) {
+            await callbacks.onUpsertParameter?.(p.name, {
+                target_type: p.objectType,
+                target_ref: p.object,
+                bounds: { min: p.min, max: p.max },
+                default: p.current,
+                units: '',
+                enabled: true
+            });
+        }
+        
+        // Sync wizard state to legacy form
+        _syncWizardToLegacyForm(studyName, studyPayload);
+        
+        // Create the study
+        const result = await callbacks.onUpsertParamStudy?.(studyName, studyPayload);
+        
+        if (result && result.success) {
+            _showNotice('Optimization study created successfully! Switch to Basic/Advanced view to see details.', 'success', 6000);
+            // Switch to basic view to show the form
+            setTimeout(() => {
+                if (viewModeInput) viewModeInput.value = 'basic';
+                _setParamStudiesViewMode('basic');
+            }, 1000);
+            // Refresh the table
+            await callbacks.onRefresh?.();
+        } else {
+            _showNotice(`Failed to create study: ${result?.error || 'Unknown error'}`, 'error', 5000);
+        }
+        
+    } catch (err) {
+        console.error('Wizard create study error:', err);
+        _showNotice(`Error creating study: ${err.message}`, 'error', 5000);
+    } finally {
+        wizardCreateBtn.disabled = false;
+        wizardCreateBtn.textContent = '🚀 Create & Run';
+    }
+}
+
+function _syncWizardToLegacyForm(studyName, studyPayload) {
+    // Populate name field
+    if (nameInput) nameInput.value = studyName;
+    
+    // Populate mode field
+    if (modeInput) modeInput.value = studyPayload.mode;
+    
+    // Populate parameters
+    if (paramsInput && studyPayload.parameters) {
+        if (paramsInput.tagName === 'SELECT') {
+            // For select, we need to rebuild options
+            paramsInput.innerHTML = '';
+            studyPayload.parameters.forEach(paramName => {
+                const option = document.createElement('option');
+                option.value = paramName;
+                option.textContent = paramName;
+                option.selected = true;
+                paramsInput.appendChild(option);
+            });
+        } else {
+            paramsInput.value = studyPayload.parameters.join(', ');
+        }
+    }
+    
+    // Populate samples/budget
+    if (samplesInput && studyPayload.samples) {
+        samplesInput.value = studyPayload.samples;
+    }
+    
+    // Sync objectives to objective builder if available
+    if (studyPayload.objectives && studyPayload.objectives.length > 0) {
+        // Build a formula from objectives for the objective builder
+        const objectiveNames = studyPayload.objectives.map((obj, idx) => {
+            const dir = obj.direction === 'minimize' ? '-' : '';
+            const weight = obj.reduce || 'sum';
+            return `${dir}${weight}(${obj.metric})`;
+        }).join(' + ');
+        
+        if (obFormulaInput) {
+            obFormulaInput.value = objectiveNames;
+        }
+    }
+}
+
+function _clearWizardState() {
+    wizardState = {
+        step: 1,
+        selectedParams: new Map(),
+        selectedMetrics: [],
+        budget: 20,
+        discoveredParams: [],
+    };
+    if (wizardStep1) wizardStep1.style.display = 'block';
+    if (wizardStep2) wizardStep2.style.display = 'none';
+    if (wizardStep3) wizardStep3.style.display = 'none';
+    if (wizardParamList) wizardParamList.innerHTML = '<div style="color: #64748b; font-size: 12px;">Click "Auto-Detect" to discover optimizable parameters from your geometry.</div>';
+    if (wizardMetricsList) wizardMetricsList.innerHTML = '<div style="color: #94a3b8; font-size: 12px;">Select a preset or browse metrics to get started.</div>';
+    if (wizardSelectedCount) wizardSelectedCount.textContent = '0 parameters selected';
+    if (wizardStep1NextBtn) { wizardStep1NextBtn.disabled = true; wizardStep1NextBtn.style.cursor = 'not-allowed'; }
+    if (wizardStep2NextBtn) { wizardStep2NextBtn.disabled = true; wizardStep2NextBtn.style.cursor = 'not-allowed'; }
+    if (wizardBudgetSlider) wizardBudgetSlider.value = 20;
+    if (wizardBudgetValue) wizardBudgetValue.textContent = '20';
+    if (wizardSummary) wizardSummary.innerHTML = '';
+}
+
+function _wizardPreviewInBasic() {
+    // Build a temporary study payload to preview
+    const params = Array.from(wizardState.selectedParams.values());
+    if (params.length === 0) {
+        _showNotice('Select at least one parameter first!', 'error', 3000);
+        return;
+    }
+    
+    const studyPayload = {
+        mode: 'random',
+        parameters: params.map(p => p.name),
+        samples: wizardState.budget,
+        objectives: wizardState.selectedMetrics.map(m => ({
+            metric: m.path,
+            name: m.label || m.path,
+            direction: m.direction,
+            reduce: m.reduce || 'sum'
+        }))
+    };
+    
+    // Sync to form
+    _syncWizardToLegacyForm(`preview_${Date.now()}`, studyPayload);
+    
+    // Switch to basic view
+    if (viewModeInput) viewModeInput.value = 'basic';
+    _setParamStudiesViewMode('basic');
+    
+    _showNotice('Preview shown in Basic view. You can edit fields or switch back to Wizard.', 'success', 4000);
+}
+
+// Global functions for onclick handlers
+window.addWizardMetric = function(path, label) {
+    // Check if already added
+    if (wizardState.selectedMetrics.some(m => m.path === path)) return;
+    
+    wizardState.selectedMetrics.push({
+        path,
+        label,
+        weight: 1.0,
+        direction: 'maximize',
+        reduce: 'sum'
+    });
+    
+    _renderWizardMetricsList();
+};
+
+window.setWizardMetricDirection = function(select, path) {
+    const metric = wizardState.selectedMetrics.find(m => m.path === path);
+    if (metric) {
+        metric.direction = select.value;
+    }
+};
+
+window.closeWizardMetricsBrowser = function() {
+    _renderWizardMetricsList();
+};
+
+window.updateWizardMetricDirection = function(index, direction) {
+    if (wizardState.selectedMetrics[index]) {
+        wizardState.selectedMetrics[index].direction = direction;
+    }
+};
+
+window.updateWizardMetricWeight = function(index, weight) {
+    if (wizardState.selectedMetrics[index]) {
+        wizardState.selectedMetrics[index].weight = parseFloat(weight);
+    }
+};
+
+window.removeWizardMetric = function(index) {
+    wizardState.selectedMetrics.splice(index, 1);
+    _renderWizardMetricsList();
+};

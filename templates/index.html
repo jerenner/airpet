@@ -695,12 +695,69 @@
             gap: 4px;
         }
 
-        .chat-message.thinking-indicator .tool-entry {
-            padding: 4px 8px;
+          .chat-message.thinking-indicator .tool-entry {
             background-color: rgba(255, 193, 7, 0.2);
             border-radius: 4px;
             font-size: 12px;
             border-left: 2px solid #ffc107;
+        }
+
+        .chat-message.thinking-dropdown {
+            align-self: flex-start;
+            background-color: #fffbeb;
+            border: 1px solid #f59e0b;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 4px;
+            max-width: 85%;
+        }
+
+        .thinking-toggle {
+            width: 100%;
+            background-color: #fffbeb;
+            border: none;
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #92400e;
+            cursor: pointer;
+            text-align: left;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background-color 0.2s;
+        }
+
+        .thinking-toggle:hover {
+            background-color: #fef3c7;
+        }
+
+        .thinking-content {
+            padding: 10px 14px 14px;
+            background-color: #fef3c7;
+            border-top: 1px solid #f59e0b;
+        }
+
+        .thinking-step {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            background-color: #fff;
+            border-radius: 8px;
+            border-left: 3px solid #f59e0b;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .thinking-step:last-child {
+            margin-bottom: 0;
+        }
+
+        .thinking-tools {
+            margin-top: 8px;
+            padding: 6px 10px;
+            background-color: rgba(0, 0, 0, 0.05);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #666;
         }
 
         .chat-message.markdown-content {
@@ -1273,6 +1330,9 @@
             grid-template-columns: 1fr 1fr;
             gap: 8px 10px;
         }
+        .pr-form-grid[hidden] {
+            display: none !important;
+        }
         .pr-form-grid .property_item {
             margin: 0;
         }
@@ -1720,6 +1780,13 @@
             white-space: nowrap;
             display: inline-flex;
             align-items: center;
+        }
+
+        /* View mode visibility */
+        #psWizardCard[hidden],
+        #psLegacyForm[hidden] {
+            display: none !important;
+        }
             justify-content: center;
             box-sizing: border-box;
             padding: 0 10px;
@@ -2722,11 +2789,12 @@
             <div class="modal-body" style="flex-direction: column;">
                 <div id="psNotice" style="display:none; margin: 0 0 8px 0; padding: 8px 10px; border-radius: 4px; font-size: 12px;"></div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; padding:8px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px;">
-                    <div style="font-size:12px; color:#334155;"><b>View mode:</b> Basic keeps the core study flow visible. Switch to Advanced for diagnostics and optimizer internals.</div>
+                    <div style="font-size:12px; color:#334155;"><b>View mode:</b> Wizard for guided setup, Basic for manual control, Advanced for diagnostics.</div>
                     <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                         <label for="ps_view_mode" style="margin:0; font-size:12px; color:#334155;">Mode</label>
                         <select id="ps_view_mode">
-                            <option value="basic" selected>Basic</option>
+                            <option value="wizard" selected>✨ Wizard</option>
+                            <option value="basic">Basic</option>
                             <option value="advanced">Advanced</option>
                         </select>
                     </div>
@@ -2744,7 +2812,98 @@
                     </table>
                 </div>
 
-                <div class="pr-form-grid">
+                <!-- Optimization Wizard (Wizard Mode Only) -->
+                <div id="psWizardCard" data-ps-view="wizard" style="margin-top: 10px; border: 2px solid #3b82f6; border-radius: 8px; padding: 16px; background: #eff6ff;">
+                    <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; color: #1e40af;">
+                        <span style="display: inline-block; width: 28px; height: 28px; background: #3b82f6; color: white; border-radius: 50%; text-align: center; line-height: 28px; margin-right: 8px;">✨</span>
+                        Optimization Wizard
+                    </div>
+                    
+                    <!-- Step 1: Select Parameters -->
+                    <div id="psWizardStep1">
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 1: What to optimize?</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Select parameters from your geometry to vary during optimization.</div>
+                        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <input type="text" id="psWizardParamSearch" placeholder="Search parameters..." style="flex: 1; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <button id="psWizardAutoDetectBtn" type="button" style="padding: 6px 12px; background: #22c55e; color: white; border: none; border-radius: 4px; cursor: pointer;">Auto-Detect</button>
+                        </div>
+                        <div id="psWizardParamList" style="max-height: 180px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: white; margin-bottom: 8px;">
+                            <div style="color: #64748b; font-size: 12px;">Click "Auto-Detect" to discover optimizable parameters from your geometry.</div>
+                        </div>
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <div id="psWizardSelectedCount" style="font-size: 12px; color: #64748b; align-self: center;">0 parameters selected</div>
+                            <button id="psWizardStep1NextBtn" type="button" disabled style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: not-allowed;">Next →</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Define Success -->
+                    <div id="psWizardStep2" style="display: none;">
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 2: What's success?</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 8px;">Choose what to optimize for. Start with a preset or browse simulation data.</div>
+                        
+                        <!-- Preset Templates -->
+                        <div style="margin-bottom: 12px;">
+                            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px;">Quick Presets:</div>
+                            <div id="psWizardPresetList" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="maximize_edep" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">🎯 Maximize Energy Deposition</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="minimize_thickness" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">📏 Minimize Thickness</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="maximize_hits" style="padding: 6px 12px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; font-size: 12px;">🔴 Maximize Hit Count</button>
+                                <button type="button" class="ps-wizard-preset-btn" data-preset="browse_metrics" style="padding: 6px 12px; background: #f1f5f9; border: 1px solid #94a3b8; border-radius: 4px; cursor: pointer; font-size: 12px;">📊 Browse All Metrics</button>
+                            </div>
+                        </div>
+
+                        <!-- Selected Metrics -->
+                        <div style="border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: white; margin-bottom: 8px;">
+                            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 6px;">Optimization Goals:</div>
+                            <div id="psWizardMetricsList" style="min-height: 60px;">
+                                <div style="color: #94a3b8; font-size: 12px;">Select a preset or browse metrics to get started.</div>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 8px; justify-content: space-between;">
+                            <button id="psWizardStep2BackBtn" type="button" style="padding: 8px 16px; background: #e2e8f0; color: #334155; border: none; border-radius: 4px; cursor: pointer;">← Back</button>
+                            <button id="psWizardStep2NextBtn" type="button" disabled style="padding: 8px 16px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: not-allowed;">Next →</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Set Budget -->
+                    <div id="psWizardStep3" style="display: none;">
+                        <div style="font-weight: 600; margin-bottom: 8px; color: #334155;">Step 3: How thorough?</div>
+                        <div style="font-size: 12px; color: #64748b; margin-bottom: 12px;">More evaluations = better results but longer runtime.</div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                                <label for="psWizardBudgetSlider" style="font-size: 12px; color: #475569;">Number of evaluations</label>
+                                <span id="psWizardBudgetValue" style="font-weight: 600; color: #3b82f6;">20</span>
+                            </div>
+                            <input type="range" id="psWizardBudgetSlider" min="10" max="100" value="20" step="5" style="width: 100%;">
+                            <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: #64748b;">
+                                <span>Quick (10)</span>
+                                <span>Balanced (50)</span>
+                                <span>Thorough (100)</span>
+                            </div>
+                        </div>
+
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; margin-bottom: 12px;">
+                            <div style="font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 4px;">Summary:</div>
+                            <div id="psWizardSummary" style="font-size: 12px; color: #334155;"></div>
+                        </div>
+
+                        <div style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
+                            <button id="psWizardStep3BackBtn" type="button" style="padding: 8px 16px; background: #e2e8f0; color: #334155; border: none; border-radius: 4px; cursor: pointer;">← Back</button>
+                            <div style="display: flex; gap: 8px;">
+                                <button id="psWizardPreviewBtn" type="button" style="padding: 8px 16px; background: #8b5cf6; color: white; border: none; border-radius: 4px; cursor: pointer;">👁️ Preview in Basic</button>
+                                <button id="psWizardCreateBtn" type="button" style="padding: 8px 16px; background: #22c55e; color: white; border: none; border-radius: 4px; cursor: pointer;">🚀 Create & Run</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Legacy Form (Basic and Advanced Mode) -->
+                <div class="pr-form-grid" id="psLegacyForm" data-ps-view="basic,advanced">
+                    <div class="property_item" style="grid-column: 1 / span 2; padding: 8px; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 4px; font-size: 12px; color: #92400e;">
+                        <b>💡 Tip:</b> Use the <b>Wizard</b> view for guided optimization setup, or fill in these fields manually for more control.
+                    </div>
                     <div class="property_item">
                         <label for="ps_name">Name:</label>
                         <input type="text" id="ps_name" placeholder="e.g. sweep_v1">
