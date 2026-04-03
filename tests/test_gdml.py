@@ -134,3 +134,53 @@ def test_gdml_material_density_units_round_trip(value, unit, expected_density_ex
     gdml_str = writer.get_gdml_string()
 
     assert f'<D value="{expected_export_value}" unit="g/cm3"/>' in gdml_str
+
+
+def test_parameterised_trd_dimensions_are_mapped_on_import():
+    gdml = """<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <solids>
+    <box name="world_solid" x="100" y="100" z="100" lunit="mm"/>
+    <trd name="trd_solid" x1="1" x2="2" y1="3" y2="4" z="5" lunit="mm"/>
+  </solids>
+  <structure>
+    <volume name="child_lv">
+      <materialref ref="G4_Si"/>
+      <solidref ref="trd_solid"/>
+    </volume>
+    <volume name="world_lv">
+      <materialref ref="G4_Galactic"/>
+      <solidref ref="world_solid"/>
+      <paramvol name="trd_param" ncopies="1">
+        <volumeref ref="child_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <trd_dimensions x1="1.1" x2="2.2" y1="3.3" y2="4.4" z="5.5" lunit="mm"/>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+  </structure>
+  <setup>
+    <world ref="world_lv"/>
+  </setup>
+</gdml>
+"""
+
+    parser = GDMLParser()
+    state = parser.parse_gdml_string(gdml)
+
+    param_vol = state.logical_volumes["world_lv"].content
+    assert param_vol.type == "parameterised"
+    assert param_vol.volume_ref == "child_lv"
+    assert len(param_vol.parameters) == 1
+
+    param_set = param_vol.parameters[0]
+    assert param_set.dimensions_type == "trd_dimensions"
+    assert param_set.dimensions == {
+        "x1": "1.1",
+        "x2": "2.2",
+        "y1": "3.3",
+        "y2": "4.4",
+        "z": "5.5",
+    }

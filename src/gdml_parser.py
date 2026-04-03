@@ -1078,8 +1078,8 @@ class GDMLParser:
                 'rmin1': 'rmin1', 'rmax1': 'rmax1', 'rmin2': 'rmin2', 'rmax2': 'rmax2',
                 'z': 'z', 'startphi': 'startphi', 'deltaphi': 'deltaphi'
             },
+            'trd_dimensions': {'x1': 'x1', 'x2': 'x2', 'y1': 'y1', 'y2': 'y2', 'z': 'z'},
             # ... Add mappings for other supported parameterised solids here as needed ...
-            # e.g., 'trd_dimensions': {'x1': 'x1', 'x2': 'x2', ...}
         }
 
         name = param_el.get('name', f"param_{uuid.uuid4().hex[:6]}")
