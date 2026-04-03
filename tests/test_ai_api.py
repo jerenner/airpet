@@ -5006,6 +5006,58 @@ def test_run_g4_simulation_preserves_save_hits_and_passes_sim_params_to_geant4_e
     assert "/g4pet/run/saveParticles true" in written_macro
 
 
+def test_ai_and_http_run_simulation_share_advanced_option_payload(pm, tmp_path):
+    advanced_sim_params = {
+        "events": 250,
+        "threads": 4,
+        "production_cut": "0.5 mm",
+        "hit_energy_threshold": "20 eV",
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "save_tracks_range": "3-7",
+        "seed1": 11,
+        "seed2": 22,
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+    }
+
+    version_dir = tmp_path / "version_ai_http_run"
+    version_dir.mkdir()
+    pm.current_version_id = "version-kept"
+    pm.is_changed = False
+
+    with patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True, "issue_count": 0}, "issues": []}), \
+         patch.object(pm, "_get_version_dir", return_value=str(version_dir)), \
+         patch.object(pm, "generate_macro_file", return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as mock_generate, \
+         patch("threading.Thread") as MockThread:
+        MockThread.return_value.start.return_value = None
+        ai_res = dispatch_ai_tool(pm, "run_simulation", advanced_sim_params)
+
+    assert ai_res["success"], ai_res
+    ai_sim_params = mock_generate.call_args.args[1]
+    assert ai_sim_params == advanced_sim_params
+    assert MockThread.call_count == 1
+
+    with patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True, "issue_count": 0}, "issues": []}), \
+         patch.object(pm, "_get_version_dir", return_value=str(version_dir)), \
+         patch.object(pm, "generate_macro_file", return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as mock_generate, \
+         patch("threading.Thread") as MockThread, \
+         patch("app.os.path.exists", return_value=True), \
+         patch("app.get_project_manager_for_session", return_value=pm):
+        MockThread.return_value.start.return_value = None
+        with flask_app.test_client() as client:
+            http_res = client.post("/api/simulation/run", json=advanced_sim_params)
+
+    assert http_res.status_code == 200, http_res.get_json()
+    assert http_res.get_json()["success"] is True
+    http_sim_params = mock_generate.call_args.args[1]
+    assert http_sim_params == advanced_sim_params
+    assert http_sim_params == ai_sim_params
+    assert MockThread.call_count == 1
+
+
 def test_ai_tool_get_simulation_status_supports_since_cursor(pm):
     from app import SIMULATION_STATUS, SIMULATION_LOCK
 
@@ -6210,6 +6262,56 @@ def test_simulation_analysis_route_filters_by_sensitive_detector(pm, tmp_path):
     assert data['analysis']['filtering']['available_sensitive_detectors'] == ['SD_A', 'SD_B']
     assert data['analysis']['filtering']['selected_sensitive_detector'] == 'SD_B'
     assert sum(data['analysis']['energy_spectrum']['counts']) == 2
+
+
+def test_ai_and_http_simulation_analysis_share_sensitive_detector_filter(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_filter_parity_project"
+
+    version_id, _ = pm.save_project_version("analysis_filter_parity_case")
+    job_id = "analysis-filter-parity-job"
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_path = run_dir / "output.hdf5"
+
+    with h5py.File(output_path, 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=4)
+        hits.create_dataset('Edep', data=np.array([0.01, 0.02, 0.03, 0.04]))
+        hits.create_dataset('PosX', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosY', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosZ', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('CopyNo', data=np.array([0, 1, 2, 3], dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-', b'e-', b'gamma', b'gamma'], dtype='S5'))
+        hits.create_dataset('SensitiveDetectorName', data=np.array([b'SD_A', b'SD_A', b'SD_B', b'SD_B'], dtype='S8'))
+
+    ai_args = {
+        "version_id": version_id,
+        "job_id": job_id,
+        "energy_bins": 10,
+        "spatial_bins": 5,
+        "sensitive_detector": "SD_B",
+    }
+
+    with patch("app.get_project_manager_for_session", return_value=pm):
+        ai_res = dispatch_ai_tool(pm, "get_simulation_analysis", ai_args)
+
+    assert ai_res["success"], ai_res
+
+    with patch("app.get_project_manager_for_session", return_value=pm):
+        with flask_app.test_client() as client:
+            http_res = client.get(
+                f"/api/simulation/analysis/{version_id}/{job_id}"
+                "?energy_bins=10&spatial_bins=5&sensitive_detector=SD_B"
+            )
+
+    assert http_res.status_code == 200, http_res.get_json()
+    http_analysis = http_res.get_json()["analysis"]
+    assert http_analysis == ai_res["analysis"]
+    assert http_analysis["filtering"]["sensitive_detector_supported"] is True
+    assert http_analysis["filtering"]["available_sensitive_detectors"] == ['SD_A', 'SD_B']
+    assert http_analysis["filtering"]["selected_sensitive_detector"] == 'SD_B'
+    assert http_analysis["total_hits"] == 2
 
 
 def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):
