@@ -13,3 +13,6 @@ tests/__pycache__/
 ai_debug_payload.json
 TESTS.md
 debug_files/
+setup_conda_env.sh
+AI_GDML_HARDENING_TRACKER.md
+AI_GDML_REFINEMENTS_TRACKER.md
