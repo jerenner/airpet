@@ -136,7 +136,7 @@ def test_gdml_material_density_units_round_trip(value, unit, expected_density_ex
     assert f'<D value="{expected_export_value}" unit="g/cm3"/>' in gdml_str
 
 
-def test_parameterised_trd_dimensions_are_mapped_on_import():
+def test_parameterised_trd_dimensions_are_mapped_on_import(capsys):
     gdml = """<?xml version="1.0" encoding="UTF-8"?>
 <gdml>
   <solids>
@@ -169,6 +169,10 @@ def test_parameterised_trd_dimensions_are_mapped_on_import():
 
     parser = GDMLParser()
     state = parser.parse_gdml_string(gdml)
+    captured = capsys.readouterr()
+
+    assert "No parameter mapping found for 'trd_dimensions'" not in captured.out
+    assert "No parameter mapping found for 'trd_dimensions'" not in captured.err
 
     param_vol = state.logical_volumes["world_lv"].content
     assert param_vol.type == "parameterised"
