@@ -40,7 +40,13 @@ from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
 from src.geometry_types import GeometryState
-from src.ai_tools import AI_GEOMETRY_TOOLS, PRIMITIVE_SOLID_PARAM_SPECS, get_project_summary, get_component_details
+from src.ai_tools import (
+    AI_GEOMETRY_TOOLS,
+    PRIMITIVE_SOLID_PARAM_SPECS,
+    RUN_SIMULATION_OPTION_KEYS,
+    get_project_summary,
+    get_component_details,
+)
 from src.templates import PHYSICS_TEMPLATES
 from src.surrogate_dataset import build_surrogate_dataset_from_payloads
 from src.surrogate_experiment import run_surrogate_experiment, run_surrogate_experiment_from_path
@@ -708,6 +714,7 @@ def _objective_builder_example_payload(pm: Optional[ProjectManager], template_id
             'save_hit_metadata': True,
             'save_particles': True,
             'hit_energy_threshold': '1 eV',
+            'production_cut': '1.0 mm',
         },
         'surrogate': {
             'warmup_runs': 4,
@@ -768,6 +775,18 @@ def _validate_formula_expression_for_builder(expression: Any):
     return True, None, sorted(var_names)
 
 
+def _normalize_selected_source_id_list(values: Any) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for value in values if isinstance(values, list) else []:
+        source_id = str(value or '').strip()
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        normalized.append(source_id)
+    return normalized
+
+
 def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = None):
     data = dict(payload or {})
     errors = []
@@ -781,6 +800,9 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
 
     study_objectives = data.get('study_objectives') or []
     study_parameters = data.get('study_parameters') or []
+    selected_source_ids = data.get('selected_source_ids')
+    if selected_source_ids is None:
+        selected_source_ids = data.get('source_ids')
 
     if not isinstance(extract_objectives, list):
         errors.append("extract_objectives must be a list.")
@@ -791,6 +813,28 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
     if study_parameters and not isinstance(study_parameters, list):
         errors.append("study_parameters must be a list when provided.")
         study_parameters = []
+    if selected_source_ids is not None and not isinstance(selected_source_ids, list):
+        errors.append("selected_source_ids must be a list when provided.")
+        selected_source_ids = []
+
+    selected_source_ids = _normalize_selected_source_id_list(selected_source_ids)
+    selected_sources = []
+    if pm and pm.current_geometry_state:
+        available_sources = {
+            str(source.id): str(source.name)
+            for source in (pm.current_geometry_state.sources or {}).values()
+        }
+        missing_sources = [source_id for source_id in selected_source_ids if source_id not in available_sources]
+        if missing_sources:
+            warnings.append(
+                "selected_source_ids contains unknown source ids: "
+                + ", ".join(missing_sources[:5])
+                + ("..." if len(missing_sources) > 5 else "")
+            )
+        selected_sources = [
+            {"id": source_id, "name": available_sources.get(source_id, source_id)}
+            for source_id in selected_source_ids
+        ]
 
     extract_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('simulation_extract_metrics', [])}
     study_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('study_objective_metrics', [])}
@@ -908,10 +952,13 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
 
     normalized = {
         'extract_objectives': extract_objectives,
+        'selected_source_ids': selected_source_ids,
+        'selected_sources': selected_sources,
         'study': {
             'name': study_name,
             'mode': study_mode,
             'parameters': study_parameters,
+            'simulation_source_ids': selected_source_ids,
             'objectives': study_objectives,
             'grid': data.get('study_grid', {'steps': 3}) or {'steps': 3},
             'random': data.get('study_random', {'samples': 10, 'seed': 42}) or {'samples': 10, 'seed': 42},
@@ -934,6 +981,8 @@ def _build_objective_builder_payload(payload, validation):
     study = dict(normalized.get('study', {}) or {})
     study_name = study.get('name') or data.get('study_name') or '__objective_builder_study__'
     study_objectives = list(study.get('objectives', []) or [])
+    selected_source_ids = list(normalized.get('selected_source_ids', []) or [])
+    selected_sources = list(normalized.get('selected_sources', []) or [])
 
     primary_obj = None
     for candidate in study_objectives:
@@ -968,6 +1017,7 @@ def _build_objective_builder_payload(payload, validation):
         'save_hit_metadata': True,
         'save_particles': True,
         'hit_energy_threshold': '1 eV',
+        'production_cut': '1.0 mm',
     }
 
     surrogate = data.get('surrogate') or {
@@ -999,6 +1049,8 @@ def _build_objective_builder_payload(payload, validation):
             'context': data.get('context', {}) or {},
             'keep_candidate_runs': bool(data.get('keep_candidate_runs', False)),
             'candidate_runs_root': data.get('candidate_runs_root'),
+            'selected_source_ids': selected_source_ids,
+            'selected_sources': selected_sources,
         },
         'verify_payload_template': {
             'run_id': '<optimizer_run_id>',
@@ -1319,7 +1371,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                 command, cwd=run_dir,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
-                env=get_geant4_env()
+                env=get_geant4_env(sim_params)
             )
             with SIMULATION_LOCK:
                     SIMULATION_PROCESSES[job_id] = process
@@ -1362,8 +1414,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                 if s.startswith("/run/beamOn"): continue
                 if s.startswith("/random/setSeeds"): continue
                 if s.startswith("/analysis/setFileName"): continue
-                if s.startswith("/run/numberOfThreads"): continue 
-                if s.startswith("/g4pet/run/saveHits"): continue 
+                if s.startswith("/run/numberOfThreads"): continue
                 filtered_lines.append(line)
             
             seed1 = int(sim_params.get('seed1', 12345))
@@ -1390,7 +1441,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                     cmd, cwd=run_dir,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, bufsize=1,
-                    env=get_geant4_env()
+                    env=get_geant4_env(sim_params)
                 )
                 procs.append(p)
             
@@ -3514,7 +3565,6 @@ def run_simulation():
                         if s.startswith("/random/setSeeds"): continue
                         if s.startswith("/analysis/setFileName"): continue
                         if s.startswith("/run/numberOfThreads"): continue 
-                        if s.startswith("/g4pet/run/saveHits"): continue # We force true usually, but read params
                         filtered_lines.append(line)
                     
                     # Base seeds
@@ -4103,6 +4153,7 @@ def _build_simulation_candidate_evaluator(
     context_static=None,
     keep_candidate_runs=False,
     candidate_runs_root=None,
+    selected_source_ids=None,
 ):
     static_ctx = dict(context_static or {})
     keep_runs = bool(keep_candidate_runs)
@@ -4111,99 +4162,175 @@ def _build_simulation_candidate_evaluator(
     if keep_runs:
         os.makedirs(candidate_runs_root, exist_ok=True)
 
+    requested_source_ids = _normalize_selected_source_id_list(selected_source_ids)
+
     def evaluator(*, run_record, project_manager, study):
         job_id = str(uuid.uuid4())
+        previous_active_source_ids = list(project_manager.current_geometry_state.active_source_ids or [])
+        selected_source_names = None
 
-        with tempfile.TemporaryDirectory(prefix="simloop_") as tmp:
-            version_dir = os.path.join(tmp, "version")
-            os.makedirs(version_dir, exist_ok=True)
+        if requested_source_ids:
+            available_source_map = {
+                str(source.id): str(source.name)
+                for source in (project_manager.current_geometry_state.sources or {}).values()
+            }
+            missing_source_ids = [source_id for source_id in requested_source_ids if source_id not in available_source_map]
+            if missing_source_ids:
+                return {
+                    "success": False,
+                    "error": (
+                        "Selected simulation sources are missing from the current geometry state: "
+                        + ", ".join(missing_source_ids)
+                    ),
+                    "sim_metrics": {},
+                    "simulation": {
+                        "job_id": job_id,
+                        "selected_source_ids": requested_source_ids,
+                    },
+                }
 
-            state_payload = json.dumps(project_manager.current_geometry_state.to_dict(), indent=2)
-            with open(os.path.join(version_dir, "version.json"), "w", encoding="utf-8") as f:
-                f.write(state_payload)
+            project_manager.current_geometry_state.active_source_ids = list(requested_source_ids)
+            selected_source_names = [available_source_map[source_id] for source_id in requested_source_ids]
 
-            run_dir = os.path.join(version_dir, "sim_runs", job_id)
-            os.makedirs(run_dir, exist_ok=True)
+        try:
+            with tempfile.TemporaryDirectory(prefix="simloop_") as tmp:
+                version_dir = os.path.join(tmp, "version")
+                os.makedirs(version_dir, exist_ok=True)
 
-            try:
-                project_manager.generate_macro_file(
-                    job_id=job_id,
-                    sim_params=sim_params,
-                    build_dir=GEANT4_BUILD_DIR,
-                    run_dir=run_dir,
-                    version_dir=version_dir,
+                state_payload = json.dumps(project_manager.current_geometry_state.to_dict(), indent=2)
+                with open(os.path.join(version_dir, "version.json"), "w", encoding="utf-8") as f:
+                    f.write(state_payload)
+
+                run_dir = os.path.join(version_dir, "sim_runs", job_id)
+                os.makedirs(run_dir, exist_ok=True)
+
+                try:
+                    project_manager.generate_macro_file(
+                        job_id=job_id,
+                        sim_params=sim_params,
+                        build_dir=GEANT4_BUILD_DIR,
+                        run_dir=run_dir,
+                        version_dir=version_dir,
+                    )
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Failed to generate macro for candidate: {e}",
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                run_g4_simulation(job_id=job_id, run_dir=run_dir, executable_path=GEANT4_EXECUTABLE, sim_params=sim_params)
+
+                with SIMULATION_LOCK:
+                    status = dict(SIMULATION_STATUS.get(job_id, {}))
+                    SIMULATION_STATUS.pop(job_id, None)
+                    SIMULATION_PROCESSES.pop(job_id, None)
+
+                if status.get("status") != "Completed":
+                    err_lines = status.get("stderr", []) if isinstance(status.get("stderr"), list) else []
+                    err_msg = err_lines[-1] if err_lines else "Simulation run failed."
+                    return {
+                        "success": False,
+                        "error": err_msg,
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "status": status.get("status", "Error"),
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                output_path = os.path.join(run_dir, "output.hdf5")
+                if not os.path.exists(output_path):
+                    return {
+                        "success": False,
+                        "error": "Simulation completed but output.hdf5 was not found.",
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "status": "CompletedWithoutOutput",
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                context = {}
+                context.update(static_ctx)
+                context.update(run_record.get("values", {}) or {})
+                context.update(run_record.get("metrics", {}) or {})
+
+                sim_metrics, warnings, _available = extract_objective_values_from_hdf5(
+                    output_path=output_path,
+                    objectives=sim_objectives,
+                    context=context,
                 )
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Failed to generate macro for candidate: {e}",
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                    },
+
+                simulation_info = {
+                    "job_id": job_id,
+                    "status": "Completed",
+                    "warnings": warnings,
+                    "selected_source_ids": list(requested_source_ids),
+                    "selected_source_names": selected_source_names,
                 }
 
-            run_g4_simulation(job_id=job_id, run_dir=run_dir, executable_path=GEANT4_EXECUTABLE, sim_params=sim_params)
+                if keep_runs:
+                    candidate_dir = os.path.join(candidate_runs_root, f"candidate_{run_record.get('run_index', 0):04d}_{job_id}")
+                    shutil.copytree(run_dir, candidate_dir, dirs_exist_ok=True)
+                    simulation_info["saved_run_dir"] = candidate_dir
 
-            with SIMULATION_LOCK:
-                status = dict(SIMULATION_STATUS.get(job_id, {}))
-                SIMULATION_STATUS.pop(job_id, None)
-                SIMULATION_PROCESSES.pop(job_id, None)
-
-            if status.get("status") != "Completed":
-                err_lines = status.get("stderr", []) if isinstance(status.get("stderr"), list) else []
-                err_msg = err_lines[-1] if err_lines else "Simulation run failed."
                 return {
-                    "success": False,
-                    "error": err_msg,
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                        "status": status.get("status", "Error"),
-                    },
+                    "success": True,
+                    "sim_metrics": sim_metrics,
+                    "simulation": simulation_info,
                 }
-
-            output_path = os.path.join(run_dir, "output.hdf5")
-            if not os.path.exists(output_path):
-                return {
-                    "success": False,
-                    "error": "Simulation completed but output.hdf5 was not found.",
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                        "status": "CompletedWithoutOutput",
-                    },
-                }
-
-            context = {}
-            context.update(static_ctx)
-            context.update(run_record.get("values", {}) or {})
-            context.update(run_record.get("metrics", {}) or {})
-
-            sim_metrics, warnings, _available = extract_objective_values_from_hdf5(
-                output_path=output_path,
-                objectives=sim_objectives,
-                context=context,
-            )
-
-            simulation_info = {
-                "job_id": job_id,
-                "status": "Completed",
-                "warnings": warnings,
-            }
-
-            if keep_runs:
-                candidate_dir = os.path.join(candidate_runs_root, f"candidate_{run_record.get('run_index', 0):04d}_{job_id}")
-                shutil.copytree(run_dir, candidate_dir, dirs_exist_ok=True)
-                simulation_info["saved_run_dir"] = candidate_dir
-
-            return {
-                "success": True,
-                "sim_metrics": sim_metrics,
-                "simulation": simulation_info,
-            }
+        finally:
+            project_manager.current_geometry_state.active_source_ids = previous_active_source_ids
 
     return evaluator
+
+
+def _normalize_run_selected_sources(pm: ProjectManager, run_payload: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = dict(run_payload or {})
+    raw_selected_source_ids = payload.get('selected_source_ids')
+    if raw_selected_source_ids is None:
+        raw_selected_source_ids = payload.get('source_ids')
+    if raw_selected_source_ids is None:
+        return payload, None
+    if not isinstance(raw_selected_source_ids, list):
+        return None, {"success": False, "error": "selected_source_ids must be a list when provided."}
+
+    selected_source_ids = _normalize_selected_source_id_list(raw_selected_source_ids)
+    available_sources = {
+        str(source.id): str(source.name)
+        for source in (pm.current_geometry_state.sources or {}).values()
+    }
+
+    if available_sources and not selected_source_ids:
+        return None, {
+            "success": False,
+            "error": "Select at least one particle source for the simulation sweep.",
+        }
+
+    missing_source_ids = [source_id for source_id in selected_source_ids if source_id not in available_sources]
+    if missing_source_ids:
+        return None, {
+            "success": False,
+            "error": "One or more selected sources are no longer available.",
+            "details": missing_source_ids,
+        }
+
+    payload['selected_source_ids'] = selected_source_ids
+    payload['selected_sources'] = [
+        {"id": source_id, "name": available_sources[source_id]}
+        for source_id in selected_source_ids
+    ]
+    return payload, None
 
 
 def _read_hits_columns_for_objectives(output_path):
@@ -4455,6 +4582,9 @@ def objective_builder_launch_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     run_payload = normalized_run
+    run_payload, source_error = _normalize_run_selected_sources(pm, run_payload)
+    if source_error:
+        return jsonify(source_error), 400
 
     preflight_report = pm.run_preflight_checks()
     preflight_summary = preflight_report.get('summary', {})
@@ -4509,6 +4639,7 @@ def objective_builder_launch_route():
         context_static=(run_payload.get('context') or {}),
         keep_candidate_runs=bool(run_payload.get('keep_candidate_runs', False)),
         candidate_runs_root=run_payload.get('candidate_runs_root'),
+        selected_source_ids=run_payload.get('selected_source_ids'),
     )
 
     control, response, status = _start_managed_optimizer_run(
@@ -7195,6 +7326,9 @@ def param_optimizer_run_simulation_in_loop_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     data = normalized
+    data, source_error = _normalize_run_selected_sources(pm, data)
+    if source_error:
+        return jsonify(source_error), 400
     sim_params = data['sim_params']
 
     preflight_report = pm.run_preflight_checks()
@@ -7214,6 +7348,7 @@ def param_optimizer_run_simulation_in_loop_route():
         context_static=(data.get('context') or {}),
         keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
         candidate_runs_root=data.get('candidate_runs_root'),
+        selected_source_ids=data.get('selected_source_ids'),
     )
 
     _, response, status = _start_managed_optimizer_run(
@@ -7298,6 +7433,9 @@ def param_optimizer_head_to_head_simulation_in_loop_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     data = normalized
+    data, source_error = _normalize_run_selected_sources(pm, data)
+    if source_error:
+        return jsonify(source_error), 400
     sim_params = data['sim_params']
 
     preflight_report = pm.run_preflight_checks()
@@ -7315,6 +7453,7 @@ def param_optimizer_head_to_head_simulation_in_loop_route():
         context_static=(data.get('context') or {}),
         keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
         candidate_runs_root=data.get('candidate_runs_root'),
+        selected_source_ids=data.get('selected_source_ids'),
     )
 
     _, response, status = _start_managed_optimizer_run(
@@ -10489,8 +10628,15 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
             sim_params = {
                 "events": events,
-                "threads": threads
+                "threads": threads,
             }
+            for key in RUN_SIMULATION_OPTION_KEYS:
+                value = args.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                sim_params[key] = value
             version_id = pm.current_version_id
             if pm.is_changed or not version_id:
                 version_id, _ = pm.save_project_version(f"AI_Sim_Run_{job_id[:8]}")
@@ -11060,6 +11206,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 "energy_bins": args.get('energy_bins', 100),
                 "spatial_bins": args.get('spatial_bins', 50)
             }
+            sensitive_detector = args.get('sensitive_detector')
+            if sensitive_detector not in (None, ""):
+                query["sensitive_detector"] = sensitive_detector
             status_code, body = call_route_json(get_simulation_analysis, [version_id, args['job_id']], query_params=query)
             if status_code >= 400 or body.get('success') is False:
                 return {"success": False, "error": body.get('error', f"Could not fetch simulation analysis (status {status_code}).")}

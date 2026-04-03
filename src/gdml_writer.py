@@ -25,6 +25,30 @@ class GDMLWriter:
         self.written_materials = set()
         self.written_optical_surfaces = set()
 
+    def _format_density_for_gdml(self, mat_obj):
+        raw_density = str(mat_obj.density_expr or "").strip()
+        if not raw_density:
+            return None
+
+        evaluated_density = mat_obj._evaluated_density
+        if evaluated_density is None:
+            return {"value": raw_density, "unit": "g/cm3"}
+
+        # AIRPET stores evaluated material densities in internal g/mm^3 units
+        # when the original expression includes explicit mass/volume units such as
+        # 2.33*g/cm3. GDML expects a numeric value plus an explicit unit attribute.
+        uses_explicit_unit_expr = any(token in raw_density for token in ("*", "/", "cm3", "mm3", "m3"))
+
+        try:
+            density_value = float(evaluated_density)
+        except (TypeError, ValueError):
+            return {"value": raw_density, "unit": "g/cm3"}
+
+        if uses_explicit_unit_expr:
+            density_value *= 1000.0  # convert internal g/mm^3 -> g/cm^3
+
+        return {"value": f"{density_value:.12g}", "unit": "g/cm3"}
+
     def _add_defines(self):
         if not self.geometry_state.defines: return
         define_el = ET.SubElement(self.root, "define")
@@ -116,7 +140,9 @@ class GDMLWriter:
             mat_el = ET.SubElement(materials_el, "material", mat_attrs)
 
             if mat_obj.density_expr:
-                ET.SubElement(mat_el, "D", {"value": str(mat_obj.density_expr)})
+                density_attrs = self._format_density_for_gdml(mat_obj)
+                if density_attrs:
+                    ET.SubElement(mat_el, "D", density_attrs)
 
             if mat_obj.components:
                 for comp in mat_obj.components:

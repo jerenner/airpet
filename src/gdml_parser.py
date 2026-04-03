@@ -62,6 +62,24 @@ class GDMLParser:
         # Final cleanup for common GDML artifacts that are not filesystem-friendly
         return evaluated_name.replace('[','_').replace(']','_').strip('_')
 
+    def _format_density_expression(self, density_value, density_unit=None):
+        """
+        Preserve imported density units in the raw expression so later
+        evaluation keeps the intended volumic-mass meaning.
+        """
+        if density_value is None:
+            return None
+
+        raw_value = str(density_value).strip()
+        if not raw_value:
+            return None
+
+        raw_unit = str(density_unit).strip() if density_unit else ""
+        if raw_unit:
+            return f"{raw_value}*{raw_unit}"
+
+        return raw_value
+
     def _partially_evaluate(self, expression_str, loop_vars):
         """
         Substitutes the current numeric values of loop variables into an expression string.
@@ -125,6 +143,9 @@ class GDMLParser:
         
     def _prune_intermediate_solids(self, intermediate_booleans):
         """Removes solid definitions that are only used as intermediates in boolean operations."""
+
+        if not intermediate_booleans:
+            return
 
         # --- 1. Build a complete reference count for all solids.
         solid_ref_counts = {name: 0 for name in intermediate_booleans}
@@ -295,7 +316,10 @@ class GDMLParser:
                     density_expr = None
                     d_el = element.find('D')
                     if d_el is not None:
-                        density_expr = d_el.get('value')
+                        density_expr = self._format_density_expression(
+                            d_el.get('value'),
+                            d_el.get('unit'),
+                        )
                     A_expr = None
                     atom_el = element.find('atom')
                     if atom_el is not None:

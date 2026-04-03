@@ -57,6 +57,7 @@ const AppState = {
         seed2: 0,
         print_progress: 1000,
         hit_energy_threshold: "1 eV",
+        production_cut: "1.0 mm",
         save_hits: true,
         save_hit_metadata: true,
         save_particles: false,

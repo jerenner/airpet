@@ -48,6 +48,20 @@ def _int_or_expr_param(description: str) -> Dict[str, Any]:
     }
 
 
+def _bool_param(description: str) -> Dict[str, Any]:
+    return {
+        "type": "boolean",
+        "description": description,
+    }
+
+
+def _int_param(description: str) -> Dict[str, Any]:
+    return {
+        "type": "integer",
+        "description": description,
+    }
+
+
 PRIMITIVE_SOLID_PARAM_SPECS: Dict[str, Dict[str, Any]] = {
     "box": {
         "required": ["x", "y", "z"],
@@ -302,6 +316,34 @@ def _create_primitive_solid_tool() -> Dict[str, Any]:
         ),
         "parameters": _build_create_primitive_solid_parameters()
     }
+
+
+RUN_SIMULATION_OPTION_SPECS: Dict[str, Dict[str, Any]] = {
+    "production_cut": _expr_param(
+        "Geant4 production cut passed to /run/setCut (e.g. '1.0 mm')"
+    ),
+    "hit_energy_threshold": _expr_param(
+        "Hit energy threshold passed to /g4pet/run/hitEnergyThreshold (e.g. '1 eV')"
+    ),
+    "save_hits": _bool_param("Whether to save hit ntuples during the run."),
+    "save_hit_metadata": _bool_param("Whether to save per-hit metadata."),
+    "save_particles": _bool_param("Whether to save particle ntuples."),
+    "save_tracks_range": {
+        "type": "string",
+        "description": "Track event range to persist, e.g. '0-99'.",
+    },
+    "seed1": _int_param("Primary random seed. Use 0 to keep the Geant4 default."),
+    "seed2": _int_param("Secondary random seed. Use 0 to keep the Geant4 default."),
+    "print_progress": _int_param("Print progress every N events; use 0 to disable."),
+    "physics_list": {
+        "type": "string",
+        "description": "Physics list name for G4PHYSICSLIST (e.g. 'FTFP_BERT').",
+    },
+    "optical_physics": _bool_param("Whether to enable optical physics via G4OPTICALPHYSICS."),
+}
+
+
+RUN_SIMULATION_OPTION_KEYS = tuple(RUN_SIMULATION_OPTION_SPECS.keys())
 
 # Mapping of AI tools to ProjectManager methods
 AI_GEOMETRY_TOOLS = [
@@ -981,7 +1023,8 @@ AI_GEOMETRY_TOOLS = [
             "type": "object",
             "properties": {
                 "events": {"type": "integer", "description": "Number of events to simulate (default: 1000)."},
-                "threads": {"type": "integer", "description": "Number of CPU threads (default: 1)."}
+                "threads": {"type": "integer", "description": "Number of CPU threads (default: 1)."},
+                **RUN_SIMULATION_OPTION_SPECS,
             }
         }
     },
@@ -1305,14 +1348,18 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "get_simulation_analysis",
-        "description": "Fetch rich analysis outputs (spectra, heatmaps, volume/particle breakdown).",
+        "description": "Fetch rich analysis outputs (spectra, heatmaps, volume/particle breakdown). Optionally filter by sensitive_detector.",
         "parameters": {
             "type": "object",
             "properties": {
                 "version_id": {"type": "string"},
                 "job_id": {"type": "string"},
                 "energy_bins": {"type": "integer"},
-                "spatial_bins": {"type": "integer"}
+                "spatial_bins": {"type": "integer"},
+                "sensitive_detector": {
+                    "type": "string",
+                    "description": "Optional sensitive detector name to filter hits before building histograms and summaries."
+                }
             },
             "required": ["job_id"]
         }

@@ -34,6 +34,18 @@ def _add_define_param(pm, name="sweep_x"):
     assert entry is not None and err is None
 
 
+def _add_basic_source(pm, name="test_source"):
+    source, err = pm.add_source(
+        name,
+        {"particle": "gamma", "energy": "511 keV"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        activity=1.0,
+    )
+    assert source is not None and err is None
+    return source
+
+
 def test_param_study_grid_run_basic():
     pm = _make_pm()
     _add_define_param(pm, name="p1")
@@ -100,6 +112,29 @@ def test_param_study_persistence_roundtrip():
     studies = pm2.list_param_studies()
     assert "grid_persist" in studies
     assert studies["grid_persist"]["mode"] == "grid"
+
+
+def test_param_study_persists_simulation_source_ids():
+    pm = _make_pm()
+    _add_define_param(pm, name="p1")
+    source = _add_basic_source(pm, name="persisted_source")
+
+    study, err = pm.upsert_param_study("grid_with_sources", {
+        "name": "grid_with_sources",
+        "mode": "grid",
+        "parameters": ["p1"],
+        "simulation_source_ids": [source["id"]],
+        "grid": {"steps": 2},
+    })
+    assert study is not None and err is None
+    assert study["simulation_source_ids"] == [source["id"]]
+
+    blob = pm.save_project_to_json_string()
+
+    pm2 = ProjectManager(ExpressionEvaluator())
+    pm2.load_project_from_json_string(blob)
+    studies = pm2.list_param_studies()
+    assert studies["grid_with_sources"]["simulation_source_ids"] == [source["id"]]
 
 
 def test_param_study_api_routes():
@@ -878,6 +913,61 @@ def test_objective_builder_launch_endpoint_run_with_mock_evaluator():
     assert data["study_action"] == "created"
     assert data["optimizer_result"]["simulation_in_loop"] is True
     assert "m6_launch_demo_run" in (pm.current_geometry_state.param_studies or {})
+
+
+def test_objective_builder_launch_endpoint_passes_selected_sources_to_evaluator():
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        _add_define_param(pm, name="p1")
+        source_a = _add_basic_source(pm, name="source_a")
+        source_b = _add_basic_source(pm, name="source_b")
+
+        payload = {
+            "study_name": "m6_launch_sources",
+            "study_mode": "random",
+            "study_parameters": ["p1"],
+            "selected_source_ids": [source_b["id"]],
+            "extract_objectives": [
+                {"name": "edep_sum", "metric": "hdf5_reduce", "dataset_path": "default_ntuples/Hits/Edep", "reduce": "sum"}
+            ],
+            "study_objectives": [
+                {"name": "edep_sum", "metric": "sim_metric", "key": "edep_sum", "direction": "maximize"},
+                {"name": "score", "metric": "formula", "expression": "edep_sum", "direction": "maximize"},
+            ],
+            "run_method": "surrogate_gp",
+            "run_budget": 4,
+            "run_seed": 7,
+            "sim_params": {"events": 10, "threads": 1},
+            "surrogate": {"warmup_runs": 2, "candidate_pool_size": 16},
+            "run_async": False,
+        }
+
+        captured = {}
+
+        def mock_builder(**kwargs):
+            captured.update(kwargs)
+
+            def _evaluator(*, run_record, project_manager, study):
+                p1 = float(run_record["values"]["p1"])
+                return {"success": True, "sim_metrics": {"edep_sum": 2.0 * p1}, "simulation": {"job_id": "mock"}}
+
+            return _evaluator
+
+        with patch("app.get_project_manager_for_session", return_value=pm), \
+             patch("app.GEANT4_EXECUTABLE", "/bin/echo"), \
+             patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True}}), \
+             patch("app._build_simulation_candidate_evaluator", side_effect=mock_builder):
+            resp = client.post("/api/objective_builder/launch", json=payload)
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["success"] is True
+    assert captured["selected_source_ids"] == [source_b["id"]]
+    assert data["run_payload"]["selected_source_ids"] == [source_b["id"]]
+    assert data["run_payload"]["selected_sources"] == [{"id": source_b["id"], "name": source_b["name"]}]
+    assert data["study"]["simulation_source_ids"] == [source_b["id"]]
+    assert source_a["id"] != source_b["id"]
 
 
 def test_apply_audit_history_and_rollback_endpoint():

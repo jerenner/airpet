@@ -22,6 +22,45 @@ def test_ai_geometry_tools_schema_is_valid_for_gemini_generate_content_config():
     assert cfg is not None
 
 
+def test_run_simulation_ai_schema_exposes_advanced_simulation_options():
+    run_simulation_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "run_simulation"
+    )
+    properties = run_simulation_tool["parameters"]["properties"]
+
+    for key in (
+        "production_cut",
+        "hit_energy_threshold",
+        "save_hits",
+        "save_hit_metadata",
+        "save_particles",
+        "save_tracks_range",
+        "seed1",
+        "seed2",
+        "print_progress",
+        "physics_list",
+        "optical_physics",
+    ):
+        assert key in properties
+
+    assert properties["save_hits"]["type"] == "boolean"
+    assert properties["seed1"]["type"] == "integer"
+    assert properties["physics_list"]["type"] == "string"
+
+
+def test_get_simulation_analysis_ai_schema_exposes_sensitive_detector_filter():
+    analysis_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "get_simulation_analysis"
+    )
+    properties = analysis_tool["parameters"]["properties"]
+
+    assert "sensitive_detector" in properties
+    assert properties["sensitive_detector"]["type"] == "string"
+    assert "sensitive_detector" in analysis_tool["description"]
+
+
 def test_ai_chat_flow_mocked(client):
     """Verify that the AI can trigger a simulation via chat using test_client."""
     from google.genai import types

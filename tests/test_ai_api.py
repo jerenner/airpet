@@ -5,7 +5,7 @@ import h5py
 import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
-from flask import jsonify, session
+from flask import jsonify, request, session
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
 from src.geometry_types import DivisionVolume, ReplicaVolume
@@ -4889,6 +4889,44 @@ def test_ai_simulation_tools(pm):
         assert res_status['status'] == "Finished"
 
 
+def test_ai_run_simulation_forwards_advanced_simulation_options(pm, tmp_path):
+    advanced_sim_params = {
+        "events": 250,
+        "threads": 4,
+        "production_cut": "0.5 mm",
+        "hit_energy_threshold": "20 eV",
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "save_tracks_range": "3-7",
+        "seed1": 11,
+        "seed2": 22,
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+    }
+
+    expected_sim_params = dict(advanced_sim_params)
+    version_dir = tmp_path / "version"
+    version_dir.mkdir()
+
+    pm.current_version_id = "version-kept"
+    pm.is_changed = False
+
+    with patch.object(pm, 'run_preflight_checks', return_value={'summary': {'can_run': True, 'issue_count': 0}, 'issues': []}), \
+         patch.object(pm, '_get_version_dir', return_value=str(version_dir)), \
+         patch.object(pm, 'generate_macro_file', return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as MockGenerateMacro, \
+         patch('threading.Thread') as MockThread:
+
+        MockThread.return_value.start.return_value = None
+        res = dispatch_ai_tool(pm, "run_simulation", advanced_sim_params)
+
+    assert res['success'], res
+    assert MockGenerateMacro.call_args.args[1] == expected_sim_params
+    assert MockThread.call_args.kwargs["args"][3] == expected_sim_params
+    MockThread.return_value.start.assert_called_once()
+
+
 def test_ai_run_simulation_blocks_on_preflight_failure(pm):
     failing_preflight = {
         'summary': {'can_run': False, 'issue_count': 1},
@@ -4905,6 +4943,67 @@ def test_ai_run_simulation_blocks_on_preflight_failure(pm):
     assert res['preflight_summary']['can_run'] is False
     assert res['preflight_report'] == failing_preflight
     assert not MockThread.called
+
+
+def test_run_g4_simulation_preserves_save_hits_and_passes_sim_params_to_geant4_env(tmp_path):
+    from app import SIMULATION_PROCESSES, SIMULATION_STATUS, run_g4_simulation
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.mac").write_text(
+        "\n".join([
+            "# Base macro",
+            "/tracking/storeTrajectory 0",
+            "/g4pet/run/saveHits false",
+            "/g4pet/run/saveHitMetadata false",
+            "/g4pet/run/saveParticles true",
+            "/g4pet/run/hitEnergyThreshold 20 eV",
+            "/run/setCut 0.5 mm",
+            "/run/printProgress 250",
+            "/analysis/setFileName output.hdf5",
+            "/run/beamOn 4",
+        ]),
+        encoding="utf-8",
+    )
+
+    sim_params = {
+        "events": 4,
+        "threads": 2,
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "hit_energy_threshold": "20 eV",
+        "production_cut": "0.5 mm",
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+        "seed1": 11,
+        "seed2": 22,
+    }
+
+    def make_process():
+        proc = MagicMock()
+        proc.stdout = MagicMock()
+        proc.stdout.readline.return_value = ""
+        proc.stderr = MagicMock()
+        proc.stderr.readline.return_value = ""
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        proc.wait.return_value = 0
+        return proc
+
+    with patch.dict(SIMULATION_STATUS, {}, clear=True), \
+         patch.dict(SIMULATION_PROCESSES, {}, clear=True), \
+         patch('app.get_geant4_env', return_value={"G4PHYSICSLIST": "FTFP_BERT", "G4OPTICALPHYSICS": "true"}) as MockEnv, \
+         patch('app.subprocess.Popen', side_effect=[make_process(), make_process()]):
+
+        run_g4_simulation("job-save-hits", str(run_dir), "/fake/geant4", sim_params)
+
+    assert all(call_args.args == (sim_params,) for call_args in MockEnv.call_args_list)
+    written_macro = (run_dir / "run_t0.mac").read_text(encoding="utf-8")
+    assert "/g4pet/run/saveHits false" in written_macro
+    assert "/g4pet/run/saveHitMetadata false" in written_macro
+    assert "/g4pet/run/saveParticles true" in written_macro
 
 
 def test_ai_tool_get_simulation_status_supports_since_cursor(pm):
@@ -5658,6 +5757,7 @@ def test_generate_macro_uses_low_default_hit_energy_threshold(pm, tmp_path):
 
     assert "/g4pet/run/hitEnergyThreshold 1 eV" in macro_text
     assert "/g4pet/run/saveHitMetadata true" in macro_text
+    assert "/run/setCut 1.0 mm" in macro_text
 
 
 def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
@@ -5675,6 +5775,23 @@ def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
     macro_text = Path(macro_path).read_text(encoding="utf-8")
 
     assert "/g4pet/run/hitEnergyThreshold 25 eV" in macro_text
+
+
+def test_generate_macro_respects_explicit_production_cut(pm, tmp_path):
+    version_dir = tmp_path / "version_production_cut_override"
+    version_dir.mkdir()
+    (version_dir / "version.json").write_text("{}", encoding="utf-8")
+
+    macro_path = pm.generate_macro_file(
+        "production-cut-override",
+        {"events": 1, "production_cut": "1 um"},
+        str(tmp_path),
+        str(tmp_path),
+        str(version_dir),
+    )
+    macro_text = Path(macro_path).read_text(encoding="utf-8")
+
+    assert "/run/setCut 1 um" in macro_text
 
 
 def test_generate_macro_allows_disabling_hit_metadata(pm, tmp_path):
@@ -5909,35 +6026,63 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
                 "job_id": "job-1"
             })
 
-        with patch('app.get_simulation_analysis', return_value=jsonify({"success": True, "analysis": {"total_hits": 5}})):
+        def fake_get_simulation_analysis(version_id, job_id):
+            return jsonify({
+                "success": True,
+                "analysis": {
+                    "total_hits": 5,
+                    "version_id": version_id,
+                    "job_id": job_id,
+                    "energy_bins": request.args.get("energy_bins"),
+                    "spatial_bins": request.args.get("spatial_bins"),
+                    "sensitive_detector": request.args.get("sensitive_detector", ""),
+                }
+            })
+
+        with patch('app.get_simulation_analysis', side_effect=fake_get_simulation_analysis):
             analysis_res = dispatch_ai_tool(pm, "get_simulation_analysis", {
                 "version_id": "v1",
                 "job_id": "job-1",
                 "energy_bins": 64,
-                "spatial_bins": 32
+                "spatial_bins": 32,
+                "sensitive_detector": "SD_B",
             })
 
     assert meta_res['success'], meta_res
     assert meta_res['metadata']['events'] == 1000
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 5
+    assert analysis_res['analysis']['version_id'] == 'v1'
+    assert analysis_res['analysis']['job_id'] == 'job-1'
+    assert analysis_res['analysis']['energy_bins'] == '64'
+    assert analysis_res['analysis']['spatial_bins'] == '32'
+    assert analysis_res['analysis']['sensitive_detector'] == 'SD_B'
 
 
 def test_ai_tool_route_bridge_get_analysis_without_request_context(pm):
     with patch(
         'app.get_simulation_analysis',
-        side_effect=lambda version_id, job_id: jsonify({"success": True, "analysis": {"total_hits": 7, "job_id": job_id}})
+        side_effect=lambda version_id, job_id: jsonify({
+            "success": True,
+            "analysis": {
+                "total_hits": 7,
+                "job_id": job_id,
+                "sensitive_detector": request.args.get("sensitive_detector", ""),
+            }
+        })
     ):
         analysis_res = dispatch_ai_tool(pm, "get_simulation_analysis", {
             "version_id": "v2",
             "job_id": "job-ctxless",
             "energy_bins": 32,
             "spatial_bins": 16,
+            "sensitive_detector": "SD_A",
         })
 
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 7
     assert analysis_res['analysis']['job_id'] == 'job-ctxless'
+    assert analysis_res['analysis']['sensitive_detector'] == 'SD_A'
 
 
 def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):

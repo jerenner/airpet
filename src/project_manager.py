@@ -1239,6 +1239,11 @@ class ProjectManager:
             'name': name,
             'mode': mode,
             'parameters': list(config.get('parameters', [])),
+            'simulation_source_ids': [
+                str(source_id).strip()
+                for source_id in (config.get('simulation_source_ids') or [])
+                if str(source_id).strip()
+            ],
             'grid': config.get('grid', {}) or {},
             'random': config.get('random', {}) or {},
             'objectives': config.get('objectives', []) or [],
@@ -6637,7 +6642,8 @@ class ProjectManager:
 
         # --- Add production cuts ---
         macro_content.append("# --- Physics Cuts for Performance ---")
-        macro_content.append("/run/setCut 1.0 mm") # Stop tracking particles that can't travel at least 1mm
+        production_cut = str(sim_params.get('production_cut') or '1.0 mm').strip()
+        macro_content.append(f"/run/setCut {production_cut}")
         macro_content.append("")
 
         # --- Add commands to control n-tuple saving ---

@@ -1,5 +1,7 @@
 import pytest
-from src.geometry_types import GeometryState, LogicalVolume, PhysicalVolumePlacement
+from src.geometry_types import GeometryState, LogicalVolume, PhysicalVolumePlacement, Material
+from src.expression_evaluator import ExpressionEvaluator
+from src.gdml_parser import GDMLParser
 from src.gdml_writer import GDMLWriter
 
 def test_topological_sort():
@@ -53,3 +55,82 @@ def test_tessellated_solid_deduplication():
     # Verify that only 3 unique positions are defined in the output
     # Each position tag looks like: <position name="Tess_v0" unit="mm" x="0" y="0" z="0"/>
     assert gdml_str.count("<position") == 3
+
+
+def test_material_density_is_written_with_explicit_gdml_unit():
+    state = GeometryState()
+
+    mat = Material(
+        "G4_Si",
+        Z_expr="14",
+        A_expr="28.085",
+        density_expr="2.33*g/cm3",
+        state="solid",
+    )
+    mat._evaluated_density = 0.00233  # internal g/mm^3
+    state.add_material(mat)
+
+    writer = GDMLWriter(state)
+    writer._add_materials()
+    gdml_str = writer.get_gdml_string()
+
+    assert '<D value="2.33" unit="g/cm3"/>' in gdml_str
+
+
+def test_plain_numeric_density_is_preserved_as_gdml_g_per_cm3():
+    state = GeometryState()
+
+    mat = Material(
+        "G4_Galactic",
+        Z_expr="1",
+        A_expr="1.01",
+        density_expr="1.0e-25",
+        state="gas",
+    )
+    mat._evaluated_density = 1.0e-25
+    state.add_material(mat)
+
+    writer = GDMLWriter(state)
+    writer._add_materials()
+    gdml_str = writer.get_gdml_string()
+
+    assert '<D value="1e-25" unit="g/cm3"/>' in gdml_str or '<D value="1.0e-25" unit="g/cm3"/>' in gdml_str
+
+
+@pytest.mark.parametrize(
+    "value,unit,expected_density_expr,expected_internal_density,expected_export_value",
+    [
+        ("2.33", "g/cm3", "2.33*g/cm3", 0.00233, "2.33"),
+        ("2.33", "mg/cm3", "2.33*mg/cm3", 2.33e-06, "0.00233"),
+        ("2330", "kg/m3", "2330*kg/m3", 0.00233, "2.33"),
+    ],
+)
+def test_gdml_material_density_units_round_trip(value, unit, expected_density_expr, expected_internal_density, expected_export_value):
+    gdml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <materials>
+    <material name="Silicon" state="solid" Z="14">
+      <D value="{value}" unit="{unit}"/>
+      <atom value="28.085"/>
+    </material>
+  </materials>
+</gdml>
+"""
+
+    parser = GDMLParser()
+    state = parser.parse_gdml_string(gdml)
+    material = state.materials["Silicon"]
+
+    assert material.density_expr == expected_density_expr
+
+    evaluator = ExpressionEvaluator()
+    success, evaluated_density = evaluator.evaluate(material.density_expr, verbose=False)
+    assert success
+    assert evaluated_density == pytest.approx(expected_internal_density)
+
+    material._evaluated_density = evaluated_density
+
+    writer = GDMLWriter(state)
+    gdml_str = writer.get_gdml_string()
+
+    assert f'<D value="{expected_export_value}" unit="g/cm3"/>' in gdml_str

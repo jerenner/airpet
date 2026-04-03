@@ -92,7 +92,7 @@ const ITEMS_PER_GROUP = 100;
 // Simulation control variables
 let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
-    simSaveHitsCheckbox, simSaveHitMetadataCheckbox, simHitEnergyThresholdInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
+    simSaveHitsCheckbox, simSaveHitMetadataCheckbox, simHitEnergyThresholdInput, simProductionCutInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
     preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightScopeHintLine,
@@ -348,6 +348,7 @@ export function initUI(cb) {
     simSaveHitsCheckbox = document.getElementById('simSaveHits');
     simSaveHitMetadataCheckbox = document.getElementById('simSaveHitMetadata');
     simHitEnergyThresholdInput = document.getElementById('simHitEnergyThreshold');
+    simProductionCutInput = document.getElementById('simProductionCut');
     simSaveParticlesCheckbox = document.getElementById('simSaveParticles');
     simSaveTracksRangeInput = document.getElementById('simSaveTracksRange');
     drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
@@ -3475,6 +3476,9 @@ export function setSimOptions(options) {
         simSaveHitMetadataCheckbox.checked = options.save_hit_metadata !== false;
     }
     simHitEnergyThresholdInput.value = options.hit_energy_threshold || '1 eV';
+    if (simProductionCutInput) {
+        simProductionCutInput.value = options.production_cut || '1.0 mm';
+    }
     simSaveParticlesCheckbox.checked = options.save_particles || false;
     simSaveTracksRangeInput.value = options.save_tracks_range || '';
     simPrintProgressInput.value = options.print_progress || 1000;
@@ -3489,6 +3493,7 @@ export function getSimOptions() {
         save_hits: simSaveHitsCheckbox.checked,
         save_hit_metadata: simSaveHitMetadataCheckbox ? simSaveHitMetadataCheckbox.checked : true,
         hit_energy_threshold: (simHitEnergyThresholdInput.value || '1 eV').trim(),
+        production_cut: (simProductionCutInput && simProductionCutInput.value ? simProductionCutInput.value : '1.0 mm').trim(),
         save_particles: simSaveParticlesCheckbox.checked,
         save_tracks_range: simSaveTracksRangeInput.value,
         physics_list: simPhysicsListSelect ? simPhysicsListSelect.value : 'FTFP_BERT',
