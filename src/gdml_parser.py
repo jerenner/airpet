@@ -1079,6 +1079,11 @@ class GDMLParser:
                 'z': 'z', 'startphi': 'startphi', 'deltaphi': 'deltaphi'
             },
             'trd_dimensions': {'x1': 'x1', 'x2': 'x2', 'y1': 'y1', 'y2': 'y2', 'z': 'z'},
+            'trap_dimensions': {
+                'z': 'z', 'theta': 'theta', 'phi': 'phi', 'y1': 'y1',
+                'x1': 'x1', 'x2': 'x2', 'alpha1': 'alpha1', 'y2': 'y2',
+                'x3': 'x3', 'x4': 'x4', 'alpha2': 'alpha2'
+            },
             # ... Add mappings for other supported parameterised solids here as needed ...
         }
 

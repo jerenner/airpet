@@ -188,3 +188,63 @@ def test_parameterised_trd_dimensions_are_mapped_on_import(capsys):
         "y2": "4.4",
         "z": "5.5",
     }
+
+
+def test_parameterised_trap_dimensions_are_mapped_on_import(capsys):
+    gdml = """<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <solids>
+    <box name="world_solid" x="100" y="100" z="100" lunit="mm"/>
+    <trap name="trap_solid" z="50" theta="10" phi="20" y1="30" x1="40" x2="50" alpha1="60" y2="70" x3="80" x4="90" alpha2="100" aunit="deg" lunit="mm"/>
+  </solids>
+  <structure>
+    <volume name="child_lv">
+      <materialref ref="G4_Si"/>
+      <solidref ref="trap_solid"/>
+    </volume>
+    <volume name="world_lv">
+      <materialref ref="G4_Galactic"/>
+      <solidref ref="world_solid"/>
+      <paramvol name="trap_param" ncopies="1">
+        <volumeref ref="child_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <trap_dimensions z="5.5" theta="6.6" phi="7.7" y1="8.8" x1="9.9" x2="10.1" alpha1="11.2" y2="12.3" x3="13.4" x4="14.5" alpha2="15.6" lunit="mm" aunit="deg"/>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+  </structure>
+  <setup>
+    <world ref="world_lv"/>
+  </setup>
+</gdml>
+"""
+
+    parser = GDMLParser()
+    state = parser.parse_gdml_string(gdml)
+    captured = capsys.readouterr()
+
+    assert "No parameter mapping found for 'trap_dimensions'" not in captured.out
+    assert "No parameter mapping found for 'trap_dimensions'" not in captured.err
+
+    param_vol = state.logical_volumes["world_lv"].content
+    assert param_vol.type == "parameterised"
+    assert param_vol.volume_ref == "child_lv"
+    assert len(param_vol.parameters) == 1
+
+    param_set = param_vol.parameters[0]
+    assert param_set.dimensions_type == "trap_dimensions"
+    assert param_set.dimensions == {
+        "z": "5.5",
+        "theta": "6.6",
+        "phi": "7.7",
+        "y1": "8.8",
+        "x1": "9.9",
+        "x2": "10.1",
+        "alpha1": "11.2",
+        "y2": "12.3",
+        "x3": "13.4",
+        "x4": "14.5",
+        "alpha2": "15.6",
+    }
