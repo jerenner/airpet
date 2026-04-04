@@ -139,8 +139,8 @@ def _load_state(gdml_text):
 def _roundtrip_state(fixture_path):
     source_text = fixture_path.read_text(encoding="utf-8")
     pm, original_state = _load_state(source_text)
-    _, roundtrip_state = _load_state(pm.export_to_gdml_string())
-    return original_state, roundtrip_state
+    roundtrip_pm, roundtrip_state = _load_state(pm.export_to_gdml_string())
+    return pm, original_state, roundtrip_pm, roundtrip_state
 
 
 def _assert_case_expectations(state, expected):
@@ -276,13 +276,45 @@ CORPUS_CASES = [
         },
         id="parameterised-polycone-polyhedra",
     ),
+    pytest.param(
+        "test_polycones.gdml",
+        {
+            "materials": {"Vacuum": None, "Lead": None},
+            "defines": (
+                "pos_solid_cone",
+                "pos_hollow_cone",
+                "pos_segmented_cone",
+                "pos_generic_cone",
+                "identity",
+            ),
+            "solids": {
+                "WorldBox": "box",
+                "SolidTrafficCone": "polycone",
+                "HollowNozzle": "polycone",
+                "SegmentedCone": "polycone",
+                "VaseShape": "genericPolycone",
+            },
+            "world_children": (
+                "pvSolidCone",
+                "pvHollowNozzle",
+                "pvSegmentedCone",
+                "pvVaseShape",
+            ),
+            "warning_free": True,
+        },
+        id="test-polycones",
+    ),
 ]
 
 
 @pytest.mark.parametrize("fixture_name, expected", CORPUS_CASES)
 def test_gdml_corpus_round_trips(fixture_name, expected):
     fixture_path = FIXTURE_DIR / fixture_name
-    original_state, roundtrip_state = _roundtrip_state(fixture_path)
+    pm, original_state, roundtrip_pm, roundtrip_state = _roundtrip_state(fixture_path)
+
+    if expected.get("warning_free"):
+        assert pm.gdml_parser.import_warnings == []
+        assert roundtrip_pm.gdml_parser.import_warnings == []
 
     assert _state_signature(original_state) == _state_signature(roundtrip_state)
     _assert_case_expectations(original_state, expected)

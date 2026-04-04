@@ -54,12 +54,12 @@ A task is only `DONE` when all of the following are true:
 ## Current Status
 
 - Overall phase: post-release audit follow-up
-- Release posture: conditional pass, with the parameterised polycone/polyhedra corpus gap, twisted parameterised-solid importer gap, and remaining AIRPET primitive parameterised-import gap now closed; additional real-example corpus coverage is being extended
-- Current priority: GDML-013
+- Release posture: backlog exhausted after closing the AIRPET `test_polycones.gdml` corpus gap; no tracked NEXT/PENDING items remain
+- Current priority: none
 
 ## Current NEXT Task
 
-GDML-013: Add AIRPET `test_polycones.gdml` corpus coverage for genericPolycone/polycone solids.
+No NEXT task remains. Backlog exhausted.
 
 ## Backlog
 
@@ -90,12 +90,13 @@ Statuses:
 | AI-006 | P2 | AI | Preserve source provenance in downloaded param-study JSON | DONE | Added `tests/js/param_study_export_summary.test.mjs` to lock in run-result provenance, launch-payload fallback, and preview-sweep no-source handling for the export summary helper that feeds downloaded study JSON |
 | GDML-011 | P2 | GDML | Add parameterised import mappings for eltube/elcone/paraboloid | DONE | Parser now normalizes the remaining AIRPET primitive parameter blocks that were still imported raw, and the GDML regression table now locks all three shapes warning-free |
 | GDML-012 | P2 | GDML | Add AIRPET example corpus coverage for parameterized box/tube GDML | DONE | Added warning-free round-trip coverage for the checked-in `geom/parameterized.gdml` and `geom/pTube.gdml` examples; the parser preserves `box_dimensions` and `tube_dimensions` parameter sets across export/import |
-| GDML-013 | P2 | GDML | Add AIRPET `test_polycones.gdml` corpus coverage for genericPolycone/polycone solids | NEXT | Promote the checked-in real example into the corpus smoke suite and verify the generic polycone path stays warning-free |
+| GDML-013 | P2 | GDML | Add AIRPET `test_polycones.gdml` corpus coverage for genericPolycone/polycone solids | DONE | Promoted the checked-in `geom/test_polycones.gdml` example into the corpus smoke suite; warning-free coverage now locks the polycone and genericPolycone solid paths |
 
 ## Cycle Log
 
 | Date | Task | Outcome | Notes |
 | --- | --- | --- | --- |
+| 2026-04-04 21:55:39 CEST | GDML-013 | DONE | Files: `tests/test_gdml_corpus.py`, `tests/fixtures/gdml/corpus/test_polycones.gdml`, `docs/AI_GDML_REFINEMENTS_TRACKER.md`; tests: `source /Users/marth/miniconda/etc/profile.d/conda.sh && conda run -n airpet python -m pytest tests/test_gdml_corpus.py -q -k 'test_polycones'` (`1 passed`); outcome: promoted the checked-in `test_polycones.gdml` example into the corpus smoke suite, verified the polycone and genericPolycone solids round-trip warning-free, and exhausted the current backlog; no NEXT task remains |
 | 2026-04-02 | Backlog setup | DONE | Created tracker and seeded the first ordered hardening backlog from the release audit |
 | 2026-04-02 | GDML-001 | DONE | Files: `src/gdml_parser.py`, `src/expression_evaluator.py`, `tests/test_gdml.py`; tests: `conda run --no-capture-output -n virtualpet pytest /Users/jrenner/local/jerenner/airpet/tests/test_gdml.py -q` (`7 passed`); outcome: imported density units now survive parse/eval/export and materials-only GDML no longer trips empty-solid pruning |
 | 2026-04-02 | AI-001 | DONE | Files: `src/ai_tools.py`, `app.py`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`; tests: `conda run --no-capture-output -n virtualpet pytest /Users/jrenner/local/jerenner/airpet/tests/test_ai_integration.py /Users/jrenner/local/jerenner/airpet/tests/test_ai_api.py -q -k 'test_ai_geometry_tools_schema_is_valid_for_gemini_generate_content_config or test_run_simulation_ai_schema_exposes_advanced_simulation_options or test_ai_simulation_tools or test_ai_run_simulation_forwards_advanced_simulation_options or test_ai_run_simulation_blocks_on_preflight_failure or test_run_g4_simulation_preserves_save_hits_and_passes_sim_params_to_geant4_env'` (`6 passed`); outcome: `run_simulation` now accepts the advanced UI options, forwards them through the AI dispatcher, and preserves `save_hits` in multi-process launches |
