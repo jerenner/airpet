@@ -1111,6 +1111,15 @@ class GDMLParser:
                 'rmin': 'rmin', 'rmax': 'rmax', 'inst': 'inst',
                 'outst': 'outst', 'z': 'z'
             },
+            'eltube_dimensions': {
+                'dx': 'dx', 'dy': 'dy', 'dz': 'dz'
+            },
+            'elcone_dimensions': {
+                'dx': 'dx', 'dy': 'dy', 'zmax': 'zmax', 'zcut': 'zcut'
+            },
+            'paraboloid_dimensions': {
+                'rlo': 'rlo', 'rhi': 'rhi', 'dz': 'dz'
+            },
             'polycone_dimensions': {
                 'numRZ': 'numRZ', 'startPhi': 'startPhi', 'openPhi': 'openPhi'
             },

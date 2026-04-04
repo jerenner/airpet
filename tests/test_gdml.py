@@ -467,6 +467,24 @@ def test_parameterised_trap_dimensions_are_mapped_on_import(capsys):
             {"rmin": "1.25", "rmax": "2.5", "inst": "3.75", "outst": "4.5", "z": "5.25", "lunit": "mm", "aunit": "deg"},
             {"rmin": "1.25", "rmax": "2.5", "inst": "3.75", "outst": "4.5", "z": "5.25"},
         ),
+        (
+            "eltube_dimensions",
+            {"dx": "1", "dy": "2", "dz": "3", "lunit": "mm"},
+            {"dx": "1.5", "dy": "2.5", "dz": "3.5", "lunit": "mm"},
+            {"dx": "1.5", "dy": "2.5", "dz": "3.5"},
+        ),
+        (
+            "elcone_dimensions",
+            {"dx": "4", "dy": "5", "zmax": "6", "zcut": "7", "lunit": "mm"},
+            {"dx": "4.5", "dy": "5.5", "zmax": "6.5", "zcut": "7.5", "lunit": "mm"},
+            {"dx": "4.5", "dy": "5.5", "zmax": "6.5", "zcut": "7.5"},
+        ),
+        (
+            "paraboloid_dimensions",
+            {"rlo": "8", "rhi": "9", "dz": "10", "lunit": "mm"},
+            {"rlo": "8.5", "rhi": "9.5", "dz": "10.5", "lunit": "mm"},
+            {"rlo": "8.5", "rhi": "9.5", "dz": "10.5"},
+        ),
     ],
 )
 def test_parameterised_additional_dimensions_are_mapped_on_import(
