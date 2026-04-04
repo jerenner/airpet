@@ -526,6 +526,131 @@ def test_parameterised_additional_dimensions_are_mapped_on_import(
 
 
 @pytest.mark.parametrize(
+    "dimensions_tag,solid_attrs,parameter_attrs,expected_dimensions",
+    [
+        (
+            "twistedbox_dimensions",
+            {"PhiTwist": "10", "x": "20", "y": "30", "z": "40", "lunit": "mm", "aunit": "deg"},
+            {"PhiTwist": "10.5", "x": "20.5", "y": "30.5", "z": "40.5", "lunit": "mm", "aunit": "deg"},
+            {"PhiTwist": "10.5", "x": "20.5", "y": "30.5", "z": "40.5"},
+        ),
+        (
+            "twistedtrd_dimensions",
+            {"PhiTwist": "5", "x1": "6", "x2": "7", "y1": "8", "y2": "9", "z": "10", "lunit": "mm", "aunit": "deg"},
+            {"PhiTwist": "5.5", "x1": "6.5", "x2": "7.5", "y1": "8.5", "y2": "9.5", "z": "10.5", "lunit": "mm", "aunit": "deg"},
+            {"PhiTwist": "5.5", "x1": "6.5", "x2": "7.5", "y1": "8.5", "y2": "9.5", "z": "10.5"},
+        ),
+        (
+            "twistedtrap_dimensions",
+            {
+                "PhiTwist": "1",
+                "z": "2",
+                "Theta": "3",
+                "Phi": "4",
+                "y1": "5",
+                "x1": "6",
+                "x2": "7",
+                "y2": "8",
+                "x3": "9",
+                "x4": "10",
+                "Alph": "11",
+                "lunit": "mm",
+                "aunit": "deg",
+            },
+            {
+                "PhiTwist": "1.5",
+                "z": "2.5",
+                "Theta": "3.5",
+                "Phi": "4.5",
+                "y1": "5.5",
+                "x1": "6.5",
+                "x2": "7.5",
+                "y2": "8.5",
+                "x3": "9.5",
+                "x4": "10.5",
+                "Alph": "11.5",
+                "lunit": "mm",
+                "aunit": "deg",
+            },
+            {
+                "PhiTwist": "1.5",
+                "z": "2.5",
+                "Theta": "3.5",
+                "Phi": "4.5",
+                "y1": "5.5",
+                "x1": "6.5",
+                "x2": "7.5",
+                "y2": "8.5",
+                "x3": "9.5",
+                "x4": "10.5",
+                "Alph": "11.5",
+            },
+        ),
+        (
+            "twistedtubs_dimensions",
+            {"twistedangle": "12", "endinnerrad": "13", "endouterrad": "14", "zlen": "15", "phi": "16", "lunit": "mm", "aunit": "deg"},
+            {"twistedangle": "12.5", "endinnerrad": "13.5", "endouterrad": "14.5", "zlen": "15.5", "phi": "16.5", "lunit": "mm", "aunit": "deg"},
+            {"twistedangle": "12.5", "endinnerrad": "13.5", "endouterrad": "14.5", "zlen": "15.5", "phi": "16.5"},
+        ),
+    ],
+)
+def test_parameterised_twisted_dimensions_are_mapped_on_import(
+    dimensions_tag,
+    solid_attrs,
+    parameter_attrs,
+    expected_dimensions,
+    capsys,
+):
+    solid_tag = dimensions_tag.replace("_dimensions", "")
+
+    gdml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <solids>
+    <box name="world_solid" x="100" y="100" z="100" lunit="mm"/>
+    <{solid_tag} name="{solid_tag}_solid" {_attrs_to_xml(solid_attrs)}/>
+  </solids>
+  <structure>
+    <volume name="child_lv">
+      <materialref ref="G4_Si"/>
+      <solidref ref="{solid_tag}_solid"/>
+    </volume>
+    <volume name="world_lv">
+      <materialref ref="G4_Galactic"/>
+      <solidref ref="world_solid"/>
+      <paramvol name="{solid_tag}_param" ncopies="1">
+        <volumeref ref="child_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <{dimensions_tag} {_attrs_to_xml(parameter_attrs)}/>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+  </structure>
+  <setup>
+    <world ref="world_lv"/>
+  </setup>
+</gdml>
+"""
+
+    parser = GDMLParser()
+    state = parser.parse_gdml_string(gdml)
+    captured = capsys.readouterr()
+
+    assert f"No parameter mapping found for '{dimensions_tag}'" not in captured.out
+    assert f"No parameter mapping found for '{dimensions_tag}'" not in captured.err
+
+    param_vol = state.logical_volumes["world_lv"].content
+    assert param_vol.type == "parameterised"
+    assert param_vol.volume_ref == "child_lv"
+    assert len(param_vol.parameters) == 1
+
+    param_set = param_vol.parameters[0]
+    assert param_set.dimensions_type == dimensions_tag
+    assert param_set.dimensions == expected_dimensions
+
+
+@pytest.mark.parametrize(
     (
         "solid_tag",
         "solid_attrs",
