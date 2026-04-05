@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -6388,6 +6389,7 @@ def test_ai_and_http_simulation_analysis_share_sensitive_detector_filter(pm, tmp
                 f"/api/simulation/analysis/{version_id}/{job_id}"
                 "?energy_bins=10&spatial_bins=5&sensitive_detector=SD_B"
             )
+            download_res = client.get(f"/api/simulation/download/{version_id}/{job_id}")
 
     assert http_res.status_code == 200, http_res.get_json()
     http_analysis = http_res.get_json()["analysis"]
@@ -6396,6 +6398,35 @@ def test_ai_and_http_simulation_analysis_share_sensitive_detector_filter(pm, tmp
     assert http_analysis["filtering"]["available_sensitive_detectors"] == ['SD_A', 'SD_B']
     assert http_analysis["filtering"]["selected_sensitive_detector"] == 'SD_B'
     assert http_analysis["total_hits"] == 2
+
+    assert download_res.status_code == 200, download_res.get_data(as_text=True)
+    assert download_res.mimetype == "application/x-hdf5"
+    assert "attachment" in download_res.headers.get("Content-Disposition", "")
+    assert f"sim_{job_id[:8]}_output.hdf5" in download_res.headers.get("Content-Disposition", "")
+
+    with h5py.File(io.BytesIO(download_res.data), "r") as downloaded_h5:
+        hits_group = downloaded_h5["default_ntuples/Hits"]
+        assert {
+            "entries",
+            "Edep",
+            "PosX",
+            "PosY",
+            "PosZ",
+            "CopyNo",
+            "ParticleName",
+            "SensitiveDetectorName",
+        }.issubset(set(hits_group.keys()))
+
+        entries_dataset = hits_group["entries"]
+        downloaded_entries = int(entries_dataset[()] if entries_dataset.shape == () else entries_dataset[0])
+        assert downloaded_entries == 4
+
+        sensitive_detector_names = [
+            value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            for value in hits_group["SensitiveDetectorName"][:]
+        ]
+        assert sensitive_detector_names.count("SD_A") == 2
+        assert sensitive_detector_names.count("SD_B") == 2
 
 
 def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):
