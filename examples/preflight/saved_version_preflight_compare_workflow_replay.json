@@ -1,0 +1,92 @@
+{
+  "schema_version": "2026-04-05.saved-version-preflight-compare-workflow-replay.v1",
+  "route": "POST /api/preflight/compare_versions",
+  "ai_wrapper": "compare_preflight_versions",
+  "fixture": "_seed_saved_version_compare_fixture (src/scoped_preflight_replay.py)",
+  "replay_intent": "Compact end-to-end replay artifact for explicit saved-version preflight compare parity and regression-delta checks.",
+  "workflow": {
+    "route_payload": {
+      "project_name": "workflow_compare_project",
+      "baseline_version_id": "workflow_compare_baseline",
+      "candidate_version_id": "workflow_compare_candidate"
+    },
+    "ai_args": {
+      "project_name": "workflow_compare_project",
+      "baseline_version_id": "workflow_compare_baseline",
+      "candidate_version_id": "workflow_compare_candidate"
+    },
+    "expected_contract": {
+      "route_status_code": 200,
+      "route_ai_payload_identical": true
+    }
+  },
+  "expected_response_excerpt": {
+    "success": true,
+    "project_name": "workflow_compare_project",
+    "baseline_version_id": "workflow_compare_baseline",
+    "candidate_version_id": "workflow_compare_candidate",
+    "baseline_report": {
+      "summary": {
+        "can_run": true,
+        "issue_count": 0,
+        "counts_by_code": {}
+      }
+    },
+    "candidate_report": {
+      "summary": {
+        "can_run": false,
+        "issue_count": 1,
+        "counts_by_code": {
+          "unknown_material_reference": 1
+        }
+      }
+    },
+    "comparison": {
+      "added_issue_codes": [
+        "unknown_material_reference"
+      ],
+      "resolved_issue_codes": [],
+      "counts_delta_by_code": {
+        "unknown_material_reference": 1
+      },
+      "issue_count_delta": 1,
+      "status": {
+        "can_run_changed": true,
+        "regressed_can_run": true,
+        "improved_can_run": false,
+        "fingerprint_changed": true
+      }
+    },
+    "ordering_metadata": {
+      "ordering_basis": "explicit_version_ids"
+    },
+    "version_sources": {
+      "baseline": {
+        "version_id": "workflow_compare_baseline",
+        "is_autosave": false,
+        "is_autosave_snapshot": false,
+        "version_json_exists": true,
+        "source_path_checks": {
+          "versions_root_exists": true,
+          "version_dir_within_versions_root": true,
+          "version_json_within_versions_root": true
+        }
+      },
+      "candidate": {
+        "version_id": "workflow_compare_candidate",
+        "is_autosave": false,
+        "is_autosave_snapshot": false,
+        "version_json_exists": true,
+        "source_path_checks": {
+          "versions_root_exists": true,
+          "version_dir_within_versions_root": true,
+          "version_json_within_versions_root": true
+        }
+      }
+    }
+  },
+  "debugging_pointers": [
+    "Use the saved-version compare fixture to inspect baseline and candidate version seeding if the replay fails.",
+    "If route and AI outputs drift, compare compare_preflight_versions selector normalization and version-source provenance before changing the compare logic."
+  ]
+}
