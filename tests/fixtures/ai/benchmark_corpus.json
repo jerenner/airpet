@@ -221,6 +221,191 @@
     }
   },
   {
+    "name": "geometry_preflight_simulation_analysis",
+    "prompt": "Turn the default box into a sensitive silicon slab, run preflight, launch a short simulation, and inspect the filtered hit analysis for the saved run.",
+    "preconditions": [
+      {
+        "tool": "manage_material",
+        "args": {
+          "name": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "created"
+          }
+        }
+      },
+      {
+        "tool": "modify_solid",
+        "args": {
+          "name": "box_solid",
+          "params": {
+            "x": "10 mm",
+            "y": "10 mm",
+            "z": "0.5 mm"
+          }
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "manage_logical_volume",
+        "args": {
+          "name": "box_LV",
+          "solid_ref": "box_solid",
+          "material_ref": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "configure_incident_beam",
+        "args": {
+          "target": "box_LV",
+          "source_name": "slab_beam",
+          "particle": "electron",
+          "energy": "10 keV",
+          "incident_axis": "+z",
+          "offset": "1*mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "configured"
+          },
+          "source": {
+            "name": "slab_beam",
+            "target_pv_name": "box_PV",
+            "target_sensitive_updated": true,
+            "gps_commands": {
+              "particle": "e-",
+              "ang/type": "beam1d",
+              "energy": "10*keV"
+            }
+          }
+        }
+      }
+    ],
+    "trace": [
+      {
+        "tool": "run_preflight_checks",
+        "args": {},
+        "expected": {
+          "success": true,
+          "preflight_summary": {
+            "can_run": true
+          }
+        }
+      },
+      {
+        "tool": "run_simulation",
+        "args": {
+          "events": 8,
+          "threads": 1,
+          "production_cut": "0.5 mm",
+          "hit_energy_threshold": "20 eV",
+          "save_hits": true,
+          "save_hit_metadata": true,
+          "save_particles": true,
+          "physics_list": "FTFP_BERT",
+          "optical_physics": true
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "Simulation started"
+          },
+          "preflight_summary": {
+            "can_run": true
+          },
+          "job_id": {
+            "$exists": true
+          }
+        }
+      },
+      {
+        "tool": "get_simulation_analysis",
+        "args": {
+          "version_id": "benchmark-version",
+          "job_id": "$job_id",
+          "energy_bins": 8,
+          "spatial_bins": 4,
+          "sensitive_detector": "box_LV_SD"
+        },
+        "expected": {
+          "success": true,
+          "analysis": {
+            "total_hits": 4,
+            "filtering": {
+              "sensitive_detector_supported": true,
+              "available_sensitive_detectors": [
+                "box_LV_SD"
+              ],
+              "selected_sensitive_detector": "box_LV_SD"
+            },
+            "energy_spectrum": {
+              "counts": {
+                "$len": 8
+              }
+            },
+            "heatmaps": {
+              "xy": {
+                "z": {
+                  "$len": 4
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "materials": {
+        "G4_Si": {
+          "mat_type": "nist"
+        }
+      },
+      "solids": {
+        "box_solid": {
+          "_evaluated_parameters": {
+            "x": 10.0,
+            "y": 10.0,
+            "z": 0.5
+          }
+        }
+      },
+      "logical_volumes": {
+        "box_LV": {
+          "material_ref": "G4_Si",
+          "is_sensitive": true
+        }
+      },
+      "active_source_ids": {
+        "$len": 1
+      },
+      "sources": {
+        "slab_beam": {
+          "gps_commands": {
+            "particle": "e-",
+            "ang/type": "beam1d",
+            "energy": "10*keV"
+          }
+        }
+      },
+      "current_version_id": "benchmark-version",
+      "is_changed": false
+    }
+  },
+  {
     "name": "analysis_filter",
     "prompt": "Show the hit analysis for run job-1 filtered to sensitive detector SD_B.",
     "trace": [
