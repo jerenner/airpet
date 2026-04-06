@@ -6233,6 +6233,15 @@ def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):
 
     with patch('app.get_project_manager_for_session', return_value=pm):
         with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+            history_data = history_res.get_json()
+            assert history_res.status_code == 200
+            assert history_data['success'] is True
+            assert [entry['id'] for entry in history_data['history']] == [version_id]
+            assert set(history_data['history'][0]['runs']) == {'run-a', 'run-b'}
+
             resp = client.post('/api/delete_version', json={
                 'project_name': pm.project_name,
                 'version_id': version_id,
@@ -6245,6 +6254,16 @@ def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):
     assert not Path(pm._get_version_dir(version_id)).exists()
     assert pm.current_version_id is None
     assert pm.is_changed is True
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+    history_data = history_res.get_json()
+    assert history_res.status_code == 200
+    assert history_data['success'] is True
+    assert history_data['history'] == []
 
 
 def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
@@ -6260,6 +6279,15 @@ def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
 
     with patch('app.get_project_manager_for_session', return_value=pm):
         with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+            history_data = history_res.get_json()
+            assert history_res.status_code == 200
+            assert history_data['success'] is True
+            assert [entry['id'] for entry in history_data['history']] == [version_id]
+            assert set(history_data['history'][0]['runs']) == {'run-target', 'run-sibling'}
+
             resp = client.post('/api/delete_simulation_run', json={
                 'project_name': pm.project_name,
                 'version_id': version_id,
@@ -6272,6 +6300,17 @@ def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
     assert not target_run_dir.exists()
     assert sibling_run_dir.exists()
     assert Path(pm._get_version_dir(version_id)).exists()
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+    history_data = history_res.get_json()
+    assert history_res.status_code == 200
+    assert history_data['success'] is True
+    assert [entry['id'] for entry in history_data['history']] == [version_id]
+    assert set(history_data['history'][0]['runs']) == {'run-sibling'}
 
 
 def test_simulation_analysis_route_handles_degenerate_histogram_ranges(pm, tmp_path):

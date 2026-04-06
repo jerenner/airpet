@@ -20,6 +20,10 @@ import * as SolidEditor from './solidEditor.js';
 import * as StepImportEditor from './stepImportEditor.js';
 import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
 import * as ParamStudyEditor from './paramStudyEditor.js';
+import {
+    buildHistoryDeleteConfirmationMessage,
+    normalizeHistoryDeleteSelection,
+} from './historyDeleteFlow.js';
 import * as UIManager from './uiManager.js';
 import * as AIAssistant from './aiAssistant.js';
 import {
@@ -1307,24 +1311,11 @@ async function handleDeleteRun(projectName, versionId, jobId, versionDescription
 }
 
 async function handleDeleteHistorySelection(projectName, selection) {
-    const versionIds = [...new Set((selection?.versionIds || []).filter(Boolean))];
-    const versionIdSet = new Set(versionIds);
-    const runs = [...new Map(
-        (selection?.runs || [])
-            .filter(item => item && item.versionId && item.runId)
-            .filter(item => !versionIdSet.has(item.versionId))
-            .map(item => [`${item.versionId}::${item.runId}`, item])
-    ).values()];
-
-    const versionCount = versionIds.length;
-    const runCount = runs.length;
+    const normalizedSelection = normalizeHistoryDeleteSelection(selection);
+    const { versionIds, runs, versionCount, runCount } = normalizedSelection;
     if (versionCount === 0 && runCount === 0) return;
 
-    const parts = [];
-    if (versionCount > 0) parts.push(`${versionCount} version${versionCount === 1 ? '' : 's'}`);
-    if (runCount > 0) parts.push(`${runCount} run${runCount === 1 ? '' : 's'}`);
-
-    const confirmMessage = `Delete ${parts.join(' and ')}? This cannot be undone.`;
+    const confirmMessage = buildHistoryDeleteConfirmationMessage(normalizedSelection);
     if (!UIManager.confirmAction(confirmMessage)) return;
 
     UIManager.showLoading("Deleting selected history items...");
