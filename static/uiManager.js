@@ -32,13 +32,23 @@ import {
     GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
     GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
     GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
     LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
     LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
     LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
     formatGlobalMagneticFieldSummary,
+    formatGlobalElectricFieldSummary,
     formatLocalMagneticFieldSummary,
+    formatLocalElectricFieldSummary,
     normalizeLocalMagneticFieldState,
+    normalizeLocalElectricFieldState,
     normalizeGlobalMagneticFieldState,
+    normalizeGlobalElectricFieldState,
     normalizeTargetVolumeNames,
 } from './environmentFieldUi.js';
 
@@ -1774,7 +1784,7 @@ function createReadOnlyProperty(parent, labelText, value) {
     parent.appendChild(propDiv);
 }
 
-function createEnvironmentFieldInput(parent, { labelText, id, value, onChange }) {
+function createEnvironmentFieldInput(parent, { labelText, id, value, onChange, fieldLabel }) {
     const fieldWrap = document.createElement('div');
     fieldWrap.className = 'environment-vector-field';
 
@@ -1791,8 +1801,8 @@ function createEnvironmentFieldInput(parent, { labelText, id, value, onChange })
     input.addEventListener('change', () => {
         const nextValue = input.valueAsNumber;
         if (!Number.isFinite(nextValue)) {
-            const axisLabel = labelText.replace(/\s*\(T\)$/, '');
-            showError(`Global magnetic field ${axisLabel} must be a finite number.`);
+            const axisLabel = labelText.replace(/\s*\([^)]+\)$/, '');
+            showError(`${fieldLabel} ${axisLabel} must be a finite number.`);
             input.value = String(value);
             return;
         }
@@ -1826,6 +1836,99 @@ function createEnvironmentTextInput(parent, { labelText, id, value, onChange, pl
     parent.appendChild(fieldWrap);
 }
 
+function renderEnvironmentFieldCard(parent, {
+    title,
+    summary,
+    enabledInputId,
+    enabled,
+    onEnabledChange,
+    fieldLabel,
+    targetInputId = null,
+    targetValue = null,
+    targetPlaceholder = '',
+    onTargetChange = null,
+    vectorInputPrefix,
+    vectorValues,
+    vectorAxes,
+    vectorPropertyBase,
+    vectorUnitLabel,
+    objectType,
+    objectId,
+    noteText = '',
+}) {
+    const card = document.createElement('div');
+    card.className = 'environment-field-card';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'environment-field-title';
+    titleEl.textContent = title;
+    card.appendChild(titleEl);
+
+    const summaryEl = document.createElement('p');
+    summaryEl.className = 'environment-summary';
+    summaryEl.textContent = summary;
+    card.appendChild(summaryEl);
+
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'environment-toggle-row';
+
+    const enabledInput = document.createElement('input');
+    enabledInput.type = 'checkbox';
+    enabledInput.id = enabledInputId;
+    enabledInput.checked = Boolean(enabled);
+    enabledInput.addEventListener('change', () => {
+        onEnabledChange(enabledInput.checked);
+    });
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.htmlFor = enabledInput.id;
+    enabledLabel.textContent = 'Enabled';
+
+    toggleRow.appendChild(enabledInput);
+    toggleRow.appendChild(enabledLabel);
+    card.appendChild(toggleRow);
+
+    if (targetInputId) {
+        const targetRow = document.createElement('div');
+        targetRow.className = 'environment-vector-row';
+        createEnvironmentTextInput(targetRow, {
+            labelText: 'Target Volumes',
+            id: targetInputId,
+            value: targetValue,
+            placeholder: targetPlaceholder,
+            onChange: onTargetChange,
+        });
+        card.appendChild(targetRow);
+    }
+
+    const vectorRow = document.createElement('div');
+    vectorRow.className = 'environment-vector-row';
+    vectorAxes.forEach((axis) => {
+        createEnvironmentFieldInput(vectorRow, {
+            labelText: `${axis.toUpperCase()} (${vectorUnitLabel})`,
+            id: `${vectorInputPrefix}_${axis}`,
+            value: vectorValues[axis],
+            fieldLabel,
+            onChange: (nextValue) => {
+                callbacks.onInspectorPropertyChanged(
+                    objectType,
+                    objectId,
+                    `${vectorPropertyBase}.${axis}`,
+                    nextValue
+                );
+            },
+        });
+    });
+    card.appendChild(vectorRow);
+
+    const note = document.createElement('p');
+    note.className = 'environment-note';
+    note.textContent = noteText;
+    card.appendChild(note);
+
+    parent.appendChild(card);
+}
+
 function renderEnvironmentPanel(projectState) {
     if (!environmentPanelRoot) return;
 
@@ -1838,122 +1941,88 @@ function renderEnvironmentPanel(projectState) {
         return;
     }
 
-    const field = normalizeGlobalMagneticFieldState(
+    const globalMagneticField = normalizeGlobalMagneticFieldState(
         projectState?.environment?.global_uniform_magnetic_field
     );
-
-    const card = document.createElement('div');
-    card.className = 'environment-field-card';
-
-    const title = document.createElement('div');
-    title.className = 'environment-field-title';
-    title.textContent = 'Global Magnetic Field';
-    card.appendChild(title);
-
-    const summary = document.createElement('p');
-    summary.className = 'environment-summary';
-    summary.textContent = formatGlobalMagneticFieldSummary(field);
-    card.appendChild(summary);
-
-    const toggleRow = document.createElement('div');
-    toggleRow.className = 'environment-toggle-row';
-
-    const enabledInput = document.createElement('input');
-    enabledInput.type = 'checkbox';
-    enabledInput.id = 'global_magnetic_field_enabled';
-    enabledInput.checked = field.enabled;
-    enabledInput.addEventListener('change', () => {
-        callbacks.onInspectorPropertyChanged(
-            GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
-            GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
-            'enabled',
-            enabledInput.checked
-        );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Global Magnetic Field',
+        summary: formatGlobalMagneticFieldSummary(globalMagneticField),
+        enabledInputId: 'global_magnetic_field_enabled',
+        enabled: globalMagneticField.enabled,
+        fieldLabel: 'Global magnetic field',
+        objectType: GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+        objectId: GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+        vectorInputPrefix: 'global_magnetic_field',
+        vectorValues: globalMagneticField.field_vector_tesla,
+        vectorAxes: GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_tesla',
+        vectorUnitLabel: 'T',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        noteText: 'Saved in project state and passed to Geant4 runtime initialization.',
     });
 
-    const enabledLabel = document.createElement('label');
-    enabledLabel.htmlFor = enabledInput.id;
-    enabledLabel.textContent = 'Enabled';
-
-    toggleRow.appendChild(enabledInput);
-    toggleRow.appendChild(enabledLabel);
-    card.appendChild(toggleRow);
-
-    const vectorRow = document.createElement('div');
-    vectorRow.className = 'environment-vector-row';
-    GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES.forEach((axis) => {
-        createEnvironmentFieldInput(vectorRow, {
-            labelText: `${axis.toUpperCase()} (T)`,
-            id: `global_magnetic_field_${axis}`,
-            value: field.field_vector_tesla[axis],
-            onChange: (nextValue) => {
-                callbacks.onInspectorPropertyChanged(
-                    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
-                    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
-                    `field_vector_tesla.${axis}`,
-                    nextValue
-                );
-            },
-        });
+    const globalElectricField = normalizeGlobalElectricFieldState(
+        projectState?.environment?.global_uniform_electric_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Global Electric Field',
+        summary: formatGlobalElectricFieldSummary(globalElectricField),
+        enabledInputId: 'global_electric_field_enabled',
+        enabled: globalElectricField.enabled,
+        fieldLabel: 'Global electric field',
+        objectType: GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+        objectId: GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+        vectorInputPrefix: 'global_electric_field',
+        vectorValues: globalElectricField.field_vector_volt_per_meter,
+        vectorAxes: GLOBAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_volt_per_meter',
+        vectorUnitLabel: 'V/m',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        noteText: 'Saved in project state and passed to Geant4 runtime initialization.',
     });
-    card.appendChild(vectorRow);
 
-    const note = document.createElement('p');
-    note.className = 'environment-note';
-    note.textContent = 'Saved in project state and passed to Geant4 runtime initialization.';
-    card.appendChild(note);
-
-    environmentPanelRoot.appendChild(card);
-
-    const localField = normalizeLocalMagneticFieldState(
+    const localMagneticField = normalizeLocalMagneticFieldState(
         projectState?.environment?.local_uniform_magnetic_field
     );
-
-    const localCard = document.createElement('div');
-    localCard.className = 'environment-field-card';
-
-    const localTitle = document.createElement('div');
-    localTitle.className = 'environment-field-title';
-    localTitle.textContent = 'Local Magnetic Field';
-    localCard.appendChild(localTitle);
-
-    const localSummary = document.createElement('p');
-    localSummary.className = 'environment-summary';
-    localSummary.textContent = formatLocalMagneticFieldSummary(localField);
-    localCard.appendChild(localSummary);
-
-    const localToggleRow = document.createElement('div');
-    localToggleRow.className = 'environment-toggle-row';
-
-    const localEnabledInput = document.createElement('input');
-    localEnabledInput.type = 'checkbox';
-    localEnabledInput.id = 'local_magnetic_field_enabled';
-    localEnabledInput.checked = localField.enabled;
-    localEnabledInput.addEventListener('change', () => {
-        callbacks.onInspectorPropertyChanged(
-            LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
-            LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
-            'enabled',
-            localEnabledInput.checked
-        );
-    });
-
-    const localEnabledLabel = document.createElement('label');
-    localEnabledLabel.htmlFor = localEnabledInput.id;
-    localEnabledLabel.textContent = 'Enabled';
-
-    localToggleRow.appendChild(localEnabledInput);
-    localToggleRow.appendChild(localEnabledLabel);
-    localCard.appendChild(localToggleRow);
-
-    const targetRow = document.createElement('div');
-    targetRow.className = 'environment-vector-row';
-    createEnvironmentTextInput(targetRow, {
-        labelText: 'Target Volumes',
-        id: 'local_magnetic_field_target_volumes',
-        value: localField.target_volume_names.join(', '),
-        placeholder: 'box_LV, detector_LV',
-        onChange: (nextValue) => {
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Local Magnetic Field',
+        summary: formatLocalMagneticFieldSummary(localMagneticField),
+        enabledInputId: 'local_magnetic_field_enabled',
+        enabled: localMagneticField.enabled,
+        fieldLabel: 'Local magnetic field',
+        objectType: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+        objectId: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+        targetInputId: 'local_magnetic_field_target_volumes',
+        targetValue: localMagneticField.target_volume_names.join(', '),
+        targetPlaceholder: 'box_LV, detector_LV',
+        vectorInputPrefix: 'local_magnetic_field',
+        vectorValues: localMagneticField.field_vector_tesla,
+        vectorAxes: LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_tesla',
+        vectorUnitLabel: 'T',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        onTargetChange: (nextValue) => {
             callbacks.onInspectorPropertyChanged(
                 LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
                 LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
@@ -1961,30 +2030,46 @@ function renderEnvironmentPanel(projectState) {
                 nextValue
             );
         },
+        noteText: 'Targets are comma-separated logical volume names.',
     });
-    LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES.forEach((axis) => {
-        createEnvironmentFieldInput(targetRow, {
-            labelText: `${axis.toUpperCase()} (T)`,
-            id: `local_magnetic_field_${axis}`,
-            value: localField.field_vector_tesla[axis],
-            onChange: (nextValue) => {
-                callbacks.onInspectorPropertyChanged(
-                    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
-                    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
-                    `field_vector_tesla.${axis}`,
-                    nextValue
-                );
-            },
-        });
+
+    const localElectricField = normalizeLocalElectricFieldState(
+        projectState?.environment?.local_uniform_electric_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Local Electric Field',
+        summary: formatLocalElectricFieldSummary(localElectricField),
+        enabledInputId: 'local_electric_field_enabled',
+        enabled: localElectricField.enabled,
+        fieldLabel: 'Local electric field',
+        objectType: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+        objectId: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+        targetInputId: 'local_electric_field_target_volumes',
+        targetValue: localElectricField.target_volume_names.join(', '),
+        targetPlaceholder: 'box_LV, detector_LV',
+        vectorInputPrefix: 'local_electric_field',
+        vectorValues: localElectricField.field_vector_volt_per_meter,
+        vectorAxes: LOCAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_volt_per_meter',
+        vectorUnitLabel: 'V/m',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        onTargetChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'target_volume_names',
+                nextValue
+            );
+        },
+        noteText: 'Targets are comma-separated logical volume names.',
     });
-    localCard.appendChild(targetRow);
-
-    const localNote = document.createElement('p');
-    localNote.className = 'environment-note';
-    localNote.textContent = 'Targets are comma-separated logical volume names.';
-    localCard.appendChild(localNote);
-
-    environmentPanelRoot.appendChild(localCard);
 }
 
 /**

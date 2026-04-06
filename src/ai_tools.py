@@ -354,7 +354,7 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "get_component_details",
-        "description": "Get the full JSON definition of a specific component to see its current parameters, including the saved environment and global magnetic field.",
+        "description": "Get the full JSON definition of a specific component to see its current parameters, including the saved environment and magnetic/electric field state.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -373,9 +373,13 @@ AI_GEOMETRY_TOOLS = [
             "Update a single property on a project object using the same path contract as the backend "
             "/update_property route. For the global magnetic field, use object_type='environment', "
             "object_id='global_uniform_magnetic_field', and property paths like 'enabled' or "
-            "'field_vector_tesla.x'. For local magnetic field assignments, use "
+            "'field_vector_tesla.x'. For the global electric field, use "
+            "object_id='global_uniform_electric_field' and property paths like 'enabled' or "
+            "'field_vector_volt_per_meter.y'. For local magnetic field assignments, use "
             "object_id='local_uniform_magnetic_field' and property paths like 'enabled', "
-            "'target_volume_names', or 'field_vector_tesla.z'."
+            "'target_volume_names', or 'field_vector_tesla.z'. For local electric field assignments, "
+            "use object_id='local_uniform_electric_field' and property paths like 'enabled', "
+            "'target_volume_names', or 'field_vector_volt_per_meter.z'."
         ),
         "parameters": {
             "type": "object",
@@ -391,7 +395,7 @@ AI_GEOMETRY_TOOLS = [
                 },
                 "property_path": {
                     "type": "string",
-                    "description": "Dot-separated property path, for example 'enabled' or 'field_vector_tesla.z'."
+                    "description": "Dot-separated property path, for example 'enabled', 'field_vector_tesla.z', or 'field_vector_volt_per_meter.z'."
                 },
                 "new_value": {
                     "type": "string",

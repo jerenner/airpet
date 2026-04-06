@@ -617,10 +617,19 @@ def test_ai_tool_update_property_and_get_component_details_cover_environment_fie
             "enabled": False,
             "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
         },
+        "global_uniform_electric_field": {
+            "enabled": False,
+            "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
         "local_uniform_magnetic_field": {
             "enabled": False,
             "target_volume_names": [],
             "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
+        "local_uniform_electric_field": {
+            "enabled": False,
+            "target_volume_names": [],
+            "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
         },
     }
 
@@ -648,6 +657,30 @@ def test_ai_tool_update_property_and_get_component_details_cover_environment_fie
     })
     assert res["success"], res
 
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "global_uniform_electric_field",
+        "property_path": "enabled",
+        "new_value": True,
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_electric_field",
+        "property_path": "target_volume_names",
+        "new_value": "box_LV",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_electric_field",
+        "property_path": "field_vector_volt_per_meter.y",
+        "new_value": "-1.5",
+    })
+    assert res["success"], res
+
     updated_details = dispatch_ai_tool(pm, "get_component_details", {
         "component_type": "environment",
         "name": "environment",
@@ -657,10 +690,19 @@ def test_ai_tool_update_property_and_get_component_details_cover_environment_fie
         "enabled": True,
         "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
     }
+    assert updated_details["result"]["global_uniform_electric_field"] == {
+        "enabled": True,
+        "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
+    }
     assert updated_details["result"]["local_uniform_magnetic_field"] == {
         "enabled": False,
         "target_volume_names": ["box_LV", "detector_LV"],
         "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 2.25},
+    }
+    assert updated_details["result"]["local_uniform_electric_field"] == {
+        "enabled": False,
+        "target_volume_names": ["box_LV"],
+        "field_vector_volt_per_meter": {"x": 0.0, "y": -1.5, "z": 0.0},
     }
 
 

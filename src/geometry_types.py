@@ -786,46 +786,65 @@ class ParticleSource:
         instance._evaluated_rotation = data.get('_evaluated_rotation', {'x': 0, 'y': 0, 'z': 0})
         return instance
 
+def _default_uniform_field_vector():
+    return {'x': 0.0, 'y': 0.0, 'z': 0.0}
+
+
+def _normalize_uniform_field_vector(raw_vector, field_name, vector_field_name):
+    if raw_vector is None:
+        return _default_uniform_field_vector()
+
+    if not isinstance(raw_vector, dict):
+        raise ValueError(f"{field_name}.{vector_field_name} must be an object with x/y/z.")
+
+    normalized = _default_uniform_field_vector()
+    for axis in ('x', 'y', 'z'):
+        try:
+            value = float(raw_vector.get(axis, normalized[axis]))
+        except (TypeError, ValueError):
+            raise ValueError(f"{field_name}.{vector_field_name}.{axis} must be a finite number.")
+        if not math.isfinite(value):
+            raise ValueError(f"{field_name}.{vector_field_name}.{axis} must be a finite number.")
+        normalized[axis] = value
+
+    return normalized
+
+
+def _validate_uniform_field_vector(data, field_name, vector_field_name):
+    vector = data.get(vector_field_name)
+    if vector is not None:
+        if not isinstance(vector, dict):
+            return False, f"{field_name}.{vector_field_name} must be an object with x/y/z."
+        for axis in ('x', 'y', 'z'):
+            try:
+                value = float(vector.get(axis, 0.0))
+            except (TypeError, ValueError):
+                return False, f"{field_name}.{vector_field_name}.{axis} must be a finite number."
+            if not math.isfinite(value):
+                return False, f"{field_name}.{vector_field_name}.{axis} must be a finite number."
+
+    return True, None
+
+
 class GlobalUniformMagneticField:
     """Saved-project contract for a global uniform magnetic field."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.global_uniform_magnetic_field"
+    FIELD_VECTOR_NAME = "field_vector_tesla"
 
     def __init__(self, enabled=False, field_vector_tesla=None):
         if not isinstance(enabled, bool):
             raise ValueError("environment.global_uniform_magnetic_field.enabled must be a boolean.")
 
         self.enabled = enabled
-        self.field_vector_tesla = self._normalize_field_vector(field_vector_tesla)
-
-    @staticmethod
-    def _default_field_vector():
-        return {'x': 0.0, 'y': 0.0, 'z': 0.0}
-
-    @classmethod
-    def _normalize_field_vector(cls, raw_vector):
-        if raw_vector is None:
-            return cls._default_field_vector()
-
-        if not isinstance(raw_vector, dict):
-            raise ValueError("environment.global_uniform_magnetic_field.field_vector_tesla must be an object with x/y/z.")
-
-        normalized = cls._default_field_vector()
-        for axis in ('x', 'y', 'z'):
-            try:
-                value = float(raw_vector.get(axis, normalized[axis]))
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"environment.global_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
-                )
-            if not math.isfinite(value):
-                raise ValueError(
-                    f"environment.global_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
-                )
-            normalized[axis] = value
-
-        return normalized
+        self.field_vector_tesla = _normalize_uniform_field_vector(
+            field_vector_tesla,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
 
     @classmethod
-    def validate(cls, data, field_name="environment.global_uniform_magnetic_field"):
+    def validate(cls, data, field_name=ENVIRONMENT_FIELD_NAME):
         if data is None:
             return True, None
         if not isinstance(data, dict):
@@ -835,19 +854,7 @@ class GlobalUniformMagneticField:
         if not isinstance(enabled, bool):
             return False, f"{field_name}.enabled must be a boolean."
 
-        vector = data.get('field_vector_tesla')
-        if vector is not None:
-            if not isinstance(vector, dict):
-                return False, f"{field_name}.field_vector_tesla must be an object with x/y/z."
-            for axis in ('x', 'y', 'z'):
-                try:
-                    value = float(vector.get(axis, 0.0))
-                except (TypeError, ValueError):
-                    return False, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
-                if not math.isfinite(value):
-                    return False, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
-
-        return True, None
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
 
     def to_dict(self):
         return {
@@ -870,8 +877,62 @@ class GlobalUniformMagneticField:
         )
 
 
+class GlobalUniformElectricField:
+    """Saved-project contract for a global uniform electric field."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.global_uniform_electric_field"
+    FIELD_VECTOR_NAME = "field_vector_volt_per_meter"
+
+    def __init__(self, enabled=False, field_vector_volt_per_meter=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.global_uniform_electric_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.field_vector_volt_per_meter = _normalize_uniform_field_vector(
+            field_vector_volt_per_meter,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @classmethod
+    def validate(cls, data, field_name=ENVIRONMENT_FIELD_NAME):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "field_vector_volt_per_meter": dict(self.field_vector_volt_per_meter),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            field_vector_volt_per_meter=data.get('field_vector_volt_per_meter'),
+        )
+
+
 class LocalUniformMagneticField:
     """Saved-project contract for a local uniform magnetic field assignment."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.local_uniform_magnetic_field"
+    FIELD_VECTOR_NAME = "field_vector_tesla"
 
     def __init__(self, enabled=False, target_volume_names=None, field_vector_tesla=None):
         if not isinstance(enabled, bool):
@@ -879,35 +940,11 @@ class LocalUniformMagneticField:
 
         self.enabled = enabled
         self.target_volume_names = self._normalize_target_volume_names(target_volume_names)
-        self.field_vector_tesla = self._normalize_field_vector(field_vector_tesla)
-
-    @staticmethod
-    def _default_field_vector():
-        return {'x': 0.0, 'y': 0.0, 'z': 0.0}
-
-    @classmethod
-    def _normalize_field_vector(cls, raw_vector):
-        if raw_vector is None:
-            return cls._default_field_vector()
-
-        if not isinstance(raw_vector, dict):
-            raise ValueError("environment.local_uniform_magnetic_field.field_vector_tesla must be an object with x/y/z.")
-
-        normalized = cls._default_field_vector()
-        for axis in ('x', 'y', 'z'):
-            try:
-                value = float(raw_vector.get(axis, normalized[axis]))
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"environment.local_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
-                )
-            if not math.isfinite(value):
-                raise ValueError(
-                    f"environment.local_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
-                )
-            normalized[axis] = value
-
-        return normalized
+        self.field_vector_tesla = _normalize_uniform_field_vector(
+            field_vector_tesla,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
 
     @staticmethod
     def _coerce_target_volume_names(raw_names):
@@ -956,19 +993,7 @@ class LocalUniformMagneticField:
             except ValueError:
                 return False, f"{field_name}.target_volume_names must be an array of strings."
 
-        vector = data.get('field_vector_tesla')
-        if vector is not None:
-            if not isinstance(vector, dict):
-                return False, f"{field_name}.field_vector_tesla must be an object with x/y/z."
-            for axis in ('x', 'y', 'z'):
-                try:
-                    value = float(vector.get(axis, 0.0))
-                except (TypeError, ValueError):
-                    return False, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
-                if not math.isfinite(value):
-                    return False, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
-
-        return True, None
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
 
     def to_dict(self):
         return {
@@ -992,19 +1017,125 @@ class LocalUniformMagneticField:
             field_vector_tesla=data.get('field_vector_tesla'),
         )
 
+
+class LocalUniformElectricField:
+    """Saved-project contract for a local uniform electric field assignment."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.local_uniform_electric_field"
+    FIELD_VECTOR_NAME = "field_vector_volt_per_meter"
+
+    def __init__(self, enabled=False, target_volume_names=None, field_vector_volt_per_meter=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.local_uniform_electric_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.target_volume_names = self._normalize_target_volume_names(target_volume_names)
+        self.field_vector_volt_per_meter = _normalize_uniform_field_vector(
+            field_vector_volt_per_meter,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @staticmethod
+    def _coerce_target_volume_names(raw_names):
+        if raw_names is None:
+            return []
+
+        if isinstance(raw_names, str):
+            raw_items = re.split(r"[,\n;]+", raw_names)
+        elif isinstance(raw_names, (list, tuple, set)):
+            raw_items = list(raw_names)
+        else:
+            raise ValueError(
+                "environment.local_uniform_electric_field.target_volume_names must be an array of strings."
+            )
+
+        normalized = []
+        seen = set()
+        for raw_item in raw_items:
+            name = str(raw_item).strip()
+            if not name or name in seen:
+                continue
+            normalized.append(name)
+            seen.add(name)
+
+        return normalized
+
+    @classmethod
+    def _normalize_target_volume_names(cls, raw_names):
+        return cls._coerce_target_volume_names(raw_names)
+
+    @classmethod
+    def validate(cls, data, field_name="environment.local_uniform_electric_field"):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        target_names = data.get('target_volume_names')
+        if target_names is not None:
+            try:
+                cls._coerce_target_volume_names(target_names)
+            except ValueError:
+                return False, f"{field_name}.target_volume_names must be an array of strings."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "target_volume_names": list(self.target_volume_names),
+            "field_vector_volt_per_meter": dict(self.field_vector_volt_per_meter),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            target_volume_names=data.get('target_volume_names'),
+            field_vector_volt_per_meter=data.get('field_vector_volt_per_meter'),
+        )
+
 class EnvironmentState:
     """Saved-project environment state shared by UI, AI, and runtime plumbing."""
 
-    def __init__(self, global_uniform_magnetic_field=None, local_uniform_magnetic_field=None):
+    def __init__(
+        self,
+        global_uniform_magnetic_field=None,
+        global_uniform_electric_field=None,
+        local_uniform_magnetic_field=None,
+        local_uniform_electric_field=None,
+    ):
         if isinstance(global_uniform_magnetic_field, GlobalUniformMagneticField):
             self.global_uniform_magnetic_field = global_uniform_magnetic_field
         else:
             self.global_uniform_magnetic_field = GlobalUniformMagneticField.from_dict(global_uniform_magnetic_field)
 
+        if isinstance(global_uniform_electric_field, GlobalUniformElectricField):
+            self.global_uniform_electric_field = global_uniform_electric_field
+        else:
+            self.global_uniform_electric_field = GlobalUniformElectricField.from_dict(global_uniform_electric_field)
+
         if isinstance(local_uniform_magnetic_field, LocalUniformMagneticField):
             self.local_uniform_magnetic_field = local_uniform_magnetic_field
         else:
             self.local_uniform_magnetic_field = LocalUniformMagneticField.from_dict(local_uniform_magnetic_field)
+
+        if isinstance(local_uniform_electric_field, LocalUniformElectricField):
+            self.local_uniform_electric_field = local_uniform_electric_field
+        else:
+            self.local_uniform_electric_field = LocalUniformElectricField.from_dict(local_uniform_electric_field)
 
     @classmethod
     def validate(cls, data, field_name="environment"):
@@ -1024,19 +1155,43 @@ class EnvironmentState:
         if not ok:
             return ok, err
 
+        electric_field_data = data.get('global_uniform_electric_field')
+        if electric_field_data is None and 'global_electric_field' in data:
+            electric_field_data = data.get('global_electric_field')
+
+        ok, err = GlobalUniformElectricField.validate(
+            electric_field_data,
+            field_name=f"{field_name}.global_uniform_electric_field",
+        )
+        if not ok:
+            return ok, err
+
         local_field_data = data.get('local_uniform_magnetic_field')
         if local_field_data is None and 'local_magnetic_field' in data:
             local_field_data = data.get('local_magnetic_field')
 
-        return LocalUniformMagneticField.validate(
+        ok, err = LocalUniformMagneticField.validate(
             local_field_data,
             field_name=f"{field_name}.local_uniform_magnetic_field",
+        )
+        if not ok:
+            return ok, err
+
+        local_electric_field_data = data.get('local_uniform_electric_field')
+        if local_electric_field_data is None and 'local_electric_field' in data:
+            local_electric_field_data = data.get('local_electric_field')
+
+        return LocalUniformElectricField.validate(
+            local_electric_field_data,
+            field_name=f"{field_name}.local_uniform_electric_field",
         )
 
     def to_dict(self):
         return {
             "global_uniform_magnetic_field": self.global_uniform_magnetic_field.to_dict(),
+            "global_uniform_electric_field": self.global_uniform_electric_field.to_dict(),
             "local_uniform_magnetic_field": self.local_uniform_magnetic_field.to_dict(),
+            "local_uniform_electric_field": self.local_uniform_electric_field.to_dict(),
         }
 
     @classmethod
@@ -1051,9 +1206,15 @@ class EnvironmentState:
         field_data = data.get('global_uniform_magnetic_field')
         if field_data is None and 'global_magnetic_field' in data:
             field_data = data.get('global_magnetic_field')
+        electric_field_data = data.get('global_uniform_electric_field')
+        if electric_field_data is None and 'global_electric_field' in data:
+            electric_field_data = data.get('global_electric_field')
         local_field_data = data.get('local_uniform_magnetic_field')
         if local_field_data is None and 'local_magnetic_field' in data:
             local_field_data = data.get('local_magnetic_field')
+        local_electric_field_data = data.get('local_uniform_electric_field')
+        if local_electric_field_data is None and 'local_electric_field' in data:
+            local_electric_field_data = data.get('local_electric_field')
 
         try:
             field = GlobalUniformMagneticField.from_dict(field_data)
@@ -1062,12 +1223,24 @@ class EnvironmentState:
             field = GlobalUniformMagneticField()
 
         try:
+            electric_field = GlobalUniformElectricField.from_dict(electric_field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid global uniform electric field payload: {exc}. Using defaults.")
+            electric_field = GlobalUniformElectricField()
+
+        try:
             local_field = LocalUniformMagneticField.from_dict(local_field_data)
         except ValueError as exc:
             print(f"Warning: Invalid local uniform magnetic field payload: {exc}. Using defaults.")
             local_field = LocalUniformMagneticField()
 
-        return cls(field, local_field)
+        try:
+            local_electric_field = LocalUniformElectricField.from_dict(local_electric_field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid local uniform electric field payload: {exc}. Using defaults.")
+            local_electric_field = LocalUniformElectricField()
+
+        return cls(field, electric_field, local_field, local_electric_field)
 
 class GeometryState:
     """Holds the entire geometry definition."""
@@ -1217,11 +1390,18 @@ class GeometryState:
         load_objects('border_surfaces', BorderSurface, instance.border_surfaces)
         load_objects('sources', ParticleSource, instance.sources)
         instance.environment = EnvironmentState.from_dict(data.get('environment'))
-        legacy_global_field = data.get('global_uniform_magnetic_field')
-        if legacy_global_field is not None and data.get('environment') is None:
-            instance.environment = EnvironmentState.from_dict({
-                "global_uniform_magnetic_field": legacy_global_field
-            })
+        legacy_environment = {}
+        for legacy_key in (
+            'global_uniform_magnetic_field',
+            'global_uniform_electric_field',
+            'local_uniform_magnetic_field',
+            'local_uniform_electric_field',
+        ):
+            if data.get(legacy_key) is not None:
+                legacy_environment[legacy_key] = data.get(legacy_key)
+
+        if legacy_environment and data.get('environment') is None:
+            instance.environment = EnvironmentState.from_dict(legacy_environment)
 
         # Migration: Handle legacy active_source_id (single string)
         legacy_id = data.get('active_source_id')

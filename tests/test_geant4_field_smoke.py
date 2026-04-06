@@ -52,6 +52,27 @@ def _build_field_smoke_project():
     return pm
 
 
+def _build_electric_field_smoke_project():
+    pm = ProjectManager(ExpressionEvaluator())
+    pm.create_empty_project()
+
+    source, error = pm.configure_incident_beam(
+        target="box_LV",
+        particle="e-",
+        energy="100 keV",
+        incident_axis="+z",
+        offset="1*mm",
+        source_name="beam",
+        activity=1.0,
+        mark_target_sensitive=False,
+        activate=True,
+    )
+    assert error is None
+    assert source is not None
+
+    return pm
+
+
 def _run_field_case(pm, tmp_path, *, field_enabled):
     run_root = tmp_path / ("field_on" if field_enabled else "field_off")
     version_dir = run_root / "version"
@@ -106,6 +127,68 @@ def _run_field_case(pm, tmp_path, *, field_enabled):
     track_path = run_dir / "tracks" / "event_0000_tracks.txt"
     assert track_path.exists(), (
         f"Missing track output for field_enabled={field_enabled}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+
+    return track_path
+
+
+def _run_electric_field_case(pm, tmp_path, *, field_enabled):
+    run_root = tmp_path / ("electric_field_on" if field_enabled else "electric_field_off")
+    version_dir = run_root / "version"
+    run_dir = run_root / "run"
+    version_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True)
+
+    pm.current_geometry_state.environment.global_uniform_electric_field.enabled = field_enabled
+    pm.current_geometry_state.environment.global_uniform_electric_field.field_vector_volt_per_meter = {
+        "x": 0.0,
+        # Keep the smoke responsive while still producing a visible bend.
+        "y": 5.0e6,
+        "z": 0.0,
+    }
+    (version_dir / "version.json").write_text(pm.save_project_to_json_string(), encoding="utf-8")
+
+    pm.generate_macro_file(
+        f"electric-field-smoke-{'on' if field_enabled else 'off'}",
+        {
+            "events": 1,
+            "threads": 1,
+            "seed1": 12345,
+            "seed2": 67890,
+            "save_hits": False,
+            "save_particles": False,
+            "save_hit_metadata": False,
+            "save_tracks_range": "0-0",
+        },
+        str(GEANT4_BUILD_DIR),
+        str(run_dir),
+        str(version_dir),
+    )
+
+    env = os.environ.copy()
+    env["G4PHYSICSLIST"] = "FTFP_BERT"
+    env.pop("G4OPTICALPHYSICS", None)
+
+    result = subprocess.run(
+        [str(GEANT4_EXECUTABLE), "run.mac"],
+        cwd=run_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, (
+        f"Geant4 run failed for electric field_enabled={field_enabled}\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
+
+    track_path = run_dir / "tracks" / "event_0000_tracks.txt"
+    assert track_path.exists(), (
+        f"Missing track output for electric field_enabled={field_enabled}\n"
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}"
     )
@@ -210,6 +293,23 @@ def test_field_on_vs_field_off_changes_charged_particle_track(tmp_path):
 
     assert off_max_x < 0.05
     assert on_max_x > off_max_x + 0.1
+
+
+@pytest.mark.skipif(not GEANT4_EXECUTABLE.exists(), reason="Geant4 smoke binary is not built")
+def test_electric_field_on_vs_field_off_changes_charged_particle_track(tmp_path):
+    pm = _build_electric_field_smoke_project()
+
+    off_track = _run_electric_field_case(pm, tmp_path, field_enabled=False)
+    on_track = _run_electric_field_case(pm, tmp_path, field_enabled=True)
+
+    off_points = _read_primary_track_points(off_track)
+    on_points = _read_primary_track_points(on_track)
+
+    off_max_y = max(abs(y) for _, y, _ in off_points)
+    on_max_y = max(abs(y) for _, y, _ in on_points)
+
+    assert off_max_y < 0.05
+    assert on_max_y > off_max_y + 0.02
 
 
 @pytest.mark.skipif(not GEANT4_EXECUTABLE.exists(), reason="Geant4 smoke binary is not built")

@@ -1,6 +1,6 @@
 # Physics Environment Refinement Tracker
 
-Last updated: 2026-04-06T23:09:43+02:00
+Last updated: 2026-04-07T01:33:48+02:00
 
 ## Mission
 
@@ -58,17 +58,17 @@ A task is only `DONE` when all of the following are true:
 
 - Overall phase: roadmap phase R1, active
 - Dependency note: workflow refinement is exhausted; the physics-environment loop is now active
-- Current priority: PER-007
+- Current priority: PER-008
 - Success metric: AIRPET can define and run a minimal field-aware simulation without hand-editing Geant4 code or macros outside the product workflow
 
 ## Current NEXT Task
 
-PER-007: Add electric-field support on the shared environment abstraction.
+PER-008: Add compact example assets and templates for field-aware simulations.
 
 Reason:
 
-- local magnetic-field assignment now exists end to end
-- the shared field abstraction should cover electric fields without magnetic-only assumptions
+- electric-field support now exists end to end on the shared abstraction
+- compact examples keep the new field flows easy to discover and validate
 - it keeps the MVP sequence aligned with the roadmap
 
 ## Backlog
@@ -89,7 +89,7 @@ Statuses:
 | PER-004 | P1 | UI | Add UI surfaces for creating, editing, and inspecting a global magnetic field | DONE | Added a project-level Environment accordion in the Properties tab with enabled/vector editors and a read-only summary that writes through the shared environment update-property path |
 | PER-005 | P1 | AI | Add AI/backend tool surfaces for reading and writing global magnetic-field configuration | DONE | Added environment inspection through `get_component_details` plus a generic `update_property` AI tool that routes through the shared environment property path |
 | PER-006 | P1 | Fields | Add local magnetic-field assignment to selected volumes or regions | DONE | Added a local uniform magnetic field contract for selected logical volumes, threaded it through project serialization, macro generation, Geant4 field-manager attachment, and focused UI/AI/backend regressions |
-| PER-007 | P1 | Fields | Add electric-field support on the shared environment abstraction | PENDING | Avoid magnetic-only assumptions in the design |
+| PER-007 | P1 | Fields | Add electric-field support on the shared environment abstraction | DONE | Added electric fields to saved project state, UI, AI/backend, macro generation, and Geant4 runtime plumbing; the electric smoke now uses the vacuum box so the charged-particle run stays under the deterministic timeout |
 | PER-008 | P2 | Examples | Add compact example assets and templates for field-aware simulations | PENDING | Keep examples tiny and deterministic |
 | PER-009 | P2 | Environment | Add region-specific production cuts and user limits on the same environment layer | PENDING | Keep fields, cuts, and limits cohesive |
 | PER-010 | P2 | Analysis | Add field-aware run metadata and analysis summaries so environment variants are visible in outputs | PENDING | Make environment configuration easy to inspect after the run |
@@ -106,6 +106,7 @@ Statuses:
 | 2026-04-06T19:09:53+02:00 | PER-004 global magnetic field UI surfaces | DONE | Files: `app.py`, `src/project_manager.py`, `static/environmentFieldUi.js`, `static/uiManager.js`, `templates/index.html`, `tests/js/environment_field_ui.test.mjs`, `tests/test_project_manager_update_property.py`, `tests/test_update_property_api.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `node --check static/uiManager.js`; `node --check static/environmentFieldUi.js`; `python3 -m py_compile app.py src/project_manager.py tests/test_update_property_api.py tests/test_project_manager_update_property.py`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_project_manager_update_property.py tests/test_update_property_api.py -q`; `node --test tests/js/environment_field_ui.test.mjs`. Outcome: added a project-level Environment accordion in the Properties tab with enabled/vector editors and a read-only summary, routed updates through the shared environment property path, and locked in the behavior with focused Python and JS regressions. Next: PER-005 |
 | 2026-04-06T21:07:52+02:00 | PER-005 AI/backend global magnetic-field tool surfaces | DONE | Files: `app.py`, `src/ai_tools.py`, `src/project_manager.py`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `python3 -m py_compile app.py src/ai_tools.py src/project_manager.py tests/test_ai_api.py tests/test_ai_integration.py`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_api.py -k 'environment_field' -q`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_integration.py -k 'environment_ai_schema_exposes_read_and_write_tools' -q`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_update_property_api.py -q`. Outcome: exposed the global field through `get_component_details`, added a generic `update_property` AI tool that drives the shared environment update path, and confirmed the existing update-property route still accepts environment updates. Next: PER-006 |
 | 2026-04-06T23:09:43+02:00 | PER-006 local magnetic field assignment | DONE | Files: `src/geometry_types.py`, `src/project_manager.py`, `src/ai_tools.py`, `geant4/include/DetectorConstruction.hh`, `geant4/src/DetectorConstruction.cc`, `static/environmentFieldUi.js`, `static/uiManager.js`, `templates/index.html`, `tests/test_environment_state.py`, `tests/test_project_manager_update_property.py`, `tests/test_update_property_api.py`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `tests/test_geant4_field_macro.py`, `tests/test_geant4_field_smoke.py`, `tests/js/environment_field_ui.test.mjs`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `node --check static/environmentFieldUi.js`; `node --check static/uiManager.js`; `node --test tests/js/environment_field_ui.test.mjs`; `python3 -m py_compile src/geometry_types.py src/project_manager.py src/ai_tools.py app.py tests/test_environment_state.py tests/test_project_manager_update_property.py tests/test_update_property_api.py tests/test_ai_api.py tests/test_ai_integration.py`; `cmake --build geant4/build --target airpet-sim -j2`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_environment_state.py::test_environment_state_defaults_and_roundtrip tests/test_environment_state.py::test_environment_state_validation_and_project_roundtrip tests/test_project_manager_update_property.py::test_update_object_property_supports_global_uniform_magnetic_field_updates tests/test_project_manager_update_property.py::test_update_object_property_supports_local_uniform_magnetic_field_updates tests/test_update_property_api.py::test_update_property_route_accepts_environment_object_type tests/test_update_property_api.py::test_update_property_route_accepts_local_environment_object_type tests/test_ai_api.py::test_ai_tool_update_property_and_get_component_details_cover_environment_field tests/test_ai_integration.py::test_environment_ai_schema_exposes_read_and_write_tools tests/test_geant4_field_macro.py::test_generate_macro_threads_saved_global_field_into_runtime_initialization tests/test_geant4_field_smoke.py::test_field_on_vs_field_off_changes_charged_particle_track tests/test_geant4_field_smoke.py::test_local_field_assignment_changes_track_inside_target_volume -q`. Outcome: added a local uniform magnetic-field contract for selected logical volumes, threaded it through saved project state, AI/backend/UI surfaces, Geant4 macro generation, and runtime field-manager attachment, with deterministic coverage for saved-state, update-property, macro emission, and both global/local field smokes. Next: PER-007 |
+| 2026-04-07T01:33:48+02:00 | PER-007 electric-field support on the shared environment abstraction | DONE | Files: `src/geometry_types.py`, `src/project_manager.py`, `src/ai_tools.py`, `geant4/include/DetectorConstruction.hh`, `geant4/src/DetectorConstruction.cc`, `static/environmentFieldUi.js`, `static/uiManager.js`, `tests/js/environment_field_ui.test.mjs`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `tests/test_environment_state.py`, `tests/test_geant4_field_macro.py`, `tests/test_geant4_field_smoke.py`, `tests/test_project_manager_update_property.py`, `tests/test_update_property_api.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `cmake --build geant4/build --target airpet-sim -j2`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_geant4_field_macro.py::test_generate_macro_threads_saved_global_field_into_runtime_initialization tests/test_geant4_field_smoke.py -q`. Outcome: added electric fields to the shared environment model, runtime macro generation, UI, and AI/backend surfaces; fixed the Geant4 messenger/field-builder wiring so the combined field path is valid; and kept the electric charged-particle smoke deterministic by running it in the default vacuum box instead of the silicon stopper. Next: PER-008 |
 
 ## Notes For Future Reordering
 

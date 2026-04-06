@@ -1,109 +1,167 @@
-const DEFAULT_FIELD_VECTOR = Object.freeze({ x: 0, y: 0, z: 0 });
-const GLOBAL_FIELD_AXES = Object.freeze(['x', 'y', 'z']);
-const TARGET_VOLUME_DELIMITERS = /[,\n;]+/;
+const FIELD_VECTOR_AXES = ['x', 'y', 'z'];
 
-export const GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE = 'environment';
-export const GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID = 'global_uniform_magnetic_field';
-export const GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES = GLOBAL_FIELD_AXES;
-export const LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE = 'environment';
-export const LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID = 'local_uniform_magnetic_field';
-export const LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES = GLOBAL_FIELD_AXES;
-
-function normalizeBoolean(value) {
-    if (value === true || value === false) {
-        return value;
+function normalizeBoolean(rawValue) {
+    if (typeof rawValue === 'boolean') {
+        return rawValue;
     }
 
-    if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'off', ''].includes(normalized)) return false;
-    }
-
-    return Boolean(value);
-}
-
-function normalizeFiniteNumber(value) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-}
-
-export function normalizeTargetVolumeNames(rawNames = null) {
-    const items = Array.isArray(rawNames)
-        ? rawNames
-        : typeof rawNames === 'string'
-            ? rawNames.split(TARGET_VOLUME_DELIMITERS)
-            : [];
-
-    const normalized = [];
-    const seen = new Set();
-
-    for (const item of items) {
-        const name = String(item).trim();
-        if (!name || seen.has(name)) {
-            continue;
+    if (typeof rawValue === 'string') {
+        const normalized = rawValue.trim().toLowerCase();
+        if (['true', '1', 'yes', 'on'].includes(normalized)) {
+            return true;
         }
+        if (['false', '0', 'no', 'off'].includes(normalized)) {
+            return false;
+        }
+    }
 
-        normalized.push(name);
-        seen.add(name);
+    return Boolean(rawValue);
+}
+
+function normalizeFieldVector(rawVector) {
+    const normalized = { x: 0, y: 0, z: 0 };
+
+    if (!rawVector || typeof rawVector !== 'object') {
+        return normalized;
+    }
+
+    for (const axis of FIELD_VECTOR_AXES) {
+        const parsed = Number(rawVector[axis]);
+        normalized[axis] = Number.isFinite(parsed) ? parsed : 0;
     }
 
     return normalized;
 }
 
-export function normalizeGlobalMagneticFieldState(rawField = null) {
-    const field = rawField && typeof rawField === 'object' ? rawField : {};
-    const vector = field.field_vector_tesla && typeof field.field_vector_tesla === 'object'
-        ? field.field_vector_tesla
-        : {};
+export function normalizeTargetVolumeNames(rawNames) {
+    if (rawNames == null) {
+        return [];
+    }
 
-    return {
-        enabled: normalizeBoolean(field.enabled),
-        field_vector_tesla: {
-            x: normalizeFiniteNumber(vector.x ?? DEFAULT_FIELD_VECTOR.x),
-            y: normalizeFiniteNumber(vector.y ?? DEFAULT_FIELD_VECTOR.y),
-            z: normalizeFiniteNumber(vector.z ?? DEFAULT_FIELD_VECTOR.z),
-        },
+    const source = typeof rawNames === 'string'
+        ? rawNames.split(/[,;\n]+/)
+        : Array.isArray(rawNames)
+            ? rawNames
+            : [];
+
+    const normalized = [];
+    const seen = new Set();
+
+    for (const rawName of source) {
+        const name = String(rawName).trim();
+        if (!name || seen.has(name)) {
+            continue;
+        }
+        seen.add(name);
+        normalized.push(name);
+    }
+
+    return normalized;
+}
+
+function normalizeFieldState(rawState, { includeTargets, vectorKey }) {
+    const state = rawState && typeof rawState === 'object' ? rawState : {};
+    const rawVector = state[vectorKey] ?? state.field_vector_tesla ?? state.field_vector_volt_per_meter;
+    const normalized = {
+        enabled: normalizeBoolean(state.enabled),
+        [vectorKey]: normalizeFieldVector(rawVector),
     };
+
+    if (includeTargets) {
+        normalized.target_volume_names = normalizeTargetVolumeNames(state.target_volume_names);
+    }
+
+    return normalized;
 }
 
-export function normalizeLocalMagneticFieldState(rawField = null) {
-    const field = rawField && typeof rawField === 'object' ? rawField : {};
-    const vector = field.field_vector_tesla && typeof field.field_vector_tesla === 'object'
-        ? field.field_vector_tesla
-        : {};
-
-    return {
-        enabled: normalizeBoolean(field.enabled),
-        target_volume_names: normalizeTargetVolumeNames(
-            field.target_volume_names ?? field.target_logical_volume_names
-        ),
-        field_vector_tesla: {
-            x: normalizeFiniteNumber(vector.x ?? DEFAULT_FIELD_VECTOR.x),
-            y: normalizeFiniteNumber(vector.y ?? DEFAULT_FIELD_VECTOR.y),
-            z: normalizeFiniteNumber(vector.z ?? DEFAULT_FIELD_VECTOR.z),
-        },
-    };
+function formatVectorSummary(vector) {
+    return `(${FIELD_VECTOR_AXES.map((axis) => String(vector?.[axis] ?? 0)).join(', ')})`;
 }
 
-export function formatGlobalMagneticFieldComponent(value) {
-    return String(normalizeFiniteNumber(value));
+function formatFieldSummary(label, state, unit, { includeTargets, vectorKey }) {
+    const status = state?.enabled ? 'enabled' : 'disabled';
+    const parts = [`${label}: ${status}`];
+
+    if (includeTargets) {
+        const targets = normalizeTargetVolumeNames(state?.target_volume_names);
+        if (targets.length > 0) {
+            parts.push(`(targets ${targets.join(', ')})`);
+        }
+    }
+
+    const rawVector = state?.[vectorKey] ?? state?.field_vector_tesla ?? state?.field_vector_volt_per_meter;
+    parts.push(`${formatVectorSummary(rawVector)} ${unit}`);
+    return parts.join(' ');
 }
 
-export function formatGlobalMagneticFieldSummary(rawField = null) {
-    const field = normalizeGlobalMagneticFieldState(rawField);
-    const status = field.enabled ? 'enabled' : 'disabled';
-    const vector = field.field_vector_tesla;
-    return `Global magnetic field: ${status} (${formatGlobalMagneticFieldComponent(vector.x)}, ${formatGlobalMagneticFieldComponent(vector.y)}, ${formatGlobalMagneticFieldComponent(vector.z)}) T`;
+export const GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE = 'environment';
+export const GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID = 'global_uniform_magnetic_field';
+export const GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES = FIELD_VECTOR_AXES;
+
+export const GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE = 'environment';
+export const GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID = 'global_uniform_electric_field';
+export const GLOBAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES = FIELD_VECTOR_AXES;
+
+export const LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE = 'environment';
+export const LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID = 'local_uniform_magnetic_field';
+export const LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES = FIELD_VECTOR_AXES;
+
+export const LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE = 'environment';
+export const LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID = 'local_uniform_electric_field';
+export const LOCAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES = FIELD_VECTOR_AXES;
+
+export function normalizeGlobalMagneticFieldState(rawState) {
+    return normalizeFieldState(rawState, {
+        includeTargets: false,
+        vectorKey: 'field_vector_tesla',
+    });
 }
 
-export function formatLocalMagneticFieldSummary(rawField = null) {
-    const field = normalizeLocalMagneticFieldState(rawField);
-    const status = field.enabled ? 'enabled' : 'disabled';
-    const vector = field.field_vector_tesla;
-    const targetSummary = field.target_volume_names.length > 0
-        ? `targets ${field.target_volume_names.join(', ')}`
-        : 'no target volumes';
+export function normalizeGlobalElectricFieldState(rawState) {
+    return normalizeFieldState(rawState, {
+        includeTargets: false,
+        vectorKey: 'field_vector_volt_per_meter',
+    });
+}
 
-    return `Local magnetic field: ${status} (${targetSummary}) (${formatGlobalMagneticFieldComponent(vector.x)}, ${formatGlobalMagneticFieldComponent(vector.y)}, ${formatGlobalMagneticFieldComponent(vector.z)}) T`;
+export function normalizeLocalMagneticFieldState(rawState) {
+    return normalizeFieldState(rawState, {
+        includeTargets: true,
+        vectorKey: 'field_vector_tesla',
+    });
+}
+
+export function normalizeLocalElectricFieldState(rawState) {
+    return normalizeFieldState(rawState, {
+        includeTargets: true,
+        vectorKey: 'field_vector_volt_per_meter',
+    });
+}
+
+export function formatGlobalMagneticFieldSummary(state) {
+    return formatFieldSummary('Global magnetic field', state, 'T', {
+        includeTargets: false,
+        vectorKey: 'field_vector_tesla',
+    });
+}
+
+export function formatGlobalElectricFieldSummary(state) {
+    return formatFieldSummary('Global electric field', state, 'V/m', {
+        includeTargets: false,
+        vectorKey: 'field_vector_volt_per_meter',
+    });
+}
+
+export function formatLocalMagneticFieldSummary(state) {
+    return formatFieldSummary('Local magnetic field', state, 'T', {
+        includeTargets: true,
+        vectorKey: 'field_vector_tesla',
+    });
+}
+
+export function formatLocalElectricFieldSummary(state) {
+    return formatFieldSummary('Local electric field', state, 'V/m', {
+        includeTargets: true,
+        vectorKey: 'field_vector_volt_per_meter',
+    });
 }

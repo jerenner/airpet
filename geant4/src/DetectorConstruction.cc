@@ -1,102 +1,119 @@
 #include "DetectorConstruction.hh"
 #include "AirPetSensitiveDetector.hh"
 
-#include "G4FieldManager.hh"
-#include "G4GlobalMagFieldMessenger.hh"
-#include "G4RunManager.hh"
+#include "G4ElectroMagneticField.hh"
+#include "G4FieldBuilder.hh"
 #include "G4GenericMessenger.hh"
-#include "G4UIdirectory.hh"
-#include "G4UIcommand.hh"
-#include "G4UIparameter.hh"
-#include "G4UIcmdWithAString.hh"
-#include "G4SDManager.hh"
-#include "G4UniformMagField.hh"
-#include "G4LogicalVolumeStore.hh"
-#include "G4SolidStore.hh"
-#include "G4PhysicalVolumeStore.hh"
 #include "G4GeometryManager.hh"
+#include "G4LogicalVolume.hh"
+#include "G4LogicalVolumeStore.hh"
+#include "G4RunManager.hh"
+#include "G4SDManager.hh"
+#include "G4PhysicalVolumeStore.hh"
+#include "G4SolidStore.hh"
+#include "G4UIcmdWith3VectorAndUnit.hh"
+#include "G4UIdirectory.hh"
+#include "G4UImessenger.hh"
+#include "G4SystemOfUnits.hh"
 
+#include <exception>
+#include <fstream>
 #include <sstream>
 
-DetectorConstruction::DetectorConstruction()
- : G4VUserDetectorConstruction(),
-   fWorldVolume(nullptr),
-   fMessenger(nullptr),
-   fMagFieldMessenger(nullptr),
-   fGDMLFilename("default.gdml") // A default name
-{
-  // The G4GDMLParser can be configured to check for overlaps
-  fParser.SetOverlapCheck(true);
-  fMagFieldMessenger = new G4GlobalMagFieldMessenger(G4ThreeVector());
-  DefineCommands();
-}
-
-DetectorConstruction::~DetectorConstruction()
-{
-  delete fMagFieldMessenger;
-  delete fMessenger;
-}
-
-void DetectorConstruction::DefineCommands()
+namespace
 {
 
-  // The G4GenericMessenger ties UI commands to methods of this class.
-  // The 'this' pointer is passed here.
-  fMessenger = new G4GenericMessenger(this, "/g4pet/detector/", "Detector control");
-
-  // Command to read a GDML file
-  fMessenger->DeclareMethod("readFile", &DetectorConstruction::SetGDMLFile)
-      .SetGuidance("Read geometry from a GDML file.")
-      .SetParameterName("filename", false) // The name for the one and only parameter
-      .SetStates(G4State_PreInit, G4State_Idle)
-      .SetToBeBroadcasted(false);
-
-  // Command to add a Sensitive Detector to a Logical Volume
-  fMessenger->DeclareMethod("addSD", &DetectorConstruction::SetSensitiveDetector)
-      .SetGuidance("Assign a sensitive detector to a logical volume.")
-      .SetGuidance("Usage: /g4pet/detector/addSD <LogicalVolumeName> <SensitiveDetectorName>")
-      .SetParameterName("LogicalVolumeName",     /*omittable=*/false)
-      .SetParameterName("SensitiveDetectorName", /*omittable=*/false)
-      .SetStates(G4State_PreInit, G4State_Idle)
-      .SetToBeBroadcasted(false);
-
-  // Command to add a local magnetic field to a Logical Volume
-  fMessenger->DeclareMethod("addLocalMagField", &DetectorConstruction::SetLocalMagneticField)
-      .SetGuidance("Assign a local uniform magnetic field to a logical volume.")
-      .SetGuidance("Usage: /g4pet/detector/addLocalMagField <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>")
-      .SetParameterName("Assignment", /*omittable=*/false)
-      .SetStates(G4State_PreInit, G4State_Idle)
-      .SetToBeBroadcasted(false);
-}
-
-// This method is defined for the messenger (takes G4Strings)
-void DetectorConstruction::SetSensitiveDetector(G4String logicalVolumeName, G4String sdName)
+class AirPetUniformElectroMagneticField : public G4ElectroMagneticField
 {
-  fSensitiveDetectorsMap[logicalVolumeName] = sdName;
-  G4cout << "--> Requested sensitive detector '" << sdName
-         << "' for logical volume '" << logicalVolumeName << "'" << G4endl;
+public:
+  AirPetUniformElectroMagneticField(const G4ThreeVector& magneticField,
+                                    const G4ThreeVector& electricField)
+    : fMagneticField(magneticField), fElectricField(electricField)
+  {}
 
-  // Tell the RunManager that the detector setup has changed and needs to be rebuilt.
-  // This will ensure ConstructSDandField() is called again before the next run.
-  //G4RunManager::GetRunManager()->ReinitializeGeometry();
-}
+  void GetFieldValue(const G4double[4], G4double* field) const override
+  {
+    field[0] = fMagneticField.x();
+    field[1] = fMagneticField.y();
+    field[2] = fMagneticField.z();
+    field[3] = fElectricField.x();
+    field[4] = fElectricField.y();
+    field[5] = fElectricField.z();
+  }
 
-void DetectorConstruction::SetLocalMagneticField(G4String assignmentPayload)
+  G4bool DoesFieldChangeEnergy() const override
+  {
+    return fElectricField.mag2() > 0.0;
+  }
+
+private:
+  G4ThreeVector fMagneticField;
+  G4ThreeVector fElectricField;
+};
+
+class AirPetGlobalFieldMessenger : public G4UImessenger
+{
+public:
+  explicit AirPetGlobalFieldMessenger(DetectorConstruction* detector)
+    : fDetector(detector)
+  {
+    fDirectory = new G4UIdirectory("/globalField/");
+    fDirectory->SetGuidance("Global uniform electromagnetic field UI commands");
+
+    fSetMagneticValueCmd = new G4UIcmdWith3VectorAndUnit("/globalField/setValue", this);
+    fSetMagneticValueCmd->SetGuidance("Set uniform magnetic field value.");
+    fSetMagneticValueCmd->SetParameterName("Bx", "By", "Bz", false);
+    fSetMagneticValueCmd->SetUnitCategory("Magnetic flux density");
+    fSetMagneticValueCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
+
+    fSetElectricValueCmd = new G4UIcmdWith3VectorAndUnit("/globalField/setElectricValue", this);
+    fSetElectricValueCmd->SetGuidance("Set uniform electric field value.");
+    fSetElectricValueCmd->SetParameterName("Ex", "Ey", "Ez", false);
+    fSetElectricValueCmd->SetUnitCategory("Electric field");
+    fSetElectricValueCmd->AvailableForStates(G4State_PreInit, G4State_Idle);
+  }
+
+  ~AirPetGlobalFieldMessenger() override
+  {
+    delete fSetMagneticValueCmd;
+    delete fSetElectricValueCmd;
+    delete fDirectory;
+  }
+
+  void SetNewValue(G4UIcommand* command, G4String newValue) override
+  {
+    if (command == fSetMagneticValueCmd) {
+      fDetector->SetGlobalMagneticField(fSetMagneticValueCmd->GetNew3VectorValue(newValue));
+    } else if (command == fSetElectricValueCmd) {
+      fDetector->SetGlobalElectricField(fSetElectricValueCmd->GetNew3VectorValue(newValue));
+    }
+  }
+
+private:
+  DetectorConstruction* fDetector;
+  G4UIdirectory* fDirectory = nullptr;
+  G4UIcmdWith3VectorAndUnit* fSetMagneticValueCmd = nullptr;
+  G4UIcmdWith3VectorAndUnit* fSetElectricValueCmd = nullptr;
+};
+
+bool ParseFieldAssignmentPayload(const G4String& assignmentPayload,
+                                 const G4String& fieldLabel,
+                                 const G4String& unitLabel,
+                                 G4String& logicalVolumeName,
+                                 G4ThreeVector& fieldVector)
 {
   std::stringstream stream(assignmentPayload);
-  std::string logicalVolumeName;
+  std::string logicalVolumeText;
   std::string fieldXText;
   std::string fieldYText;
   std::string fieldZText;
 
-  if (!std::getline(stream, logicalVolumeName, '|') ||
-      !std::getline(stream, fieldXText, '|') ||
-      !std::getline(stream, fieldYText, '|') ||
-      !std::getline(stream, fieldZText, '|')) {
-    G4cerr << "--> WARNING: Invalid local magnetic field payload '"
-           << assignmentPayload
-           << "'. Expected <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>." << G4endl;
-    return;
+  if (!std::getline(stream, logicalVolumeText, '|') || !std::getline(stream, fieldXText, '|') ||
+      !std::getline(stream, fieldYText, '|') || !std::getline(stream, fieldZText, '|')) {
+    G4cerr << "--> WARNING: Invalid local " << fieldLabel << " field payload '"
+           << assignmentPayload << "'. Expected <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>."
+           << G4endl;
+    return false;
   }
 
   try {
@@ -104,20 +121,155 @@ void DetectorConstruction::SetLocalMagneticField(G4String assignmentPayload)
     const G4double fieldY = std::stod(fieldYText);
     const G4double fieldZ = std::stod(fieldZText);
 
-    fLocalMagFieldAssignments[logicalVolumeName] = G4ThreeVector(fieldX, fieldY, fieldZ);
-    G4cout << "--> Requested local magnetic field ("
-           << fieldX << ", " << fieldY << ", " << fieldZ
-           << ") tesla for logical volume '" << logicalVolumeName << "'" << G4endl;
+    logicalVolumeName = logicalVolumeText;
+    fieldVector = G4ThreeVector(fieldX, fieldY, fieldZ);
+    G4cout << "--> Requested local " << fieldLabel << " field (" << fieldX << ", " << fieldY
+           << ", " << fieldZ << ") " << unitLabel << " for logical volume '"
+           << logicalVolumeName << "'" << G4endl;
+    return true;
   } catch (const std::exception&) {
-    G4cerr << "--> WARNING: Invalid numeric local magnetic field payload '"
-           << assignmentPayload
-           << "'. Expected <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>." << G4endl;
+    G4cerr << "--> WARNING: Invalid numeric local " << fieldLabel << " field payload '"
+           << assignmentPayload << "'. Expected <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>."
+           << G4endl;
+    return false;
+  }
+}
+
+bool HasNonZeroField(const G4ThreeVector& fieldVector)
+{
+  return fieldVector.mag2() > 0.0;
+}
+
+void ConfigureElectroMagneticFieldParameters(G4FieldParameters* fieldParameters)
+{
+  if (!fieldParameters) {
+    return;
+  }
+
+  fieldParameters->SetFieldType(kElectroMagnetic);
+  fieldParameters->SetEquationType(kEqElectroMagnetic);
+  fieldParameters->SetStepperType(kClassicalRK4);
+}
+
+}  // namespace
+
+DetectorConstruction::DetectorConstruction()
+  : G4VUserDetectorConstruction(),
+    fWorldVolume(nullptr),
+    fMessenger(nullptr),
+    fGlobalFieldMessenger(nullptr),
+    fGlobalMagneticField(0., 0., 0.),
+    fGlobalElectricField(0., 0., 0.),
+    fGDMLFilename("default.gdml")
+{
+  fParser.SetOverlapCheck(true);
+  DefineCommands();
+}
+
+DetectorConstruction::~DetectorConstruction()
+{
+  delete fGlobalFieldMessenger;
+  delete fMessenger;
+}
+
+void DetectorConstruction::DefineCommands()
+{
+  fGlobalFieldMessenger = new AirPetGlobalFieldMessenger(this);
+
+  fMessenger = new G4GenericMessenger(this, "/g4pet/detector/", "Detector control");
+
+  fMessenger->DeclareMethod("readFile", &DetectorConstruction::SetGDMLFile)
+    .SetGuidance("Read geometry from a GDML file.")
+    .SetParameterName("filename", false)
+    .SetStates(G4State_PreInit, G4State_Idle)
+    .SetToBeBroadcasted(false);
+
+  fMessenger->DeclareMethod("addSD", &DetectorConstruction::SetSensitiveDetector)
+    .SetGuidance("Assign a sensitive detector to a logical volume.")
+    .SetGuidance("Usage: /g4pet/detector/addSD <LogicalVolumeName> <SensitiveDetectorName>")
+    .SetParameterName("LogicalVolumeName", false)
+    .SetParameterName("SensitiveDetectorName", false)
+    .SetStates(G4State_PreInit, G4State_Idle)
+    .SetToBeBroadcasted(false);
+
+  fMessenger->DeclareMethod("addLocalMagField", &DetectorConstruction::SetLocalMagneticField)
+    .SetGuidance("Assign a local uniform magnetic field to a logical volume.")
+    .SetGuidance("Usage: /g4pet/detector/addLocalMagField <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>")
+    .SetParameterName("Assignment", false)
+    .SetStates(G4State_PreInit, G4State_Idle)
+    .SetToBeBroadcasted(false);
+
+  fMessenger->DeclareMethod("addLocalElecField", &DetectorConstruction::SetLocalElectricField)
+    .SetGuidance("Assign a local uniform electric field to a logical volume.")
+    .SetGuidance("Usage: /g4pet/detector/addLocalElecField <LogicalVolumeName>|<FieldX>|<FieldY>|<FieldZ>")
+    .SetParameterName("Assignment", false)
+    .SetStates(G4State_PreInit, G4State_Idle)
+    .SetToBeBroadcasted(false);
+}
+
+void DetectorConstruction::SetSensitiveDetector(G4String logicalVolumeName, G4String sdName)
+{
+  fSensitiveDetectorsMap[logicalVolumeName] = sdName;
+  G4cout << "--> Requested sensitive detector '" << sdName << "' for logical volume '"
+         << logicalVolumeName << "'" << G4endl;
+}
+
+void DetectorConstruction::SetGlobalMagneticField(G4ThreeVector value)
+{
+  fGlobalMagneticField = value;
+  G4cout << "--> Requested global magnetic field (" << value.x() << ", " << value.y() << ", "
+         << value.z() << ") tesla" << G4endl;
+
+  if (auto* runManager = G4RunManager::GetRunManager()) {
+    runManager->GeometryHasBeenModified();
+  }
+}
+
+void DetectorConstruction::SetGlobalElectricField(G4ThreeVector value)
+{
+  fGlobalElectricField = value;
+  G4cout << "--> Requested global electric field (" << value.x() << ", " << value.y() << ", "
+         << value.z() << ") volt/m" << G4endl;
+
+  if (auto* runManager = G4RunManager::GetRunManager()) {
+    runManager->GeometryHasBeenModified();
+  }
+}
+
+void DetectorConstruction::SetLocalMagneticField(G4String assignmentPayload)
+{
+  G4String logicalVolumeName;
+  G4ThreeVector fieldVector;
+  if (!ParseFieldAssignmentPayload(
+        assignmentPayload, "magnetic", "tesla", logicalVolumeName, fieldVector)) {
+    return;
+  }
+
+  fLocalMagFieldAssignments[logicalVolumeName] = fieldVector;
+
+  if (auto* runManager = G4RunManager::GetRunManager()) {
+    runManager->GeometryHasBeenModified();
+  }
+}
+
+void DetectorConstruction::SetLocalElectricField(G4String assignmentPayload)
+{
+  G4String logicalVolumeName;
+  G4ThreeVector fieldVector;
+  if (!ParseFieldAssignmentPayload(
+        assignmentPayload, "electric", "volt/m", logicalVolumeName, fieldVector)) {
+    return;
+  }
+
+  fLocalElecFieldAssignments[logicalVolumeName] = fieldVector;
+
+  if (auto* runManager = G4RunManager::GetRunManager()) {
+    runManager->GeometryHasBeenModified();
   }
 }
 
 void DetectorConstruction::SetGDMLFile(G4String filename)
 {
-  // Check if the file exists before storing the name
   std::ifstream ifile(filename);
   if (!ifile) {
     G4Exception("DetectorConstruction::SetGDMLFile",
@@ -129,10 +281,6 @@ void DetectorConstruction::SetGDMLFile(G4String filename)
 
   fGDMLFilename = filename;
   G4cout << "--> Geometry will be loaded from: " << fGDMLFilename << G4endl;
-
-  // Inform the RunManager that the geometry needs to be rebuilt
-  //G4RunManager::GetRunManager()->ReinitializeGeometry();
-  //G4cout << "--> Geometry will be loaded from: " << fGDMLFilename << G4endl;
 }
 
 G4VPhysicalVolume* DetectorConstruction::Construct()
@@ -144,17 +292,12 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
     return nullptr;
   }
 
-  // Clear any previously loaded geometry
   G4GeometryManager::GetInstance()->OpenGeometry();
   G4PhysicalVolumeStore::GetInstance()->Clean();
   G4LogicalVolumeStore::GetInstance()->Clean();
   G4SolidStore::GetInstance()->Clean();
 
-  // Parse the GDML file
-  // The parser will create all materials, solids, and logical/physical volumes.
-  fParser.Read(fGDMLFilename, false); // false = do not validate schema
-
-  // Get the pointer to the world volume
+  fParser.Read(fGDMLFilename, false);
   fWorldVolume = fParser.GetWorldVolume();
 
   if (!fWorldVolume) {
@@ -168,16 +311,44 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
 
 void DetectorConstruction::ConstructSDandField()
 {
-
   G4cout << G4endl << "-------- DetectorConstruction::ConstructSDandField --------" << G4endl;
-  
+
   G4SDManager* sdManager = G4SDManager::GetSDMpointer();
   G4LogicalVolumeStore* lvStore = G4LogicalVolumeStore::GetInstance();
-  fLocalMagneticFields.clear();
-  fLocalFieldManagers.clear();
-  
-  // Iterate over all the SD attachment requests made via the messenger
-  //G4cout << "--> Sensitve det map contains " << fSensitiveDetectorsMap.size() << " detector" << G4endl;
+  const bool hasGlobalField = HasNonZeroField(fGlobalMagneticField) || HasNonZeroField(fGlobalElectricField);
+
+  bool hasLocalField = false;
+  for (const auto& pair : fLocalMagFieldAssignments) {
+    if (HasNonZeroField(pair.second)) {
+      hasLocalField = true;
+      break;
+    }
+  }
+  if (!hasLocalField) {
+    for (const auto& pair : fLocalElecFieldAssignments) {
+      if (HasNonZeroField(pair.second)) {
+        hasLocalField = true;
+        break;
+      }
+    }
+  }
+
+  G4FieldBuilder* fieldBuilder = nullptr;
+  if (hasGlobalField || hasLocalField) {
+    fieldBuilder = G4FieldBuilder::Instance();
+    fieldBuilder->SetFieldType(kElectroMagnetic);
+    if (auto* globalParameters = fieldBuilder->GetFieldParameters()) {
+      ConfigureElectroMagneticFieldParameters(globalParameters);
+      globalParameters->SetMinimumStep(0.25 * mm);
+    }
+
+    if (hasGlobalField) {
+      auto* globalField =
+        new AirPetUniformElectroMagneticField(fGlobalMagneticField, fGlobalElectricField);
+      fieldBuilder->SetGlobalField(globalField);
+    }
+  }
+
   for (const auto& pair : fSensitiveDetectorsMap) {
     const G4String& lvName = pair.first;
     const G4String& sdName = pair.second;
@@ -186,54 +357,68 @@ void DetectorConstruction::ConstructSDandField()
 
     if (!logicalVolume) {
       G4cerr << "--> WARNING: Logical Volume '" << lvName
-             << "' not found in geometry. Cannot attach SD '"
-             << sdName << "'." << G4endl;
+             << "' not found in geometry. Cannot attach SD '" << sdName << "'." << G4endl;
       continue;
     }
 
-    // Check if the SD already exists
-    G4VSensitiveDetector* existingSD = sdManager->FindSensitiveDetector(sdName, false); // false = don't warn if not found
+    G4VSensitiveDetector* existingSD = sdManager->FindSensitiveDetector(sdName, false);
 
     if (existingSD) {
-      // Use the base class's method to attach the SD
       G4VUserDetectorConstruction::SetSensitiveDetector(logicalVolume, existingSD);
       G4cout << "--> Attached existing sensitive detector '" << sdName
              << "' to logical volume '" << lvName << "'" << G4endl;
-    }
-    else {
-      // If it doesn't exist, create a new instance of our generic SD
+    } else {
       auto* airpetSD = new AirPetSensitiveDetector(sdName);
       sdManager->AddNewDetector(airpetSD);
-      // Use the base class's method to attach the SD
       G4VUserDetectorConstruction::SetSensitiveDetector(logicalVolume, airpetSD);
       G4cout << "--> Created and attached new sensitive detector '" << sdName
              << "' to logical volume '" << lvName << "'" << G4endl;
     }
   }
 
+  std::map<G4String, std::pair<G4ThreeVector, G4ThreeVector>> combinedLocalFields;
   for (const auto& pair : fLocalMagFieldAssignments) {
+    combinedLocalFields[pair.first].first = pair.second;
+  }
+  for (const auto& pair : fLocalElecFieldAssignments) {
+    combinedLocalFields[pair.first].second = pair.second;
+  }
+
+  for (const auto& pair : combinedLocalFields) {
     const G4String& lvName = pair.first;
-    const G4ThreeVector& fieldVector = pair.second;
+    const G4ThreeVector& magneticField = pair.second.first;
+    const G4ThreeVector& electricField = pair.second.second;
 
     G4LogicalVolume* logicalVolume = lvStore->GetVolume(lvName);
 
     if (!logicalVolume) {
       G4cerr << "--> WARNING: Logical Volume '" << lvName
-             << "' not found in geometry. Cannot attach local magnetic field ("
-             << fieldVector.x() << ", " << fieldVector.y() << ", " << fieldVector.z()
-             << ") tesla." << G4endl;
+             << "' not found in geometry. Cannot attach local field." << G4endl;
       continue;
     }
 
-    auto localField = std::make_unique<G4UniformMagField>(fieldVector);
-    auto fieldManager = std::make_unique<G4FieldManager>(localField.get());
-    logicalVolume->SetFieldManager(fieldManager.get(), false);
+    if (fieldBuilder) {
+      if (auto* localParameters = fieldBuilder->GetFieldParameters(lvName)) {
+        ConfigureElectroMagneticFieldParameters(localParameters);
+        localParameters->SetMinimumStep(0.25 * mm);
+      } else {
+        auto* createdParameters = fieldBuilder->CreateFieldParameters(lvName);
+        if (createdParameters) {
+          ConfigureElectroMagneticFieldParameters(createdParameters);
+          createdParameters->SetMinimumStep(0.25 * mm);
+        }
+      }
+      auto* localField = new AirPetUniformElectroMagneticField(magneticField, electricField);
+      fieldBuilder->SetLocalField(localField, logicalVolume);
 
-    G4cout << "--> Attached local magnetic field ("
-           << fieldVector.x() << ", " << fieldVector.y() << ", " << fieldVector.z()
-           << ") tesla to logical volume '" << lvName << "'" << G4endl;
+      G4cout << "--> Attached local field (" << magneticField.x() << ", " << magneticField.y()
+             << ", " << magneticField.z() << ") tesla and (" << electricField.x() << ", "
+             << electricField.y() << ", " << electricField.z() << ") volt/m to logical volume '"
+             << lvName << "'" << G4endl;
+    }
+  }
 
-    fLocalMagneticFields.push_back(std::move(localField));
-    fLocalFieldManagers.push_back(std::move(fieldManager));
+  if (fieldBuilder) {
+    fieldBuilder->ConstructFieldSetup();
   }
 }

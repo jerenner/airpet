@@ -115,6 +115,36 @@ def test_update_object_property_supports_global_uniform_magnetic_field_updates()
     }
 
 
+def test_update_object_property_supports_global_uniform_electric_field_updates():
+    pm = _make_pm()
+
+    success, error = pm.update_object_property(
+        "environment",
+        "global_uniform_electric_field",
+        "enabled",
+        "true",
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.global_uniform_electric_field.enabled is True
+
+    success, error = pm.update_object_property(
+        "environment",
+        "global_uniform_electric_field",
+        "field_vector_volt_per_meter.y",
+        "2.5",
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.global_uniform_electric_field.field_vector_volt_per_meter == {
+        "x": 0.0,
+        "y": 2.5,
+        "z": 0.0,
+    }
+
+
 def test_update_object_property_supports_local_uniform_magnetic_field_updates():
     pm = _make_pm()
 
@@ -156,4 +186,48 @@ def test_update_object_property_supports_local_uniform_magnetic_field_updates():
         "x": 0.0,
         "y": 0.0,
         "z": -0.5,
+    }
+
+
+def test_update_object_property_supports_local_uniform_electric_field_updates():
+    pm = _make_pm()
+
+    success, error = pm.update_object_property(
+        "environment",
+        "local_uniform_electric_field",
+        "enabled",
+        True,
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.local_uniform_electric_field.enabled is True
+
+    success, error = pm.update_object_property(
+        "environment",
+        "local_uniform_electric_field",
+        "target_volume_names",
+        "box_LV, detector_LV, box_LV",
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.local_uniform_electric_field.target_volume_names == [
+        "box_LV",
+        "detector_LV",
+    ]
+
+    success, error = pm.update_object_property(
+        "environment",
+        "local_uniform_electric_field",
+        "field_vector_volt_per_meter.z",
+        "-0.75",
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.local_uniform_electric_field.field_vector_volt_per_meter == {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -0.75,
     }

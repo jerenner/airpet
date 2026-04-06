@@ -18,7 +18,9 @@ import threading
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
-                            BorderSurface, ParticleSource
+                            BorderSurface, ParticleSource, GlobalUniformMagneticField, \
+                            GlobalUniformElectricField, LocalUniformMagneticField, \
+                            LocalUniformElectricField
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
@@ -2891,8 +2893,24 @@ class ProjectManager:
 
         return path_parts, None
 
+    def _environment_field_descriptor(self, target_obj):
+        field_name = getattr(target_obj.__class__, "ENVIRONMENT_FIELD_NAME", None)
+        vector_name = getattr(target_obj.__class__, "FIELD_VECTOR_NAME", None)
+
+        if not field_name:
+            field_name = (
+                "environment.local_uniform_magnetic_field"
+                if hasattr(target_obj, "target_volume_names")
+                else "environment.global_uniform_magnetic_field"
+            )
+
+        if not vector_name:
+            vector_name = "field_vector_tesla"
+
+        return field_name, vector_name
+
     def _normalize_environment_update_value(self, target_obj, property_path, new_value):
-        field_name = "environment.local_uniform_magnetic_field" if hasattr(target_obj, "target_volume_names") else "environment.global_uniform_magnetic_field"
+        field_name, vector_name = self._environment_field_descriptor(target_obj)
 
         if property_path == 'enabled':
             if isinstance(new_value, bool):
@@ -2932,7 +2950,7 @@ class ProjectManager:
 
             return normalized, None
 
-        if property_path.startswith('field_vector_tesla.'):
+        if property_path.startswith(f'{vector_name}.'):
             axis = property_path.split('.', 1)[1]
             if axis not in {'x', 'y', 'z'}:
                 return None, f"Invalid property path '{property_path}'"
@@ -2940,10 +2958,10 @@ class ProjectManager:
             try:
                 numeric_value = float(new_value)
             except (TypeError, ValueError):
-                return None, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
+                return None, f"{field_name}.{vector_name}.{axis} must be a finite number."
 
             if not math.isfinite(numeric_value):
-                return None, f"{field_name}.field_vector_tesla.{axis} must be a finite number."
+                return None, f"{field_name}.{vector_name}.{axis} must be a finite number."
 
             return numeric_value, None
 
@@ -2968,11 +2986,14 @@ class ProjectManager:
         elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
         elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
         elif object_type == "environment":
-            if object_id == "global_uniform_magnetic_field":
-                target_obj = self.current_geometry_state.environment.global_uniform_magnetic_field
-            elif object_id == "local_uniform_magnetic_field":
-                target_obj = self.current_geometry_state.environment.local_uniform_magnetic_field
-            else:
+            environment_objects = {
+                "global_uniform_magnetic_field": self.current_geometry_state.environment.global_uniform_magnetic_field,
+                "global_uniform_electric_field": self.current_geometry_state.environment.global_uniform_electric_field,
+                "local_uniform_magnetic_field": self.current_geometry_state.environment.local_uniform_magnetic_field,
+                "local_uniform_electric_field": self.current_geometry_state.environment.local_uniform_electric_field,
+            }
+            target_obj = environment_objects.get(object_id)
+            if target_obj is None:
                 return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
         elif object_type == "physical_volume":
 
@@ -6729,39 +6750,72 @@ class ProjectManager:
         macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
         macro_content.append("")
 
-        # --- Global Magnetic Field ---
-        global_field = temp_state.environment.global_uniform_magnetic_field
-        field_vector = (
-            global_field.field_vector_tesla
-            if global_field.enabled
-            else {'x': 0.0, 'y': 0.0, 'z': 0.0}
-        )
+        # --- Global Field Configuration ---
+        global_magnetic_field = temp_state.environment.global_uniform_magnetic_field
+        global_electric_field = temp_state.environment.global_uniform_electric_field
+
         macro_content.append("# --- Global Magnetic Field ---")
-        macro_content.append(
-            "/globalField/setValue "
-            f"{float(field_vector['x']):.12g} "
-            f"{float(field_vector['y']):.12g} "
-            f"{float(field_vector['z']):.12g} tesla"
-        )
+        if global_magnetic_field.enabled:
+            vector = global_magnetic_field.field_vector_tesla
+            macro_content.append(
+                "/globalField/setValue "
+                f"{float(vector['x']):.12g} "
+                f"{float(vector['y']):.12g} "
+                f"{float(vector['z']):.12g} tesla"
+            )
+        else:
+            macro_content.append("# Global magnetic field is disabled.")
         macro_content.append("")
 
-        local_field = temp_state.environment.local_uniform_magnetic_field
+        macro_content.append("# --- Global Electric Field ---")
+        if global_electric_field.enabled:
+            vector = global_electric_field.field_vector_volt_per_meter
+            macro_content.append(
+                "/globalField/setElectricValue "
+                f"{float(vector['x']):.12g} "
+                f"{float(vector['y']):.12g} "
+                f"{float(vector['z']):.12g} volt/m"
+            )
+        else:
+            macro_content.append("# Global electric field is disabled.")
+        macro_content.append("")
+
+        local_magnetic_field = temp_state.environment.local_uniform_magnetic_field
         macro_content.append("# --- Local Magnetic Field Assignments ---")
-        if local_field.enabled and local_field.target_volume_names:
-            for volume_name in local_field.target_volume_names:
+        if local_magnetic_field.enabled and local_magnetic_field.target_volume_names:
+            for volume_name in local_magnetic_field.target_volume_names:
                 macro_content.append(
                     "/g4pet/detector/addLocalMagField "
                     f"{volume_name}|"
-                    f"{float(local_field.field_vector_tesla['x']):.12g}|"
-                    f"{float(local_field.field_vector_tesla['y']):.12g}|"
-                    f"{float(local_field.field_vector_tesla['z']):.12g}"
+                    f"{float(local_magnetic_field.field_vector_tesla['x']):.12g}|"
+                    f"{float(local_magnetic_field.field_vector_tesla['y']):.12g}|"
+                    f"{float(local_magnetic_field.field_vector_tesla['z']):.12g}"
                 )
-        elif local_field.enabled:
+        elif local_magnetic_field.enabled:
             macro_content.append("# Local magnetic field is enabled, but no target volumes were configured.")
-        elif local_field.target_volume_names:
+        elif local_magnetic_field.target_volume_names:
             macro_content.append("# Local magnetic field assignment is disabled.")
         else:
             macro_content.append("# No local magnetic field assignments defined.")
+        macro_content.append("")
+
+        local_electric_field = temp_state.environment.local_uniform_electric_field
+        macro_content.append("# --- Local Electric Field Assignments ---")
+        if local_electric_field.enabled and local_electric_field.target_volume_names:
+            for volume_name in local_electric_field.target_volume_names:
+                macro_content.append(
+                    "/g4pet/detector/addLocalElecField "
+                    f"{volume_name}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['x']):.12g}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['y']):.12g}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['z']):.12g}"
+                )
+        elif local_electric_field.enabled:
+            macro_content.append("# Local electric field is enabled, but no target volumes were configured.")
+        elif local_electric_field.target_volume_names:
+            macro_content.append("# Local electric field assignment is disabled.")
+        else:
+            macro_content.append("# No local electric field assignments defined.")
         macro_content.append("")
 
         # --- Configure Sensitive Detectors ---

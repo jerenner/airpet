@@ -130,6 +130,36 @@ def test_update_property_route_accepts_environment_object_type(monkeypatch):
     ]
 
 
+def test_update_property_route_accepts_global_electric_environment_object_type(monkeypatch):
+    app_module.app.config["TESTING"] = True
+
+    payload = {
+        "object_type": "environment",
+        "object_id": "global_uniform_electric_field",
+        "property_path": "field_vector_volt_per_meter.z",
+        "new_value": -2.5,
+    }
+
+    fake_pm = _FakeProjectManager((True, None))
+
+    monkeypatch.setattr(app_module, "get_project_manager_for_session", lambda: fake_pm)
+    monkeypatch.setattr(
+        app_module,
+        "create_success_response",
+        lambda *_args, **_kwargs: app_module.jsonify({"success": True, "message": "stub-success"}),
+    )
+
+    with app_module.app.test_client() as client:
+        response = client.post("/update_property", json=payload)
+
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result == {"success": True, "message": "stub-success"}
+    assert fake_pm.calls == [
+        ("environment", "global_uniform_electric_field", "field_vector_volt_per_meter.z", -2.5)
+    ]
+
+
 def test_update_property_route_accepts_local_environment_object_type(monkeypatch):
     app_module.app.config["TESTING"] = True
 
@@ -157,6 +187,36 @@ def test_update_property_route_accepts_local_environment_object_type(monkeypatch
     assert result == {"success": True, "message": "stub-success"}
     assert fake_pm.calls == [
         ("environment", "local_uniform_magnetic_field", "target_volume_names", "box_LV, detector_LV")
+    ]
+
+
+def test_update_property_route_accepts_local_electric_environment_object_type(monkeypatch):
+    app_module.app.config["TESTING"] = True
+
+    payload = {
+        "object_type": "environment",
+        "object_id": "local_uniform_electric_field",
+        "property_path": "target_volume_names",
+        "new_value": "box_LV, detector_LV",
+    }
+
+    fake_pm = _FakeProjectManager((True, None))
+
+    monkeypatch.setattr(app_module, "get_project_manager_for_session", lambda: fake_pm)
+    monkeypatch.setattr(
+        app_module,
+        "create_success_response",
+        lambda *_args, **_kwargs: app_module.jsonify({"success": True, "message": "stub-success"}),
+    )
+
+    with app_module.app.test_client() as client:
+        response = client.post("/update_property", json=payload)
+
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result == {"success": True, "message": "stub-success"}
+    assert fake_pm.calls == [
+        ("environment", "local_uniform_electric_field", "target_volume_names", "box_LV, detector_LV")
     ]
 
 
