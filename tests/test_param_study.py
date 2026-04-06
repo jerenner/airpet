@@ -1469,6 +1469,82 @@ def test_simulation_in_loop_optimizer_api_route_with_mock_evaluator():
         assert data["optimizer_result"]["method"] == "surrogate_gp"
 
 
+def test_simulation_in_loop_optimizer_api_route_respects_selected_source_subset():
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        pm = _make_pm()
+        _add_define_param(pm, name="p1")
+        source_a = _add_basic_source(pm, name="source_a")
+        source_b = _add_basic_source(pm, name="source_b")
+
+        study, err = pm.upsert_param_study("sim_loop_subset_api", {
+            "name": "sim_loop_subset_api",
+            "mode": "random",
+            "parameters": ["p1"],
+            "random": {"samples": 8, "seed": 11},
+            "objectives": [
+                {"metric": "sim_metric", "name": "edep", "key": "edep_sum", "direction": "maximize"},
+                {"metric": "parameter_value", "name": "p1v", "parameter": "p1", "direction": "minimize"},
+                {"metric": "formula", "name": "score", "expression": "0.8*edep - 0.2*p1v", "direction": "maximize"},
+            ],
+        })
+        assert study is not None and err is None
+        assert source_a["id"] != source_b["id"]
+
+        captured = {}
+
+        def mock_builder(**kwargs):
+            captured.update(kwargs)
+            selected_source_ids = list(kwargs.get("selected_source_ids") or [])
+            available_sources = {
+                str(source.id): str(source.name)
+                for source in (kwargs["pm"].current_geometry_state.sources or {}).values()
+            }
+            selected_source_names = [available_sources[source_id] for source_id in selected_source_ids]
+
+            def _evaluator(*, run_record, project_manager, study):
+                p1 = float(run_record["values"]["p1"])
+                return {
+                    "success": True,
+                    "sim_metrics": {"edep_sum": 2.0 * p1},
+                    "simulation": {
+                        "job_id": f"mock_{run_record['run_index']}",
+                        "selected_source_ids": selected_source_ids,
+                        "selected_source_names": selected_source_names,
+                    },
+                }
+
+            return _evaluator
+
+        with patch("app.get_project_manager_for_session", return_value=pm), \
+             patch("app.GEANT4_EXECUTABLE", "/bin/echo"), \
+             patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True}}), \
+             patch("app._build_simulation_candidate_evaluator", side_effect=mock_builder):
+            resp = client.post("/api/param_optimizer/run_simulation_in_loop", json={
+                "study_name": "sim_loop_subset_api",
+                "method": "surrogate_gp",
+                "budget": 8,
+                "seed": 7,
+                "objective_name": "score",
+                "direction": "maximize",
+                "selected_source_ids": [f"  {source_b['id']}  ", source_b["id"]],
+                "sim_params": {"events": 10, "threads": 1},
+                "sim_objectives": [{"name": "edep_sum", "metric": "hdf5_reduce", "dataset_path": "default_ntuples/Hits/Edep", "reduce": "sum"}],
+                "surrogate": {"warmup_runs": 4, "candidate_pool_size": 64},
+            })
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["optimizer_result"]["simulation_in_loop"] is True
+    assert data["optimizer_result"]["method"] == "surrogate_gp"
+    assert captured["selected_source_ids"] == [source_b["id"]]
+    assert data["optimizer_result"]["best_run"]["simulation"]["selected_source_ids"] == [source_b["id"]]
+    assert data["optimizer_result"]["best_run"]["simulation"]["selected_source_names"] == [source_b["name"]]
+    assert all(candidate["simulation"]["selected_source_ids"] == [source_b["id"]] for candidate in data["optimizer_result"]["candidates"])
+    assert all(candidate["simulation"]["selected_source_names"] == [source_b["name"]] for candidate in data["optimizer_result"]["candidates"])
+
+
 def test_simulation_in_loop_head_to_head_api_route_with_mock_evaluator():
     app.config["TESTING"] = True
     with app.test_client() as client:
