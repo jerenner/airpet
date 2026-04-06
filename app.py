@@ -6678,6 +6678,7 @@ UPDATE_PROPERTY_ALLOWED_OBJECT_TYPES = {
     "solid",
     "logical_volume",
     "physical_volume",
+    "environment",
 }
 
 

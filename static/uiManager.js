@@ -28,6 +28,13 @@ import {
     filterScopedIssuesByBucket,
     getScopedIssueBucketDisplayLabel,
 } from './preflightScopedDiagnosticsUi.js';
+import {
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+    formatGlobalMagneticFieldSummary,
+    normalizeGlobalMagneticFieldState,
+} from './environmentFieldUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -49,7 +56,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot,
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot,
     borderSurfacesListRoot;
-let inspectorContentDiv;
+let inspectorContentDiv, environmentPanelRoot;
 
 // Project, history and undo/redo
 let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
@@ -273,6 +280,7 @@ export function initUI(cb) {
     elementsListRoot = document.getElementById('elements_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
+    environmentPanelRoot = document.getElementById('environment_panel_root');
 
 
     // Bottom panel (AI and simulation)
@@ -1760,6 +1768,116 @@ function createReadOnlyProperty(parent, labelText, value) {
     parent.appendChild(propDiv);
 }
 
+function createEnvironmentFieldInput(parent, { labelText, id, value, onChange }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = 'any';
+    input.id = id;
+    input.value = String(value);
+    input.addEventListener('change', () => {
+        const nextValue = input.valueAsNumber;
+        if (!Number.isFinite(nextValue)) {
+            const axisLabel = labelText.replace(/\s*\(T\)$/, '');
+            showError(`Global magnetic field ${axisLabel} must be a finite number.`);
+            input.value = String(value);
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function renderEnvironmentPanel(projectState) {
+    if (!environmentPanelRoot) return;
+
+    environmentPanelRoot.innerHTML = '';
+
+    if (!projectState) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No project loaded.';
+        environmentPanelRoot.appendChild(empty);
+        return;
+    }
+
+    const field = normalizeGlobalMagneticFieldState(
+        projectState?.environment?.global_uniform_magnetic_field
+    );
+
+    const card = document.createElement('div');
+    card.className = 'environment-field-card';
+
+    const title = document.createElement('div');
+    title.className = 'environment-field-title';
+    title.textContent = 'Global Magnetic Field';
+    card.appendChild(title);
+
+    const summary = document.createElement('p');
+    summary.className = 'environment-summary';
+    summary.textContent = formatGlobalMagneticFieldSummary(field);
+    card.appendChild(summary);
+
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'environment-toggle-row';
+
+    const enabledInput = document.createElement('input');
+    enabledInput.type = 'checkbox';
+    enabledInput.id = 'global_magnetic_field_enabled';
+    enabledInput.checked = field.enabled;
+    enabledInput.addEventListener('change', () => {
+        callbacks.onInspectorPropertyChanged(
+            GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+            GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+            'enabled',
+            enabledInput.checked
+        );
+    });
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.htmlFor = enabledInput.id;
+    enabledLabel.textContent = 'Enabled';
+
+    toggleRow.appendChild(enabledInput);
+    toggleRow.appendChild(enabledLabel);
+    card.appendChild(toggleRow);
+
+    const vectorRow = document.createElement('div');
+    vectorRow.className = 'environment-vector-row';
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES.forEach((axis) => {
+        createEnvironmentFieldInput(vectorRow, {
+            labelText: `${axis.toUpperCase()} (T)`,
+            id: `global_magnetic_field_${axis}`,
+            value: field.field_vector_tesla[axis],
+            onChange: (nextValue) => {
+                callbacks.onInspectorPropertyChanged(
+                    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                    `field_vector_tesla.${axis}`,
+                    nextValue
+                );
+            },
+        });
+    });
+    card.appendChild(vectorRow);
+
+    const note = document.createElement('p');
+    note.className = 'environment-note';
+    note.textContent = 'Saved in project state and passed to Geant4 runtime initialization.';
+    card.appendChild(note);
+
+    environmentPanelRoot.appendChild(card);
+}
+
 /**
  * Enables or disables transformation mode buttons based on provided state.
  * @param {object} state - An object with keys 'translate', 'rotate', 'scale' and boolean values.
@@ -1880,6 +1998,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
     populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
+    renderEnvironmentPanel(projectState);
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot && sceneUpdate) {
@@ -2617,6 +2736,7 @@ export function clearHierarchy() {
     if (opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if (skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
     if (borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
+    renderEnvironmentPanel(null);
 }
 
 export function clearInspector() {

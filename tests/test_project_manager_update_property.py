@@ -83,3 +83,33 @@ def test_update_object_property_keeps_valid_nested_dict_updates_working():
     assert success is True
     assert error is None
     assert pm.current_geometry_state.solids["box_solid"].raw_parameters["x"] == "250"
+
+
+def test_update_object_property_supports_global_uniform_magnetic_field_updates():
+    pm = _make_pm()
+
+    success, error = pm.update_object_property(
+        "environment",
+        "global_uniform_magnetic_field",
+        "enabled",
+        True,
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.global_uniform_magnetic_field.enabled is True
+
+    success, error = pm.update_object_property(
+        "environment",
+        "global_uniform_magnetic_field",
+        "field_vector_tesla.y",
+        "1.5",
+    )
+
+    assert success is True
+    assert error is None
+    assert pm.current_geometry_state.environment.global_uniform_magnetic_field.field_vector_tesla == {
+        "x": 0.0,
+        "y": 1.5,
+        "z": 0.0,
+    }

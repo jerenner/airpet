@@ -233,6 +233,75 @@
             font-family: monospace;
         }
 
+        #environment_panel_root .environment-field-card {
+            padding: 10px;
+            margin: 8px;
+            background: #f8fafc;
+            border: 1px solid #dbe3f0;
+            border-radius: 4px;
+        }
+
+        #environment_panel_root .environment-field-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #0f172a;
+            margin-bottom: 6px;
+        }
+
+        #environment_panel_root .environment-summary {
+            margin: 0 0 10px 0;
+            font-size: 12px;
+            color: #334155;
+            font-family: monospace;
+        }
+
+        #environment_panel_root .environment-toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        #environment_panel_root .environment-toggle-row label {
+            font-weight: bold;
+            color: #334155;
+        }
+
+        #environment_panel_root .environment-vector-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        #environment_panel_root .environment-vector-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 90px;
+        }
+
+        #environment_panel_root .environment-vector-field label {
+            font-size: 11px;
+            font-weight: bold;
+            color: #334155;
+        }
+
+        #environment_panel_root .environment-vector-field input {
+            width: 100px;
+            font-family: monospace;
+            padding: 4px;
+            border: 1px solid #cbd5e1;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        #environment_panel_root .environment-note {
+            margin: 10px 0 0 0;
+            font-size: 11px;
+            color: #64748b;
+        }
+
 
         #main_content_area {
             flex-grow: 1;
@@ -2840,6 +2909,16 @@
             </div>
             <div id="tab_properties" class="tab_pane">
                 <div class="accordion">
+                    <!-- Environment accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[-]</span>
+                            <span>&nbsp;Environment</span>
+                        </div>
+                        <div class="accordion-content active">
+                            <div id="environment_panel_root"></div>
+                        </div>
+                    </div>
                     <!-- Materials accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">

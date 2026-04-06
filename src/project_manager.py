@@ -2889,6 +2889,37 @@ class ProjectManager:
 
         return path_parts, None
 
+    def _normalize_environment_update_value(self, property_path, new_value):
+        if property_path == 'enabled':
+            if isinstance(new_value, bool):
+                return new_value, None
+
+            if isinstance(new_value, str):
+                normalized = new_value.strip().lower()
+                if normalized in {'true', '1', 'yes', 'on'}:
+                    return True, None
+                if normalized in {'false', '0', 'no', 'off'}:
+                    return False, None
+
+            return None, "environment.global_uniform_magnetic_field.enabled must be a boolean."
+
+        if property_path.startswith('field_vector_tesla.'):
+            axis = property_path.split('.', 1)[1]
+            if axis not in {'x', 'y', 'z'}:
+                return None, f"Invalid property path '{property_path}'"
+
+            try:
+                numeric_value = float(new_value)
+            except (TypeError, ValueError):
+                return None, f"environment.global_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
+
+            if not math.isfinite(numeric_value):
+                return None, f"environment.global_uniform_magnetic_field.field_vector_tesla.{axis} must be a finite number."
+
+            return numeric_value, None
+
+        return None, f"Invalid property path '{property_path}'"
+
     def update_object_property(self, object_type, object_id, property_path, new_value):
         """
         Updates a property of an object.
@@ -2907,6 +2938,9 @@ class ProjectManager:
         elif object_type == "material": target_obj = self.current_geometry_state.materials.get(object_id)
         elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
         elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
+        elif object_type == "environment":
+            if object_id in {"global_uniform_magnetic_field", "global_magnetic_field"}:
+                target_obj = self.current_geometry_state.environment.global_uniform_magnetic_field
         elif object_type == "physical_volume":
 
             # Iterate through LVs and Assemblies
@@ -2936,6 +2970,11 @@ class ProjectManager:
             return False, path_error
 
         try:
+            if object_type == "environment":
+                new_value, coercion_error = self._normalize_environment_update_value(property_path, new_value)
+                if coercion_error:
+                    return False, coercion_error
+
             current_level_obj = target_obj
             for part in path_parts[:-1]:
                 if isinstance(current_level_obj, dict):
