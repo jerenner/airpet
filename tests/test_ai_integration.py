@@ -854,6 +854,87 @@ def test_ai_chat_stream_persists_final_reply_in_history_for_local_adapter(client
         assert final_messages, history
 
 
+def test_ai_chat_stream_persists_prompt_reply_and_tool_activity_in_history_for_local_adapter(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend') as MockInvokeAdapter, \
+         patch('app.dispatch_ai_tool') as MockDispatchTool:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockInvokeAdapter.side_effect = [
+            MagicMock(
+                backend_id='llama_cpp',
+                model='qwen-local',
+                text=(
+                    "I'll define spacing and proceed.\n\n"
+                    "```json\n"
+                    "{\n"
+                    "  \"tool_calls\": [\n"
+                    "    {\"tool\": \"manage_define\", \"name\": \"SiPM_spacing\", \"value\": \"10\"}\n"
+                    "  ]\n"
+                    "}\n"
+                    "```"
+                ),
+                usage={'prompt_tokens': 50, 'completion_tokens': 20},
+                raw_response={},
+            ),
+            MagicMock(
+                backend_id='llama_cpp',
+                model='qwen-local',
+                text='Done. Created the SiPM grid on kapton.',
+                usage={'prompt_tokens': 58, 'completion_tokens': 18},
+                raw_response={},
+            ),
+        ]
+        MockDispatchTool.return_value = {"success": True, "message": "Define updated."}
+
+        response = client.post('/api/ai/chat/stream', json={
+            'message': 'Create an 8x8 SiPM matrix.',
+            'model': 'llama_cpp::qwen-local',
+        })
+
+        assert response.status_code == 200
+        events = _parse_sse_data_events(response)
+        complete_events = [evt for evt in events if evt.get('type') == 'complete']
+        assert complete_events, events
+        assert complete_events[-1]['message'] == 'Done. Created the SiPM grid on kapton.'
+        assert MockInvokeAdapter.call_count == 2
+        MockDispatchTool.assert_called_once()
+
+        history_response = client.get('/api/ai/history')
+        assert history_response.status_code == 200
+        history = history_response.get_json()['history']
+
+        user_messages = [
+            msg for msg in history
+            if msg.get('role') == 'user'
+            and (msg.get('metadata') or {}).get('original_message') == 'Create an 8x8 SiPM matrix.'
+        ]
+        assert user_messages, history
+
+        intermediate_messages = [
+            msg for msg in history
+            if msg.get('role') == 'assistant'
+            and (msg.get('metadata') or {}).get('_intermediate')
+        ]
+        assert intermediate_messages, history
+        assert intermediate_messages[0]['tool_calls'][0]['function']['name'] == 'manage_define'
+
+        tool_messages = [msg for msg in history if msg.get('role') == 'tool']
+        assert tool_messages, history
+        assert tool_messages[0]['name'] == 'manage_define'
+
+        final_messages = [
+            msg for msg in history
+            if msg.get('role') == 'assistant'
+            and msg.get('content') == 'Done. Created the SiPM grid on kapton.'
+            and not (msg.get('metadata') or {}).get('_intermediate')
+        ]
+        assert final_messages, history
+
+
 def test_ai_chat_stream_persists_final_reply_in_history_for_gemini(client):
     final_part = MagicMock()
     final_part.function_call = None

@@ -55,16 +55,16 @@ A task is only `DONE` when all of the following are true:
 
 - Overall phase: workflow backlog execution
 - Dependency note: the separate AI/GDML refinements loop still has one remaining GDML task (`GDML-013`); workflow refinement continues independently
-- Current priority: WF-007
+- Current priority: complete
 
 ## Current NEXT Task
 
-WF-007: Add a refresh-persistence workflow regression for prompts, replies, and saved tool activity.
+No remaining workflow tasks.
 
 Reason:
 
-- it is now the highest-priority remaining workflow item
-- it should protect the trust-critical "refresh after AI turn" path
+- the workflow backlog is complete
+- no NEXT or PENDING workflow items remain
 
 ## Backlog
 
@@ -84,7 +84,7 @@ Statuses:
 | WF-004 | P1 | Analysis | Lock in end-to-end analysis/export workflow contract coverage | DONE | Added a regression that exercises the filtered analysis response and the raw simulation download attachment from the same run, then verified the downloaded HDF5 still exposes the expected hits schema and sensitive-detector metadata. |
 | WF-005 | P1 | Optimization | Add a simulation-in-loop optimization workflow regression with selected source subsets | DONE | Added a direct simulation-in-loop API regression that normalizes a selected source subset and verifies each candidate preserves `selected_source_ids` and `selected_source_names` through the optimizer result |
 | WF-006 | P2 | History | Add workflow-level regression coverage for single-delete and bulk-delete history flows | DONE | Added a history delete-flow helper for bulk selection normalization, wired the bulk delete controller through it, and pinned the project-history listing before/after single-delete run/version routes. |
-| WF-007 | P2 | AI Session | Add a refresh-persistence workflow regression for prompts, replies, and saved tool activity | NEXT | Aim at the trust-critical "refresh after AI turn" path |
+| WF-007 | P2 | AI Session | Add a refresh-persistence workflow regression for prompts, replies, and saved tool activity | DONE | Added a streamed local-adapter refresh regression that rehydrates the user prompt, assistant reply, and tool trace from `/api/ai/history`; the AI assistant cache now resets after a successful history load |
 
 ## Cycle Log
 
@@ -97,6 +97,7 @@ Statuses:
 | 2026-04-06 | WF-004 analysis/export contract coverage | DONE | Files: `tests/test_ai_api.py`, `docs/WORKFLOW_REFINEMENT_TRACKER.md`. Test: `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_api.py -k 'ai_and_http_simulation_analysis_share_sensitive_detector_filter' -q`. Outcome: locked in the filtered analysis contract together with the raw HDF5 download attachment, including filename/MIME checks and the sensitive-detector metadata retained in the downloaded artifact. Next: WF-005 |
 | 2026-04-06T02:04:23+02:00 | WF-005 simulation-in-loop selected-source subset regression | DONE | Files: `tests/test_param_study.py`, `docs/WORKFLOW_REFINEMENT_TRACKER.md`. Test: `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_param_study.py -k 'simulation_in_loop_optimizer_api_route_respects_selected_source_subset' -q`. Outcome: added a direct simulation-in-loop API regression that normalizes a selected source subset and verifies each candidate preserves `selected_source_ids` and `selected_source_names` through the optimizer result. Next: WF-006 |
 | 2026-04-06T11:32:04+02:00 | WF-006 history delete-flow regression | DONE | Files: `static/historyDeleteFlow.js`, `static/main.js`, `tests/test_ai_api.py`, `tests/js/history_delete_flow.test.mjs`, `docs/WORKFLOW_REFINEMENT_TRACKER.md`. Tests: `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_api.py -k 'delete_version_route_removes_version_and_child_sim_runs or delete_simulation_run_route_removes_only_selected_run' -q`, `node --test tests/js/history_delete_flow.test.mjs`. Outcome: added a pure history-selection normalization helper for bulk delete, wired the bulk-delete controller through it, and pinned project-history listings before/after single run/version deletes. Next: WF-007 |
+| 2026-04-06T11:07:23Z | WF-007 refresh-persistence workflow regression | DONE | Files: `static/aiAssistant.js`, `tests/test_ai_integration.py`, `docs/WORKFLOW_REFINEMENT_TRACKER.md`. Tests: `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_integration.py -k 'prompt_reply_and_tool_activity_in_history_for_local_adapter' -q`, `node --check static/aiAssistant.js`. Outcome: added a streamed local-adapter regression that proves `/api/ai/history` rehydrates the user prompt, assistant reply, and tool activity after refresh, and cleared the AI assistant's unsaved-message cache after a successful history load. Next: none.
 
 ## Notes For Future Reordering
 
