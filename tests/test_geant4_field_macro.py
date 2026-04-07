@@ -72,3 +72,4 @@ def test_generate_macro_threads_saved_global_field_into_runtime_initialization(t
 
     assert read_file_idx < field_idx < electric_field_idx < local_field_idx < local_electric_field_idx < region_controls_idx < init_idx
     assert metadata["environment"] == saved_environment
+    assert metadata["environment_summary"] == state.environment.to_summary_dict()

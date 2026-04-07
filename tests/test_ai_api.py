@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from flask import jsonify, request, session
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
-from src.geometry_types import DivisionVolume, ReplicaVolume
+from src.geometry_types import DivisionVolume, EnvironmentState, ReplicaVolume
 from app import dispatch_ai_tool, app as flask_app, _persist_final_stream_reply
 
 @pytest.fixture
@@ -5698,12 +5698,28 @@ def test_ai_tool_get_simulation_status_can_disable_log_summary(pm):
     assert "log_summary" not in res
 
 
-def test_ai_analysis_summary(pm):
+def test_ai_analysis_summary(pm, tmp_path):
     # Mocking h5py File
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_summary_project"
+    version_id = "test-version"
+    job_id = "test-job-id"
+    pm.current_version_id = version_id
+
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "job_id": job_id,
+        "environment": EnvironmentState.from_dict({
+            "global_uniform_magnetic_field": {
+                "enabled": True,
+                "field_vector_tesla": {"x": 0.0, "y": 1.5, "z": -0.25},
+            }
+        }).to_dict(),
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
     with patch('h5py.File') as MockFile:
-        job_id = "test-job-id"
-        pm.current_version_id = "test-version"
-        
         mock_f = MockFile.return_value.__enter__.return_value
         
         # Mock 'default_ntuples/Hits' group
@@ -5734,6 +5750,11 @@ def test_ai_analysis_summary(pm):
             assert res['success'], f"Error: {res.get('error')}"
             assert res['summary']['total_hits'] == 10
             assert res['summary']['particle_breakdown']['gamma'] == 10
+            assert res['summary']['environment_summary']['has_active_controls'] is True
+            assert res['summary']['environment_summary']['active_control_count'] == 1
+            assert res['summary']['environment_summary']['summary_text'] == (
+                "Global magnetic field: (0, 1.5, -0.25) T"
+            )
 
 def test_ai_physics_template(pm):
     # Test inserting a phantom template
@@ -6376,7 +6397,21 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
     with flask_app.test_request_context('/api/ai/chat', json={}):
         session['user_id'] = 'local_user'
 
-        with patch('app.get_simulation_metadata', return_value=jsonify({"success": True, "metadata": {"events": 1000}})):
+        with patch(
+            'app.get_simulation_metadata',
+            return_value=jsonify({
+                "success": True,
+                "metadata": {
+                    "events": 1000,
+                    "environment_summary": {
+                        "has_active_controls": True,
+                        "active_control_count": 1,
+                        "summary_text": "Global magnetic field: (0, 1.5, -0.25) T",
+                        "active_controls": [],
+                    },
+                },
+            }),
+        ):
             meta_res = dispatch_ai_tool(pm, "get_simulation_metadata", {
                 "version_id": "v1",
                 "job_id": "job-1"
@@ -6392,6 +6427,12 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
                     "energy_bins": request.args.get("energy_bins"),
                     "spatial_bins": request.args.get("spatial_bins"),
                     "sensitive_detector": request.args.get("sensitive_detector", ""),
+                    "environment_summary": {
+                        "has_active_controls": True,
+                        "active_control_count": 1,
+                        "summary_text": "Global magnetic field: (0, 1.5, -0.25) T",
+                        "active_controls": [],
+                    },
                 }
             })
 
@@ -6406,6 +6447,7 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
 
     assert meta_res['success'], meta_res
     assert meta_res['metadata']['events'] == 1000
+    assert meta_res['metadata']['environment_summary']['active_control_count'] == 1
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 5
     assert analysis_res['analysis']['version_id'] == 'v1'
@@ -6413,6 +6455,7 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
     assert analysis_res['analysis']['energy_bins'] == '64'
     assert analysis_res['analysis']['spatial_bins'] == '32'
     assert analysis_res['analysis']['sensitive_detector'] == 'SD_B'
+    assert analysis_res['analysis']['environment_summary']['has_active_controls'] is True
 
 
 def test_ai_tool_route_bridge_get_analysis_without_request_context(pm):
@@ -6439,6 +6482,65 @@ def test_ai_tool_route_bridge_get_analysis_without_request_context(pm):
     assert analysis_res['analysis']['total_hits'] == 7
     assert analysis_res['analysis']['job_id'] == 'job-ctxless'
     assert analysis_res['analysis']['sensitive_detector'] == 'SD_A'
+
+
+def test_simulation_metadata_and_analysis_routes_include_environment_summary(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_metadata_project"
+
+    version_id = "analysis-version"
+    job_id = "analysis-job"
+    version_dir = Path(pm._get_version_dir(version_id))
+    run_dir = version_dir / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    env = EnvironmentState.from_dict({
+        "global_uniform_magnetic_field": {
+            "enabled": True,
+            "field_vector_tesla": {"x": 0.0, "y": 1.5, "z": -0.25},
+        }
+    })
+
+    metadata = {
+        "job_id": job_id,
+        "timestamp": "2026-04-07T00:00:00",
+        "total_events": 3,
+        "sim_options": {"events": 3},
+        "environment": env.to_dict(),
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with h5py.File(run_dir / "output.hdf5", 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=3)
+        hits.create_dataset('Edep', data=np.array([0.01, 0.02, 0.03]))
+        hits.create_dataset('PosX', data=np.array([0.0, 1.0, 2.0]))
+        hits.create_dataset('PosY', data=np.array([0.0, 0.5, 1.0]))
+        hits.create_dataset('PosZ', data=np.array([0.0, 0.0, 0.0]))
+        hits.create_dataset('CopyNo', data=np.array([0, 0, 0], dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-'] * 3, dtype='S2'))
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            metadata_res = client.get(f'/api/simulation/metadata/{version_id}/{job_id}')
+            analysis_res = client.get(
+                f'/api/simulation/analysis/{version_id}/{job_id}?energy_bins=10&spatial_bins=5'
+            )
+
+    metadata_data = metadata_res.get_json()
+    assert metadata_res.status_code == 200
+    assert metadata_data["success"] is True
+    assert metadata_data["metadata"]["environment_summary"]["has_active_controls"] is True
+    assert metadata_data["metadata"]["environment_summary"]["active_control_count"] == 1
+    assert metadata_data["metadata"]["environment_summary"]["summary_text"] == (
+        "Global magnetic field: (0, 1.5, -0.25) T"
+    )
+
+    analysis_data = analysis_res.get_json()
+    assert analysis_res.status_code == 200
+    assert analysis_data["success"] is True
+    assert analysis_data["analysis"]["environment_summary"] == metadata_data["metadata"]["environment_summary"]
+    assert analysis_data["analysis"]["filtering"]["sensitive_detector_supported"] is False
 
 
 def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):

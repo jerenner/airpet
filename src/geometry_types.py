@@ -1269,6 +1269,22 @@ class RegionCutsAndLimits:
 class EnvironmentState:
     """Saved-project environment state shared by UI, AI, and runtime plumbing."""
 
+    @staticmethod
+    def _summary_number(value):
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @classmethod
+    def _summary_vector(cls, vector, unit_label):
+        vector = vector if isinstance(vector, dict) else {}
+        return (
+            f"({cls._summary_number(vector.get('x', 0.0))}, "
+            f"{cls._summary_number(vector.get('y', 0.0))}, "
+            f"{cls._summary_number(vector.get('z', 0.0))}) {unit_label}"
+        )
+
     def __init__(
         self,
         global_uniform_magnetic_field=None,
@@ -1369,6 +1385,84 @@ class EnvironmentState:
             "local_uniform_magnetic_field": self.local_uniform_magnetic_field.to_dict(),
             "local_uniform_electric_field": self.local_uniform_electric_field.to_dict(),
             "region_cuts_and_limits": self.region_cuts_and_limits.to_dict(),
+        }
+
+    def to_summary_dict(self):
+        active_controls = []
+
+        def add_control(kind, label, description, state):
+            active_controls.append({
+                "kind": kind,
+                "label": label,
+                "description": description,
+                "state": state,
+            })
+
+        global_magnetic_field = self.global_uniform_magnetic_field
+        if global_magnetic_field.enabled:
+            add_control(
+                "global_uniform_magnetic_field",
+                "Global magnetic field",
+                f"Global magnetic field: {self._summary_vector(global_magnetic_field.field_vector_tesla, 'T')}",
+                global_magnetic_field.to_dict(),
+            )
+
+        global_electric_field = self.global_uniform_electric_field
+        if global_electric_field.enabled:
+            add_control(
+                "global_uniform_electric_field",
+                "Global electric field",
+                f"Global electric field: {self._summary_vector(global_electric_field.field_vector_volt_per_meter, 'V/m')}",
+                global_electric_field.to_dict(),
+            )
+
+        local_magnetic_field = self.local_uniform_magnetic_field
+        if local_magnetic_field.enabled:
+            targets = ", ".join(local_magnetic_field.target_volume_names) or "(no targets)"
+            add_control(
+                "local_uniform_magnetic_field",
+                "Local magnetic field",
+                f"Local magnetic field: targets {targets}, {self._summary_vector(local_magnetic_field.field_vector_tesla, 'T')}",
+                local_magnetic_field.to_dict(),
+            )
+
+        local_electric_field = self.local_uniform_electric_field
+        if local_electric_field.enabled:
+            targets = ", ".join(local_electric_field.target_volume_names) or "(no targets)"
+            add_control(
+                "local_uniform_electric_field",
+                "Local electric field",
+                f"Local electric field: targets {targets}, {self._summary_vector(local_electric_field.field_vector_volt_per_meter, 'V/m')}",
+                local_electric_field.to_dict(),
+            )
+
+        region_controls = self.region_cuts_and_limits
+        if region_controls.enabled:
+            targets = ", ".join(region_controls.target_volume_names) or "(no targets)"
+            add_control(
+                "region_cuts_and_limits",
+                "Region cuts and limits",
+                (
+                    f"Region cuts and limits: region {region_controls.region_name}, targets {targets}, "
+                    f"cut {self._summary_number(region_controls.production_cut_mm)} mm, "
+                    f"max step {self._summary_number(region_controls.max_step_mm)} mm, "
+                    f"max track {self._summary_number(region_controls.max_track_length_mm)} mm, "
+                    f"max time {self._summary_number(region_controls.max_time_ns)} ns, "
+                    f"min Ek {self._summary_number(region_controls.min_kinetic_energy_mev)} MeV, "
+                    f"min range {self._summary_number(region_controls.min_range_mm)} mm"
+                ),
+                region_controls.to_dict(),
+            )
+
+        summary_text = "No environment controls enabled."
+        if active_controls:
+            summary_text = "; ".join(control["description"] for control in active_controls)
+
+        return {
+            "has_active_controls": bool(active_controls),
+            "active_control_count": len(active_controls),
+            "summary_text": summary_text,
+            "active_controls": active_controls,
         }
 
     @classmethod

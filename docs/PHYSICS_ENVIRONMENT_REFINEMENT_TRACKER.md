@@ -56,18 +56,19 @@ A task is only `DONE` when all of the following are true:
 
 ## Current Status
 
-- Overall phase: roadmap phase R1, active
-- Dependency note: workflow refinement is exhausted; the physics-environment loop is now active
-- Current priority: PER-010
-- Success metric: AIRPET can define and run a minimal field-aware simulation without hand-editing Geant4 code or macros outside the product workflow
+- Overall phase: roadmap phase R1, complete
+- Dependency note: workflow refinement is exhausted; the physics-environment backlog is complete
+- Current priority: complete
+- Success metric: AIRPET can define, save, inspect, and run a minimal field-aware simulation without hand-editing Geant4 code or macros outside the product workflow
 
 ## Current NEXT Task
 
-PER-010: Add field-aware run metadata and analysis summaries so environment variants are visible in outputs.
+No remaining physics-environment tasks.
 
 Reason:
 
-- Keep environment configuration visible after the run
+- the physics-environment backlog is complete
+- no NEXT or PENDING physics-environment items remain
 
 ## Backlog
 
@@ -90,7 +91,7 @@ Statuses:
 | PER-007 | P1 | Fields | Add electric-field support on the shared environment abstraction | DONE | Added electric fields to saved project state, UI, AI/backend, macro generation, and Geant4 runtime plumbing; the electric smoke now uses the vacuum box so the charged-particle run stays under the deterministic timeout |
 | PER-008 | P2 | Examples | Add compact example assets and templates for field-aware simulations | DONE | Added a field-aware silicon starter asset with explicit saved global field state plus a reusable `field_probe_slab` physics template for compact field comparisons |
 | PER-009 | P2 | Environment | Add region-specific production cuts and user limits on the same environment layer | DONE | Added a combined region-controls environment object with saved-state validation, update-property/UI/AI plumbing, region macro emission, and Geant4 runtime application for production cuts plus user limits |
-| PER-010 | P2 | Analysis | Add field-aware run metadata and analysis summaries so environment variants are visible in outputs | NEXT | Make environment configuration easy to inspect after the run |
+| PER-010 | P2 | Analysis | Add field-aware run metadata and analysis summaries so environment variants are visible in outputs | DONE | Added a deterministic environment summary to run metadata plus simulation metadata/analysis and AI analysis outputs so active field and region variants are visible after the run |
 
 ## Cycle Log
 
@@ -107,6 +108,7 @@ Statuses:
 | 2026-04-07T01:33:48+02:00 | PER-007 electric-field support on the shared environment abstraction | DONE | Files: `src/geometry_types.py`, `src/project_manager.py`, `src/ai_tools.py`, `geant4/include/DetectorConstruction.hh`, `geant4/src/DetectorConstruction.cc`, `static/environmentFieldUi.js`, `static/uiManager.js`, `tests/js/environment_field_ui.test.mjs`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `tests/test_environment_state.py`, `tests/test_geant4_field_macro.py`, `tests/test_geant4_field_smoke.py`, `tests/test_project_manager_update_property.py`, `tests/test_update_property_api.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `cmake --build geant4/build --target airpet-sim -j2`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_geant4_field_macro.py::test_generate_macro_threads_saved_global_field_into_runtime_initialization tests/test_geant4_field_smoke.py -q`. Outcome: added electric fields to the shared environment model, runtime macro generation, UI, and AI/backend surfaces; fixed the Geant4 messenger/field-builder wiring so the combined field path is valid; and kept the electric charged-particle smoke deterministic by running it in the default vacuum box instead of the silicon stopper. Next: PER-008 |
 | 2026-04-07T10:59:19+02:00 | PER-008 field-aware examples and templates | DONE | Files: `examples/field_aware/README.md`, `examples/field_aware/field_aware_silicon_starter.project.json`, `src/ai_tools.py`, `src/templates.py`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `tests/test_field_aware_examples.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `python3 -m json.tool examples/field_aware/field_aware_silicon_starter.project.json`; `python3 -m py_compile src/templates.py src/ai_tools.py tests/test_ai_api.py tests/test_ai_integration.py tests/test_field_aware_examples.py`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_field_aware_examples.py -q`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_api.py -k 'physics_template or field_probe_slab' -q`; `/Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_integration.py -k 'field_probe_slab' -q`. Outcome: added a compact field-aware silicon starter asset with explicit saved global field state plus a reusable sensitive `field_probe_slab` physics template so field-focused projects stay easy to discover and extend. Next: PER-009 |
 | 2026-04-07T12:15:45+02:00 | PER-009 region-specific production cuts and user limits | DONE | Files: `src/geometry_types.py`, `src/project_manager.py`, `src/ai_tools.py`, `geant4/include/DetectorConstruction.hh`, `geant4/src/DetectorConstruction.cc`, `static/environmentFieldUi.js`, `static/uiManager.js`, `tests/js/environment_field_ui.test.mjs`, `tests/test_ai_api.py`, `tests/test_ai_integration.py`, `tests/test_environment_state.py`, `tests/test_field_aware_examples.py`, `tests/test_geant4_field_macro.py`, `tests/test_project_manager_update_property.py`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_CONTEXT.md`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_ROADMAP.md`, `docs/PHYSICS_ENVIRONMENT_REFINEMENT_TRACKER.md`. Tests: `node --check static/environmentFieldUi.js`; `node --check static/uiManager.js`; `node --test tests/js/environment_field_ui.test.mjs`; `python3 -m py_compile src/geometry_types.py src/project_manager.py src/ai_tools.py tests/test_environment_state.py tests/test_project_manager_update_property.py tests/test_ai_api.py tests/test_ai_integration.py tests/test_geant4_field_macro.py tests/test_field_aware_examples.py`; `PYTHONPATH=/tmp/occ_stub:$PYTHONPATH /Users/marth/miniconda/envs/airpet/bin/pytest tests/test_environment_state.py tests/test_project_manager_update_property.py tests/test_field_aware_examples.py tests/test_geant4_field_macro.py tests/test_ai_api.py tests/test_ai_integration.py -k 'test_environment_state_defaults_and_roundtrip or test_environment_state_validation_and_project_roundtrip or test_update_object_property_supports_region_cuts_and_limits_updates or test_field_aware_silicon_starter_saves_explicit_fields or test_generate_macro_threads_saved_global_field_into_runtime_initialization or test_ai_tool_update_property_and_get_component_details_cover_environment_field or test_environment_ai_schema_exposes_read_and_write_tools' -q`; `cmake --build geant4/build --target airpet-sim -j2`. Outcome: added a combined region-controls environment object with saved-state validation, update-property/UI/AI plumbing, macro emission, and Geant4 runtime application for production cuts plus user limits. Next: PER-010 |
+| 2026-04-07T14:07:44+02:00 | PER-010 field-aware run metadata and analysis summaries | DONE | Files: `app.py`, `src/geometry_types.py`, `src/project_manager.py`, `tests/test_ai_api.py`, `tests/test_environment_state.py`, `tests/test_geant4_field_macro.py`. Tests: `python3 -m py_compile app.py tests/test_ai_api.py`; `PYTHONPATH=/tmp/occ_stub:$PYTHONPATH /Users/marth/miniconda/envs/airpet/bin/pytest tests/test_environment_state.py -q`; `PYTHONPATH=/tmp/occ_stub:$PYTHONPATH /Users/marth/miniconda/envs/airpet/bin/pytest tests/test_geant4_field_macro.py -q`; `PYTHONPATH=/tmp/occ_stub:$PYTHONPATH /Users/marth/miniconda/envs/airpet/bin/pytest tests/test_ai_api.py -q -k 'ai_analysis_summary or simulation_metadata_and_analysis_routes_include_environment_summary or ai_tool_route_bridge_get_metadata_and_analysis'`. Outcome: added a deterministic environment summary helper, wrote it into run metadata, surfaced it through simulation metadata/analysis responses and the AI analysis summary tool, and locked the behavior with metadata, route, and AI regression coverage. Next: none.
 
 ## Notes For Future Reordering
 

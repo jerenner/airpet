@@ -19,7 +19,7 @@ Do not activate the next roadmap phase until one of the following is true:
 - `docs/WORKFLOW_REFINEMENT_TRACKER.md` has no `NEXT` or `PENDING` items left
 - workflow refinement is manually paused and the next phase is explicitly promoted
 
-As of 2026-04-07, workflow refinement is exhausted, so R1 is now `ACTIVE`.
+As of 2026-04-07, workflow refinement is exhausted, and R1 is now `DONE`.
 
 ## Product Direction
 
@@ -49,7 +49,7 @@ Statuses used here:
 
 | Phase | Status | Why It Comes Next | Exit Signal |
 | --- | --- | --- | --- |
-| R1: Physics Environment Refinement | ACTIVE | AIRPET already handles geometry and workflows well enough that missing field/environment capabilities are now a bigger blocker for real Geant4 use | A user can define, save, inspect, and run field-aware simulations from AIRPET without hand-editing Geant4 code or macros |
+| R1: Physics Environment Refinement | DONE | AIRPET already handles geometry and workflows well enough that missing field/environment capabilities were a bigger blocker for real Geant4 use | A user can define, save, inspect, and run field-aware simulations from AIRPET without hand-editing Geant4 code or macros |
 | R2: CAD Interoperability Refinement | PLANNED | Complex mechanical shapes should usually come from CAD; AIRPET should be best-in-class at import, reimport, and simulation-oriented augmentation | Imported assemblies can be updated, grouped, annotated, and instrumented reliably inside AIRPET |
 | R3: Detector Feature Generators | PLANNED | Many detector users need patterned holes, stacks, arrays, channels, and shields more than generic CAD sketching | Common detector-specific patterned and repeated geometry features can be created directly in AIRPET |
 | R4: Advanced Scoring And Run Controls | PLANNED | Once environment and geometry authoring are stronger, users need richer outputs and expert run controls | AIRPET exposes useful scoring/tally/run-control features for broader study classes with strong regression coverage |
@@ -58,6 +58,8 @@ Statuses used here:
 ## Current Next Phase
 
 ### R1: Physics Environment Refinement
+
+Status: DONE
 
 Objective:
 Add the highest-value Geant4 simulation-environment capabilities, starting with magnetic fields and a shared environment model that later electric fields, cuts, and limits can reuse.
@@ -70,7 +72,7 @@ Why now:
 
 Current focus:
 
-- field-aware run metadata and analysis summaries so environment variants are visible in outputs
+- phase complete; field-aware run metadata and analysis summaries are now visible in outputs
 
 Phase docs:
 

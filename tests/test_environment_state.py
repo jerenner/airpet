@@ -66,6 +66,13 @@ def test_environment_state_defaults_and_roundtrip():
         },
     }
 
+    assert state.environment.to_summary_dict() == {
+        "has_active_controls": False,
+        "active_control_count": 0,
+        "summary_text": "No environment controls enabled.",
+        "active_controls": [],
+    }
+
     round_tripped = GeometryState.from_dict(payload)
     assert round_tripped.environment.to_dict() == payload["environment"]
 
@@ -143,6 +150,14 @@ def test_environment_state_validation_and_project_roundtrip():
     assert loaded.environment.region_cuts_and_limits.max_time_ns == 20.0
     assert loaded.environment.region_cuts_and_limits.min_kinetic_energy_mev == 0.002
     assert loaded.environment.region_cuts_and_limits.min_range_mm == 0.05
+
+    summary = loaded.environment.to_summary_dict()
+    assert summary["has_active_controls"] is True
+    assert summary["active_control_count"] == 5
+    assert summary["active_controls"][0]["kind"] == "global_uniform_magnetic_field"
+    assert summary["active_controls"][-1]["kind"] == "region_cuts_and_limits"
+    assert "Global magnetic field: (0, 1.5, -0.25) T" in summary["summary_text"]
+    assert "Region cuts and limits: region tracker_region" in summary["summary_text"]
 
     electric_bad_payload = {
         "global_uniform_electric_field": {

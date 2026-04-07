@@ -39,7 +39,7 @@ from src.expression_evaluator import ExpressionEvaluator
 from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
-from src.geometry_types import GeometryState
+from src.geometry_types import EnvironmentState, GeometryState
 from src.ai_tools import (
     AI_GEOMETRY_TOOLS,
     PRIMITIVE_SOLID_PARAM_SPECS,
@@ -4141,9 +4141,46 @@ def get_simulation_metadata(version_id, job_id):
     try:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
+        environment_summary = _environment_summary_from_metadata(metadata)
+        if environment_summary is not None and 'environment_summary' not in metadata:
+            metadata['environment_summary'] = environment_summary
         return jsonify({"success": True, "metadata": metadata})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _load_simulation_run_metadata(pm, version_id, job_id):
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    metadata_path = os.path.join(run_dir, "metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return None
+
+    try:
+        with open(metadata_path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _environment_summary_from_metadata(metadata):
+    if not isinstance(metadata, dict):
+        return None
+
+    summary = metadata.get("environment_summary")
+    if isinstance(summary, dict):
+        return summary
+
+    environment = metadata.get("environment")
+    if not isinstance(environment, dict):
+        return None
+
+    try:
+        return EnvironmentState.from_dict(environment).to_summary_dict()
+    except Exception:
+        return None
+
 
 def _build_simulation_candidate_evaluator(
     pm,
@@ -5068,6 +5105,11 @@ def get_simulation_analysis(version_id, job_id):
                 'available_sensitive_detectors': available_sensitive_detectors,
                 'selected_sensitive_detector': selected_sensitive_detector,
             }
+
+        metadata = _load_simulation_run_metadata(pm, version_id, job_id)
+        environment_summary = _environment_summary_from_metadata(metadata)
+        if environment_summary is not None:
+            analysis_data['environment_summary'] = environment_summary
 
         return jsonify({"success": True, "analysis": analysis_data})
 
@@ -10860,12 +10902,18 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                             n_str = n.decode('utf-8') if isinstance(n, bytes) else str(n)
                             particles[n_str] = particles.get(n_str, 0) + 1
 
+                    summary = {
+                        "total_hits": total_hits,
+                        "particle_breakdown": particles,
+                    }
+                    metadata = _load_simulation_run_metadata(pm, version_id, job_id)
+                    environment_summary = _environment_summary_from_metadata(metadata)
+                    if environment_summary is not None:
+                        summary["environment_summary"] = environment_summary
+
                     return {
                         "success": True,
-                        "summary": {
-                            "total_hits": total_hits,
-                            "particle_breakdown": particles
-                        }
+                        "summary": summary
                     }
             except Exception as e:
                 return {"success": False, "error": str(e)}

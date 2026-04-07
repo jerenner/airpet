@@ -48,8 +48,8 @@ As of 2026-04-07:
 
 - AIRPET already has a meaningful STEP import and smart CAD path.
 - AIRPET already supports detector geometry, materials, sources, param studies, optimization workflows, and a growing regression corpus.
-- AIRPET now supports global uniform magnetic fields, global uniform electric fields, local logical-volume magnetic/electric-field assignments, and region-specific production cuts and user limits in saved state, macro generation, UI, AI, and Geant4 runtime plumbing.
-- The next open environment gap is field-aware run metadata and analysis summaries so environment variants are visible in outputs.
+- AIRPET now supports global uniform magnetic fields, global uniform electric fields, local logical-volume magnetic/electric-field assignments, region-specific production cuts and user limits, and field-aware run metadata and analysis summaries in saved state, macro generation, UI, AI, Geant4 runtime plumbing, and outputs.
+- The remaining environment work, if any, now belongs to successor phases.
 
 ## Scope
 
@@ -89,7 +89,7 @@ Avoid:
 2. Deterministic field-on versus field-off coverage.
 3. UI and AI support for field configuration and inspection.
 4. Electric field support on the same abstraction.
-5. Field-aware run metadata and analysis summaries.
+5. Field-aware run metadata and analysis summaries. Completed in PER-010.
 6. Field-aware scoring or run-configuration follow-ons if needed.
 
 ## Suggested Example Assets

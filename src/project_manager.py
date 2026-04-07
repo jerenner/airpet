@@ -6742,6 +6742,7 @@ class ProjectManager:
             temp_state = GeometryState.from_dict(state_dict)
             gdml_string = GDMLWriter(temp_state).get_gdml_string()
             metadata['environment'] = temp_state.environment.to_dict()
+            metadata['environment_summary'] = temp_state.environment.to_summary_dict()
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
             
