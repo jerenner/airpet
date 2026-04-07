@@ -55,7 +55,7 @@ import {
     normalizeRegionCutsAndLimitsState,
     normalizeTargetVolumeNames,
 } from './environmentFieldUi.js';
-import { buildCadImportSelectionContext, describeCadImportRecord } from './cadImportUi.js';
+import { buildCadImportBatchContext, buildCadImportSelectionContext, describeCadImportRecord } from './cadImportUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -204,6 +204,7 @@ let callbacks = {
     onPVVisibilityToggle: (pvId, isVisible) => { },
     onAiGenerateClicked: (promptText) => { },
     onReimportStepClicked: (file, importRecord) => { },
+    onCadImportBatchActionClicked: (action, importRecord) => { },
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
     onSourceActivationToggled: (sourceId) => { },
@@ -2330,6 +2331,7 @@ function renderCadImportsPanel(projectState) {
     cadImports.forEach((rawRecord, index) => {
         const described = describeCadImportRecord(rawRecord);
         const selectionContext = described.selectionContext || buildCadImportSelectionContext(rawRecord);
+        const batchContext = described.batchContext || buildCadImportBatchContext(rawRecord);
         const card = document.createElement('details');
         card.className = 'cad-import-card';
         card.open = cadImports.length === 1 || index === cadImports.length - 1;
@@ -2384,6 +2386,34 @@ function renderCadImportsPanel(projectState) {
             actions.appendChild(selectButton);
         }
 
+        if (batchContext.hasLogicalVolumes) {
+            const materialButton = document.createElement('button');
+            materialButton.type = 'button';
+            materialButton.className = 'history-action-btn';
+            materialButton.textContent = 'Set Material...';
+            materialButton.title = 'Apply one material to all imported logical volumes in this STEP record.';
+            materialButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (callbacks.onCadImportBatchActionClicked) {
+                    callbacks.onCadImportBatchActionClicked('material', rawRecord);
+                }
+            });
+            actions.appendChild(materialButton);
+
+            const sensitiveButton = document.createElement('button');
+            sensitiveButton.type = 'button';
+            sensitiveButton.className = 'history-action-btn';
+            sensitiveButton.textContent = 'Mark Sensitive';
+            sensitiveButton.title = 'Mark all imported logical volumes in this STEP record as sensitive.';
+            sensitiveButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (callbacks.onCadImportBatchActionClicked) {
+                    callbacks.onCadImportBatchActionClicked('sensitive', rawRecord);
+                }
+            });
+            actions.appendChild(sensitiveButton);
+        }
+
         const reimportButton = document.createElement('button');
         reimportButton.type = 'button';
         reimportButton.className = 'history-action-btn';
@@ -2410,6 +2440,13 @@ function renderCadImportsPanel(projectState) {
         actions.appendChild(reimportButton);
         actions.appendChild(reimportFileInput);
         body.appendChild(actions);
+
+        if (batchContext.hasLogicalVolumes) {
+            const batchNote = document.createElement('p');
+            batchNote.className = 'cad-import-note';
+            batchNote.textContent = `Batch helpers apply to ${batchContext.logicalVolumeSummary}.`;
+            body.appendChild(batchNote);
+        }
 
         const note = document.createElement('p');
         note.className = 'cad-import-note';

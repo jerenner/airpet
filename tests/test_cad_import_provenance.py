@@ -158,6 +158,54 @@ def _build_fake_imported_state(solid_dimensions=('1', '2', '3')):
     return state, solid, lv, assembly, assembly_child, top_level_pv
 
 
+def _build_fake_imported_state_with_multiple_lvs():
+    state = GeometryState()
+    state.grouping_name = 'fixture_import'
+
+    solid_a = Solid(
+        'fixture_solid_a',
+        'box',
+        {'x': '1', 'y': '2', 'z': '3'},
+    )
+    state.add_solid(solid_a)
+
+    solid_b = Solid(
+        'fixture_solid_b',
+        'box',
+        {'x': '4', 'y': '5', 'z': '6'},
+    )
+    state.add_solid(solid_b)
+
+    lv_a = LogicalVolume('fixture_lv_a', solid_a.name, 'G4_STAINLESS-STEEL')
+    lv_b = LogicalVolume('fixture_lv_b', solid_b.name, 'G4_STAINLESS-STEEL')
+    state.add_logical_volume(lv_a)
+    state.add_logical_volume(lv_b)
+
+    assembly = Assembly('fixture_assembly')
+    assembly_child_a = PhysicalVolumePlacement(
+        name='fixture_lv_a_placement',
+        volume_ref=lv_a.name,
+        parent_lv_name=assembly.name,
+    )
+    assembly_child_b = PhysicalVolumePlacement(
+        name='fixture_lv_b_placement',
+        volume_ref=lv_b.name,
+        parent_lv_name=assembly.name,
+    )
+    assembly.add_placement(assembly_child_a)
+    assembly.add_placement(assembly_child_b)
+    state.add_assembly(assembly)
+
+    top_level_pv = PhysicalVolumePlacement(
+        name='fixture_assembly_placement',
+        volume_ref=assembly.name,
+        parent_lv_name='World',
+    )
+    state.placements_to_add = [top_level_pv]
+
+    return state, (solid_a, solid_b), (lv_a, lv_b), (assembly_child_a, assembly_child_b), top_level_pv
+
+
 def test_step_import_provenance_roundtrips_through_saved_project_state():
     payload_bytes = b'STEP-DATA'
     expected_sha256 = hashlib.sha256(payload_bytes).hexdigest()
@@ -396,3 +444,114 @@ def test_step_reimport_preserves_lv_annotations_and_relinks_sources():
     assert linked_source.volume_link_id == reimported_linked_pv.id
     assert linked_source.confine_to_pv == reimported_linked_pv.name
     assert linked_source.position == {'x': '12.0', 'y': '34.0', 'z': '56.0'}
+
+
+def test_step_import_logical_volume_batch_assignment_uses_import_ids_atomically():
+    payload_bytes = b'STEP-DATA-BATCH'
+
+    imported_state, _, (lv_a, lv_b), _, _ = _build_fake_imported_state_with_multiple_lvs()
+
+    pm = _make_pm()
+    upload = DummyStepUpload(payload_bytes, 'fixture.step')
+
+    with patch('src.project_manager.parse_step_file', return_value=imported_state):
+        success, error_msg, import_report = pm.import_step_with_options(
+            upload,
+            {
+                'groupingName': 'fixture_import',
+                'placementMode': 'assembly',
+                'parentLVName': 'World',
+                'offset': {'x': '0', 'y': '0', 'z': '0'},
+                'smartImport': True,
+            },
+        )
+
+    assert success is True
+    assert error_msg is None
+    assert import_report is None
+
+    import_record = pm.current_geometry_state.cad_imports[0]
+    imported_lv_ids = import_record['created_object_ids']['logical_volume_ids']
+    assert set(imported_lv_ids) == {lv_a.id, lv_b.id}
+
+    copper_material, error_msg = pm.add_material(
+        'Copper',
+        {
+            'density_expr': '8.96',
+            'Z_expr': '29',
+        },
+    )
+    assert error_msg is None
+    assert copper_material['name'] == 'Copper'
+
+    history_index_before = pm.history_index
+
+    success, error_msg, updated_lv_names = pm.update_logical_volume_batch([
+        {'id': lv_a.id, 'material_ref': 'Copper', 'is_sensitive': True},
+        {'id': lv_b.id, 'material_ref': 'Copper', 'is_sensitive': True},
+    ])
+
+    assert success is True
+    assert error_msg is None
+    assert updated_lv_names == ['fixture_lv_a', 'fixture_lv_b']
+    assert pm.current_geometry_state.logical_volumes['fixture_lv_a'].material_ref == 'Copper'
+    assert pm.current_geometry_state.logical_volumes['fixture_lv_b'].material_ref == 'Copper'
+    assert pm.current_geometry_state.logical_volumes['fixture_lv_a'].is_sensitive is True
+    assert pm.current_geometry_state.logical_volumes['fixture_lv_b'].is_sensitive is True
+    assert pm.history_index == history_index_before + 1
+
+
+def test_step_import_logical_volume_batch_rolls_back_on_invalid_material():
+    payload_bytes = b'STEP-DATA-BATCH-ROLLBACK'
+
+    imported_state, _, (lv_a, lv_b), _, _ = _build_fake_imported_state_with_multiple_lvs()
+
+    pm = _make_pm()
+    upload = DummyStepUpload(payload_bytes, 'fixture.step')
+
+    with patch('src.project_manager.parse_step_file', return_value=imported_state):
+        success, error_msg, import_report = pm.import_step_with_options(
+            upload,
+            {
+                'groupingName': 'fixture_import',
+                'placementMode': 'assembly',
+                'parentLVName': 'World',
+                'offset': {'x': '0', 'y': '0', 'z': '0'},
+                'smartImport': True,
+            },
+        )
+
+    assert success is True
+    assert error_msg is None
+    assert import_report is None
+
+    original_material_refs = {
+        'fixture_lv_a': pm.current_geometry_state.logical_volumes['fixture_lv_a'].material_ref,
+        'fixture_lv_b': pm.current_geometry_state.logical_volumes['fixture_lv_b'].material_ref,
+    }
+
+    copper_material, error_msg = pm.add_material(
+        'Copper',
+        {
+            'density_expr': '8.96',
+            'Z_expr': '29',
+        },
+    )
+    assert error_msg is None
+    assert copper_material['name'] == 'Copper'
+
+    history_index_before = pm.history_index
+
+    success, error_msg, updated_lv_names = pm.update_logical_volume_batch([
+        {'id': lv_a.id, 'material_ref': 'Copper', 'is_sensitive': True},
+        {'id': lv_b.id, 'material_ref': 'MissingMat', 'is_sensitive': True},
+    ])
+
+    assert success is False
+    assert "MissingMat" in error_msg
+    assert updated_lv_names == []
+    assert {
+        'fixture_lv_a': pm.current_geometry_state.logical_volumes['fixture_lv_a'].material_ref,
+        'fixture_lv_b': pm.current_geometry_state.logical_volumes['fixture_lv_b'].material_ref,
+    } == original_material_refs
+    assert pm.history_index == history_index_before

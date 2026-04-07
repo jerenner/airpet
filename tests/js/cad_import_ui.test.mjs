@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildCadImportBatchContext,
     buildCadImportReimportContext,
     buildCadImportSelectionContext,
     describeCadImportRecord,
@@ -64,6 +65,7 @@ test('cad import provenance helpers describe a full STEP import deterministicall
             'Smart CAD',
             'Created Objects',
             'Created Groups',
+            'Imported Logical Volumes',
             'Top-Level Selection',
         ],
     );
@@ -106,4 +108,17 @@ test('cad import selection helpers fall back to the first recorded placement for
 
     assert.deepEqual(selectionContext.selectionIds, ['placement-a']);
     assert.equal(selectionContext.selectionSummary, '1 top-level placement');
+});
+
+test('cad import batch helpers normalize imported logical volume ids and summaries', () => {
+    const batchContext = buildCadImportBatchContext({
+        created_object_ids: {
+            logical_volume_ids: ['lv-a', '', null, 'lv-b'],
+        },
+    });
+
+    assert.deepEqual(batchContext.logicalVolumeIds, ['lv-a', 'lv-b']);
+    assert.equal(batchContext.logicalVolumeCount, 2);
+    assert.equal(batchContext.logicalVolumeSummary, '2 logical volumes');
+    assert.equal(batchContext.hasLogicalVolumes, true);
 });

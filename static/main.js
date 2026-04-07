@@ -17,6 +17,7 @@ import * as RingArrayEditor from './ringArrayEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
+import { buildCadImportBatchContext } from './cadImportUi.js';
 import * as StepImportEditor from './stepImportEditor.js';
 import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
 import * as ParamStudyEditor from './paramStudyEditor.js';
@@ -197,6 +198,7 @@ async function initializeApp() {
         onImportAiResponseClicked: handleImportAiResponse,
         onImportStepClicked: handleImportStep,
         onReimportStepClicked: handleReimportStepImport,
+        onCadImportBatchActionClicked: handleCadImportBatchAction,
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -2469,6 +2471,113 @@ async function handleImportStep(file, importRecord = null) {
 
 async function handleReimportStepImport(file, importRecord) {
     await handleImportStep(file, importRecord);
+}
+
+function getImportedCadLogicalVolumeIdSet(importRecord) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    return new Set(batchContext.logicalVolumeIds);
+}
+
+function getImportedCadMaterialSuggestion(importRecord) {
+    const logicalVolumeIdSet = getImportedCadLogicalVolumeIdSet(importRecord);
+    const projectState = AppState.currentProjectState || {};
+    const logicalVolumes = projectState.logical_volumes || {};
+    const materialRefs = [];
+
+    for (const lv of Object.values(logicalVolumes)) {
+        if (!lv || !logicalVolumeIdSet.has(lv.id)) continue;
+        const materialRef = typeof lv.material_ref === 'string' ? lv.material_ref.trim() : '';
+        if (materialRef) materialRefs.push(materialRef);
+    }
+
+    if (materialRefs.length === 0) {
+        const materialNames = Object.keys(projectState.materials || {});
+        return materialNames.length > 0 ? materialNames[0] : '';
+    }
+
+    return materialRefs[0];
+}
+
+function buildCadImportLogicalVolumeBatchUpdates(importRecord, partialUpdate) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    return batchContext.logicalVolumeIds.map((id) => ({
+        id,
+        ...partialUpdate,
+    }));
+}
+
+async function handleCadImportBatchAction(action, importRecord) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    if (!batchContext.hasLogicalVolumes) {
+        UIManager.showError("This STEP import did not record any logical volumes for batch editing.");
+        return;
+    }
+
+    const selectionContext = getSelectionContext();
+    const projectState = AppState.currentProjectState || {};
+
+    if (action === 'material') {
+        const availableMaterials = Object.keys(projectState.materials || {});
+        if (availableMaterials.length === 0) {
+            UIManager.showError("Create a material before applying one to imported logical volumes.");
+            return;
+        }
+
+        const suggestedMaterial = getImportedCadMaterialSuggestion(importRecord) || availableMaterials[0];
+        const promptMessage = `Assign a material to ${batchContext.logicalVolumeSummary}:`;
+        const materialName = prompt(promptMessage, suggestedMaterial || '');
+        if (materialName == null) {
+            return;
+        }
+
+        const materialRef = materialName.trim();
+        if (!materialRef) {
+            return;
+        }
+
+        if (!projectState.materials || !projectState.materials[materialRef]) {
+            UIManager.showError(`Material '${materialRef}' was not found.`);
+            return;
+        }
+
+        const updates = buildCadImportLogicalVolumeBatchUpdates(importRecord, {
+            material_ref: materialRef,
+        });
+
+        UIManager.showLoading(`Applying material to ${batchContext.logicalVolumeSummary}...`);
+        try {
+            const result = await APIService.updateLogicalVolumeBatch(updates);
+            syncUIWithState(result, selectionContext);
+        } catch (error) {
+            UIManager.showError("Error applying material to imported CAD geometry: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+        return;
+    }
+
+    if (action === 'sensitive') {
+        if (!UIManager.confirmAction(`Mark ${batchContext.logicalVolumeSummary} as sensitive?`)) {
+            return;
+        }
+
+        const updates = buildCadImportLogicalVolumeBatchUpdates(importRecord, {
+            is_sensitive: true,
+        });
+
+        UIManager.showLoading(`Marking ${batchContext.logicalVolumeSummary} sensitive...`);
+        try {
+            const result = await APIService.updateLogicalVolumeBatch(updates);
+            syncUIWithState(result, selectionContext);
+        } catch (error) {
+            UIManager.showError("Error marking imported CAD geometry sensitive: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+        return;
+    }
+
+    UIManager.showError(`Unknown CAD import batch action '${action}'.`);
 }
 
 // NEW Handlers for the Assembly Definition Editor

@@ -114,6 +114,20 @@ function getPlacementModeLabel(placementMode) {
     return placementMode === 'individual' ? 'individual' : 'assembly';
 }
 
+export function buildCadImportBatchContext(rawRecord) {
+    const record = normalizeCadImportRecord(rawRecord);
+    const logicalVolumeIds = record.created_object_ids.logical_volume_ids;
+
+    return {
+        logicalVolumeIds,
+        logicalVolumeCount: logicalVolumeIds.length,
+        logicalVolumeSummary: logicalVolumeIds.length > 0
+            ? formatCount(logicalVolumeIds.length, 'logical volume')
+            : 'No imported logical volumes recorded.',
+        hasLogicalVolumes: logicalVolumeIds.length > 0,
+    };
+}
+
 export function buildCadImportReimportContext(rawRecord) {
     const record = normalizeCadImportRecord(rawRecord);
     const sourceLabel = `${record.source.filename} (${record.import_id})`;
@@ -139,6 +153,7 @@ export function describeCadImportRecord(rawRecord) {
     const createdObjectSummary = formatCreatedObjectSummary(record);
     const createdGroupSummary = formatCreatedGroupSummary(record);
     const selectionContext = buildSelectionContextFromRecord(record);
+    const batchContext = buildCadImportBatchContext(record);
     const placementMode = getPlacementModeLabel(record.options.placement_mode);
     const sourceLabel = `${record.source.filename} (${record.import_id})`;
     const summary = `STEP import from ${record.source.filename} · placement mode: ${placementMode} · smart CAD ${record.options.smart_import_enabled ? 'on' : 'off'}`;
@@ -160,11 +175,13 @@ export function describeCadImportRecord(rawRecord) {
             { label: 'Smart CAD', value: record.options.smart_import_enabled ? 'Enabled' : 'Disabled' },
             { label: 'Created Objects', value: createdObjectSummary },
             { label: 'Created Groups', value: createdGroupSummary },
+            { label: 'Imported Logical Volumes', value: batchContext.logicalVolumeSummary },
             { label: 'Top-Level Selection', value: selectionContext.selectionSummary },
         ],
         createdObjectSummary,
         createdGroupSummary,
         selectionContext,
+        batchContext,
         reimportContext: {
             ...buildCadImportReimportContext(record),
             sourceLabel,

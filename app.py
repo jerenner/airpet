@@ -8061,6 +8061,30 @@ def update_logical_volume_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/api/update_logical_volume_batch', methods=['POST'])
+def update_logical_volume_batch_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    updates_list = data.get('updates')
+    if not isinstance(updates_list, list):
+        return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
+
+    success, error_msg, updated_lv_names = pm.update_logical_volume_batch(updates_list)
+
+    if success:
+        updated_count = len(updated_lv_names)
+        return create_success_response(
+            pm,
+            f"Updated {updated_count} logical volume(s).",
+            extra_payload={
+                "updated_logical_volume_names": updated_lv_names,
+                "updated_logical_volume_count": updated_count,
+            },
+        )
+
+    return jsonify({"success": False, "error": error_msg or "Failed to update logical volumes."}), 500
+
 @app.route('/add_physical_volume', methods=['POST'])
 def add_physical_volume_route():
     pm = get_project_manager_for_session()

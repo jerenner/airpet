@@ -590,6 +590,20 @@ class ProjectManager:
 
         return None
 
+    def _resolve_logical_volume_name(self, logical_volume_ref):
+        """Resolve a logical volume by name or stable id."""
+        if not isinstance(logical_volume_ref, str):
+            return None
+
+        logical_volume_ref = logical_volume_ref.strip()
+        if not logical_volume_ref or not self.current_geometry_state:
+            return None
+
+        if logical_volume_ref in self.current_geometry_state.logical_volumes:
+            return logical_volume_ref
+
+        return self._find_object_name_by_id(self.current_geometry_state.logical_volumes, logical_volume_ref)
+
     def _snapshot_step_import_annotations(self, cad_import_record):
         """Captures user-facing annotations that should survive a supported reimport."""
         if not self.current_geometry_state or not isinstance(cad_import_record, dict):
@@ -3877,19 +3891,59 @@ class ProjectManager:
         if not lv:
             return False, f"Logical Volume '{lv_name}' not found."
 
-        # Update standard properties if provided
-        if new_solid_ref and new_solid_ref in self.current_geometry_state.solids:
-            lv.solid_ref = new_solid_ref
-        if new_material_ref and new_material_ref in self.current_geometry_state.materials:
-            lv.material_ref = new_material_ref
+        success, error_msg = self._apply_logical_volume_update(
+            lv,
+            new_solid_ref=new_solid_ref,
+            new_material_ref=new_material_ref,
+            new_vis_attributes=new_vis_attributes,
+            new_is_sensitive=new_is_sensitive,
+            new_content_type=new_content_type,
+            new_content=new_content,
+            strict=False,
+        )
+        if not success:
+            return False, error_msg
+
+        # Capture the new state
+        self._capture_history_state(f"Updated LV {lv_name}")
+
+        self.recalculate_geometry_state()
+        return True, None
+
+    def _apply_logical_volume_update(
+        self,
+        lv,
+        new_solid_ref=None,
+        new_material_ref=None,
+        new_vis_attributes=None,
+        new_is_sensitive=None,
+        new_content_type=None,
+        new_content=None,
+        strict=False,
+    ):
+        """Apply a logical-volume update in-place, optionally validating references."""
+        if not self.current_geometry_state or lv is None:
+            return False, "No project loaded."
+
+        if new_solid_ref is not None:
+            if new_solid_ref in self.current_geometry_state.solids:
+                lv.solid_ref = new_solid_ref
+            elif strict:
+                return False, f"Solid '{new_solid_ref}' not found."
+
+        if new_material_ref is not None:
+            if new_material_ref in self.current_geometry_state.materials:
+                lv.material_ref = new_material_ref
+            elif strict:
+                return False, f"Material '{new_material_ref}' not found."
+
         if new_vis_attributes is not None:
             lv.vis_attributes = new_vis_attributes
+
         if new_is_sensitive is not None:
-            lv.is_sensitive = new_is_sensitive
-            
-        # Update content if provided
+            lv.is_sensitive = bool(new_is_sensitive)
+
         if new_content_type and new_content is not None and len(new_content) > 0:
-            print(f"Got new content {new_content}")
             lv.content_type = new_content_type
             if new_content_type == 'replica':
                 lv.content = ReplicaVolume.from_dict(new_content)
@@ -3897,15 +3951,89 @@ class ProjectManager:
                 lv.content = DivisionVolume.from_dict(new_content)
             elif new_content_type == 'parameterised':
                 lv.content = ParamVolume.from_dict(new_content)
-            else: # physvol
-                # This could be more complex, might need to update existing children
-                lv.content = [] 
+            else:
+                lv.content = []
 
-        # Capture the new state
-        self._capture_history_state(f"Updated LV {lv_name}")
-        
-        self.recalculate_geometry_state()
         return True, None
+
+    def update_logical_volume_batch(self, updates_list):
+        """Apply a batch of logical-volume updates atomically."""
+        if not self.current_geometry_state:
+            return False, "No project loaded.", []
+
+        if not isinstance(updates_list, list):
+            return False, "Invalid request: 'updates' must be a list.", []
+
+        normalized_updates = []
+        for index, update_data in enumerate(updates_list):
+            if not isinstance(update_data, dict):
+                return False, f"Logical volume update #{index + 1} must be an object.", []
+
+            lv_ref = update_data.get('id')
+            if lv_ref is None:
+                lv_ref = update_data.get('name')
+
+            lv_name = self._resolve_logical_volume_name(lv_ref)
+            if not lv_name:
+                return False, f"Logical Volume '{lv_ref}' not found.", []
+
+            new_solid_ref = update_data.get('solid_ref')
+            if isinstance(new_solid_ref, str):
+                new_solid_ref = new_solid_ref.strip() or None
+
+            new_material_ref = update_data.get('material_ref')
+            if isinstance(new_material_ref, str):
+                new_material_ref = new_material_ref.strip() or None
+
+            if new_solid_ref is not None and new_solid_ref not in self.current_geometry_state.solids:
+                return False, f"Solid '{new_solid_ref}' not found.", []
+
+            if new_material_ref is not None and new_material_ref not in self.current_geometry_state.materials:
+                return False, f"Material '{new_material_ref}' not found.", []
+
+            normalized_updates.append((
+                self.current_geometry_state.logical_volumes[lv_name],
+                lv_name,
+                new_solid_ref,
+                new_material_ref,
+                update_data.get('vis_attributes'),
+                update_data.get('is_sensitive'),
+                update_data.get('content_type'),
+                update_data.get('content'),
+            ))
+
+        if not normalized_updates:
+            return True, None, []
+
+        self.begin_transaction()
+        updated_lv_names = []
+
+        try:
+            for lv, lv_name, new_solid_ref, new_material_ref, new_vis_attributes, new_is_sensitive, new_content_type, new_content in normalized_updates:
+                success, error_msg = self._apply_logical_volume_update(
+                    lv,
+                    new_solid_ref=new_solid_ref,
+                    new_material_ref=new_material_ref,
+                    new_vis_attributes=new_vis_attributes,
+                    new_is_sensitive=new_is_sensitive,
+                    new_content_type=new_content_type,
+                    new_content=new_content,
+                    strict=True,
+                )
+                if not success:
+                    raise ValueError(error_msg)
+                if lv_name not in updated_lv_names:
+                    updated_lv_names.append(lv_name)
+
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                raise ValueError(error_msg)
+        except Exception as exc:
+            self.abort_transaction()
+            return False, str(exc), []
+
+        self.end_transaction(f"Batch update to {len(updated_lv_names)} logical volumes")
+        return True, None, updated_lv_names
 
     def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation, scale, copy_number_expr="0"):
         if not self.current_geometry_state: return None, "No project loaded"

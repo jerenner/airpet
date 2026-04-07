@@ -707,6 +707,15 @@ export async function updateLogicalVolume(id, solid_ref, material_ref, vis_attri
     return handleResponse(response);
 }
 
+export async function updateLogicalVolumeBatch(updates) {
+    const response = await fetch(`${API_BASE_URL}/api/update_logical_volume_batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates })
+    });
+    return handleResponse(response);
+}
+
 export async function addPhysicalVolume(parent_lv_name, name, volume_ref, position, rotation, scale) {
     const response = await fetch(`${API_BASE_URL}/add_physical_volume`, {
         method: 'POST',
