@@ -123,6 +123,14 @@ def _build_step_import_provenance_record(temp_path, step_file_stream, options, i
         },
     }
 
+
+def _normalize_step_import_object_name(value):
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None
+
 class ProjectManager:
     def __init__(self, expression_evaluator):
         self.current_geometry_state = GeometryState()
@@ -576,6 +584,211 @@ class ProjectManager:
                 return object_name
 
         return None
+
+    def _snapshot_step_import_annotations(self, cad_import_record):
+        """Captures user-facing annotations that should survive a supported reimport."""
+        if not self.current_geometry_state or not isinstance(cad_import_record, dict):
+            return {
+                'logical_volumes': {},
+                'sources': {},
+                'ui_groups': {},
+            }
+
+        object_ids = cad_import_record.get('created_object_ids', {}) or {}
+        imported_pv_ids = {
+            object_id
+            for object_id in (object_ids.get('placement_ids', []) or [])
+            if isinstance(object_id, str) and object_id.strip()
+        }
+
+        snapshot = {
+            'logical_volumes': {},
+            'sources': {},
+            'ui_groups': {},
+        }
+
+        imported_names_by_type = {
+            'solid': {
+                name
+                for object_id in object_ids.get('solid_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.solids, object_id))
+            },
+            'logical_volume': {
+                name
+                for object_id in object_ids.get('logical_volume_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.logical_volumes, object_id))
+            },
+            'assembly': {
+                name
+                for object_id in object_ids.get('assembly_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.assemblies, object_id))
+            },
+        }
+
+        for object_id in object_ids.get('logical_volume_ids', []) or []:
+            lv_name = self._find_object_name_by_id(self.current_geometry_state.logical_volumes, object_id)
+            if not lv_name:
+                continue
+            lv = self.current_geometry_state.logical_volumes.get(lv_name)
+            if not lv:
+                continue
+            snapshot['logical_volumes'][lv_name] = {
+                'material_ref': lv.material_ref,
+                'is_sensitive': lv.is_sensitive,
+                'vis_attributes': deepcopy(lv.vis_attributes),
+            }
+
+        for source in self.current_geometry_state.sources.values():
+            linked_pv_id = getattr(source, 'volume_link_id', None)
+            if linked_pv_id not in imported_pv_ids:
+                continue
+            snapshot['sources'][source.id] = {
+                'volume_link_name': getattr(self._find_pv_by_id(linked_pv_id), 'name', None),
+            }
+
+        for group_type, group_list in getattr(self.current_geometry_state, 'ui_groups', {}).items():
+            imported_names = imported_names_by_type.get(group_type, set())
+            if not imported_names or not isinstance(group_list, list):
+                continue
+
+            preserved_groups = []
+            for group in group_list:
+                if not isinstance(group, dict):
+                    continue
+                members = group.get('members', [])
+                if any(member in imported_names for member in members if isinstance(member, str)):
+                    preserved_groups.append(deepcopy(group))
+
+            if preserved_groups:
+                snapshot['ui_groups'][group_type] = preserved_groups
+
+        return snapshot
+
+    def _sync_linked_source_to_pv(self, source, pv, force_confine_name=True):
+        """Updates a source so it stays bound to the supplied physical volume."""
+        if not source or not pv:
+            return
+
+        global_pos, global_rot_rad = self._calculate_global_transform(pv)
+        source.position = {
+            'x': str(global_pos['x']),
+            'y': str(global_pos['y']),
+            'z': str(global_pos['z']),
+        }
+        source.rotation = {
+            'x': str(global_rot_rad['x']),
+            'y': str(global_rot_rad['y']),
+            'z': str(global_rot_rad['z']),
+        }
+        if force_confine_name or not source.confine_to_pv:
+            source.confine_to_pv = pv.name
+        source.volume_link_id = pv.id
+
+        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+        if lv:
+            solid = self.current_geometry_state.solids.get(lv.solid_ref)
+            if solid:
+                p = solid._evaluated_parameters
+                cmds = source.gps_commands
+
+                # Clear any old shape-specific confinement keys before applying the new shape.
+                for key in [
+                    'pos/shape', 'pos/radius', 'pos/halfx', 'pos/halfy', 'pos/halfz',
+                    'pos/sigma_x', 'pos/sigma_y', 'pos/sigma_r', 'pos/paralp',
+                    'pos/parthe', 'pos/parphi'
+                ]:
+                    cmds.pop(key, None)
+
+                MARGIN = 0.001  # mm
+                cmds['pos/type'] = 'Volume'
+                if solid.type in ['box']:
+                    cmds['pos/shape'] = 'Box'
+                    cmds['pos/halfx'] = f"{max(0, p.get('x', 0) / 2 - MARGIN)} mm"
+                    cmds['pos/halfy'] = f"{max(0, p.get('y', 0) / 2 - MARGIN)} mm"
+                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0) / 2 - MARGIN)} mm"
+                elif solid.type in ['tube', 'cylinder', 'tubs']:
+                    cmds['pos/shape'] = 'Cylinder'
+                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0) / 2 - MARGIN)} mm"
+                elif solid.type in ['sphere', 'orb']:
+                    cmds['pos/shape'] = 'Sphere'
+                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                else:
+                    cmds['pos/shape'] = 'Sphere'
+                    cmds['pos/radius'] = '50 mm'
+
+        source._evaluated_position = global_pos
+        source._evaluated_rotation = global_rot_rad
+
+    def _restore_step_import_annotations(self, annotation_snapshot):
+        """Reapplies preserved annotations after a STEP reimport has replaced geometry."""
+        if not self.current_geometry_state or not isinstance(annotation_snapshot, dict):
+            return
+
+        for lv_name, lv_snapshot in (annotation_snapshot.get('logical_volumes') or {}).items():
+            lv = self.current_geometry_state.logical_volumes.get(lv_name)
+            if not lv or not isinstance(lv_snapshot, dict):
+                continue
+
+            material_ref = _normalize_step_import_object_name(lv_snapshot.get('material_ref'))
+            if material_ref is not None:
+                lv.material_ref = material_ref
+
+            if 'is_sensitive' in lv_snapshot:
+                lv.is_sensitive = bool(lv_snapshot.get('is_sensitive'))
+
+            if lv_snapshot.get('vis_attributes') is not None:
+                lv.vis_attributes = deepcopy(lv_snapshot.get('vis_attributes'))
+
+        for source_id, source_snapshot in (annotation_snapshot.get('sources') or {}).items():
+            if not isinstance(source_snapshot, dict):
+                continue
+
+            source = next(
+                (candidate for candidate in self.current_geometry_state.sources.values() if candidate.id == source_id),
+                None,
+            )
+            if not source:
+                continue
+
+            linked_name = _normalize_step_import_object_name(source_snapshot.get('volume_link_name'))
+            if not linked_name:
+                continue
+
+            linked_pv = self._find_pv_by_name(linked_name)
+            if not linked_pv:
+                continue
+
+            self._sync_linked_source_to_pv(source, linked_pv)
+
+        for group_type, preserved_groups in (annotation_snapshot.get('ui_groups') or {}).items():
+            live_groups = self.current_geometry_state.ui_groups.get(group_type)
+            if not isinstance(live_groups, list):
+                continue
+
+            current_names = {
+                'solid': set(self.current_geometry_state.solids.keys()),
+                'logical_volume': set(self.current_geometry_state.logical_volumes.keys()),
+                'assembly': set(self.current_geometry_state.assemblies.keys()),
+            }.get(group_type, set())
+
+            for preserved_group in preserved_groups:
+                if not isinstance(preserved_group, dict):
+                    continue
+
+                group_name = preserved_group.get('name')
+                if not isinstance(group_name, str) or not group_name.strip():
+                    continue
+
+                live_group = next((group for group in live_groups if group.get('name') == group_name), None)
+                if not live_group:
+                    continue
+
+                live_group['members'] = [
+                    member
+                    for member in preserved_group.get('members', [])
+                    if isinstance(member, str) and member.strip() and member in current_names
+                ]
 
     def _delete_step_import_subsystem(self, cad_import_record):
         """Deletes all objects and groups recorded for a STEP import."""
@@ -4981,8 +5194,10 @@ class ProjectManager:
             imported_state.cad_imports.append(cad_import_record)
 
             import_report = getattr(imported_state, 'smart_import_report', None)
+            annotation_snapshot = None
 
             if target_import_record is not None:
+                annotation_snapshot = self._snapshot_step_import_annotations(target_import_record)
                 self.begin_transaction()
                 delete_success, delete_error = self._delete_step_import_subsystem(target_import_record)
                 if not delete_success:
@@ -5001,6 +5216,9 @@ class ProjectManager:
                 if target_import_record is not None:
                     self.abort_transaction()
                 return False, f"Failed to merge STEP geometry: {error_msg}", None
+
+            if annotation_snapshot is not None:
+                self._restore_step_import_annotations(annotation_snapshot)
 
             # Set the new solids as "changed" so they will be sent to the front end.
             newly_created_solid_names = {solid.name for solid in imported_state.solids.values()}
@@ -5393,54 +5611,7 @@ class ProjectManager:
         
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
         
-        # If Linked, calculate global transform
-        if volume_link_id:
-             pv = self._find_pv_by_id(volume_link_id)
-             if pv:
-                # Override position/rotation with GLOBAL transform of the PV
-                global_pos, global_rot_rad = self._calculate_global_transform(pv)
-                position = {
-                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
-                }
-                rotation = {
-                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
-                }
-                # Also ensure confine_to_pv is set to the name (required for Geant4) if it wasn't passed or is empty
-                if not confine_to_pv:
-                    confine_to_pv = pv.name
-                
-                # Fetch shape info from the linked Logical Volume -> Solid
-                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
-                if lv:
-                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
-                    if solid:
-                        p = solid._evaluated_parameters
-                        
-                        # Clear any existing shape parameters to avoid conflicts (e.g. Para vs Cylinder)
-                        keys_to_remove = ['pos/shape', 'pos/radius', 'pos/halfx', 'pos/halfy', 'pos/halfz', 'pos/sigma_x', 'pos/sigma_y', 'pos/sigma_r', 'pos/paralp', 'pos/parthe', 'pos/parphi']
-                        for k in keys_to_remove:
-                            if k in gps_commands:
-                                del gps_commands[k]
-
-                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
-                        MARGIN = 0.001 # mm
-                        
-                        gps_commands['pos/type'] = 'Volume'
-                        if solid.type in ['box']:
-                            gps_commands['pos/shape'] = 'Box'
-                            gps_commands['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
-                            gps_commands['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
-                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['tube', 'cylinder', 'tubs']:
-                            gps_commands['pos/shape'] = 'Cylinder'
-                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['sphere', 'orb']:
-                            gps_commands['pos/shape'] = 'Sphere'
-                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                        else:
-                            gps_commands['pos/shape'] = 'Sphere'
-                            gps_commands['pos/radius'] = '50 mm'
+        linked_pv = self._find_pv_by_id(volume_link_id) if volume_link_id else None
 
         new_source = ParticleSource(
             name=name,
@@ -5451,6 +5622,9 @@ class ProjectManager:
             confine_to_pv=confine_to_pv,
             volume_link_id=volume_link_id
         )
+
+        if linked_pv:
+            self._sync_linked_source_to_pv(new_source, linked_pv, force_confine_name=False)
 
         self.current_geometry_state.add_source(new_source)
         
@@ -5512,60 +5686,13 @@ class ProjectManager:
         
         # Handle Linked Volume Updates
         source_to_update.volume_link_id = new_volume_link_id
-
-        # RE-CALCULATE GLOBAL POSITION AND SHAPE IF LINKED
         if source_to_update.volume_link_id:
-             pv = self._find_pv_by_id(source_to_update.volume_link_id)
-             if pv:
-                # 1. Update Transform
-                global_pos, global_rot_rad = self._calculate_global_transform(pv)
-                source_to_update.position = {
-                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
-                }
-                source_to_update.rotation = {
-                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
-                }
-                # Ensure confine name matches
-                source_to_update.confine_to_pv = pv.name
-
-                # 2. Update Shape Parameters to match the Volume dimensions
-                # Fetch shape info from the linked Logical Volume -> Solid
-                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
-                if lv:
-                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
-                    if solid:
-                        p = solid._evaluated_parameters
-                        cmds = source_to_update.gps_commands
-                        
-                        # Set default type to Volume
-                        cmds['pos/type'] = 'Volume'
-
-                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
-                        MARGIN = 0.001 # mm
-                        
-                        cmds['pos/type'] = 'Volume'
-                        if solid.type in ['box']:
-                            cmds['pos/shape'] = 'Box'
-                            cmds['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
-                            cmds['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
-                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['tube', 'cylinder', 'tubs']:
-                            cmds['pos/shape'] = 'Cylinder'
-                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['sphere', 'orb']:
-                            cmds['pos/shape'] = 'Sphere'
-                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                        else:
-                            cmds['pos/shape'] = 'Sphere'
-                            cmds['pos/radius'] = '50 mm'
-
-             else:
+            pv = self._find_pv_by_id(source_to_update.volume_link_id)
+            if pv:
+                self._sync_linked_source_to_pv(source_to_update, pv)
+            else:
                 # Linked ID not found? Maybe deleted. Clear link.
                 source_to_update.volume_link_id = None
-        else:
-             # Standard update of position/rotation if NOT linked (already handled above by basic property updates)
-             pass
 
         self._capture_history_state(f"Updated particle source {source_to_update.name}")
         # Recalculation is not strictly necessary unless commands affect evaluation,

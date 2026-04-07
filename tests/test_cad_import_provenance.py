@@ -248,3 +248,106 @@ def test_step_reimport_targets_existing_import_and_replaces_the_old_subsystem():
     assert 'fixture_solid_1' not in solid_group['members']
     assert 'fixture_lv_1' not in lv_group['members']
     assert 'fixture_assembly_1' not in assembly_group['members']
+
+
+def test_step_reimport_preserves_lv_annotations_and_relinks_sources():
+    first_payload_bytes = b'STEP-DATA-FIRST'
+    second_payload_bytes = b'STEP-DATA-SECOND'
+
+    first_imported_state, _, _, _, _, _ = _build_fake_imported_state(('1', '2', '3'))
+    second_imported_state, _, _, _, _, second_top_level_pv = _build_fake_imported_state(('4', '5', '6'))
+    second_top_level_pv.position = {'x': '12', 'y': '34', 'z': '56'}
+
+    pm = _make_pm()
+
+    with patch('src.project_manager.parse_step_file', side_effect=[first_imported_state, second_imported_state]):
+        first_upload = DummyStepUpload(first_payload_bytes, 'fixture.step')
+        success, error_msg, import_report = pm.import_step_with_options(
+            first_upload,
+            {
+                'groupingName': 'fixture_import',
+                'placementMode': 'assembly',
+                'parentLVName': 'World',
+                'offset': {'x': '0', 'y': '0', 'z': '0'},
+                'smartImport': True,
+            },
+        )
+
+        assert success is True
+        assert error_msg is None
+        assert import_report is None
+
+        initial_import_id = pm.current_geometry_state.cad_imports[0]['import_id']
+
+        copper_material, error_msg = pm.add_material(
+            'Copper',
+            {
+                'density_expr': '8.96',
+                'Z_expr': '29',
+            },
+        )
+        assert error_msg is None
+        assert copper_material['name'] == 'Copper'
+
+        success, error_msg = pm.update_logical_volume(
+            'fixture_lv',
+            'fixture_solid',
+            'Copper',
+            new_vis_attributes={'color': {'r': 0.1, 'g': 0.2, 'b': 0.3, 'a': 0.9}},
+            new_is_sensitive=True,
+        )
+        assert success is True
+        assert error_msg is None
+
+        success, error_msg = pm.create_group('logical_volume', 'manual_import_group')
+        assert success is True
+        assert error_msg is None
+        success, error_msg = pm.move_items_to_group('logical_volume', ['fixture_lv'], 'manual_import_group')
+        assert success is True
+        assert error_msg is None
+
+        linked_pv = pm._find_pv_by_name('fixture_assembly_placement')
+        assert linked_pv is not None
+        source_dict, error_msg = pm.add_source(
+            'linked_source',
+            {'particle': 'gamma', 'energy': '1 MeV'},
+            {'x': '0', 'y': '0', 'z': '0'},
+            {'x': '0', 'y': '0', 'z': '0'},
+            volume_link_id=linked_pv.id,
+        )
+        assert error_msg is None
+        source_name = source_dict['name']
+        source_id = source_dict['id']
+        assert pm.current_geometry_state.sources[source_name].volume_link_id == linked_pv.id
+
+        second_upload = DummyStepUpload(second_payload_bytes, 'fixture.step')
+        success, error_msg, import_report = pm.import_step_with_options(
+            second_upload,
+            {
+                'reimportTargetImportId': initial_import_id,
+            },
+        )
+
+    assert success is True
+    assert error_msg is None
+    assert import_report is None
+
+    reimported_lv = pm.current_geometry_state.logical_volumes['fixture_lv']
+    assert reimported_lv.material_ref == 'Copper'
+    assert reimported_lv.is_sensitive is True
+    assert reimported_lv.vis_attributes == {'color': {'r': 0.1, 'g': 0.2, 'b': 0.3, 'a': 0.9}}
+
+    manual_group = next(
+        group for group in pm.current_geometry_state.ui_groups['logical_volume']
+        if group['name'] == 'manual_import_group'
+    )
+    assert manual_group['members'] == ['fixture_lv']
+
+    reimported_linked_pv = pm._find_pv_by_name('fixture_assembly_placement')
+    assert reimported_linked_pv is not None
+
+    linked_source = pm.current_geometry_state.sources[source_name]
+    assert linked_source.id == source_id
+    assert linked_source.volume_link_id == reimported_linked_pv.id
+    assert linked_source.confine_to_pv == reimported_linked_pv.name
+    assert linked_source.position == {'x': '12.0', 'y': '34.0', 'z': '56.0'}
