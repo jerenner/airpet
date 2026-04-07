@@ -129,6 +129,328 @@ def _build_step_import_provenance_record(temp_path, step_file_stream, options, i
     }
 
 
+def _normalize_step_import_signature_value(value):
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_step_import_signature_value(val)
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+
+    if isinstance(value, list):
+        return [_normalize_step_import_signature_value(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [_normalize_step_import_signature_value(item) for item in value]
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if hasattr(value, 'to_dict') and callable(value.to_dict):
+        try:
+            return _normalize_step_import_signature_value(value.to_dict())
+        except Exception:
+            return str(value)
+
+    return value
+
+
+def _hash_step_import_signature(payload):
+    normalized_payload = _normalize_step_import_signature_value(payload)
+    serialized_payload = json.dumps(
+        normalized_payload,
+        sort_keys=True,
+        separators=(',', ':'),
+        ensure_ascii=True,
+        default=str,
+    )
+    return hashlib.sha256(serialized_payload.encode('utf-8')).hexdigest()
+
+
+def _find_step_import_pv_in_state(state, pv_id):
+    if not state or not isinstance(pv_id, str) or not pv_id.strip():
+        return None
+
+    pv_id = pv_id.strip()
+
+    for lv in getattr(state, 'logical_volumes', {}).values():
+        if getattr(lv, 'content_type', None) != 'physvol' or not isinstance(getattr(lv, 'content', None), list):
+            continue
+        for pv in lv.content:
+            if getattr(pv, 'id', None) == pv_id:
+                return pv
+
+    for assembly in getattr(state, 'assemblies', {}).values():
+        for pv in getattr(assembly, 'placements', []) or []:
+            if getattr(pv, 'id', None) == pv_id:
+                return pv
+
+    return None
+
+
+def _collect_step_import_leaf_part_records(state, root_placement_ids=None):
+    if not state:
+        return []
+
+    root_placements = []
+    if root_placement_ids is None:
+        root_placements = list(getattr(state, 'placements_to_add', []) or [])
+    else:
+        seen_root_ids = set()
+        for pv_id in root_placement_ids:
+            pv = _find_step_import_pv_in_state(state, pv_id)
+            if pv and getattr(pv, 'id', None) not in seen_root_ids:
+                seen_root_ids.add(pv.id)
+                root_placements.append(pv)
+
+    root_placements = sorted(
+        root_placements,
+        key=lambda pv: (
+            getattr(pv, 'name', '') or '',
+            getattr(pv, 'id', '') or '',
+        ),
+    )
+
+    records = []
+
+    def _placement_snapshot(pv, include_parent=False):
+        snapshot = {
+            'volume_kind': 'assembly'
+            if getattr(pv, 'volume_ref', None) in getattr(state, 'assemblies', {})
+            else 'logical_volume'
+            if getattr(pv, 'volume_ref', None) in getattr(state, 'logical_volumes', {})
+            else 'missing',
+            'copy_number_expr': _normalize_step_import_signature_value(getattr(pv, 'copy_number_expr', None)),
+            'position': _normalize_step_import_signature_value(getattr(pv, 'position', None)),
+            'rotation': _normalize_step_import_signature_value(getattr(pv, 'rotation', None)),
+            'scale': _normalize_step_import_signature_value(getattr(pv, 'scale', None)),
+        }
+        if include_parent:
+            snapshot['parent_lv_name'] = _normalize_step_import_signature_value(getattr(pv, 'parent_lv_name', None))
+        return snapshot
+
+    def _solid_snapshot(lv):
+        solid = getattr(state, 'solids', {}).get(getattr(lv, 'solid_ref', None))
+        if not solid:
+            return {
+                'solid_ref': getattr(lv, 'solid_ref', None),
+                'missing': True,
+            }
+
+        return {
+            'solid_type': getattr(solid, 'type', None),
+            'raw_parameters': _normalize_step_import_signature_value(getattr(solid, 'raw_parameters', None)),
+        }
+
+    def _record_leaf_part(lv, path_snapshots):
+        part_payload = {
+            'path': path_snapshots,
+            'leaf': {
+                'solid': _solid_snapshot(lv),
+            },
+        }
+
+        if getattr(lv, 'content_type', None) != 'physvol':
+            content = getattr(lv, 'content', None)
+            if content is not None:
+                part_payload['leaf']['content_type'] = getattr(lv, 'content_type', None)
+                if hasattr(content, 'to_dict') and callable(content.to_dict):
+                    part_payload['leaf']['content'] = _normalize_step_import_signature_value(content.to_dict())
+                else:
+                    part_payload['leaf']['content'] = _normalize_step_import_signature_value(content)
+
+        records.append({
+            'kind': 'logical_volume',
+            'name': getattr(lv, 'name', ''),
+            'signature': _hash_step_import_signature(part_payload),
+        })
+
+    def _walk_placement(pv, path_snapshots, active_volume_refs):
+        if not pv:
+            return
+
+        volume_ref = getattr(pv, 'volume_ref', None)
+        if isinstance(volume_ref, str) and volume_ref in active_volume_refs:
+            return
+
+        next_active_volume_refs = set(active_volume_refs)
+        if isinstance(volume_ref, str) and volume_ref:
+            next_active_volume_refs.add(volume_ref)
+
+        next_path = path_snapshots + [_placement_snapshot(pv, include_parent=not path_snapshots)]
+
+        lv = getattr(state, 'logical_volumes', {}).get(volume_ref)
+        if lv:
+            if getattr(lv, 'content_type', None) == 'physvol' and isinstance(getattr(lv, 'content', None), list) and lv.content:
+                for child_pv in lv.content:
+                    _walk_placement(child_pv, next_path, next_active_volume_refs)
+            else:
+                _record_leaf_part(lv, next_path)
+            return
+
+        assembly = getattr(state, 'assemblies', {}).get(volume_ref)
+        if assembly:
+            for child_pv in getattr(assembly, 'placements', []) or []:
+                _walk_placement(child_pv, next_path, next_active_volume_refs)
+
+    for root_pv in root_placements:
+        _walk_placement(root_pv, [], set())
+
+    return records
+
+
+def _build_step_import_reimport_diff_summary(current_state, target_import_record, imported_state):
+    if not current_state or not isinstance(target_import_record, dict) or not imported_state:
+        return {
+            'summary': {
+                'total_before': 0,
+                'total_after': 0,
+                'unchanged_count': 0,
+                'added_count': 0,
+                'removed_count': 0,
+                'renamed_count': 0,
+                'changed_count': 0,
+            },
+            'added_parts': [],
+            'removed_parts': [],
+            'renamed_parts': [],
+            'changed_parts': [],
+        }
+
+    object_ids = target_import_record.get('created_object_ids', {}) or {}
+    root_placement_ids = object_ids.get('top_level_placement_ids') or object_ids.get('placement_ids') or []
+
+    before_records = _collect_step_import_leaf_part_records(current_state, root_placement_ids=root_placement_ids)
+    after_records = _collect_step_import_leaf_part_records(imported_state)
+
+    before_by_exact_key = {}
+    after_by_exact_key = {}
+    for index, record in enumerate(before_records):
+        before_by_exact_key.setdefault((record['name'], record['signature']), []).append(index)
+    for index, record in enumerate(after_records):
+        after_by_exact_key.setdefault((record['name'], record['signature']), []).append(index)
+
+    matched_before = set()
+    matched_after = set()
+    unchanged_count = 0
+
+    for key in sorted(set(before_by_exact_key).intersection(after_by_exact_key)):
+        before_indices = before_by_exact_key[key]
+        after_indices = after_by_exact_key[key]
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            matched_before.add(before_indices[offset])
+            matched_after.add(after_indices[offset])
+            unchanged_count += 1
+
+    before_by_signature = {}
+    after_by_signature = {}
+    for index, record in enumerate(before_records):
+        if index in matched_before:
+            continue
+        before_by_signature.setdefault(record['signature'], []).append(index)
+    for index, record in enumerate(after_records):
+        if index in matched_after:
+            continue
+        after_by_signature.setdefault(record['signature'], []).append(index)
+
+    renamed_parts = []
+    for signature in sorted(set(before_by_signature).intersection(after_by_signature)):
+        before_indices = sorted(
+            before_by_signature[signature],
+            key=lambda index: (before_records[index]['name'], index),
+        )
+        after_indices = sorted(
+            after_by_signature[signature],
+            key=lambda index: (after_records[index]['name'], index),
+        )
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            before_index = before_indices[offset]
+            after_index = after_indices[offset]
+            matched_before.add(before_index)
+            matched_after.add(after_index)
+            renamed_parts.append({
+                'kind': before_records[before_index]['kind'],
+                'before_name': before_records[before_index]['name'],
+                'after_name': after_records[after_index]['name'],
+                'signature': signature,
+            })
+
+    before_by_name = {}
+    after_by_name = {}
+    for index, record in enumerate(before_records):
+        if index in matched_before:
+            continue
+        before_by_name.setdefault(record['name'], []).append(index)
+    for index, record in enumerate(after_records):
+        if index in matched_after:
+            continue
+        after_by_name.setdefault(record['name'], []).append(index)
+
+    changed_parts = []
+    for name in sorted(set(before_by_name).intersection(after_by_name)):
+        before_indices = sorted(
+            before_by_name[name],
+            key=lambda index: (before_records[index]['signature'], index),
+        )
+        after_indices = sorted(
+            after_by_name[name],
+            key=lambda index: (after_records[index]['signature'], index),
+        )
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            before_index = before_indices[offset]
+            after_index = after_indices[offset]
+            matched_before.add(before_index)
+            matched_after.add(after_index)
+            changed_parts.append({
+                'kind': before_records[before_index]['kind'],
+                'name': name,
+                'before_signature': before_records[before_index]['signature'],
+                'after_signature': after_records[after_index]['signature'],
+            })
+
+    added_parts = [
+        {
+            'kind': after_records[index]['kind'],
+            'name': after_records[index]['name'],
+            'signature': after_records[index]['signature'],
+        }
+        for index in sorted(
+            (index for index in range(len(after_records)) if index not in matched_after),
+            key=lambda index: (after_records[index]['name'], after_records[index]['signature'], index),
+        )
+    ]
+
+    removed_parts = [
+        {
+            'kind': before_records[index]['kind'],
+            'name': before_records[index]['name'],
+            'signature': before_records[index]['signature'],
+        }
+        for index in sorted(
+            (index for index in range(len(before_records)) if index not in matched_before),
+            key=lambda index: (before_records[index]['name'], before_records[index]['signature'], index),
+        )
+    ]
+
+    return {
+        'summary': {
+            'total_before': len(before_records),
+            'total_after': len(after_records),
+            'unchanged_count': unchanged_count,
+            'added_count': len(added_parts),
+            'removed_count': len(removed_parts),
+            'renamed_count': len(renamed_parts),
+            'changed_count': len(changed_parts),
+        },
+        'added_parts': added_parts,
+        'removed_parts': removed_parts,
+        'renamed_parts': renamed_parts,
+        'changed_parts': changed_parts,
+    }
+
+
 def _normalize_step_import_object_name(value):
     if isinstance(value, str):
         normalized = value.strip()
@@ -5316,6 +5638,14 @@ class ProjectManager:
 
             # The STEP parser now takes the options dictionary
             imported_state = parse_step_file(temp_path, effective_options)
+            reimport_diff_summary = None
+            if target_import_record is not None:
+                reimport_diff_summary = _build_step_import_reimport_diff_summary(
+                    self.current_geometry_state,
+                    target_import_record,
+                    imported_state,
+                )
+
             cad_import_record = _build_step_import_provenance_record(
                 temp_path,
                 step_file_stream,
@@ -5323,6 +5653,8 @@ class ProjectManager:
                 imported_state,
                 import_id=target_import_id,
             )
+            if reimport_diff_summary is not None:
+                cad_import_record['reimport_diff_summary'] = reimport_diff_summary
             imported_state.cad_imports = list(getattr(imported_state, 'cad_imports', []) or [])
             imported_state.cad_imports.append(cad_import_record)
 

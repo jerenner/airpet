@@ -206,6 +206,41 @@ def _build_fake_imported_state_with_multiple_lvs():
     return state, (solid_a, solid_b), (lv_a, lv_b), (assembly_child_a, assembly_child_b), top_level_pv
 
 
+def _build_fake_individual_imported_state(part_specs):
+    state = GeometryState()
+    state.grouping_name = 'fixture_import'
+    state.placements_to_add = []
+
+    for spec in part_specs:
+        part_name = spec['name']
+        dimensions = spec.get('dimensions', ('1', '2', '3'))
+        position = spec.get('position', {'x': '0', 'y': '0', 'z': '0'})
+        rotation = spec.get('rotation')
+        scale = spec.get('scale')
+
+        solid = Solid(
+            f'{part_name}_solid',
+            'box',
+            {'x': str(dimensions[0]), 'y': str(dimensions[1]), 'z': str(dimensions[2])},
+        )
+        state.add_solid(solid)
+
+        lv = LogicalVolume(part_name, solid.name, 'G4_STAINLESS-STEEL')
+        state.add_logical_volume(lv)
+
+        pv = PhysicalVolumePlacement(
+            name=f'{part_name}_placement',
+            volume_ref=lv.name,
+            parent_lv_name='World',
+            position_val_or_ref=position,
+            rotation_val_or_ref=rotation,
+            scale_val_or_ref=scale,
+        )
+        state.placements_to_add.append(pv)
+
+    return state
+
+
 def test_step_import_provenance_roundtrips_through_saved_project_state():
     payload_bytes = b'STEP-DATA'
     expected_sha256 = hashlib.sha256(payload_bytes).hexdigest()
@@ -444,6 +479,131 @@ def test_step_reimport_preserves_lv_annotations_and_relinks_sources():
     assert linked_source.volume_link_id == reimported_linked_pv.id
     assert linked_source.confine_to_pv == reimported_linked_pv.name
     assert linked_source.position == {'x': '12.0', 'y': '34.0', 'z': '56.0'}
+
+
+def test_step_reimport_records_a_deterministic_part_diff_summary():
+    first_payload_bytes = b'STEP-DATA-DIFF-ONE'
+    second_payload_bytes = b'STEP-DATA-DIFF-TWO'
+
+    first_imported_state = _build_fake_individual_imported_state([
+        {
+            'name': 'fixture_part_a',
+            'dimensions': ('1', '2', '3'),
+            'position': {'x': '0', 'y': '0', 'z': '0'},
+        },
+        {
+            'name': 'fixture_part_b',
+            'dimensions': ('4', '5', '6'),
+            'position': {'x': '10', 'y': '0', 'z': '0'},
+        },
+        {
+            'name': 'fixture_part_c',
+            'dimensions': ('7', '8', '9'),
+            'position': {'x': '20', 'y': '0', 'z': '0'},
+        },
+    ])
+
+    second_imported_state = _build_fake_individual_imported_state([
+        {
+            'name': 'fixture_part_a',
+            'dimensions': ('1.5', '2', '3'),
+            'position': {'x': '0', 'y': '0', 'z': '0'},
+        },
+        {
+            'name': 'fixture_part_b_renamed',
+            'dimensions': ('4', '5', '6'),
+            'position': {'x': '10', 'y': '0', 'z': '0'},
+        },
+        {
+            'name': 'fixture_part_d',
+            'dimensions': ('10', '11', '12'),
+            'position': {'x': '30', 'y': '0', 'z': '0'},
+        },
+    ])
+
+    pm = _make_pm()
+
+    with patch('src.project_manager.parse_step_file', side_effect=[first_imported_state, second_imported_state]):
+        first_upload = DummyStepUpload(first_payload_bytes, 'fixture.step')
+        success, error_msg, import_report = pm.import_step_with_options(
+            first_upload,
+            {
+                'groupingName': 'fixture_import',
+                'placementMode': 'individual',
+                'parentLVName': 'World',
+                'offset': {'x': '0', 'y': '0', 'z': '0'},
+                'smartImport': True,
+            },
+        )
+
+        assert success is True
+        assert error_msg is None
+        assert import_report is None
+
+        initial_import_id = pm.current_geometry_state.cad_imports[0]['import_id']
+
+        second_upload = DummyStepUpload(second_payload_bytes, 'fixture.step')
+        success, error_msg, import_report = pm.import_step_with_options(
+            second_upload,
+            {
+                'reimportTargetImportId': initial_import_id,
+            },
+        )
+
+    assert success is True
+    assert error_msg is None
+    assert import_report is None
+
+    reimport_record = pm.current_geometry_state.cad_imports[0]
+    reimport_diff = reimport_record['reimport_diff_summary']
+
+    assert reimport_diff['summary'] == {
+        'total_before': 3,
+        'total_after': 3,
+        'unchanged_count': 0,
+        'added_count': 1,
+        'removed_count': 1,
+        'renamed_count': 1,
+        'changed_count': 1,
+    }
+    assert reimport_diff['added_parts'] == [
+        {
+            'kind': 'logical_volume',
+            'name': 'fixture_part_d',
+            'signature': reimport_diff['added_parts'][0]['signature'],
+        }
+    ]
+    assert reimport_diff['removed_parts'] == [
+        {
+            'kind': 'logical_volume',
+            'name': 'fixture_part_c',
+            'signature': reimport_diff['removed_parts'][0]['signature'],
+        }
+    ]
+    assert reimport_diff['renamed_parts'] == [
+        {
+            'kind': 'logical_volume',
+            'before_name': 'fixture_part_b',
+            'after_name': 'fixture_part_b_renamed',
+            'signature': reimport_diff['renamed_parts'][0]['signature'],
+        }
+    ]
+    assert reimport_diff['changed_parts'] == [
+        {
+            'kind': 'logical_volume',
+            'name': 'fixture_part_a',
+            'before_signature': reimport_diff['changed_parts'][0]['before_signature'],
+            'after_signature': reimport_diff['changed_parts'][0]['after_signature'],
+        }
+    ]
+    assert reimport_diff['changed_parts'][0]['before_signature'] != reimport_diff['changed_parts'][0]['after_signature']
+
+    saved_payload = json.loads(pm.save_project_to_json_string())
+    assert saved_payload['cad_imports'][0]['reimport_diff_summary'] == reimport_diff
+
+    pm_round_tripped = ProjectManager(ExpressionEvaluator())
+    pm_round_tripped.load_project_from_json_string(json.dumps(saved_payload))
+    assert pm_round_tripped.current_geometry_state.cad_imports[0]['reimport_diff_summary'] == reimport_diff
 
 
 def test_step_import_logical_volume_batch_assignment_uses_import_ids_atomically():

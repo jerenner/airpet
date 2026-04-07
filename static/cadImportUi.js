@@ -12,6 +12,91 @@ function normalizeOffset(rawOffset) {
     };
 }
 
+function normalizeReimportDiffPart(rawPart) {
+    const part = rawPart && typeof rawPart === 'object' ? rawPart : {};
+
+    return {
+        kind: normalizeString(part.kind, 'logical_volume'),
+        name: normalizeString(part.name, 'unknown'),
+        signature: normalizeString(part.signature, ''),
+        before_name: normalizeString(part.before_name, ''),
+        after_name: normalizeString(part.after_name, ''),
+        before_signature: normalizeString(part.before_signature, ''),
+        after_signature: normalizeString(part.after_signature, ''),
+    };
+}
+
+function normalizeReimportDiffSummary(rawSummary) {
+    const summary = rawSummary && typeof rawSummary === 'object' ? rawSummary : {};
+    const counts = summary.summary && typeof summary.summary === 'object' ? summary.summary : {};
+    const normalizedSummary = {
+        total_before: Number.isFinite(Number(counts.total_before)) ? Number(counts.total_before) : 0,
+        total_after: Number.isFinite(Number(counts.total_after)) ? Number(counts.total_after) : 0,
+        unchanged_count: Number.isFinite(Number(counts.unchanged_count)) ? Number(counts.unchanged_count) : 0,
+        added_count: Number.isFinite(Number(counts.added_count)) ? Number(counts.added_count) : 0,
+        removed_count: Number.isFinite(Number(counts.removed_count)) ? Number(counts.removed_count) : 0,
+        renamed_count: Number.isFinite(Number(counts.renamed_count)) ? Number(counts.renamed_count) : 0,
+        changed_count: Number.isFinite(Number(counts.changed_count)) ? Number(counts.changed_count) : 0,
+    };
+
+    const addedParts = Array.isArray(summary.added_parts) ? summary.added_parts.map(normalizeReimportDiffPart) : [];
+    const removedParts = Array.isArray(summary.removed_parts) ? summary.removed_parts.map(normalizeReimportDiffPart) : [];
+    const renamedParts = Array.isArray(summary.renamed_parts) ? summary.renamed_parts.map(normalizeReimportDiffPart) : [];
+    const changedParts = Array.isArray(summary.changed_parts) ? summary.changed_parts.map(normalizeReimportDiffPart) : [];
+
+    return {
+        summary: normalizedSummary,
+        summary_text: formatReimportDiffSummaryText(normalizedSummary),
+        added_parts: addedParts,
+        removed_parts: removedParts,
+        renamed_parts: renamedParts,
+        changed_parts: changedParts,
+    };
+}
+
+function formatReimportDiffSummaryText(summary) {
+    const normalizedSummary = summary && typeof summary === 'object' ? summary : {};
+    const counts = [
+        ['added_count', 'added'],
+        ['removed_count', 'removed'],
+        ['renamed_count', 'renamed'],
+        ['changed_count', 'changed'],
+    ]
+        .map(([key, label]) => {
+            const count = Number.isFinite(Number(normalizedSummary[key])) ? Number(normalizedSummary[key]) : 0;
+            return count > 0 ? `${count} ${label}` : '';
+        })
+        .filter(Boolean);
+
+    if (counts.length === 0) {
+        return 'No part-level changes recorded.';
+    }
+
+    return `Part changes: ${counts.join(', ')}.`;
+}
+
+function formatReimportDiffPartList(parts) {
+    const normalizedParts = Array.isArray(parts) ? parts.filter((part) => part && typeof part === 'object') : [];
+    if (normalizedParts.length === 0) {
+        return { text: 'None', title: 'No parts in this category.' };
+    }
+
+    const lines = normalizedParts.map((part) => {
+        if (part.before_name && part.after_name) {
+            return `${part.before_name} -> ${part.after_name}`;
+        }
+        return `${part.name}${part.signature ? ` (${part.signature.slice(0, 12)}...)` : ''}`;
+    });
+
+    const preview = lines.slice(0, 4).join(', ');
+    const text = lines.length > 4 ? `${preview}, +${lines.length - 4} more` : preview;
+
+    return {
+        text,
+        title: lines.join('\n'),
+    };
+}
+
 function normalizeCadImportRecord(rawRecord) {
     const record = rawRecord && typeof rawRecord === 'object' ? rawRecord : {};
     const source = record.source && typeof record.source === 'object' ? record.source : {};
@@ -22,6 +107,9 @@ function normalizeCadImportRecord(rawRecord) {
     const createdGroupNames = record.created_group_names && typeof record.created_group_names === 'object'
         ? record.created_group_names
         : {};
+    const reimportDiffSummary = record.reimport_diff_summary && typeof record.reimport_diff_summary === 'object'
+        ? normalizeReimportDiffSummary(record.reimport_diff_summary)
+        : null;
 
     const solidIds = Array.isArray(createdObjectIds.solid_ids) ? createdObjectIds.solid_ids.filter(Boolean) : [];
     const logicalVolumeIds = Array.isArray(createdObjectIds.logical_volume_ids) ? createdObjectIds.logical_volume_ids.filter(Boolean) : [];
@@ -71,6 +159,7 @@ function normalizeCadImportRecord(rawRecord) {
             logical_volume: normalizeString(createdGroupNames.logical_volume, ''),
             assembly: normalizeString(createdGroupNames.assembly, ''),
         },
+        reimport_diff_summary: reimportDiffSummary,
     };
 }
 
@@ -156,28 +245,56 @@ export function describeCadImportRecord(rawRecord) {
     const batchContext = buildCadImportBatchContext(record);
     const placementMode = getPlacementModeLabel(record.options.placement_mode);
     const sourceLabel = `${record.source.filename} (${record.import_id})`;
-    const summary = `STEP import from ${record.source.filename} · placement mode: ${placementMode} · smart CAD ${record.options.smart_import_enabled ? 'on' : 'off'}`;
+    const actionLabel = record.reimport_diff_summary ? 'reimport' : 'import';
+    const summary = `STEP ${actionLabel} from ${record.source.filename} · placement mode: ${placementMode} · smart CAD ${record.options.smart_import_enabled ? 'on' : 'off'}`;
+
+    const detailRows = [
+        { label: 'Import ID', value: record.import_id },
+        { label: 'Source File', value: record.source.filename },
+        { label: 'Source SHA256', value: { text: record.source.short_sha256, title: record.source.sha256 } },
+        { label: 'Grouping Name', value: record.options.grouping_name },
+        { label: 'Placement Mode', value: placementMode },
+        { label: 'Parent LV', value: record.options.parent_lv_name },
+        {
+            label: 'Placement Offset',
+            value: `x=${record.options.offset.x}, y=${record.options.offset.y}, z=${record.options.offset.z}`,
+        },
+        { label: 'Smart CAD', value: record.options.smart_import_enabled ? 'Enabled' : 'Disabled' },
+        { label: 'Created Objects', value: createdObjectSummary },
+        { label: 'Created Groups', value: createdGroupSummary },
+        { label: 'Imported Logical Volumes', value: batchContext.logicalVolumeSummary },
+        { label: 'Top-Level Selection', value: selectionContext.selectionSummary },
+    ];
+
+    if (record.reimport_diff_summary) {
+        detailRows.push({
+            label: 'Reimport Diff',
+            value: record.reimport_diff_summary.summary_text,
+        });
+
+        const addedParts = formatReimportDiffPartList(record.reimport_diff_summary.added_parts);
+        const removedParts = formatReimportDiffPartList(record.reimport_diff_summary.removed_parts);
+        const renamedParts = formatReimportDiffPartList(record.reimport_diff_summary.renamed_parts);
+        const changedParts = formatReimportDiffPartList(record.reimport_diff_summary.changed_parts);
+
+        if (record.reimport_diff_summary.added_parts.length > 0) {
+            detailRows.push({ label: 'Added Parts', value: addedParts });
+        }
+        if (record.reimport_diff_summary.removed_parts.length > 0) {
+            detailRows.push({ label: 'Removed Parts', value: removedParts });
+        }
+        if (record.reimport_diff_summary.renamed_parts.length > 0) {
+            detailRows.push({ label: 'Renamed Parts', value: renamedParts });
+        }
+        if (record.reimport_diff_summary.changed_parts.length > 0) {
+            detailRows.push({ label: 'Changed Parts', value: changedParts });
+        }
+    }
 
     return {
         title: record.options.grouping_name || record.source.filename || record.import_id,
         summary,
-        detailRows: [
-            { label: 'Import ID', value: record.import_id },
-            { label: 'Source File', value: record.source.filename },
-            { label: 'Source SHA256', value: { text: record.source.short_sha256, title: record.source.sha256 } },
-            { label: 'Grouping Name', value: record.options.grouping_name },
-            { label: 'Placement Mode', value: placementMode },
-            { label: 'Parent LV', value: record.options.parent_lv_name },
-            {
-                label: 'Placement Offset',
-                value: `x=${record.options.offset.x}, y=${record.options.offset.y}, z=${record.options.offset.z}`,
-            },
-            { label: 'Smart CAD', value: record.options.smart_import_enabled ? 'Enabled' : 'Disabled' },
-            { label: 'Created Objects', value: createdObjectSummary },
-            { label: 'Created Groups', value: createdGroupSummary },
-            { label: 'Imported Logical Volumes', value: batchContext.logicalVolumeSummary },
-            { label: 'Top-Level Selection', value: selectionContext.selectionSummary },
-        ],
+        detailRows,
         createdObjectSummary,
         createdGroupSummary,
         selectionContext,

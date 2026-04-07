@@ -83,6 +83,83 @@ test('cad import provenance helpers describe a full STEP import deterministicall
     );
 });
 
+test('cad import provenance helpers surface deterministic reimport diff summaries', () => {
+    const record = {
+        import_id: 'step_import_abc123',
+        source: {
+            format: 'step',
+            filename: 'fixture.step',
+            sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            size_bytes: 42,
+        },
+        options: {
+            grouping_name: 'fixture_import',
+            placement_mode: 'assembly',
+            parent_lv_name: 'World',
+            offset: { x: '1', y: '2', z: '3' },
+            smart_import_enabled: true,
+        },
+        created_object_ids: {
+            solid_ids: ['solid-1'],
+            logical_volume_ids: ['lv-1'],
+            assembly_ids: ['assembly-1'],
+            placement_ids: ['placement-1', 'placement-2'],
+            top_level_placement_ids: ['placement-1'],
+        },
+        created_group_names: {
+            solid: 'fixture_import_solids',
+            logical_volume: 'fixture_import_lvs',
+            assembly: 'fixture_import_assemblies',
+        },
+        reimport_diff_summary: {
+            summary: {
+                total_before: 3,
+                total_after: 3,
+                unchanged_count: 0,
+                added_count: 1,
+                removed_count: 1,
+                renamed_count: 1,
+                changed_count: 1,
+            },
+            summary_text: 'Part changes: 1 added, 1 removed, 1 renamed, 1 changed.',
+            added_parts: [
+                { kind: 'logical_volume', name: 'fixture_part_d', signature: 'sig-added' },
+            ],
+            removed_parts: [
+                { kind: 'logical_volume', name: 'fixture_part_c', signature: 'sig-removed' },
+            ],
+            renamed_parts: [
+                {
+                    kind: 'logical_volume',
+                    before_name: 'fixture_part_b',
+                    after_name: 'fixture_part_b_renamed',
+                    signature: 'sig-renamed',
+                },
+            ],
+            changed_parts: [
+                {
+                    kind: 'logical_volume',
+                    name: 'fixture_part_a',
+                    before_signature: 'sig-before',
+                    after_signature: 'sig-after',
+                },
+            ],
+        },
+    };
+
+    const described = describeCadImportRecord(record);
+
+    assert.equal(described.summary, 'STEP reimport from fixture.step · placement mode: assembly · smart CAD on');
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Reimport Diff').value,
+        'Part changes: 1 added, 1 removed, 1 renamed, 1 changed.',
+    );
+    assert.equal(described.detailRows.find((row) => row.label === 'Added Parts').value.text, 'fixture_part_d (sig-added...)');
+    assert.equal(described.detailRows.find((row) => row.label === 'Removed Parts').value.text, 'fixture_part_c (sig-removed...)');
+    assert.equal(described.detailRows.find((row) => row.label === 'Renamed Parts').value.text, 'fixture_part_b -> fixture_part_b_renamed');
+    assert.equal(described.detailRows.find((row) => row.label === 'Changed Parts').value.text, 'fixture_part_a');
+});
+
 test('cad import provenance helpers stay stable when optional fields are missing', () => {
     const described = describeCadImportRecord({});
     const reimportContext = buildCadImportReimportContext({});
