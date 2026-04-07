@@ -56,18 +56,18 @@ A task is only `DONE` when all of the following are true:
 ## Current Status
 
 - Overall phase: roadmap phase R2, ready to activate after physics-environment completion
-- Current priority: CIR-004
+- Current priority: CIR-005
 - Success metric: a user can revise an imported STEP-driven subsystem in CAD and update the AIRPET project without duplicating geometry or redoing key simulation annotations by hand
 
 ## Current NEXT Task
 
-CIR-004: Add UI surfaces to inspect CAD import provenance and launch a supported reimport flow.
+CIR-005: Improve imported assembly naming, grouping, and top-level selection ergonomics.
 
 Reason:
 
-- CIR-003 is done, so the next smallest slice is surfacing the provenance and reimport flow in the UI
-- this keeps the supported backend path visible instead of buried behind naming heuristics
-- it stays within the CAD-interoperability phase without widening into reporting or cleanup yet
+- CIR-004 is done, so the next smallest slice is imported-assembly organization and findability
+- this keeps the CAD-interoperability phase moving without widening into reporting or cleanup yet
+- it stays within the same imported-CAD workflow surface and avoids mixing unrelated refactors
 
 ## Backlog
 
@@ -84,8 +84,8 @@ Statuses:
 | CIR-001 | P0 | Provenance | Add saved-project CAD import provenance metadata and stable import identity for STEP imports | DONE | Saved-project `cad_imports` records now persist STEP source digest, stable `import_id`, import options, and created object ids |
 | CIR-002 | P0 | Reimport | Add a supported STEP reimport path that targets an existing imported CAD subsystem instead of always merging new names | DONE | Reimport can now target an existing `import_id`, remove the old imported subsystem, and replace it in place without suffixing names |
 | CIR-003 | P0 | Reimport | Preserve key AIRPET-side annotations across supported STEP reimports | DONE | Reimport now restores imported LV material, sensitivity, and visual attributes, preserves matching UI group membership, and relinks source bindings onto replacement PVs |
-| CIR-004 | P1 | UI | Add UI surfaces to inspect CAD import provenance and launch a supported reimport flow | NEXT | Keep the reimport workflow visible and inspectable instead of hidden behind naming heuristics |
-| CIR-005 | P1 | Grouping | Improve imported assembly naming, grouping, and top-level selection ergonomics | PENDING | Make imported subsystems easier to find and manage after import |
+| CIR-004 | P1 | UI | Add UI surfaces to inspect CAD import provenance and launch a supported reimport flow | DONE | Added a CAD Imports accordion, provenance summary cards, and a reimport-seeded STEP modal flow |
+| CIR-005 | P1 | Grouping | Improve imported assembly naming, grouping, and top-level selection ergonomics | NEXT | Make imported subsystems easier to find and manage after import |
 | CIR-006 | P1 | Editing | Add post-import batch helpers for material and sensitive-volume assignment on imported CAD geometry | PENDING | Reduce the manual work that often follows a successful CAD import |
 | CIR-007 | P1 | Reporting | Add deterministic reimport diff summaries for added, removed, renamed, or changed imported parts | PENDING | Users should be able to see what changed before trusting the update |
 | CIR-008 | P2 | Smart Import | Surface primitive-recognition and tessellated-fallback outcomes in saved metadata and user-visible summaries | PENDING | Reuse the existing smart-import classifier and fallback policy instead of creating a separate reporting path |
@@ -100,6 +100,7 @@ Statuses:
 | 2026-04-07 | CIR-001 provenance metadata | DONE | Added persisted `cad_imports` state and STEP import identity bookkeeping in [`/Volumes/nvme/projects/airpet/src/geometry_types.py`](/Volumes/nvme/projects/airpet/src/geometry_types.py) and [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py); added regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py); verified with `pytest tests/test_cad_import_provenance.py -q` |
 | 2026-04-07 | CIR-002 reimport replacement | DONE | Added a targeted STEP reimport path in [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py) that resolves an existing `import_id`, removes the old imported subsystem, and reuses the stable provenance record identity; added regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q`; next task is CIR-003 |
 | 2026-04-07 | CIR-003 annotation preservation | DONE | Added STEP reimport annotation snapshot/restore logic in [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py) to carry imported LV material/sensitivity/visual state, matching UI group membership, and linked source bindings across supported reimports; added regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q`; next task is CIR-004 |
+| 2026-04-07 | CIR-004 provenance and reimport UI | DONE | Added provenance helpers in [`/Volumes/nvme/projects/airpet/static/cadImportUi.js`](/Volumes/nvme/projects/airpet/static/cadImportUi.js), a CAD Imports accordion in [`/Volumes/nvme/projects/airpet/templates/index.html`](/Volumes/nvme/projects/airpet/templates/index.html), controller wiring in [`/Volumes/nvme/projects/airpet/static/main.js`](/Volumes/nvme/projects/airpet/static/main.js), [`/Volumes/nvme/projects/airpet/static/uiManager.js`](/Volumes/nvme/projects/airpet/static/uiManager.js), and [`/Volumes/nvme/projects/airpet/static/stepImportEditor.js`](/Volumes/nvme/projects/airpet/static/stepImportEditor.js), plus regression coverage in [`/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs`](/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs); verified with `node --test tests/js/cad_import_ui.test.mjs`, `node --check static/cadImportUi.js`, `node --check static/stepImportEditor.js`, `node --check static/main.js`, `node --check static/uiManager.js`, and `python3 -m pytest tests/test_cad_import_provenance.py -q`; next task is CIR-005 |
 
 ## Notes For Future Reordering
 

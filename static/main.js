@@ -21,6 +21,13 @@ import * as StepImportEditor from './stepImportEditor.js';
 import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
 import * as ParamStudyEditor from './paramStudyEditor.js';
 import {
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+    setTargetVolumeMembership,
+} from './environmentFieldUi.js';
+import {
     buildHistoryDeleteConfirmationMessage,
     normalizeHistoryDeleteSelection,
 } from './historyDeleteFlow.js';
@@ -189,6 +196,7 @@ async function initializeApp() {
         onImportProjectClicked: handleImportJsonPart,
         onImportAiResponseClicked: handleImportAiResponse,
         onImportStepClicked: handleImportStep,
+        onReimportStepClicked: handleReimportStepImport,
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -2006,14 +2014,85 @@ function handleEditLV(lvData) {
     LVEditor.show(lvData, AppState.currentProjectState);
 }
 
+function resolveCreatedLogicalVolumeName(nameSuggestion, previousProjectState, nextProjectState) {
+    const previousNames = new Set(Object.keys(previousProjectState?.logical_volumes || {}));
+    const nextNames = Object.keys(nextProjectState?.logical_volumes || {});
+    const newlyCreatedName = nextNames.find((name) => !previousNames.has(name));
+
+    if (newlyCreatedName) {
+        return newlyCreatedName;
+    }
+    if (nextProjectState?.logical_volumes?.[nameSuggestion]) {
+        return nameSuggestion;
+    }
+    return nextNames.find((name) => name.startsWith(nameSuggestion)) || nameSuggestion;
+}
+
+function areStringArraysEqual(left, right) {
+    if (left === right) {
+        return true;
+    }
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+        return false;
+    }
+    return left.every((value, index) => value === right[index]);
+}
+
+async function applyLocalFieldMembershipChanges(result, lvName, localFieldAssignments) {
+    if (!result?.project_state || !lvName || !localFieldAssignments) {
+        return result;
+    }
+
+    const updates = [
+        {
+            includeInField: localFieldAssignments.include_in_local_magnetic_field,
+            objectType: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+            objectId: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+            stateKey: 'local_uniform_magnetic_field',
+        },
+        {
+            includeInField: localFieldAssignments.include_in_local_electric_field,
+            objectType: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+            objectId: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+            stateKey: 'local_uniform_electric_field',
+        },
+    ];
+
+    let nextResult = result;
+
+    for (const update of updates) {
+        const currentTargets = nextResult.project_state?.environment?.[update.stateKey]?.target_volume_names || [];
+        const nextTargets = setTargetVolumeMembership(currentTargets, lvName, update.includeInField);
+        if (areStringArraysEqual(currentTargets, nextTargets)) {
+            continue;
+        }
+
+        nextResult = await APIService.updateProperty(
+            update.objectType,
+            update.objectId,
+            'target_volume_names',
+            nextTargets
+        );
+    }
+
+    return nextResult;
+}
+
 async function handleLVEditorConfirm(data) {
     const selectionContext = getSelectionContext();
+    const previousProjectState = AppState.currentProjectState;
+    let result = null;
+    let selectionForSync = selectionContext;
     if (data.isEdit) {
         UIManager.showLoading("Updating Logical Volume...");
         try {
-            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
-            syncUIWithState(result, selectionContext);
+            result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
+            result = await applyLocalFieldMembershipChanges(result, data.id, data.local_field_assignments);
+            syncUIWithState(result, selectionForSync);
         } catch (error) {
+            if (result) {
+                syncUIWithState(result, selectionForSync);
+            }
             UIManager.showError("Error updating LV: " + (error.message || error));
         } finally {
             UIManager.hideLoading();
@@ -2021,9 +2100,23 @@ async function handleLVEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Logical Volume...");
         try {
-            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
-            syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
-        } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); }
+            result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
+            const createdLvName = resolveCreatedLogicalVolumeName(data.name, previousProjectState, result.project_state);
+            selectionForSync = [{
+                type: 'logical_volume',
+                id: createdLvName,
+                name: createdLvName,
+                data: result.project_state.logical_volumes[createdLvName],
+            }];
+            result = await applyLocalFieldMembershipChanges(result, createdLvName, data.local_field_assignments);
+            selectionForSync[0].data = result.project_state.logical_volumes[createdLvName];
+            syncUIWithState(result, selectionForSync);
+        } catch (error) {
+            if (result) {
+                syncUIWithState(result, selectionForSync);
+            }
+            UIManager.showError("Error creating LV: " + (error.message || error));
+        }
         finally { UIManager.hideLoading(); }
     }
 }
@@ -2343,10 +2436,14 @@ async function handleAiGenerate(promptText) {
     }
 }
 
-// Handler for STEP file import
-async function handleImportStep(file) {
+// Handler for STEP file import and supported reimport
+async function handleImportStep(file, importRecord = null) {
     if (!file) return;
-    StepImportEditor.show(file, AppState.currentProjectState);
+    StepImportEditor.show(file, AppState.currentProjectState, importRecord);
+}
+
+async function handleReimportStepImport(file, importRecord) {
+    await handleImportStep(file, importRecord);
 }
 
 // NEW Handlers for the Assembly Definition Editor
@@ -2713,13 +2810,16 @@ function handleCameraModeChange(mode) {
     }
 }
 
-function formatStepImportReportMessage(report, smartImportRequested = false) {
+function formatStepImportReportMessage(report, smartImportRequested = false, isReimport = false) {
+    const actionLabel = isReimport ? 'reimport' : 'import';
     if (!report) {
-        return smartImportRequested ? "STEP file imported. Smart CAD report unavailable." : "STEP file imported successfully.";
+        return smartImportRequested
+            ? `STEP file ${actionLabel}ed. Smart CAD report unavailable.`
+            : `STEP file ${actionLabel}ed successfully.`;
     }
 
     if (!report.enabled) {
-        return "STEP file imported successfully (smart import disabled).";
+        return `STEP file ${actionLabel}ed successfully (smart import disabled).`;
     }
 
     const summary = report.summary || {};
@@ -2745,7 +2845,7 @@ function formatStepImportReportMessage(report, smartImportRequested = false) {
         .map(([reason, count]) => `${reason}: ${count}`);
 
     const lines = [
-        "STEP import complete (Smart CAD).",
+        `STEP ${actionLabel} complete (Smart CAD).`,
         `Total solids: ${total}`,
         `Selected primitives: ${primitiveSelected} (${ratioPct}%)`,
         `Selected tessellated fallback: ${tessSelected}`,
@@ -2777,7 +2877,11 @@ async function handleConfirmStepImport(options) {
         syncUIWithState(result);
         UIManager.hideLoading();
 
-        const reportMessage = formatStepImportReportMessage(result.step_import_report, optionsForJson.smartImport);
+        const reportMessage = formatStepImportReportMessage(
+            result.step_import_report,
+            optionsForJson.smartImport,
+            Boolean(optionsForJson.reimportTargetImportId)
+        );
         if (reportMessage) {
             UIManager.showNotification(reportMessage);
         }

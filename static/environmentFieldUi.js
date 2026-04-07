@@ -64,6 +64,30 @@ export function normalizeTargetVolumeNames(rawNames) {
     return normalized;
 }
 
+export function hasTargetVolume(rawNames, volumeName) {
+    const normalizedName = String(volumeName || '').trim();
+    if (!normalizedName) {
+        return false;
+    }
+    return normalizeTargetVolumeNames(rawNames).includes(normalizedName);
+}
+
+export function setTargetVolumeMembership(rawNames, volumeName, shouldInclude) {
+    const normalizedName = String(volumeName || '').trim();
+    const normalizedTargets = normalizeTargetVolumeNames(rawNames);
+
+    if (!normalizedName) {
+        return normalizedTargets;
+    }
+
+    const filteredTargets = normalizedTargets.filter((name) => name !== normalizedName);
+    if (!shouldInclude) {
+        return filteredTargets;
+    }
+
+    return [...filteredTargets, normalizedName];
+}
+
 function normalizeFieldState(rawState, { includeTargets, vectorKey }) {
     const state = rawState && typeof rawState === 'object' ? rawState : {};
     const rawVector = state[vectorKey] ?? state.field_vector_tesla ?? state.field_vector_volt_per_meter;

@@ -1,16 +1,18 @@
 // static/stepImportEditor.js
 import * as ExpressionInput from './expressionInput.js';
+import { buildCadImportReimportContext } from './cadImportUi.js';
 
 // --- Module-level variables ---
 let modalElement, confirmButton, cancelButton, stepFileNameEl,
     stepImportGroupName, stepImportParentLV, stepImportOffsetContainer,
-    stepSmartImportCheckbox;
+    stepSmartImportCheckbox, stepImportModalTitle, stepImportContextNotice;
 
 let reportModalElement, closeReportButton, stepImportReportSummary, stepImportReportTableBody;
 
 let currentFile = null;
 let onConfirmCallback = null;
 let currentProjectState = null;
+let currentImportContext = null;
 
 /**
  * Initializes the STEP Import Editor modal and its event listeners.
@@ -27,6 +29,8 @@ export function initStepImportEditor(callbacks) {
     stepImportParentLV = document.getElementById('stepImportParentLV');
     stepImportOffsetContainer = document.getElementById('stepImportOffsetInputs');
     stepSmartImportCheckbox = document.getElementById('stepSmartImportCheckbox');
+    stepImportModalTitle = document.getElementById('stepImportModalTitle');
+    stepImportContextNotice = document.getElementById('stepImportContextNotice');
 
     reportModalElement = document.getElementById('stepImportReportModal');
     closeReportButton = document.getElementById('closeStepImportReport');
@@ -45,13 +49,30 @@ export function initStepImportEditor(callbacks) {
  * @param {File} file - The STEP file selected by the user.
  * @param {object} projectState - The current full project state for context.
  */
-export function show(file, projectState) {
+export function show(file, projectState, importRecord = null) {
     currentFile = file;
     currentProjectState = projectState;
+    currentImportContext = importRecord ? buildCadImportReimportContext(importRecord) : null;
     
     stepFileNameEl.textContent = file.name;
+    if (stepImportModalTitle) {
+        stepImportModalTitle.textContent = currentImportContext
+            ? 'Reimport STEP File Options'
+            : 'Import STEP File Options';
+    }
+
+    if (stepImportContextNotice) {
+        if (currentImportContext) {
+            stepImportContextNotice.hidden = false;
+            stepImportContextNotice.textContent = currentImportContext.noticeText;
+        } else {
+            stepImportContextNotice.hidden = true;
+            stepImportContextNotice.textContent = '';
+        }
+    }
+
     // Create a default grouping name from the filename, sanitized for GDML.
-    stepImportGroupName.value = file.name.replace(/\.[^/.]+$/, "").replace(/[\s\W]/g, '_');
+    stepImportGroupName.value = currentImportContext?.groupingName || file.name.replace(/\.[^/.]+$/, "").replace(/[\s\W]/g, '_');
 
     // Populate the parent LV dropdown with LVs that can contain children.
     const placeableLVs = Object.keys(projectState.logical_volumes || {})
@@ -59,18 +80,34 @@ export function show(file, projectState) {
     populateSelect(stepImportParentLV, placeableLVs);
 
     // Default the selection to the world volume if it exists.
-    if (projectState.world_volume_ref && placeableLVs.includes(projectState.world_volume_ref)) {
+    const preferredParentLV = currentImportContext?.parentLVName;
+    if (preferredParentLV && placeableLVs.includes(preferredParentLV)) {
+        stepImportParentLV.value = preferredParentLV;
+    } else if (projectState.world_volume_ref && placeableLVs.includes(projectState.world_volume_ref)) {
         stepImportParentLV.value = projectState.world_volume_ref;
     }
 
     // Create the expression inputs for the placement offset.
     stepImportOffsetContainer.innerHTML = '';
-    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_x', 'X', '0'));
-    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_y', 'Y', '0'));
-    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_z', 'Z', '0'));
+    const offset = currentImportContext?.offset || { x: '0', y: '0', z: '0' };
+    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_x', 'X', offset.x || '0'));
+    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_y', 'Y', offset.y || '0'));
+    stepImportOffsetContainer.appendChild(ExpressionInput.create('step_offset_z', 'Z', offset.z || '0'));
+
+    const assemblyRadio = document.getElementById('step_mode_assembly');
+    const individualRadio = document.getElementById('step_mode_individual');
+    const placementMode = currentImportContext?.placementMode || 'assembly';
+    if (assemblyRadio && individualRadio) {
+        assemblyRadio.checked = placementMode !== 'individual';
+        individualRadio.checked = placementMode === 'individual';
+    }
 
     if (stepSmartImportCheckbox) {
-        stepSmartImportCheckbox.checked = true;
+        stepSmartImportCheckbox.checked = currentImportContext ? Boolean(currentImportContext.smartImport) : true;
+    }
+
+    if (confirmButton) {
+        confirmButton.textContent = currentImportContext ? 'Reimport' : 'Import';
     }
 
     modalElement.style.display = 'block';
@@ -81,6 +118,19 @@ export function show(file, projectState) {
  */
 function hide() {
     modalElement.style.display = 'none';
+    currentFile = null;
+    currentProjectState = null;
+    currentImportContext = null;
+    if (confirmButton) {
+        confirmButton.textContent = 'Import';
+    }
+    if (stepImportModalTitle) {
+        stepImportModalTitle.textContent = 'Import STEP File Options';
+    }
+    if (stepImportContextNotice) {
+        stepImportContextNotice.hidden = true;
+        stepImportContextNotice.textContent = '';
+    }
 }
 
 /**
@@ -100,6 +150,9 @@ function handleConfirm() {
             },
             smartImport: !!(stepSmartImportCheckbox && stepSmartImportCheckbox.checked)
         };
+        if (currentImportContext?.reimportTargetImportId) {
+            options.reimportTargetImportId = currentImportContext.reimportTargetImportId;
+        }
         onConfirmCallback(options);
     }
     hide();

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
     formatGlobalElectricFieldSummary,
     formatGlobalMagneticFieldSummary,
+    hasTargetVolume,
     formatLocalElectricFieldSummary,
     formatLocalMagneticFieldSummary,
     formatRegionCutsAndLimitsSummary,
@@ -12,6 +13,7 @@ import {
     normalizeLocalElectricFieldState,
     normalizeLocalMagneticFieldState,
     normalizeRegionCutsAndLimitsState,
+    setTargetVolumeMembership,
 } from '../../static/environmentFieldUi.js';
 
 test('global magnetic field ui helpers normalize malformed values deterministically', () => {
@@ -157,6 +159,23 @@ test('local electric field ui summary reflects saved enabled state, targets, and
             },
         }),
         'Local electric field: enabled (targets box_LV, detector_LV) (0, 2.5, -1.25) V/m',
+    );
+});
+
+test('target volume helpers update LV membership deterministically', () => {
+    assert.equal(hasTargetVolume(['box_LV', 'detector_LV'], 'box_LV'), true);
+    assert.equal(hasTargetVolume(['box_LV', 'detector_LV'], 'missing_LV'), false);
+    assert.deepEqual(
+        setTargetVolumeMembership(['box_LV', 'detector_LV'], 'detector_LV', true),
+        ['box_LV', 'detector_LV'],
+    );
+    assert.deepEqual(
+        setTargetVolumeMembership(['box_LV', 'detector_LV'], 'tracker_LV', true),
+        ['box_LV', 'detector_LV', 'tracker_LV'],
+    );
+    assert.deepEqual(
+        setTargetVolumeMembership(['box_LV', 'detector_LV'], 'box_LV', false),
+        ['detector_LV'],
     );
 });
 

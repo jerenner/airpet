@@ -306,6 +306,108 @@
             color: #64748b;
         }
 
+        #cad_imports_panel_root .cad-imports-intro,
+        #cad_imports_panel_root .cad-imports-empty {
+            margin: 8px;
+            font-size: 12px;
+            color: #334155;
+        }
+
+        #cad_imports_panel_root .cad-import-card {
+            margin: 8px;
+            padding: 10px;
+            background: #f8fafc;
+            border: 1px solid #dbe3f0;
+            border-radius: 4px;
+        }
+
+        #cad_imports_panel_root .cad-import-card summary {
+            list-style: none;
+            cursor: pointer;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        #cad_imports_panel_root .cad-import-card summary::-webkit-details-marker {
+            display: none;
+        }
+
+        #cad_imports_panel_root .cad-import-card-summary-text {
+            min-width: 0;
+            flex: 1;
+        }
+
+        #cad_imports_panel_root .cad-import-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #0f172a;
+            margin-bottom: 4px;
+        }
+
+        #cad_imports_panel_root .cad-import-summary {
+            margin: 0;
+            font-size: 12px;
+            color: #334155;
+            font-family: monospace;
+            word-break: break-word;
+        }
+
+        #cad_imports_panel_root .cad-import-id {
+            font-size: 10px;
+            color: #475569;
+            background: #e2e8f0;
+            border-radius: 999px;
+            padding: 2px 6px;
+            white-space: nowrap;
+            align-self: flex-start;
+        }
+
+        #cad_imports_panel_root .cad-import-card-body {
+            margin-top: 10px;
+        }
+
+        #cad_imports_panel_root .property_item {
+            margin-bottom: 8px;
+        }
+
+        #cad_imports_panel_root .property_item label {
+            display: inline-block;
+            width: 110px;
+            font-weight: bold;
+            font-size: 12px;
+            vertical-align: top;
+        }
+
+        #cad_imports_panel_root .property_item.readonly label {
+            font-weight: normal;
+            color: #555;
+        }
+
+        #cad_imports_panel_root .property_item.readonly span {
+            color: #000;
+            font-family: monospace;
+        }
+
+        #cad_imports_panel_root .cad-import-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        #cad_imports_panel_root .cad-import-actions button {
+            font-size: 11px;
+            padding: 3px 8px;
+        }
+
+        #cad_imports_panel_root .cad-import-note {
+            margin: 8px 0 0 0;
+            font-size: 11px;
+            color: #64748b;
+        }
+
 
         #main_content_area {
             flex-grow: 1;
@@ -1476,6 +1578,21 @@
 
         .step-report-mode-pill.primitive { background: #dcfce7; color: #166534; }
         .step-report-mode-pill.tessellated { background: #fef3c7; color: #92400e; }
+
+        #stepImportContextNotice {
+            margin: 0 0 12px 0;
+            padding: 8px 10px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.4;
+            color: #1e3a8a;
+        }
+
+        #stepImportContextNotice[hidden] {
+            display: none;
+        }
 
         /* Parameter registry modal */
         #parameterRegistryTableWrap {
@@ -2913,16 +3030,6 @@
             </div>
             <div id="tab_properties" class="tab_pane">
                 <div class="accordion">
-                    <!-- Environment accordion -->
-                    <div class="accordion-item">
-                        <div class="accordion-header">
-                            <span class="accordion-toggle">[-]</span>
-                            <span>&nbsp;Environment</span>
-                        </div>
-                        <div class="accordion-content active">
-                            <div id="environment_panel_root"></div>
-                        </div>
-                    </div>
                     <!-- Materials accordion -->
                     <div class="accordion-item">
                         <div class="accordion-header">
@@ -3017,6 +3124,26 @@
                                     title="Create a new Border Surface">+ Add</button>
                             </div>
                             <ul id="border_surfaces_list_root"></ul>
+                        </div>
+                    </div>
+                    <!-- CAD imports accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;CAD Imports</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div id="cad_imports_panel_root"></div>
+                        </div>
+                    </div>
+                    <!-- Electromagnetic fields accordion -->
+                    <div class="accordion-item">
+                        <div class="accordion-header">
+                            <span class="accordion-toggle">[+]</span>
+                            <span>&nbsp;Electromagnetic Fields</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div id="environment_panel_root"></div>
                         </div>
                     </div>
                 </div>
@@ -4311,6 +4438,22 @@
                     <label for="lvEditorSensitive">Sensitive Detector:</label>
                     <input type="checkbox" id="lvEditorSensitive" style="width: auto;">
                 </div>
+                <div class="property_item">
+                    <label>Local Fields:</label>
+                    <div style="display: flex; flex-direction: column; gap: 6px; width: calc(100% - 100px);">
+                        <label style="width: auto; font-weight: normal;">
+                            <input type="checkbox" id="lvEditorLocalMagneticField" style="width: auto; margin-right: 6px;">
+                            Include this LV in the local magnetic field target list
+                        </label>
+                        <label style="width: auto; font-weight: normal;">
+                            <input type="checkbox" id="lvEditorLocalElectricField" style="width: auto; margin-right: 6px;">
+                            Include this LV in the local electric field target list
+                        </label>
+                        <p style="margin: 2px 0 0; color: #666; font-size: 11px;">
+                            Field vectors are configured in Properties &gt; Electromagnetic Fields.
+                        </p>
+                    </div>
+                </div>
 
                 <!-- Placeholder for procedural parameters -->
                 <div id="lv-procedural-params"
@@ -4608,10 +4751,11 @@
     <div id="stepImportModal" class="editor-modal">
         <div class="modal-content" style="width: 500px; height: auto;">
             <div class="modal-header">
-                <h4>Import STEP File Options</h4>
+                <h4 id="stepImportModalTitle">Import STEP File Options</h4>
             </div>
             <div class="modal-body" style="flex-direction: column; padding: 20px;">
                 <p style="font-size: 13px; color: #555;">Configure how to import '<b id="stepFileName"></b>'.</p>
+                <p id="stepImportContextNotice" hidden></p>
 
                 <div class="property_item">
                     <label for="stepImportGroupName">Grouping Name:</label>

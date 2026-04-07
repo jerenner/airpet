@@ -55,6 +55,7 @@ import {
     normalizeRegionCutsAndLimitsState,
     normalizeTargetVolumeNames,
 } from './environmentFieldUi.js';
+import { describeCadImportRecord } from './cadImportUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -76,7 +77,7 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot,
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot,
     borderSurfacesListRoot;
-let inspectorContentDiv, environmentPanelRoot;
+let inspectorContentDiv, environmentPanelRoot, cadImportsPanelRoot;
 
 // Project, history and undo/redo
 let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
@@ -202,6 +203,7 @@ let callbacks = {
     onInspectorPropertyChanged: (type, id, path, value) => { },
     onPVVisibilityToggle: (pvId, isVisible) => { },
     onAiGenerateClicked: (promptText) => { },
+    onReimportStepClicked: (file, importRecord) => { },
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
     onSourceActivationToggled: (sourceId) => { },
@@ -301,6 +303,7 @@ export function initUI(cb) {
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
     environmentPanelRoot = document.getElementById('environment_panel_root');
+    cadImportsPanelRoot = document.getElementById('cad_imports_panel_root');
 
 
     // Bottom panel (AI and simulation)
@@ -1783,7 +1786,15 @@ function createReadOnlyProperty(parent, labelText, value) {
     propDiv.appendChild(label);
 
     const valueSpan = document.createElement('span');
-    valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, 'text')) {
+        valueSpan.textContent = value.text;
+        if (value.title) {
+            valueSpan.title = value.title;
+        }
+    } else {
+        valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
+    }
+    valueSpan.style.wordBreak = 'break-word';
     propDiv.appendChild(valueSpan);
     parent.appendChild(propDiv);
 }
@@ -2285,6 +2296,114 @@ function renderEnvironmentPanel(projectState) {
     });
 }
 
+function renderCadImportsPanel(projectState) {
+    if (!cadImportsPanelRoot) return;
+
+    cadImportsPanelRoot.innerHTML = '';
+
+    if (!projectState) {
+        const empty = document.createElement('p');
+        empty.className = 'cad-imports-empty';
+        empty.textContent = 'No project loaded.';
+        cadImportsPanelRoot.appendChild(empty);
+        return;
+    }
+
+    const cadImports = Array.isArray(projectState.cad_imports)
+        ? projectState.cad_imports.filter((entry) => entry && typeof entry === 'object')
+        : [];
+
+    if (cadImports.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'cad-imports-empty';
+        empty.textContent = 'No imported STEP subsystems recorded yet.';
+        cadImportsPanelRoot.appendChild(empty);
+        return;
+    }
+
+    const intro = document.createElement('p');
+    intro.className = 'cad-imports-intro';
+    intro.textContent = 'Saved provenance records for imported STEP subsystems. Reimport from a revised STEP file to replace the matching import in place.';
+    cadImportsPanelRoot.appendChild(intro);
+
+    cadImports.forEach((rawRecord, index) => {
+        const described = describeCadImportRecord(rawRecord);
+        const card = document.createElement('details');
+        card.className = 'cad-import-card';
+        card.open = cadImports.length === 1 || index === cadImports.length - 1;
+
+        const summary = document.createElement('summary');
+        summary.className = 'cad-import-card-summary';
+        summary.title = 'Inspect this imported CAD provenance record.';
+
+        const summaryText = document.createElement('div');
+        summaryText.className = 'cad-import-card-summary-text';
+
+        const title = document.createElement('div');
+        title.className = 'cad-import-title';
+        title.textContent = described.title;
+        summaryText.appendChild(title);
+
+        const summaryLine = document.createElement('div');
+        summaryLine.className = 'cad-import-summary';
+        summaryLine.textContent = described.summary;
+        summaryText.appendChild(summaryLine);
+
+        const idBadge = document.createElement('code');
+        idBadge.className = 'cad-import-id';
+        idBadge.textContent = described.reimportContext.reimportTargetImportId;
+
+        summary.appendChild(summaryText);
+        summary.appendChild(idBadge);
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'cad-import-card-body';
+
+        described.detailRows.forEach((row) => {
+            createReadOnlyProperty(body, `${row.label}:`, row.value);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'cad-import-actions';
+
+        const reimportButton = document.createElement('button');
+        reimportButton.type = 'button';
+        reimportButton.className = 'history-action-btn';
+        reimportButton.textContent = 'Reimport STEP...';
+        reimportButton.title = 'Choose a replacement STEP file and open the supported reimport flow.';
+
+        const reimportFileInput = document.createElement('input');
+        reimportFileInput.type = 'file';
+        reimportFileInput.accept = '.step,.stp';
+        reimportFileInput.style.display = 'none';
+        reimportFileInput.addEventListener('change', (event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file && callbacks.onReimportStepClicked) {
+                callbacks.onReimportStepClicked(file, rawRecord);
+            }
+        });
+
+        reimportButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            reimportFileInput.click();
+        });
+
+        actions.appendChild(reimportButton);
+        actions.appendChild(reimportFileInput);
+        body.appendChild(actions);
+
+        const note = document.createElement('p');
+        note.className = 'cad-import-note';
+        note.textContent = 'The reimport modal will inherit the saved grouping and placement options for this import.';
+        body.appendChild(note);
+
+        card.appendChild(body);
+        cadImportsPanelRoot.appendChild(card);
+    });
+}
+
 /**
  * Enables or disables transformation mode buttons based on provided state.
  * @param {object} state - An object with keys 'translate', 'rotate', 'scale' and boolean values.
@@ -2380,6 +2499,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
     opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
     skinSurfacesListRoot = document.getElementById('skin_surfaces_list_root');
     borderSurfacesListRoot = document.getElementById('border_surfaces_list_root');
+    cadImportsPanelRoot = document.getElementById('cad_imports_panel_root');
 
     // Clear all lists
     if (structureTreeRoot) structureTreeRoot.innerHTML = '';
@@ -2406,6 +2526,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
     populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
     renderEnvironmentPanel(projectState);
+    renderCadImportsPanel(projectState);
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot && sceneUpdate) {
@@ -3144,6 +3265,7 @@ export function clearHierarchy() {
     if (skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
     if (borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
     renderEnvironmentPanel(null);
+    renderCadImportsPanel(null);
 }
 
 export function clearInspector() {
