@@ -26,6 +26,20 @@ function normalizeReimportDiffPart(rawPart) {
     };
 }
 
+function normalizeReimportCleanupPolicy(rawPolicy) {
+    const policy = rawPolicy && typeof rawPolicy === 'object' ? rawPolicy : {};
+
+    return {
+        replacement_mode: normalizeString(policy.replacement_mode, 'replace_in_place'),
+        obsolete_part_action: normalizeString(policy.obsolete_part_action, 'remove'),
+        removed_count: Number.isFinite(Number(policy.removed_count)) ? Number(policy.removed_count) : 0,
+        summary_text: normalizeString(
+            policy.summary_text,
+            'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+        ),
+    };
+}
+
 function normalizeReimportDiffSummary(rawSummary) {
     const summary = rawSummary && typeof rawSummary === 'object' ? rawSummary : {};
     const counts = summary.summary && typeof summary.summary === 'object' ? summary.summary : {};
@@ -43,10 +57,14 @@ function normalizeReimportDiffSummary(rawSummary) {
     const removedParts = Array.isArray(summary.removed_parts) ? summary.removed_parts.map(normalizeReimportDiffPart) : [];
     const renamedParts = Array.isArray(summary.renamed_parts) ? summary.renamed_parts.map(normalizeReimportDiffPart) : [];
     const changedParts = Array.isArray(summary.changed_parts) ? summary.changed_parts.map(normalizeReimportDiffPart) : [];
+    const cleanupPolicy = summary.cleanup_policy && typeof summary.cleanup_policy === 'object'
+        ? normalizeReimportCleanupPolicy(summary.cleanup_policy)
+        : null;
 
     return {
         summary: normalizedSummary,
         summary_text: formatReimportDiffSummaryText(normalizedSummary),
+        cleanup_policy: cleanupPolicy,
         added_parts: addedParts,
         removed_parts: removedParts,
         renamed_parts: renamedParts,
@@ -209,6 +227,21 @@ function formatReimportDiffPartList(parts) {
     };
 }
 
+function formatReimportCleanupPolicyTitle(policy) {
+    const normalizedPolicy = policy && typeof policy === 'object' ? policy : {};
+    const replacementMode = normalizeString(normalizedPolicy.replacement_mode, 'replace_in_place').replace(/_/g, ' ');
+    const obsoletePartAction = normalizeString(normalizedPolicy.obsolete_part_action, 'remove');
+    const removedCount = Number.isFinite(Number(normalizedPolicy.removed_count))
+        ? Number(normalizedPolicy.removed_count)
+        : 0;
+
+    return [
+        `Replacement mode: ${replacementMode}`,
+        `Obsolete parts action: ${obsoletePartAction}`,
+        `Obsolete parts removed: ${removedCount}`,
+    ].join('\n');
+}
+
 function normalizeCadImportRecord(rawRecord) {
     const record = rawRecord && typeof rawRecord === 'object' ? rawRecord : {};
     const source = record.source && typeof record.source === 'object' ? record.source : {};
@@ -345,7 +378,7 @@ export function buildCadImportReimportContext(rawRecord) {
         offset: { ...record.options.offset },
         smartImport: record.options.smart_import_enabled,
         sourceLabel,
-        noticeText: `Reimport target: ${sourceLabel}. Supported annotations will be preserved where the backend can match them.`,
+        noticeText: `Reimport target: ${sourceLabel}. Supported annotations will be preserved where the backend can match them. Obsolete imported parts will be removed if the revised STEP drops them.`,
     };
 }
 
@@ -403,6 +436,16 @@ export function describeCadImportRecord(rawRecord) {
             label: 'Reimport Diff',
             value: record.reimport_diff_summary.summary_text,
         });
+
+        if (record.reimport_diff_summary.cleanup_policy) {
+            detailRows.push({
+                label: 'Reimport Cleanup',
+                value: {
+                    text: record.reimport_diff_summary.cleanup_policy.summary_text,
+                    title: formatReimportCleanupPolicyTitle(record.reimport_diff_summary.cleanup_policy),
+                },
+            });
+        }
 
         const addedParts = formatReimportDiffPartList(record.reimport_diff_summary.added_parts);
         const removedParts = formatReimportDiffPartList(record.reimport_diff_summary.removed_parts);

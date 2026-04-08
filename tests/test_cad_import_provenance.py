@@ -754,6 +754,12 @@ def test_step_reimport_records_a_deterministic_part_diff_summary():
         }
     ]
     assert reimport_diff['changed_parts'][0]['before_signature'] != reimport_diff['changed_parts'][0]['after_signature']
+    assert reimport_diff['cleanup_policy'] == {
+        'replacement_mode': 'replace_in_place',
+        'obsolete_part_action': 'remove',
+        'removed_count': 1,
+        'summary_text': 'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+    }
 
     saved_payload = json.loads(pm.save_project_to_json_string())
     assert saved_payload['cad_imports'][0]['reimport_diff_summary'] == reimport_diff
@@ -829,6 +835,12 @@ def test_step_import_reimport_fixture_corpus_tracks_compact_summary_and_replacem
         'removed_count': 0,
         'renamed_count': 0,
         'changed_count': 1,
+    }
+    assert reimport_record['reimport_diff_summary']['cleanup_policy'] == {
+        'replacement_mode': 'replace_in_place',
+        'obsolete_part_action': 'remove',
+        'removed_count': 0,
+        'summary_text': 'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
     }
 
     assert 'fixture_solid_1' not in pm.current_geometry_state.solids

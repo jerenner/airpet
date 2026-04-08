@@ -499,6 +499,26 @@ def _build_step_import_reimport_diff_summary(current_state, target_import_record
     }
 
 
+def _build_step_import_reimport_cleanup_policy(reimport_diff_summary):
+    if not isinstance(reimport_diff_summary, dict):
+        return None
+
+    summary = reimport_diff_summary.get('summary', {})
+    removed_count = 0
+    if isinstance(summary, dict):
+        try:
+            removed_count = int(summary.get('removed_count', 0) or 0)
+        except Exception:
+            removed_count = 0
+
+    return {
+        'replacement_mode': 'replace_in_place',
+        'obsolete_part_action': 'remove',
+        'removed_count': max(removed_count, 0),
+        'summary_text': 'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+    }
+
+
 def _normalize_step_import_object_name(value):
     if isinstance(value, str):
         normalized = value.strip()
@@ -5705,6 +5725,7 @@ class ProjectManager:
             if smart_import_summary is not None:
                 cad_import_record['smart_import_summary'] = smart_import_summary
             if reimport_diff_summary is not None:
+                reimport_diff_summary['cleanup_policy'] = _build_step_import_reimport_cleanup_policy(reimport_diff_summary)
                 cad_import_record['reimport_diff_summary'] = reimport_diff_summary
             imported_state.cad_imports = list(getattr(imported_state, 'cad_imports', []) or [])
             imported_state.cad_imports.append(cad_import_record)

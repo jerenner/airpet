@@ -55,19 +55,13 @@ A task is only `DONE` when all of the following are true:
 
 ## Current Status
 
-- Overall phase: roadmap phase R2, ready to activate after physics-environment completion
-- Current priority: CIR-010
+- Overall phase: roadmap phase R2, complete
+- Current priority: none remaining
 - Success metric: a user can revise an imported STEP-driven subsystem in CAD and update the AIRPET project without duplicating geometry or redoing key simulation annotations by hand
 
 ## Current NEXT Task
 
-CIR-010: Add explicit replace/remove policy for obsolete imported parts in supported reimport flows.
-
-Reason:
-
-- CIR-009 is done, so the next smallest slice is making the obsolete-part replacement policy explicit
-- this keeps reimport cleanup deterministic when revisions drop parts
-- it stays within the CAD-import workflow without widening the import contract
+None remaining. CIR-010 is complete and this tracker has no NEXT or PENDING items left.
 
 ## Backlog
 
@@ -90,7 +84,7 @@ Statuses:
 | CIR-007 | P1 | Reporting | Add deterministic reimport diff summaries for added, removed, renamed, or changed imported parts | DONE | Users can now inspect deterministic part-level reimport diffs in saved CAD import provenance |
 | CIR-008 | P2 | Smart Import | Surface primitive-recognition and tessellated-fallback outcomes in saved metadata and user-visible summaries | DONE | Saved a compact smart-import outcome summary on STEP import records and surfaced it in the CAD import card summary/detail rows |
 | CIR-009 | P2 | Testing | Add a compact STEP import/reimport fixture corpus with focused regression coverage | DONE | Added compact STEP corpus fixtures in [`/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_base.step`](/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_base.step) and [`/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_revised.step`](/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_revised.step), plus a corpus-backed import/reimport regression in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q` |
-| CIR-010 | P2 | Cleanup | Add explicit replace/remove policy for obsolete imported parts in supported reimport flows | NEXT | Make deletion behavior explicit rather than implicit when CAD revisions remove parts |
+| CIR-010 | P2 | Cleanup | Add explicit replace/remove policy for obsolete imported parts in supported reimport flows | DONE | Supported STEP reimport now records an explicit replace-in-place/remove-obsolete-parts cleanup policy alongside the part diff summary |
 
 ## Cycle Log
 
@@ -106,6 +100,7 @@ Statuses:
 | 2026-04-07 | CIR-007 reimport diff summaries | DONE | Added deterministic leaf-part reimport diff summaries in [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py), surfaced them in the CAD Imports card formatter in [`/Volumes/nvme/projects/airpet/static/cadImportUi.js`](/Volumes/nvme/projects/airpet/static/cadImportUi.js), and added focused regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py) and [`/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs`](/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs); verified with `python3 -m py_compile src/project_manager.py tests/test_cad_import_provenance.py`, `node --check static/cadImportUi.js && node --check tests/js/cad_import_ui.test.mjs`, `python3 -m pytest tests/test_cad_import_provenance.py -q`, and `node --test tests/js/cad_import_ui.test.mjs`; next task is CIR-008 |
 | 2026-04-08 | CIR-008 smart-import outcome summaries | DONE | Added compact smart-import outcome persistence in [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py) and surfaced it in the CAD import card formatter in [`/Volumes/nvme/projects/airpet/static/cadImportUi.js`](/Volumes/nvme/projects/airpet/static/cadImportUi.js); added backend regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py) and UI regression coverage in [`/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs`](/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q`, `node --test tests/js/cad_import_ui.test.mjs`, and `node --check static/cadImportUi.js`; an extra `python3 -m pytest tests/test_step_import_integration.py -q` smoke check was blocked locally because the Python environment is missing `requests`; next task is CIR-009 |
 | 2026-04-08 | CIR-009 fixture corpus regression | DONE | Added compact STEP corpus fixtures in [`/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_base.step`](/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_base.step) and [`/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_revised.step`](/Volumes/nvme/projects/airpet/tests/fixtures/step/corpus/fixture_import_revised.step), plus corpus-backed import/reimport regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q`; next task is CIR-010 |
+| 2026-04-08 | CIR-010 obsolete-part cleanup policy | DONE | Added an explicit reimport cleanup policy to [`/Volumes/nvme/projects/airpet/src/project_manager.py`](/Volumes/nvme/projects/airpet/src/project_manager.py) so supported STEP reimports record replace-in-place/remove-obsolete-parts behavior alongside the diff summary, surfaced the policy in [`/Volumes/nvme/projects/airpet/static/cadImportUi.js`](/Volumes/nvme/projects/airpet/static/cadImportUi.js), and added regression coverage in [`/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py`](/Volumes/nvme/projects/airpet/tests/test_cad_import_provenance.py) and [`/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs`](/Volumes/nvme/projects/airpet/tests/js/cad_import_ui.test.mjs); verified with `python3 -m pytest tests/test_cad_import_provenance.py -q`, `node --test tests/js/cad_import_ui.test.mjs`, and `node --check static/cadImportUi.js`; no NEXT task remains in this tracker |
 
 ## Notes For Future Reordering
 

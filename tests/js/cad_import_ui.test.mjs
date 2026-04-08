@@ -116,7 +116,7 @@ test('cad import provenance helpers describe a full STEP import deterministicall
     assert.equal(described.reimportContext.smartImport, true);
     assert.equal(
         described.reimportContext.noticeText,
-        'Reimport target: fixture.step (step_import_abc123). Supported annotations will be preserved where the backend can match them.',
+        'Reimport target: fixture.step (step_import_abc123). Supported annotations will be preserved where the backend can match them. Obsolete imported parts will be removed if the revised STEP drops them.',
     );
 });
 
@@ -181,6 +181,12 @@ test('cad import provenance helpers surface deterministic reimport diff summarie
                     after_signature: 'sig-after',
                 },
             ],
+            cleanup_policy: {
+                replacement_mode: 'replace_in_place',
+                obsolete_part_action: 'remove',
+                removed_count: 1,
+                summary_text: 'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+            },
         },
     };
 
@@ -190,6 +196,14 @@ test('cad import provenance helpers surface deterministic reimport diff summarie
     assert.equal(
         described.detailRows.find((row) => row.label === 'Reimport Diff').value,
         'Part changes: 1 added, 1 removed, 1 renamed, 1 changed.',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Reimport Cleanup').value.text,
+        'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Reimport Cleanup').value.title,
+        'Replacement mode: replace in place\nObsolete parts action: remove\nObsolete parts removed: 1',
     );
     assert.equal(described.detailRows.find((row) => row.label === 'Added Parts').value.text, 'fixture_part_d (sig-added...)');
     assert.equal(described.detailRows.find((row) => row.label === 'Removed Parts').value.text, 'fixture_part_c (sig-removed...)');
