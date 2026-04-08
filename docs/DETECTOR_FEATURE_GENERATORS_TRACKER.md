@@ -61,13 +61,13 @@ A task is only `DONE` when all of the following are true:
 
 ## Current NEXT Task
 
-DFG-001: add a saved-project detector-feature-generator contract and the first patterned-hole generator specification.
+DFG-002: implement a rectangular drilled-hole array MVP backed by existing boolean-solid machinery.
 
 Focus for this task:
 
-- define how generated detector features are represented in saved AIRPET state
-- make the first contract concrete enough to support a rectangular drilled-hole generator MVP
-- keep the first generator narrow and deterministic enough to support focused regression coverage
+- materialize the first saved detector-feature-generator contract into actual boolean-backed geometry
+- keep the MVP box-oriented with explicit count, pitch, diameter, depth, and target-solid references
+- preserve the narrow deterministic contract from DFG-001 instead of broadening into multiple pattern families
 
 ## Backlog
 
@@ -81,8 +81,8 @@ Statuses:
 
 | ID | Priority | Area | Feature | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
-| DFG-001 | P0 | Foundation | Add a saved-project detector-feature-generator contract and first patterned-hole generator specification | NEXT | Start with a narrow contract that can support subtractive cylindrical hole arrays without overcommitting to a general CAD abstraction |
-| DFG-002 | P0 | Backend | Implement a rectangular drilled-hole array MVP backed by existing boolean-solid machinery | PENDING | Prefer a box-oriented first slice with explicit count, pitch, diameter, depth, and target-solid references |
+| DFG-001 | P0 | Foundation | Add a saved-project detector-feature-generator contract and first patterned-hole generator specification | DONE | Saved-project `detector_feature_generators` entries now persist normalized rectangular drilled-hole-array specs, target refs, and realized-object placeholders |
+| DFG-002 | P0 | Backend | Implement a rectangular drilled-hole array MVP backed by existing boolean-solid machinery | NEXT | Prefer a box-oriented first slice with explicit count, pitch, diameter, depth, and target-solid references |
 | DFG-003 | P1 | UI | Add UI surfaces to create, inspect, and revise patterned-hole generators | PENDING | Prefer a narrow modal/editor flow rather than a broad new side-panel system in the first slice |
 | DFG-004 | P1 | AI | Add AI/backend tool surfaces for detector-feature-generator creation and inspection | PENDING | Keep the first AI contract aligned with the saved-state and UI generator model |
 | DFG-005 | P1 | Feature | Extend hole patterns to circular or bolt-circle layouts and orientation controls | PENDING | Keep follow-on scope explicit instead of collapsing multiple pattern families into the MVP |
@@ -97,6 +97,7 @@ Statuses:
 | Date | Task | Outcome | Notes |
 | --- | --- | --- | --- |
 | 2026-04-08 | Backlog setup | DONE | Created the detector-feature-generators context and seeded the first active roadmap phase, starting with a saved-project detector-feature-generator contract and a narrow patterned-hole-generator MVP |
+| 2026-04-08 | DFG-001 detector-feature-generator contract | DONE | Files: [`/Volumes/nvme/projects/airpet/src/geometry_types.py`](/Volumes/nvme/projects/airpet/src/geometry_types.py), [`/Volumes/nvme/projects/airpet/tests/test_detector_feature_generators_state.py`](/Volumes/nvme/projects/airpet/tests/test_detector_feature_generators_state.py), [`/Volumes/nvme/projects/airpet/docs/DETECTOR_FEATURE_GENERATORS_TRACKER.md`](/Volumes/nvme/projects/airpet/docs/DETECTOR_FEATURE_GENERATORS_TRACKER.md). Tests: `python3 -m py_compile src/geometry_types.py tests/test_detector_feature_generators_state.py`; `python3 -m pytest tests/test_detector_feature_generators_state.py -q`. Outcome: added a normalized saved-project `detector_feature_generators` contract with a first `rectangular_drilled_hole_array` specification, stable target/output object refs, and deterministic defaults/placeholders for future generated geometry. Next: DFG-002 |
 
 ## Notes For Future Reordering
 

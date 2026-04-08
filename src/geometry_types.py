@@ -42,6 +42,15 @@ OUTPUT_UNIT_FACTORS = {
 DEFAULT_OUTPUT_LUNIT = "mm"
 DEFAULT_OUTPUT_AUNIT = "rad"
 
+DETECTOR_FEATURE_GENERATOR_SCHEMA_VERSION = 1
+_SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES = {"rectangular_drilled_hole_array"}
+_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS = {"target_center"}
+_SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES = {"cylindrical"}
+_SUPPORTED_DETECTOR_FEATURE_HOLE_AXES = {"z"}
+_SUPPORTED_DETECTOR_FEATURE_DRILL_FROM = {"positive_z_face"}
+_SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES = {"boolean_subtraction"}
+_SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES = {"spec_only", "generated"}
+
 def convert_to_internal_units(value, unit_str, category="length"):
     if value is None: return None
     try:
@@ -78,6 +87,331 @@ def get_unit_value(unit_str, category="length"):
     if unit_str and category in factors and unit_str in factors[category]:
         return factors[category][unit_str]
     return 1.0 # Default multiplier
+
+
+def _normalize_non_empty_string(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_positive_float(value, field_name):
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive number.")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a positive number.")
+    if normalized <= 0.0:
+        raise ValueError(f"{field_name} must be greater than 0.")
+    return normalized
+
+
+def _normalize_float(value, default, field_name):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be numeric.")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be numeric.")
+
+
+def _normalize_positive_int(value, field_name):
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive integer.")
+
+    if isinstance(value, int):
+        normalized = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{field_name} must be a positive integer.")
+        normalized = int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not re.fullmatch(r"[+-]?\d+", stripped):
+            raise ValueError(f"{field_name} must be a positive integer.")
+        normalized = int(stripped)
+    else:
+        raise ValueError(f"{field_name} must be a positive integer.")
+
+    if normalized <= 0:
+        raise ValueError(f"{field_name} must be greater than 0.")
+    return normalized
+
+
+def _normalize_detector_feature_object_ref(raw_ref, field_name, required=False):
+    if raw_ref is None:
+        if required:
+            raise ValueError(f"{field_name} is required.")
+        return None
+
+    if not isinstance(raw_ref, dict):
+        raise ValueError(f"{field_name} must be an object reference.")
+
+    ref_id = _normalize_non_empty_string(raw_ref.get("id"))
+    ref_name = _normalize_non_empty_string(raw_ref.get("name"))
+    if not ref_id and not ref_name:
+        if required:
+            raise ValueError(f"{field_name} must include id or name.")
+        return None
+
+    normalized = {}
+    if ref_id:
+        normalized["id"] = ref_id
+    if ref_name:
+        normalized["name"] = ref_name
+    return normalized
+
+
+def _normalize_detector_feature_object_ref_list(raw_refs, field_name):
+    if raw_refs is None:
+        return []
+
+    if not isinstance(raw_refs, list):
+        raise ValueError(f"{field_name} must be an array of object references.")
+
+    normalized_refs = []
+    seen_refs = set()
+    for index, raw_ref in enumerate(raw_refs):
+        normalized_ref = _normalize_detector_feature_object_ref(
+            raw_ref,
+            f"{field_name}[{index}]",
+            required=True,
+        )
+        ref_key = (normalized_ref.get("id"), normalized_ref.get("name"))
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
+        normalized_refs.append(normalized_ref)
+
+    return normalized_refs
+
+
+def _normalize_detector_feature_generator_entry(raw_entry):
+    if not isinstance(raw_entry, dict):
+        raise ValueError("detector feature generator entry must be an object.")
+
+    generator_type = _normalize_non_empty_string(raw_entry.get("generator_type"))
+    if generator_type not in _SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES:
+        raise ValueError(
+            "detector feature generator type must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES))
+            + "."
+        )
+
+    generator_id = _normalize_non_empty_string(raw_entry.get("generator_id"))
+    if not generator_id:
+        generator_id = f"detector_feature_generator_{uuid.uuid4().hex}"
+
+    schema_version = raw_entry.get("schema_version", DETECTOR_FEATURE_GENERATOR_SCHEMA_VERSION)
+    schema_version = _normalize_positive_int(schema_version, "detector_feature_generators[].schema_version")
+
+    enabled = raw_entry.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("detector_feature_generators[].enabled must be a boolean.")
+
+    target = raw_entry.get("target", {})
+    if not isinstance(target, dict):
+        raise ValueError("detector_feature_generators[].target must be an object.")
+
+    pattern = raw_entry.get("pattern", {})
+    if not isinstance(pattern, dict):
+        raise ValueError("detector_feature_generators[].pattern must be an object.")
+
+    pitch_mm = pattern.get("pitch_mm", {})
+    if not isinstance(pitch_mm, dict):
+        raise ValueError("detector_feature_generators[].pattern.pitch_mm must be an object.")
+
+    origin_offset_mm = pattern.get("origin_offset_mm", {})
+    if origin_offset_mm is None:
+        origin_offset_mm = {}
+    if not isinstance(origin_offset_mm, dict):
+        raise ValueError("detector_feature_generators[].pattern.origin_offset_mm must be an object.")
+
+    anchor = _normalize_non_empty_string(pattern.get("anchor")) or "target_center"
+    if anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+        raise ValueError(
+            "detector_feature_generators[].pattern.anchor must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+            + "."
+        )
+
+    hole = raw_entry.get("hole", {})
+    if not isinstance(hole, dict):
+        raise ValueError("detector_feature_generators[].hole must be an object.")
+
+    hole_shape = _normalize_non_empty_string(hole.get("shape")) or "cylindrical"
+    if hole_shape not in _SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES:
+        raise ValueError(
+            "detector_feature_generators[].hole.shape must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES))
+            + "."
+        )
+
+    hole_axis = _normalize_non_empty_string(hole.get("axis")) or "z"
+    if hole_axis not in _SUPPORTED_DETECTOR_FEATURE_HOLE_AXES:
+        raise ValueError(
+            "detector_feature_generators[].hole.axis must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_AXES))
+            + "."
+        )
+
+    drill_from = _normalize_non_empty_string(hole.get("drill_from")) or "positive_z_face"
+    if drill_from not in _SUPPORTED_DETECTOR_FEATURE_DRILL_FROM:
+        raise ValueError(
+            "detector_feature_generators[].hole.drill_from must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_DRILL_FROM))
+            + "."
+        )
+
+    realization = raw_entry.get("realization", {})
+    if realization is None:
+        realization = {}
+    if not isinstance(realization, dict):
+        raise ValueError("detector_feature_generators[].realization must be an object.")
+
+    realization_mode = _normalize_non_empty_string(realization.get("mode")) or "boolean_subtraction"
+    if realization_mode not in _SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES:
+        raise ValueError(
+            "detector_feature_generators[].realization.mode must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES))
+            + "."
+        )
+
+    realization_status = _normalize_non_empty_string(realization.get("status")) or "spec_only"
+    if realization_status not in _SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES:
+        raise ValueError(
+            "detector_feature_generators[].realization.status must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES))
+            + "."
+        )
+
+    generated_object_refs = realization.get("generated_object_refs", {})
+    if generated_object_refs is None:
+        generated_object_refs = {}
+    if not isinstance(generated_object_refs, dict):
+        raise ValueError("detector_feature_generators[].realization.generated_object_refs must be an object.")
+
+    default_name = f"{generator_type}_{generator_id.split('_')[-1][:8]}"
+    normalized_entry = {
+        "generator_id": generator_id,
+        "name": _normalize_non_empty_string(raw_entry.get("name")) or default_name,
+        "schema_version": schema_version,
+        "generator_type": generator_type,
+        "enabled": enabled,
+        "target": {
+            "solid_ref": _normalize_detector_feature_object_ref(
+                target.get("solid_ref"),
+                "detector_feature_generators[].target.solid_ref",
+                required=True,
+            ),
+            "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                target.get("logical_volume_refs", []),
+                "detector_feature_generators[].target.logical_volume_refs",
+            ),
+        },
+        "pattern": {
+            "count_x": _normalize_positive_int(
+                pattern.get("count_x"),
+                "detector_feature_generators[].pattern.count_x",
+            ),
+            "count_y": _normalize_positive_int(
+                pattern.get("count_y"),
+                "detector_feature_generators[].pattern.count_y",
+            ),
+            "pitch_mm": {
+                "x": _normalize_positive_float(
+                    pitch_mm.get("x"),
+                    "detector_feature_generators[].pattern.pitch_mm.x",
+                ),
+                "y": _normalize_positive_float(
+                    pitch_mm.get("y"),
+                    "detector_feature_generators[].pattern.pitch_mm.y",
+                ),
+            },
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.y",
+                ),
+            },
+            "anchor": anchor,
+        },
+        "hole": {
+            "shape": hole_shape,
+            "diameter_mm": _normalize_positive_float(
+                hole.get("diameter_mm"),
+                "detector_feature_generators[].hole.diameter_mm",
+            ),
+            "depth_mm": _normalize_positive_float(
+                hole.get("depth_mm"),
+                "detector_feature_generators[].hole.depth_mm",
+            ),
+            "axis": hole_axis,
+            "drill_from": drill_from,
+        },
+        "realization": {
+            "mode": realization_mode,
+            "status": realization_status,
+            "result_solid_ref": _normalize_detector_feature_object_ref(
+                realization.get("result_solid_ref"),
+                "detector_feature_generators[].realization.result_solid_ref",
+                required=False,
+            ),
+            "generated_object_refs": {
+                "solid_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("solid_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.solid_refs",
+                ),
+                "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("logical_volume_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.logical_volume_refs",
+                ),
+                "placement_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("placement_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.placement_refs",
+                ),
+            },
+        },
+    }
+
+    return normalized_entry
+
+
+def _normalize_detector_feature_generators(raw_generators):
+    if not isinstance(raw_generators, list):
+        return []
+
+    normalized_generators = []
+    seen_generator_ids = set()
+    for index, raw_entry in enumerate(raw_generators):
+        try:
+            normalized_entry = _normalize_detector_feature_generator_entry(raw_entry)
+        except ValueError as exc:
+            print(f"Warning: Skipping detector feature generator at index {index}: {exc}")
+            continue
+
+        generator_id = normalized_entry["generator_id"]
+        if generator_id in seen_generator_ids:
+            print(
+                "Warning: Skipping detector feature generator at index "
+                f"{index}: duplicate generator_id '{generator_id}'."
+            )
+            continue
+
+        seen_generator_ids.add(generator_id)
+        normalized_generators.append(normalized_entry)
+
+    return normalized_generators
 
 class Define:
     """Represents a defined entity like position, rotation, or constant."""
@@ -1586,6 +1920,9 @@ class GeometryState:
         # Provenance records for imported CAD subsystems.
         self.cad_imports = []
 
+        # Saved detector-oriented feature generator contracts and realized outputs.
+        self.detector_feature_generators = []
+
         # Stable project scope identifier used by policy/audit systems to
         # associate records with this project instance across save/load cycles.
         self.project_scope_id = str(uuid.uuid4())
@@ -1647,6 +1984,7 @@ class GeometryState:
             "param_studies": self.param_studies,
             "optimizer_runs": self.optimizer_runs,
             "cad_imports": deepcopy(self.cad_imports),
+            "detector_feature_generators": deepcopy(self.detector_feature_generators),
             "project_scope_id": self.project_scope_id,
             "ui_groups": self.ui_groups
         }
@@ -1723,6 +2061,10 @@ class GeometryState:
             instance.cad_imports = [deepcopy(entry) for entry in cad_imports if isinstance(entry, dict)]
         else:
             instance.cad_imports = []
+
+        instance.detector_feature_generators = _normalize_detector_feature_generators(
+            data.get('detector_feature_generators', [])
+        )
 
         project_scope_id = data.get('project_scope_id')
         if isinstance(project_scope_id, str) and project_scope_id.strip():
