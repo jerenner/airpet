@@ -2,6 +2,8 @@ const RECTANGULAR_DRILLED_HOLE_ARRAY = 'rectangular_drilled_hole_array';
 const CIRCULAR_DRILLED_HOLE_ARRAY = 'circular_drilled_hole_array';
 const LAYERED_DETECTOR_STACK = 'layered_detector_stack';
 const TILED_SENSOR_ARRAY = 'tiled_sensor_array';
+const SUPPORT_RIB_ARRAY = 'support_rib_array';
+const CHANNEL_CUT_ARRAY = 'channel_cut_array';
 
 function normalizeString(value, fallback = '') {
     const text = String(value ?? '').trim();
@@ -83,11 +85,25 @@ function buildDefaultGeneratorName(targetName, generatorType) {
     if (generatorType === TILED_SENSOR_ARRAY) {
         return `${base}_sensor_array`;
     }
+    if (generatorType === SUPPORT_RIB_ARRAY) {
+        return `${base}_support_ribs`;
+    }
+    if (generatorType === CHANNEL_CUT_ARRAY) {
+        return `${base}_channels`;
+    }
     return `${base}_holes`;
 }
 
 function usesParentLogicalVolumeTarget(generatorType) {
-    return generatorType === LAYERED_DETECTOR_STACK || generatorType === TILED_SENSOR_ARRAY;
+    return (
+        generatorType === LAYERED_DETECTOR_STACK
+        || generatorType === TILED_SENSOR_ARRAY
+        || generatorType === SUPPORT_RIB_ARRAY
+    );
+}
+
+function usesLinearStripArray(generatorType) {
+    return generatorType === SUPPORT_RIB_ARRAY || generatorType === CHANNEL_CUT_ARRAY;
 }
 
 function normalizeSelectedItems(selectedItems) {
@@ -148,7 +164,18 @@ function getGeneratorType(rawType, fallbackType = RECTANGULAR_DRILLED_HOLE_ARRAY
     if (normalizedType === TILED_SENSOR_ARRAY) {
         return TILED_SENSOR_ARRAY;
     }
+    if (normalizedType === SUPPORT_RIB_ARRAY) {
+        return SUPPORT_RIB_ARRAY;
+    }
+    if (normalizedType === CHANNEL_CUT_ARRAY) {
+        return CHANNEL_CUT_ARRAY;
+    }
     return RECTANGULAR_DRILLED_HOLE_ARRAY;
+}
+
+function formatAxisLabel(axis) {
+    const normalizedAxis = normalizeString(axis, 'x').toLowerCase();
+    return normalizedAxis === 'y' ? 'Y' : 'X';
 }
 
 export function listDetectorFeatureGeneratorTargetOptions(projectState) {
@@ -196,7 +223,7 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
     const stackTargetOptions = listDetectorFeatureGeneratorParentOptions(projectState);
     const fallbackType = holeTargetOptions.length > 0
         ? RECTANGULAR_DRILLED_HOLE_ARRAY
-        : LAYERED_DETECTOR_STACK;
+        : SUPPORT_RIB_ARRAY;
     const generatorType = getGeneratorType(generatorEntry?.generator_type, fallbackType);
 
     const selectedHoleTargetName = (
@@ -229,10 +256,13 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
     const support = layers.support || {};
     const tiledSensor = generatorEntry?.sensor || {};
     const tiledSensorSize = tiledSensor.size_mm || {};
+    const rib = generatorEntry?.rib || {};
+    const channel = generatorEntry?.channel || {};
 
     const defaultTargetName = usesParentLogicalVolumeTarget(generatorType)
         ? selectedStackTarget?.name || 'detector_stack'
         : selectedHoleTarget?.name || 'patterned_holes';
+    const isLinearStripArray = usesLinearStripArray(generatorType);
 
     return {
         isEdit: Boolean(generatorEntry),
@@ -264,30 +294,39 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
         pitchY: Number.isFinite(Number(
             generatorType === TILED_SENSOR_ARRAY ? arrayPitch.y : pitch.y
         )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayPitch.y : pitch.y) : 5,
+        linearCount: Number.isFinite(Number(array.count)) ? Number(array.count) : 4,
+        linearPitch: Number.isFinite(Number(array.linear_pitch_mm)) ? Number(array.linear_pitch_mm) : 8,
+        linearAxis: normalizeString(array.axis, 'x').toLowerCase() === 'y' ? 'y' : 'x',
         circularCount: Number.isFinite(Number(pattern.count)) ? Number(pattern.count) : 6,
         circularRadius: Number.isFinite(Number(pattern.radius_mm)) ? Number(pattern.radius_mm) : 8,
         circularOrientation: Number.isFinite(Number(pattern.orientation_deg)) ? Number(pattern.orientation_deg) : 0,
         offsetX: Number.isFinite(Number(
             usesParentLogicalVolumeTarget(generatorType)
-                ? generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.x : stackOriginOffset.x
-                : patternOriginOffset.x
+                ? generatorType === TILED_SENSOR_ARRAY || isLinearStripArray ? arrayOriginOffset.x : stackOriginOffset.x
+                : isLinearStripArray ? arrayOriginOffset.x : patternOriginOffset.x
         )) ? Number(
             usesParentLogicalVolumeTarget(generatorType)
-                ? generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.x : stackOriginOffset.x
-                : patternOriginOffset.x
+                ? generatorType === TILED_SENSOR_ARRAY || isLinearStripArray ? arrayOriginOffset.x : stackOriginOffset.x
+                : isLinearStripArray ? arrayOriginOffset.x : patternOriginOffset.x
         ) : 0,
         offsetY: Number.isFinite(Number(
             usesParentLogicalVolumeTarget(generatorType)
-                ? generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.y : stackOriginOffset.y
-                : patternOriginOffset.y
+                ? generatorType === TILED_SENSOR_ARRAY || isLinearStripArray ? arrayOriginOffset.y : stackOriginOffset.y
+                : isLinearStripArray ? arrayOriginOffset.y : patternOriginOffset.y
         )) ? Number(
             usesParentLogicalVolumeTarget(generatorType)
-                ? generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.y : stackOriginOffset.y
-                : patternOriginOffset.y
+                ? generatorType === TILED_SENSOR_ARRAY || isLinearStripArray ? arrayOriginOffset.y : stackOriginOffset.y
+                : isLinearStripArray ? arrayOriginOffset.y : patternOriginOffset.y
         ) : 0,
         offsetZ: Number.isFinite(Number(
-            generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.z : stackOriginOffset.z
-        )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayOriginOffset.z : stackOriginOffset.z) : 0,
+            generatorType === TILED_SENSOR_ARRAY || generatorType === SUPPORT_RIB_ARRAY
+                ? arrayOriginOffset.z
+                : stackOriginOffset.z
+        )) ? Number(
+            generatorType === TILED_SENSOR_ARRAY || generatorType === SUPPORT_RIB_ARRAY
+                ? arrayOriginOffset.z
+                : stackOriginOffset.z
+        ) : 0,
         holeDiameter: Number.isFinite(Number(hole.diameter_mm)) ? Number(hole.diameter_mm) : 2,
         holeDepth: Number.isFinite(Number(hole.depth_mm)) ? Number(hole.depth_mm) : 5,
         moduleSizeX: Number.isFinite(Number(stackSize.x)) ? Number(stackSize.x) : 24,
@@ -306,6 +345,12 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
         tileSensorThickness: Number.isFinite(Number(tiledSensor.thickness_mm)) ? Number(tiledSensor.thickness_mm) : 1,
         tileSensorMaterial: normalizeString(tiledSensor.material_ref, 'G4_Si'),
         tileSensorSensitive: Boolean(tiledSensor.is_sensitive ?? true),
+        ribWidth: Number.isFinite(Number(rib.width_mm)) ? Number(rib.width_mm) : 1.5,
+        ribHeight: Number.isFinite(Number(rib.height_mm)) ? Number(rib.height_mm) : 3,
+        ribMaterial: normalizeString(rib.material_ref, 'G4_Al'),
+        ribSensitive: Boolean(rib.is_sensitive ?? false),
+        channelWidth: Number.isFinite(Number(channel.width_mm)) ? Number(channel.width_mm) : 1.5,
+        channelDepth: Number.isFinite(Number(channel.depth_mm)) ? Number(channel.depth_mm) : 4,
     };
 }
 
@@ -417,10 +462,43 @@ export function describeDetectorFeatureGenerator(rawEntry, projectState) {
         };
     }
 
-    const pattern = entry.pattern && typeof entry.pattern === 'object' ? entry.pattern : {};
-    const pitch = pattern.pitch_mm && typeof pattern.pitch_mm === 'object' ? pattern.pitch_mm : {};
-    const originOffset = pattern.origin_offset_mm && typeof pattern.origin_offset_mm === 'object' ? pattern.origin_offset_mm : {};
-    const hole = entry.hole && typeof entry.hole === 'object' ? entry.hole : {};
+    if (generatorType === SUPPORT_RIB_ARRAY) {
+        const array = entry.array && typeof entry.array === 'object' ? entry.array : {};
+        const originOffset = array.origin_offset_mm && typeof array.origin_offset_mm === 'object' ? array.origin_offset_mm : {};
+        const rib = entry.rib && typeof entry.rib === 'object' ? entry.rib : {};
+        const count = Number.isFinite(Number(array.count)) ? Number(array.count) : 0;
+        const pitch = formatNumber(array.linear_pitch_mm);
+        const axisLabel = formatAxisLabel(array.axis);
+        const offsetX = formatNumber(originOffset.x);
+        const offsetY = formatNumber(originOffset.y);
+        const offsetZ = formatNumber(originOffset.z);
+        const ribWidth = formatNumber(rib.width_mm);
+        const ribHeight = formatNumber(rib.height_mm);
+        const ribMaterial = normalizeString(rib.material_ref, 'unknown');
+        const parentLogicalVolumeName = resolveObjectName(
+            target.parent_logical_volume_ref,
+            projectState?.logical_volumes || {},
+        ) || 'unknown_parent';
+
+        return {
+            title: generatorName,
+            summary: `Support ribs in ${parentLogicalVolumeName} · ${count} ribs across ${axisLabel} @ ${pitch} mm pitch · ${ribWidth} mm wide x ${ribHeight} mm tall ${ribMaterial}`,
+            statusBadge: status === 'generated' ? 'generated' : 'spec only',
+            detailRows: [
+                { label: 'Generator ID', value: generatorId },
+                { label: 'Status', value: status === 'generated' ? 'Generated geometry is current.' : 'Saved spec only.' },
+                { label: 'Parent Logical Volume', value: parentLogicalVolumeName },
+                { label: 'Rib Pattern', value: `${count} ribs across ${axisLabel} @ ${pitch} mm` },
+                { label: 'Origin Offset', value: `${offsetX}, ${offsetY}, ${offsetZ} mm` },
+                { label: 'Rib Geometry', value: `${ribWidth} mm wide x ${ribHeight} mm tall ${ribMaterial}` },
+                { label: 'Sensitive', value: rib.is_sensitive === true ? 'Yes' : 'No' },
+                { label: 'Generated Logical Volumes', value: buildListValue(generatedLogicalVolumeNames, 'No generated logical volumes recorded') },
+                { label: 'Generated Solids', value: buildListValue(generatedSolidNames, 'No generated solids recorded') },
+                { label: 'Generated Placements', value: buildListValue(generatedPlacementNames, 'No generated placements recorded') },
+            ],
+        };
+    }
+
     const targetSolidName = resolveObjectName(target.solid_ref, projectState?.solids || {}) || 'unknown_target';
     const resultSolidName = realization.result_solid_ref
         ? resolveObjectName(realization.result_solid_ref, projectState?.solids || {})
@@ -430,6 +508,41 @@ export function describeDetectorFeatureGenerator(rawEntry, projectState) {
         : (Array.isArray(generatedRefs.logical_volume_refs) && generatedRefs.logical_volume_refs.length > 0
             ? generatedRefs.logical_volume_refs.map((ref) => resolveObjectName(ref, projectState?.logical_volumes || {})).filter(Boolean)
             : getLogicalVolumeNamesForSolid(projectState, targetSolidName));
+
+    if (generatorType === CHANNEL_CUT_ARRAY) {
+        const array = entry.array && typeof entry.array === 'object' ? entry.array : {};
+        const originOffset = array.origin_offset_mm && typeof array.origin_offset_mm === 'object' ? array.origin_offset_mm : {};
+        const channel = entry.channel && typeof entry.channel === 'object' ? entry.channel : {};
+        const count = Number.isFinite(Number(array.count)) ? Number(array.count) : 0;
+        const pitch = formatNumber(array.linear_pitch_mm);
+        const axisLabel = formatAxisLabel(array.axis);
+        const offsetX = formatNumber(originOffset.x);
+        const offsetY = formatNumber(originOffset.y);
+        const channelWidth = formatNumber(channel.width_mm);
+        const channelDepth = formatNumber(channel.depth_mm);
+
+        return {
+            title: generatorName,
+            summary: `Channel cuts on ${targetSolidName} · ${count} channels across ${axisLabel} @ ${pitch} mm pitch · ${channelWidth} mm wide depth ${channelDepth} mm`,
+            statusBadge: status === 'generated' ? 'generated' : 'spec only',
+            detailRows: [
+                { label: 'Generator ID', value: generatorId },
+                { label: 'Status', value: status === 'generated' ? 'Generated geometry is current.' : 'Saved spec only.' },
+                { label: 'Target Solid', value: targetSolidName },
+                { label: 'Target Logical Volumes', value: buildListValue(targetedLogicalVolumeNames, 'All matching logical volumes') },
+                { label: 'Channel Pattern', value: `${count} channels across ${axisLabel} @ ${pitch} mm` },
+                { label: 'Origin Offset', value: `${offsetX}, ${offsetY} mm` },
+                { label: 'Channel Cut', value: `${channelWidth} mm wide, ${channelDepth} mm deep` },
+                { label: 'Result Solid', value: resultSolidName || 'Not generated yet' },
+                { label: 'Generated Solids', value: buildListValue(generatedSolidNames, 'No generated solids recorded') },
+            ],
+        };
+    }
+
+    const pattern = entry.pattern && typeof entry.pattern === 'object' ? entry.pattern : {};
+    const pitch = pattern.pitch_mm && typeof pattern.pitch_mm === 'object' ? pattern.pitch_mm : {};
+    const originOffset = pattern.origin_offset_mm && typeof pattern.origin_offset_mm === 'object' ? pattern.origin_offset_mm : {};
+    const hole = entry.hole && typeof entry.hole === 'object' ? entry.hole : {};
     const offsetX = formatNumber(originOffset.x);
     const offsetY = formatNumber(originOffset.y);
     const holeDiameter = formatNumber(hole.diameter_mm);

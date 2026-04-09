@@ -355,7 +355,8 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
         "description": (
             "Create or update a saved detector feature generator. Current MVP supports "
             "rectangular drilled-hole arrays, a narrow circular bolt-circle variant, "
-            "a fixed absorber/sensor/support layered detector stack, and a rectangular tiled sensor array. "
+            "a fixed absorber/sensor/support layered detector stack, a rectangular tiled sensor array, "
+            "a repeated support-rib array, and a straight channel-cut array. "
             "Reuse generator_id to update an existing generator and keep realize_now=true "
             "when you want regenerated geometry plus a deterministic realization summary back."
         ),
@@ -377,6 +378,8 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                         "circular_drilled_hole_array",
                         "layered_detector_stack",
                         "tiled_sensor_array",
+                        "support_rib_array",
+                        "channel_cut_array",
                     ],
                     "description": "Detector feature generator type.",
                 },
@@ -404,7 +407,7 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                             "items": object_ref_schema,
                         },
                         "parent_logical_volume_ref": _detector_feature_object_ref_param(
-                            "Parent logical-volume reference for layered detector stacks and tiled sensor arrays."
+                            "Parent logical-volume reference for layered detector stacks, tiled sensor arrays, and support-rib arrays."
                         ),
                     },
                 },
@@ -497,11 +500,18 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                     "type": "object",
                     "description": (
                         "Rectangular tiled-sensor-array parameters. Tiled sensor arrays use "
-                        "count_x/count_y, pitch_mm, and origin_offset_mm."
+                        "count_x/count_y, pitch_mm, and origin_offset_mm. Support-rib arrays and "
+                        "channel-cut arrays use count, linear_pitch_mm, axis, and origin_offset_mm."
                     ),
                     "properties": {
+                        "count": {"type": "integer"},
                         "count_x": {"type": "integer"},
                         "count_y": {"type": "integer"},
+                        "linear_pitch_mm": {"type": "number"},
+                        "axis": {
+                            "type": "string",
+                            "enum": ["x", "y"],
+                        },
                         "pitch_mm": {
                             "type": "object",
                             "properties": {
@@ -521,6 +531,29 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                             "type": "string",
                             "enum": ["target_center"],
                         },
+                    },
+                },
+                "rib": {
+                    "type": "object",
+                    "description": (
+                        "Generated support-rib parameters. Provide width_mm, height_mm, "
+                        "material_ref, and optional is_sensitive."
+                    ),
+                    "properties": {
+                        "width_mm": {"type": "number"},
+                        "height_mm": {"type": "number"},
+                        "material_ref": {"type": "string"},
+                        "is_sensitive": {"type": "boolean"},
+                    },
+                },
+                "channel": {
+                    "type": "object",
+                    "description": (
+                        "Straight channel-cut parameters for box targets. Provide width_mm and depth_mm."
+                    ),
+                    "properties": {
+                        "width_mm": {"type": "number"},
+                        "depth_mm": {"type": "number"},
                     },
                 },
                 "sensor": {

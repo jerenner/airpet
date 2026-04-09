@@ -1140,6 +1140,24 @@ class ProjectManager:
             lv.content = []
         return lv
 
+    def _get_detector_feature_box_dimensions(self, solid_name, *, label):
+        state = self.current_geometry_state
+        solid = state.solids.get(solid_name) if state else None
+        if solid is None:
+            return None, f"{label} solid '{solid_name}' was not found."
+        if solid.type != 'box':
+            return None, f"{label} currently support only box solids."
+
+        dims = solid._evaluated_parameters or {}
+        normalized_dims = {}
+        for axis in ('x', 'y', 'z'):
+            value = float(dims.get(axis, float('nan')))
+            if not math.isfinite(value) or value <= 0.0:
+                return None, f"{label} solid '{solid_name}' has invalid evaluated {axis.upper()} size."
+            normalized_dims[axis] = value
+
+        return normalized_dims, None
+
     def _find_detector_feature_generator(self, generator_id):
         if not self.current_geometry_state or not isinstance(generator_id, str) or not generator_id.strip():
             return None, None
@@ -1974,6 +1992,387 @@ class ProjectManager:
             'sensor_thickness_mm': sensor_thickness,
         }, None
 
+    def _realize_support_rib_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        rib = generator_entry.get('rib', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Support-rib generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+
+        if array.get('anchor') != 'target_center':
+            return None, "Support-rib generators currently require anchor 'target_center'."
+
+        repeat_axis = str(array.get('axis') or '').strip()
+        count = int(array.get('count') or 0)
+        linear_pitch_mm = float(array.get('linear_pitch_mm') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+        rib_width_mm = float(rib.get('width_mm') or 0.0)
+        rib_height_mm = float(rib.get('height_mm') or 0.0)
+        rib_material_ref = str(rib.get('material_ref') or '').strip()
+        rib_sensitive = bool(rib.get('is_sensitive', False))
+        if repeat_axis not in {'x', 'y'}:
+            return None, "Support-rib generators require repeat axis 'x' or 'y'."
+        if count <= 0:
+            return None, "Support-rib generators require a positive rib count."
+        if linear_pitch_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib pitch."
+        if rib_width_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib width."
+        if rib_height_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib height."
+        if not rib_material_ref:
+            return None, "Support-rib generators require a rib material."
+        if count > 1 and linear_pitch_mm + 1e-9 < rib_width_mm:
+            return None, (
+                f"Support-rib generator '{generator_name}' requires pitch to be at least "
+                "the rib width to avoid overlapping placements."
+            )
+
+        parent_box_dims, error_msg = self._get_detector_feature_box_dimensions(
+            parent_lv.solid_ref,
+            label="Support-rib generators",
+        )
+        if error_msg:
+            return None, error_msg
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        rib_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__rib_solid',
+            object_type='box',
+        )
+        if rib_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'box':
+                rib_solid_name = prior_result_name
+        if rib_solid_name is None:
+            rib_solid_name = self._generate_unique_name(
+                f"{generator_name}__rib_solid",
+                state.solids,
+            )
+
+        rib_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__rib_lv',
+        )
+        if rib_lv_name is None:
+            rib_lv_name = self._generate_unique_name(
+                f"{generator_name}__rib_lv",
+                state.logical_volumes,
+            )
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        rib_size_x = rib_width_mm if repeat_axis == 'x' else parent_box_dims['x']
+        rib_size_y = parent_box_dims['y'] if repeat_axis == 'x' else rib_width_mm
+
+        rib_solid = self._upsert_detector_feature_generated_solid(
+            rib_solid_name,
+            'box',
+            {
+                'x': _fmt(rib_size_x),
+                'y': _fmt(rib_size_y),
+                'z': _fmt(rib_height_mm),
+            },
+        )
+
+        rib_lv = self._upsert_detector_feature_generated_logical_volume(
+            rib_lv_name,
+            solid_ref=rib_solid_name,
+            material_ref=rib_material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('support'),
+            is_sensitive=rib_sensitive,
+        )
+        rib_lv.content = []
+
+        parent_copy_start = self._get_next_copy_number(parent_lv)
+        axis_origin = (
+            offset_x - (((count - 1) * linear_pitch_mm) / 2.0)
+            if repeat_axis == 'x'
+            else offset_y - (((count - 1) * linear_pitch_mm) / 2.0)
+        )
+        rib_placements = []
+        for index in range(count):
+            axis_value = axis_origin + (index * linear_pitch_mm)
+            position = {
+                'x': _fmt(axis_value if repeat_axis == 'x' else offset_x),
+                'y': _fmt(offset_y if repeat_axis == 'x' else axis_value),
+                'z': _fmt(offset_z),
+            }
+            rib_pv = PhysicalVolumePlacement(
+                name=f"{generator_name}__rib_{index + 1}_pv",
+                volume_ref=rib_lv_name,
+                parent_lv_name=parent_lv_name,
+                copy_number_expr=str(parent_copy_start + index),
+                position_val_or_ref=position,
+                rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+            )
+            rib_placements.append(rib_pv)
+
+        parent_lv.content.extend(rib_placements)
+
+        generator_entry['realization'] = {
+            'mode': 'placement_array',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(rib_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(rib_solid),
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(rib_lv),
+                ],
+                'placement_refs': [
+                    self._build_detector_feature_object_ref(rib_pv)
+                    for rib_pv in rib_placements
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [rib_solid_name],
+            'generated_logical_volume_names': [rib_lv_name],
+            'generated_placement_names': [rib_pv.name for rib_pv in rib_placements],
+            'result_solid_name': rib_solid_name,
+            'rib_logical_volume_name': rib_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'rib_count': count,
+            'repeat_axis': repeat_axis,
+            'pitch_mm': linear_pitch_mm,
+            'rib_width_mm': rib_width_mm,
+            'rib_height_mm': rib_height_mm,
+        }, None
+
+    def _realize_channel_cut_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        channel = generator_entry.get('channel', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        target_solid_name = self._resolve_detector_feature_object_name(
+            target_section.get('solid_ref'),
+            state.solids,
+        )
+        if not target_solid_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('solid_ref'))
+                or (target_section.get('solid_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Target solid '{requested_name}' was not found."
+
+        target_box_dims, error_msg = self._get_detector_feature_box_dimensions(
+            target_solid_name,
+            label="Channel-cut generators",
+        )
+        if error_msg:
+            return None, error_msg
+
+        if array.get('anchor') != 'target_center':
+            return None, "Channel-cut generators currently require anchor 'target_center'."
+
+        repeat_axis = str(array.get('axis') or '').strip()
+        count = int(array.get('count') or 0)
+        linear_pitch_mm = float(array.get('linear_pitch_mm') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        channel_width_mm = float(channel.get('width_mm') or 0.0)
+        channel_depth_mm = float(channel.get('depth_mm') or 0.0)
+        if repeat_axis not in {'x', 'y'}:
+            return None, "Channel-cut generators require repeat axis 'x' or 'y'."
+        if count <= 0:
+            return None, "Channel-cut generators require a positive channel count."
+        if linear_pitch_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel pitch."
+        if channel_width_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel width."
+        if channel_depth_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel depth."
+        if count > 1 and linear_pitch_mm + 1e-9 < channel_width_mm:
+            return None, (
+                f"Channel-cut generator '{generator_name}' requires pitch to be at least "
+                "the channel width to avoid overlapping cuts."
+            )
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_generated_solid_refs = generated_refs.get('solid_refs', []) or []
+
+        existing_result_name = None
+        if prior_result_name and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'boolean':
+                existing_result_name = prior_result_name
+
+        cutter_name = self._find_detector_feature_generated_name(
+            prior_generated_solid_refs,
+            state.solids,
+            suffix='__channel_cutter',
+            object_type='box',
+        )
+        if cutter_name is None:
+            cutter_name = self._generate_unique_name(
+                f"{generator_name}__channel_cutter",
+                state.solids,
+            )
+        result_name = existing_result_name or self._generate_unique_name(
+            f"{generator_name}__result",
+            state.solids,
+        )
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        cutter_size_x = channel_width_mm if repeat_axis == 'x' else target_box_dims['x']
+        cutter_size_y = target_box_dims['y'] if repeat_axis == 'x' else channel_width_mm
+        cutter_solid = state.solids.get(cutter_name)
+        cutter_params = {
+            'x': _fmt(cutter_size_x),
+            'y': _fmt(cutter_size_y),
+            'z': _fmt(channel_depth_mm),
+        }
+        if cutter_solid is None:
+            cutter_solid = Solid(cutter_name, 'box', cutter_params)
+            state.add_solid(cutter_solid)
+        else:
+            cutter_solid.type = 'box'
+            cutter_solid.raw_parameters = cutter_params
+
+        z_center = (target_box_dims['z'] / 2.0) - (channel_depth_mm / 2.0)
+        axis_origin = (
+            offset_x - (((count - 1) * linear_pitch_mm) / 2.0)
+            if repeat_axis == 'x'
+            else offset_y - (((count - 1) * linear_pitch_mm) / 2.0)
+        )
+
+        recipe = [{'op': 'base', 'solid_ref': target_solid_name}]
+        for index in range(count):
+            axis_value = axis_origin + (index * linear_pitch_mm)
+            recipe.append({
+                'op': 'subtraction',
+                'solid_ref': cutter_name,
+                'transform': {
+                    'position': {
+                        'x': _fmt(axis_value if repeat_axis == 'x' else offset_x),
+                        'y': _fmt(offset_y if repeat_axis == 'x' else axis_value),
+                        'z': _fmt(z_center),
+                    },
+                },
+            })
+
+        result_solid = state.solids.get(result_name)
+        if result_solid is None:
+            result_solid = Solid(result_name, 'boolean', {'recipe': recipe})
+            state.add_solid(result_solid)
+        else:
+            result_solid.type = 'boolean'
+            result_solid.raw_parameters = {'recipe': recipe}
+
+        target_lv_names, error_msg = self._get_detector_feature_target_logical_volume_names(
+            generator_entry,
+            target_solid_name=target_solid_name,
+            prior_result_solid_name=prior_result_name,
+        )
+        if error_msg:
+            return None, error_msg
+
+        touched_logical_volumes = []
+        touched_placement_refs = []
+        seen_placement_ids = set()
+        for lv_name in target_lv_names:
+            lv = state.logical_volumes.get(lv_name)
+            if lv is None:
+                continue
+            lv.solid_ref = result_name
+            logical_volume_ref = self._build_detector_feature_object_ref(lv)
+            if logical_volume_ref:
+                touched_logical_volumes.append(logical_volume_ref)
+
+            for pv in self._find_pvs_by_lv_name(lv_name):
+                pv_ref = self._build_detector_feature_object_ref(pv)
+                if not pv_ref:
+                    continue
+                pv_ref_id = pv_ref.get('id') or pv_ref.get('name')
+                if pv_ref_id in seen_placement_ids:
+                    continue
+                seen_placement_ids.add(pv_ref_id)
+                touched_placement_refs.append(pv_ref)
+
+        generator_entry['realization'] = {
+            'mode': 'boolean_subtraction',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(result_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(result_solid),
+                    self._build_detector_feature_object_ref(cutter_solid),
+                ],
+                'logical_volume_refs': touched_logical_volumes,
+                'placement_refs': touched_placement_refs,
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [result_name, cutter_name],
+            'result_solid_name': result_name,
+            'cutter_solid_name': cutter_name,
+            'updated_logical_volume_names': target_lv_names,
+            'channel_count': count,
+            'repeat_axis': repeat_axis,
+            'pitch_mm': linear_pitch_mm,
+        }, None
+
     def _realize_detector_feature_generator_entry(self, generator_entry):
         generator_type = generator_entry.get('generator_type')
         if generator_type == 'rectangular_drilled_hole_array':
@@ -1984,6 +2383,10 @@ class ProjectManager:
             return self._realize_layered_detector_stack(generator_entry)
         if generator_type == 'tiled_sensor_array':
             return self._realize_tiled_sensor_array(generator_entry)
+        if generator_type == 'support_rib_array':
+            return self._realize_support_rib_array(generator_entry)
+        if generator_type == 'channel_cut_array':
+            return self._realize_channel_cut_array(generator_entry)
 
         return None, (
             f"Detector feature generator type '{generator_type}' is not supported for realization."
@@ -2057,7 +2460,7 @@ class ProjectManager:
                     'layered_stack'
                     if generator_entry.get('generator_type') == 'layered_detector_stack'
                     else 'placement_array'
-                    if generator_entry.get('generator_type') == 'tiled_sensor_array'
+                    if generator_entry.get('generator_type') in {'tiled_sensor_array', 'support_rib_array'}
                     else 'boolean_subtraction'
                 )
                 generator_entry['realization'] = {

@@ -1081,6 +1081,146 @@ def test_ai_tool_manage_detector_feature_generator_supports_tiled_sensor_arrays(
     assert details["result"]["realization"]["mode"] == "placement_array"
 
 
+def test_ai_tool_manage_detector_feature_generator_supports_support_rib_arrays(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_support_ribs_fixture",
+        "type": "support_rib_array",
+        "name": "ai_support_ribs",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "array": {
+            "count": 3,
+            "linear_pitch_mm": 9.0,
+            "axis": "x",
+            "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        },
+        "rib": {
+            "width_mm": 1.5,
+            "height_mm": 2.5,
+            "material_ref": "G4_Al",
+            "is_sensitive": False,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "support_rib_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count": 3,
+        "linear_pitch_mm": 9.0,
+        "axis": "x",
+        "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["rib"] == {
+        "width_mm": 1.5,
+        "height_mm": 2.5,
+        "material_ref": "G4_Al",
+        "is_sensitive": False,
+    }
+    assert result["detector_feature_realization"]["rib_count"] == 3
+    assert result["detector_feature_realization"]["rib_logical_volume_name"] == "ai_support_ribs__rib_lv"
+
+    world_rib_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_support_ribs__rib_")
+    ]
+    assert len(world_rib_pvs) == 3
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_support_ribs_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_support_ribs"
+    assert details["result"]["realization"]["mode"] == "placement_array"
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_channel_cut_arrays(pm):
+    solid, error = pm.add_solid(
+        "ai_channel_block",
+        "box",
+        {"x": "30", "y": "20", "z": "12"},
+    )
+    assert error is None
+
+    logical_volume, error = pm.add_logical_volume(
+        "ai_channel_lv",
+        "ai_channel_block",
+        "G4_Galactic",
+    )
+    assert error is None
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_channel_fixture",
+        "type": "channel_cut_array",
+        "name": "ai_channels",
+        "target": {
+            "solid_ref": "ai_channel_block",
+            "logical_volume_refs": ["ai_channel_lv"],
+        },
+        "array": {
+            "count": 4,
+            "linear_pitch_mm": 6.0,
+            "axis": "y",
+            "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        },
+        "channel": {
+            "width_mm": 1.25,
+            "depth_mm": 7.0,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "channel_cut_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "solid_ref": {
+            "id": solid["id"],
+            "name": solid["name"],
+        },
+        "logical_volume_refs": [
+            {
+                "id": logical_volume["id"],
+                "name": logical_volume["name"],
+            },
+        ],
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count": 4,
+        "linear_pitch_mm": 6.0,
+        "axis": "y",
+        "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["channel"] == {
+        "width_mm": 1.25,
+        "depth_mm": 7.0,
+    }
+    assert result["detector_feature_realization"]["channel_count"] == 4
+    assert (
+        pm.current_geometry_state.logical_volumes["ai_channel_lv"].solid_ref
+        == result["detector_feature_realization"]["result_solid_name"]
+    )
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_channel_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_channels"
+    assert details["result"]["realization"]["mode"] == "boolean_subtraction"
+
+
 def test_ai_tool_create_primitive_solid(pm):
     res = dispatch_ai_tool(pm, "create_primitive_solid", {
         "name": "AI_Box",

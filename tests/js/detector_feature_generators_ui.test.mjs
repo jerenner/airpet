@@ -396,3 +396,163 @@ test('tiled sensor array model and description stay deterministic', () => {
         'Yes',
     );
 });
+
+test('support rib array model and description stay deterministic', () => {
+    const projectState = {
+        solids: {
+            support_ribs__rib_solid: {
+                id: 'solid-rib-1',
+                name: 'support_ribs__rib_solid',
+                type: 'box',
+            },
+        },
+        logical_volumes: {
+            World: { id: 'lv-world', name: 'World', solid_ref: 'world_box', content_type: 'physvol', content: [] },
+            support_ribs__rib_lv: {
+                id: 'lv-rib-1',
+                name: 'support_ribs__rib_lv',
+                solid_ref: 'support_ribs__rib_solid',
+                content_type: 'physvol',
+                content: [],
+            },
+        },
+    };
+
+    const entry = {
+        generator_id: 'dfg_support_ribs_fixture',
+        generator_type: 'support_rib_array',
+        name: 'fixture_support_ribs',
+        target: {
+            parent_logical_volume_ref: { id: 'lv-world', name: 'World' },
+        },
+        array: {
+            count: 4,
+            linear_pitch_mm: 9,
+            axis: 'x',
+            origin_offset_mm: { x: 1.5, y: -2.0, z: 3.0 },
+        },
+        rib: {
+            width_mm: 1.5,
+            height_mm: 2.5,
+            material_ref: 'G4_Al',
+            is_sensitive: false,
+        },
+        realization: {
+            status: 'generated',
+            generated_object_refs: {
+                solid_refs: [
+                    { id: 'solid-rib-1', name: 'support_ribs__rib_solid' },
+                ],
+                logical_volume_refs: [
+                    { id: 'lv-rib-1', name: 'support_ribs__rib_lv' },
+                ],
+                placement_refs: [
+                    { id: 'pv-rib-1', name: 'fixture_support_ribs__rib_1_pv' },
+                    { id: 'pv-rib-2', name: 'fixture_support_ribs__rib_2_pv' },
+                ],
+            },
+        },
+    };
+
+    const model = buildDetectorFeatureGeneratorEditorModel(projectState, entry);
+    assert.equal(model.generatorType, 'support_rib_array');
+    assert.equal(model.selectedStackTargetName, 'World');
+    assert.equal(model.linearCount, 4);
+    assert.equal(model.linearPitch, 9);
+    assert.equal(model.linearAxis, 'x');
+    assert.equal(model.ribWidth, 1.5);
+    assert.equal(model.ribHeight, 2.5);
+    assert.equal(model.ribMaterial, 'G4_Al');
+    assert.equal(model.ribSensitive, false);
+
+    const described = describeDetectorFeatureGenerator(entry, projectState);
+    assert.equal(
+        described.summary,
+        'Support ribs in World · 4 ribs across X @ 9 mm pitch · 1.5 mm wide x 2.5 mm tall G4_Al',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Rib Pattern').value,
+        '4 ribs across X @ 9 mm',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Rib Geometry').value,
+        '1.5 mm wide x 2.5 mm tall G4_Al',
+    );
+});
+
+test('channel cut array model and description stay deterministic', () => {
+    const projectState = {
+        solids: {
+            channel_block: { id: 'solid-channel-target', name: 'channel_block', type: 'box' },
+            channel_block__result: {
+                id: 'solid-channel-result',
+                name: 'channel_block__result',
+                type: 'boolean',
+            },
+            channel_block__channel_cutter: {
+                id: 'solid-channel-cutter',
+                name: 'channel_block__channel_cutter',
+                type: 'box',
+            },
+        },
+        logical_volumes: {
+            channel_lv: { id: 'lv-channel', name: 'channel_lv', solid_ref: 'channel_block__result' },
+        },
+    };
+
+    const entry = {
+        generator_id: 'dfg_channel_fixture',
+        generator_type: 'channel_cut_array',
+        name: 'fixture_channels',
+        target: {
+            solid_ref: { id: 'solid-channel-target', name: 'channel_block' },
+            logical_volume_refs: [],
+        },
+        array: {
+            count: 3,
+            linear_pitch_mm: 7.5,
+            axis: 'y',
+            origin_offset_mm: { x: 1.0, y: -1.5 },
+        },
+        channel: {
+            width_mm: 1.25,
+            depth_mm: 6.0,
+        },
+        realization: {
+            status: 'generated',
+            result_solid_ref: { id: 'solid-channel-result', name: 'channel_block__result' },
+            generated_object_refs: {
+                solid_refs: [
+                    { id: 'solid-channel-result', name: 'channel_block__result' },
+                    { id: 'solid-channel-cutter', name: 'channel_block__channel_cutter' },
+                ],
+                logical_volume_refs: [
+                    { id: 'lv-channel', name: 'channel_lv' },
+                ],
+            },
+        },
+    };
+
+    const model = buildDetectorFeatureGeneratorEditorModel(projectState, entry);
+    assert.equal(model.generatorType, 'channel_cut_array');
+    assert.equal(model.selectedHoleTargetName, 'channel_block');
+    assert.equal(model.linearCount, 3);
+    assert.equal(model.linearPitch, 7.5);
+    assert.equal(model.linearAxis, 'y');
+    assert.equal(model.channelWidth, 1.25);
+    assert.equal(model.channelDepth, 6);
+
+    const described = describeDetectorFeatureGenerator(entry, projectState);
+    assert.equal(
+        described.summary,
+        'Channel cuts on channel_block · 3 channels across Y @ 7.5 mm pitch · 1.25 mm wide depth 6 mm',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Channel Pattern').value,
+        '3 channels across Y @ 7.5 mm',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Channel Cut').value,
+        '1.25 mm wide, 6 mm deep',
+    );
+});

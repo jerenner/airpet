@@ -9942,7 +9942,7 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         raw_target = normalized_args.get('target')
 
         if isinstance(raw_target, str):
-            if normalized_args.get('generator_type') in {'layered_detector_stack', 'tiled_sensor_array'}:
+            if normalized_args.get('generator_type') in {'layered_detector_stack', 'tiled_sensor_array', 'support_rib_array'}:
                 raw_target = {'parent_logical_volume_ref': raw_target}
             else:
                 raw_target = {'solid_ref': raw_target}

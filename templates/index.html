@@ -4669,6 +4669,8 @@
                         <option value="circular_drilled_hole_array">Circular (Bolt Circle)</option>
                         <option value="layered_detector_stack">Layered Detector Stack</option>
                         <option value="tiled_sensor_array">Tiled Sensor Array</option>
+                        <option value="support_rib_array">Support Rib Array</option>
+                        <option value="channel_cut_array">Channel Cut Array</option>
                     </select>
                 </div>
                 <div class="property_item">
@@ -4778,6 +4780,51 @@
                         <label for="detectorFeatureGeneratorTileSensorSensitive" style="width:auto;">Mark generated sensors as sensitive</label>
                     </div>
                 </div>
+                <div id="detectorFeatureGeneratorLinearArrayFields" hidden>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorLinearCount">Feature Count:</label>
+                        <input type="number" id="detectorFeatureGeneratorLinearCount" min="1" step="1" value="4">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorLinearPitch">Feature Pitch (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorLinearPitch" min="0.001" step="any" value="8">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorLinearAxis">Repeat Axis:</label>
+                        <select id="detectorFeatureGeneratorLinearAxis">
+                            <option value="x">X</option>
+                            <option value="y">Y</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="detectorFeatureGeneratorSupportRibFields" hidden>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorRibWidth">Rib Width (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorRibWidth" min="0.001" step="any" value="1.5">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorRibHeight">Rib Height (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorRibHeight" min="0.001" step="any" value="3">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorRibMaterial">Rib Material:</label>
+                        <input type="text" id="detectorFeatureGeneratorRibMaterial" value="G4_Al" placeholder="e.g., G4_Al">
+                    </div>
+                    <div class="property_item">
+                        <input type="checkbox" id="detectorFeatureGeneratorRibSensitive">
+                        <label for="detectorFeatureGeneratorRibSensitive" style="width:auto;">Mark generated ribs as sensitive</label>
+                    </div>
+                </div>
+                <div id="detectorFeatureGeneratorChannelFields" hidden>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorChannelWidth">Channel Width (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorChannelWidth" min="0.001" step="any" value="1.5">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorChannelDepth">Channel Depth (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorChannelDepth" min="0.001" step="any" value="4">
+                    </div>
+                </div>
                 <div class="property_item">
                     <label for="detectorFeatureGeneratorOffsetX">Offset X (mm):</label>
                     <input type="number" id="detectorFeatureGeneratorOffsetX" step="any" value="0">
@@ -4800,7 +4847,7 @@
                         <input type="number" id="detectorFeatureGeneratorHoleDepth" min="0.001" step="any" value="5">
                     </div>
                 </div>
-                <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b;">Hole generators drill cylindrical holes along +Z into box solids. Layered stacks generate a fixed absorber/sensor/support sandwich, and tiled sensor arrays place repeated sensor cells on an X/Y grid inside the selected parent logical volume.</p>
+                <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b;">Hole generators drill cylindrical holes along +Z into box solids. Channel generators cut repeated straight grooves into box solids, support-rib generators place repeated ribs inside a parent logical volume, layered stacks generate a fixed absorber/sensor/support sandwich, and tiled sensor arrays place repeated sensor cells on an X/Y grid inside the selected parent logical volume.</p>
             </div>
             <div class="modal-footer">
                 <button id="detectorFeatureGeneratorCancel">Cancel</button>

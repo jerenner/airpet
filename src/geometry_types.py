@@ -48,8 +48,11 @@ _SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES = {
     "circular_drilled_hole_array",
     "layered_detector_stack",
     "tiled_sensor_array",
+    "support_rib_array",
+    "channel_cut_array",
 }
 _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS = {"target_center"}
+_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES = {"x", "y"}
 _SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES = {"cylindrical"}
 _SUPPORTED_DETECTOR_FEATURE_HOLE_AXES = {"z"}
 _SUPPORTED_DETECTOR_FEATURE_DRILL_FROM = {"positive_z_face"}
@@ -259,6 +262,18 @@ def _normalize_detector_feature_generator_entry(raw_entry):
     if not isinstance(sensor, dict):
         raise ValueError("detector_feature_generators[].sensor must be an object.")
 
+    rib = raw_entry.get("rib", {})
+    if rib is None:
+        rib = {}
+    if not isinstance(rib, dict):
+        raise ValueError("detector_feature_generators[].rib must be an object.")
+
+    channel = raw_entry.get("channel", {})
+    if channel is None:
+        channel = {}
+    if not isinstance(channel, dict):
+        raise ValueError("detector_feature_generators[].channel must be an object.")
+
     hole = raw_entry.get("hole", {})
     if hole is None:
         hole = {}
@@ -275,7 +290,7 @@ def _normalize_detector_feature_generator_entry(raw_entry):
         "layered_stack"
         if generator_type == "layered_detector_stack"
         else "placement_array"
-        if generator_type == "tiled_sensor_array"
+        if generator_type in {"tiled_sensor_array", "support_rib_array"}
         else "boolean_subtraction"
     )
     realization_mode = _normalize_non_empty_string(realization.get("mode")) or default_realization_mode
@@ -306,6 +321,8 @@ def _normalize_detector_feature_generator_entry(raw_entry):
     normalized_array = None
     normalized_layers = None
     normalized_sensor = None
+    normalized_rib = None
+    normalized_channel = None
     normalized_hole = None
 
     if generator_type == "rectangular_drilled_hole_array":
@@ -692,6 +709,148 @@ def _normalize_detector_feature_generator_entry(raw_entry):
             ),
             "is_sensitive": bool(sensor.get("is_sensitive", True)),
         }
+    elif generator_type == "support_rib_array":
+        array_anchor = _normalize_non_empty_string(array.get("anchor")) or "target_center"
+        if array_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].array.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        origin_offset_mm = array.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].array.origin_offset_mm must be an object.")
+
+        repeat_axis = _normalize_non_empty_string(array.get("axis", array.get("repeat_axis")))
+        if repeat_axis not in _SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES:
+            raise ValueError(
+                "detector_feature_generators[].array.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES))
+                + "."
+            )
+
+        normalized_target = {
+            "parent_logical_volume_ref": _normalize_detector_feature_object_ref(
+                target.get("parent_logical_volume_ref"),
+                "detector_feature_generators[].target.parent_logical_volume_ref",
+                required=True,
+            ),
+        }
+        normalized_array = {
+            "count": _normalize_positive_int(
+                array.get("count", array.get("rib_count", array.get("repeat_count"))),
+                "detector_feature_generators[].array.count",
+            ),
+            "linear_pitch_mm": _normalize_positive_float(
+                array.get("linear_pitch_mm", array.get("pitch_mm", array.get("pitch"))),
+                "detector_feature_generators[].array.linear_pitch_mm",
+            ),
+            "axis": repeat_axis,
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.y",
+                ),
+                "z": _normalize_float(
+                    origin_offset_mm.get("z"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.z",
+                ),
+            },
+            "anchor": array_anchor,
+        }
+        normalized_rib = {
+            "width_mm": _normalize_positive_float(
+                rib.get("width_mm", rib.get("thickness_mm")),
+                "detector_feature_generators[].rib.width_mm",
+            ),
+            "height_mm": _normalize_positive_float(
+                rib.get("height_mm"),
+                "detector_feature_generators[].rib.height_mm",
+            ),
+            "material_ref": _normalize_detector_feature_material_ref(
+                rib.get("material_ref", rib.get("material")),
+                "detector_feature_generators[].rib.material_ref",
+            ),
+            "is_sensitive": bool(rib.get("is_sensitive", False)),
+        }
+    elif generator_type == "channel_cut_array":
+        array_anchor = _normalize_non_empty_string(array.get("anchor")) or "target_center"
+        if array_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].array.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        origin_offset_mm = array.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].array.origin_offset_mm must be an object.")
+
+        repeat_axis = _normalize_non_empty_string(array.get("axis", array.get("repeat_axis")))
+        if repeat_axis not in _SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES:
+            raise ValueError(
+                "detector_feature_generators[].array.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES))
+                + "."
+            )
+
+        normalized_target = {
+            "solid_ref": _normalize_detector_feature_object_ref(
+                target.get("solid_ref"),
+                "detector_feature_generators[].target.solid_ref",
+                required=True,
+            ),
+            "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                target.get("logical_volume_refs", []),
+                "detector_feature_generators[].target.logical_volume_refs",
+            ),
+        }
+        normalized_array = {
+            "count": _normalize_positive_int(
+                array.get("count", array.get("channel_count", array.get("repeat_count"))),
+                "detector_feature_generators[].array.count",
+            ),
+            "linear_pitch_mm": _normalize_positive_float(
+                array.get("linear_pitch_mm", array.get("pitch_mm", array.get("pitch"))),
+                "detector_feature_generators[].array.linear_pitch_mm",
+            ),
+            "axis": repeat_axis,
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.y",
+                ),
+            },
+            "anchor": array_anchor,
+        }
+        normalized_channel = {
+            "width_mm": _normalize_positive_float(
+                channel.get("width_mm"),
+                "detector_feature_generators[].channel.width_mm",
+            ),
+            "depth_mm": _normalize_positive_float(
+                channel.get("depth_mm"),
+                "detector_feature_generators[].channel.depth_mm",
+            ),
+        }
     else:
         raise ValueError(
             "detector feature generator type must be one of: "
@@ -744,6 +903,10 @@ def _normalize_detector_feature_generator_entry(raw_entry):
         normalized_entry["layers"] = normalized_layers
     if normalized_sensor is not None:
         normalized_entry["sensor"] = normalized_sensor
+    if normalized_rib is not None:
+        normalized_entry["rib"] = normalized_rib
+    if normalized_channel is not None:
+        normalized_entry["channel"] = normalized_channel
 
     return normalized_entry
 

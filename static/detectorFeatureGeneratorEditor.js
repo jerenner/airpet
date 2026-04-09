@@ -4,6 +4,8 @@ const RECTANGULAR_DRILLED_HOLE_ARRAY = 'rectangular_drilled_hole_array';
 const CIRCULAR_DRILLED_HOLE_ARRAY = 'circular_drilled_hole_array';
 const LAYERED_DETECTOR_STACK = 'layered_detector_stack';
 const TILED_SENSOR_ARRAY = 'tiled_sensor_array';
+const SUPPORT_RIB_ARRAY = 'support_rib_array';
+const CHANNEL_CUT_ARRAY = 'channel_cut_array';
 
 let modalElement;
 let titleElement;
@@ -42,6 +44,18 @@ let tileSensorSizeYInput;
 let tileSensorThicknessInput;
 let tileSensorMaterialInput;
 let tileSensorSensitiveInput;
+let linearArrayFields;
+let linearCountInput;
+let linearPitchInput;
+let linearAxisInput;
+let supportRibFields;
+let ribWidthInput;
+let ribHeightInput;
+let ribMaterialInput;
+let ribSensitiveInput;
+let channelFields;
+let channelWidthInput;
+let channelDepthInput;
 let offsetXInput;
 let offsetYInput;
 let offsetZRow;
@@ -97,6 +111,18 @@ export function initDetectorFeatureGeneratorEditor(callbacks) {
     tileSensorThicknessInput = document.getElementById('detectorFeatureGeneratorTileSensorThickness');
     tileSensorMaterialInput = document.getElementById('detectorFeatureGeneratorTileSensorMaterial');
     tileSensorSensitiveInput = document.getElementById('detectorFeatureGeneratorTileSensorSensitive');
+    linearArrayFields = document.getElementById('detectorFeatureGeneratorLinearArrayFields');
+    linearCountInput = document.getElementById('detectorFeatureGeneratorLinearCount');
+    linearPitchInput = document.getElementById('detectorFeatureGeneratorLinearPitch');
+    linearAxisInput = document.getElementById('detectorFeatureGeneratorLinearAxis');
+    supportRibFields = document.getElementById('detectorFeatureGeneratorSupportRibFields');
+    ribWidthInput = document.getElementById('detectorFeatureGeneratorRibWidth');
+    ribHeightInput = document.getElementById('detectorFeatureGeneratorRibHeight');
+    ribMaterialInput = document.getElementById('detectorFeatureGeneratorRibMaterial');
+    ribSensitiveInput = document.getElementById('detectorFeatureGeneratorRibSensitive');
+    channelFields = document.getElementById('detectorFeatureGeneratorChannelFields');
+    channelWidthInput = document.getElementById('detectorFeatureGeneratorChannelWidth');
+    channelDepthInput = document.getElementById('detectorFeatureGeneratorChannelDepth');
     offsetXInput = document.getElementById('detectorFeatureGeneratorOffsetX');
     offsetYInput = document.getElementById('detectorFeatureGeneratorOffsetY');
     offsetZRow = document.getElementById('detectorFeatureGeneratorOffsetZRow');
@@ -151,6 +177,15 @@ export function show(generatorEntry, projectState, selectedItems = []) {
     tileSensorThicknessInput.value = String(model.tileSensorThickness);
     tileSensorMaterialInput.value = model.tileSensorMaterial;
     tileSensorSensitiveInput.checked = Boolean(model.tileSensorSensitive);
+    linearCountInput.value = String(model.linearCount);
+    linearPitchInput.value = String(model.linearPitch);
+    linearAxisInput.value = model.linearAxis;
+    ribWidthInput.value = String(model.ribWidth);
+    ribHeightInput.value = String(model.ribHeight);
+    ribMaterialInput.value = model.ribMaterial;
+    ribSensitiveInput.checked = Boolean(model.ribSensitive);
+    channelWidthInput.value = String(model.channelWidth);
+    channelDepthInput.value = String(model.channelDepth);
     offsetXInput.value = String(model.offsetX);
     offsetYInput.value = String(model.offsetY);
     offsetZInput.value = String(model.offsetZ);
@@ -187,19 +222,21 @@ function getCurrentGeneratorType() {
 }
 
 function usesParentLogicalVolumeTarget(generatorType) {
-    return generatorType === LAYERED_DETECTOR_STACK || generatorType === TILED_SENSOR_ARRAY;
+    return (
+        generatorType === LAYERED_DETECTOR_STACK
+        || generatorType === TILED_SENSOR_ARRAY
+        || generatorType === SUPPORT_RIB_ARRAY
+    );
+}
+
+function usesLinearStripArray(generatorType) {
+    return generatorType === SUPPORT_RIB_ARRAY || generatorType === CHANNEL_CUT_ARRAY;
 }
 
 function getCurrentTargetOptions() {
     return usesParentLogicalVolumeTarget(getCurrentGeneratorType())
         ? currentStackTargetOptions
         : currentHoleTargetOptions;
-}
-
-function getCurrentSelectedTargetName() {
-    return usesParentLogicalVolumeTarget(getCurrentGeneratorType())
-        ? currentSelectedStackTargetName
-        : currentSelectedHoleTargetName;
 }
 
 function populateTargetOptions(options, selectedName, targetType) {
@@ -235,7 +272,9 @@ function updateTargetSummary() {
         targetSummary.textContent = usesParentLogicalVolumeTarget(generatorType)
             ? generatorType === TILED_SENSOR_ARRAY
                 ? 'Select a parent logical volume for the tiled sensors.'
-                : 'Select a parent logical volume for the generated stack.'
+                : generatorType === SUPPORT_RIB_ARRAY
+                    ? 'Select a parent logical volume for the generated support ribs.'
+                    : 'Select a parent logical volume for the generated stack.'
             : 'Select a box solid to target.';
         targetSummary.title = '';
         return;
@@ -244,7 +283,9 @@ function updateTargetSummary() {
     if (usesParentLogicalVolumeTarget(generatorType)) {
         targetSummary.textContent = generatorType === TILED_SENSOR_ARRAY
             ? `Parent logical volume: ${optionData.placementSummary}. Generated sensor cells will be centered on the saved X/Y/Z offset.`
-            : `Parent logical volume: ${optionData.placementSummary}. Generated modules will be centered on the saved offset.`;
+            : generatorType === SUPPORT_RIB_ARRAY
+                ? `Parent logical volume: ${optionData.placementSummary}. Generated ribs will be centered on the saved X/Y/Z offset.`
+                : `Parent logical volume: ${optionData.placementSummary}. Generated modules will be centered on the saved offset.`;
         targetSummary.title = '';
         currentSelectedStackTargetName = optionData.name;
         return;
@@ -252,7 +293,9 @@ function updateTargetSummary() {
 
     const names = optionData.logicalVolumeNames || [];
     if (names.length === 0) {
-        targetSummary.textContent = 'Matching logical volumes: none yet. The saved spec will still target this box solid.';
+        targetSummary.textContent = generatorType === CHANNEL_CUT_ARRAY
+            ? 'Matching logical volumes: none yet. The saved spec will still target this box solid for channel cuts.'
+            : 'Matching logical volumes: none yet. The saved spec will still target this box solid.';
         targetSummary.title = '';
         currentSelectedHoleTargetName = optionData.name;
         return;
@@ -269,6 +312,9 @@ function updateGeneratorTypeSections() {
     const generatorType = getCurrentGeneratorType();
     const isLayeredStack = generatorType === LAYERED_DETECTOR_STACK;
     const isTiledSensorArray = generatorType === TILED_SENSOR_ARRAY;
+    const isSupportRibArray = generatorType === SUPPORT_RIB_ARRAY;
+    const isChannelCutArray = generatorType === CHANNEL_CUT_ARRAY;
+    const isLinearStripArray = usesLinearStripArray(generatorType);
 
     if (rectangularFields) {
         rectangularFields.hidden = (
@@ -285,11 +331,20 @@ function updateGeneratorTypeSections() {
     if (sensorArrayFields) {
         sensorArrayFields.hidden = !isTiledSensorArray;
     }
+    if (linearArrayFields) {
+        linearArrayFields.hidden = !isLinearStripArray;
+    }
+    if (supportRibFields) {
+        supportRibFields.hidden = !isSupportRibArray;
+    }
+    if (channelFields) {
+        channelFields.hidden = !isChannelCutArray;
+    }
     if (holeFields) {
-        holeFields.hidden = isLayeredStack || isTiledSensorArray;
+        holeFields.hidden = isLayeredStack || isTiledSensorArray || isSupportRibArray || isChannelCutArray;
     }
     if (offsetZRow) {
-        offsetZRow.hidden = !isLayeredStack && !isTiledSensorArray;
+        offsetZRow.hidden = !isLayeredStack && !isTiledSensorArray && !isSupportRibArray;
     }
     if (targetLabel) {
         targetLabel.textContent = usesParentLogicalVolumeTarget(generatorType) ? 'Parent LV:' : 'Target Solid:';
@@ -428,6 +483,48 @@ function buildTiledSensorArrayPayload() {
     };
 }
 
+function buildLinearArrayPayload(includeZOffset = false) {
+    const originOffset = {
+        x: readFiniteNumber(offsetXInput, 'Offset X'),
+        y: readFiniteNumber(offsetYInput, 'Offset Y'),
+    };
+    if (includeZOffset) {
+        originOffset.z = readFiniteNumber(offsetZInput, 'Offset Z');
+    }
+
+    return {
+        array: {
+            count: readPositiveInteger(linearCountInput, 'Feature count'),
+            linear_pitch_mm: readPositiveNumber(linearPitchInput, 'Feature pitch'),
+            axis: readRequiredText(linearAxisInput, 'Repeat axis').toLowerCase(),
+            origin_offset_mm: originOffset,
+            anchor: 'target_center',
+        },
+    };
+}
+
+function buildSupportRibPayload() {
+    return {
+        ...buildLinearArrayPayload(true),
+        rib: {
+            width_mm: readPositiveNumber(ribWidthInput, 'Rib width'),
+            height_mm: readPositiveNumber(ribHeightInput, 'Rib height'),
+            material_ref: readRequiredText(ribMaterialInput, 'Rib material'),
+            is_sensitive: Boolean(ribSensitiveInput.checked),
+        },
+    };
+}
+
+function buildChannelCutPayload() {
+    return {
+        ...buildLinearArrayPayload(false),
+        channel: {
+            width_mm: readPositiveNumber(channelWidthInput, 'Channel width'),
+            depth_mm: readPositiveNumber(channelDepthInput, 'Channel depth'),
+        },
+    };
+}
+
 function handleConfirm() {
     if (!onConfirmCallback) {
         return;
@@ -461,7 +558,9 @@ function handleConfirm() {
                 },
                 ...(generatorType === TILED_SENSOR_ARRAY
                     ? buildTiledSensorArrayPayload()
-                    : buildLayeredStackPayload()),
+                    : generatorType === SUPPORT_RIB_ARRAY
+                        ? buildSupportRibPayload()
+                        : buildLayeredStackPayload()),
                 realize_now: true,
             });
             hide();
@@ -479,14 +578,18 @@ function handleConfirm() {
                 },
                 logical_volume_refs: [],
             },
-            pattern: buildPatternPayload(generatorType),
-            hole: {
-                shape: 'cylindrical',
-                diameter_mm: readPositiveNumber(holeDiameterInput, 'Hole diameter'),
-                depth_mm: readPositiveNumber(holeDepthInput, 'Hole depth'),
-                axis: 'z',
-                drill_from: 'positive_z_face',
-            },
+            ...(generatorType === CHANNEL_CUT_ARRAY
+                ? buildChannelCutPayload()
+                : {
+                    pattern: buildPatternPayload(generatorType),
+                    hole: {
+                        shape: 'cylindrical',
+                        diameter_mm: readPositiveNumber(holeDiameterInput, 'Hole diameter'),
+                        depth_mm: readPositiveNumber(holeDepthInput, 'Hole depth'),
+                        axis: 'z',
+                        drill_from: 'positive_z_face',
+                    },
+                }),
             realize_now: true,
         });
         hide();

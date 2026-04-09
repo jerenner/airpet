@@ -377,6 +377,120 @@ def test_tiled_sensor_array_contract_defaults():
     }
 
 
+def test_support_rib_array_contract_defaults():
+    loaded = GeometryState.from_dict(
+        {
+            "detector_feature_generators": [
+                {
+                    "generator_type": "support_rib_array",
+                    "target": {
+                        "parent_logical_volume_ref": {"name": "World"},
+                    },
+                    "array": {
+                        "count": "4",
+                        "linear_pitch_mm": "8.5",
+                        "axis": "y",
+                        "origin_offset_mm": {"x": "1.5", "y": -2, "z": "3.25"},
+                    },
+                    "rib": {
+                        "width_mm": "1.2",
+                        "height_mm": 4,
+                        "material": "G4_Al",
+                    },
+                },
+            ]
+        }
+    )
+
+    assert len(loaded.detector_feature_generators) == 1
+    entry = loaded.detector_feature_generators[0]
+    assert entry["generator_id"].startswith("detector_feature_generator_")
+    assert entry["name"].startswith("support_rib_array_")
+    assert entry["generator_type"] == "support_rib_array"
+    assert entry["target"] == {
+        "parent_logical_volume_ref": {"name": "World"},
+    }
+    assert entry["array"] == {
+        "count": 4,
+        "linear_pitch_mm": 8.5,
+        "axis": "y",
+        "origin_offset_mm": {"x": 1.5, "y": -2.0, "z": 3.25},
+        "anchor": "target_center",
+    }
+    assert entry["rib"] == {
+        "width_mm": 1.2,
+        "height_mm": 4.0,
+        "material_ref": "G4_Al",
+        "is_sensitive": False,
+    }
+    assert entry["realization"] == {
+        "mode": "placement_array",
+        "status": "spec_only",
+        "result_solid_ref": None,
+        "generated_object_refs": {
+            "solid_refs": [],
+            "logical_volume_refs": [],
+            "placement_refs": [],
+        },
+    }
+
+
+def test_channel_cut_array_contract_defaults():
+    loaded = GeometryState.from_dict(
+        {
+            "detector_feature_generators": [
+                {
+                    "generator_type": "channel_cut_array",
+                    "target": {
+                        "solid_ref": {"name": "channel_block"},
+                    },
+                    "array": {
+                        "count": "3",
+                        "linear_pitch_mm": "7.5",
+                        "axis": "x",
+                        "origin_offset_mm": {"x": "1.0", "y": -1.5},
+                    },
+                    "channel": {
+                        "width_mm": "1.25",
+                        "depth_mm": 6,
+                    },
+                },
+            ]
+        }
+    )
+
+    assert len(loaded.detector_feature_generators) == 1
+    entry = loaded.detector_feature_generators[0]
+    assert entry["generator_id"].startswith("detector_feature_generator_")
+    assert entry["name"].startswith("channel_cut_array_")
+    assert entry["generator_type"] == "channel_cut_array"
+    assert entry["target"] == {
+        "solid_ref": {"name": "channel_block"},
+        "logical_volume_refs": [],
+    }
+    assert entry["array"] == {
+        "count": 3,
+        "linear_pitch_mm": 7.5,
+        "axis": "x",
+        "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        "anchor": "target_center",
+    }
+    assert entry["channel"] == {
+        "width_mm": 1.25,
+        "depth_mm": 6.0,
+    }
+    assert entry["realization"] == {
+        "mode": "boolean_subtraction",
+        "status": "spec_only",
+        "result_solid_ref": None,
+        "generated_object_refs": {
+            "solid_refs": [],
+            "logical_volume_refs": [],
+            "placement_refs": [],
+        },
+    }
+
+
 def test_detector_feature_generator_contract_roundtrips_through_project_manager():
     valid_payload = {
         "generator_id": "dfg_rect_holes_fixture",
@@ -1285,6 +1399,304 @@ def test_tiled_sensor_array_realization_reuses_generated_sensor_objects_and_repl
         "refresh_sensor_array__sensor_r2_c1_pv",
         "refresh_sensor_array__sensor_r2_c2_pv",
         "refresh_sensor_array__sensor_r2_c3_pv",
+    ]
+
+
+def test_support_rib_array_realization_creates_repeated_rib_geometry_and_generated_refs():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "support_parent_box",
+        "box",
+        {"x": "40", "y": "30", "z": "20"},
+    )
+    assert error_msg is None
+
+    parent_lv, error_msg = pm.add_logical_volume("support_parent_lv", "support_parent_box", "G4_Galactic")
+    assert error_msg is None
+    _, error_msg = pm.add_physical_volume(
+        "World",
+        "support_parent_pv",
+        "support_parent_lv",
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "1", "y": "1", "z": "1"},
+    )
+    assert error_msg is None
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_support_ribs_runtime",
+            "name": "fixture_support_ribs",
+            "generator_type": "support_rib_array",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": parent_lv["id"],
+                    "name": "support_parent_lv",
+                },
+            },
+            "array": {
+                "count": 3,
+                "linear_pitch_mm": 10,
+                "axis": "x",
+                "origin_offset_mm": {"x": 1, "y": -2, "z": 3},
+            },
+            "rib": {
+                "width_mm": 1.5,
+                "height_mm": 4,
+                "material_ref": "G4_Al",
+                "is_sensitive": False,
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_support_ribs_runtime")
+    assert error_msg is None
+    assert result["rib_count"] == 3
+    assert result["parent_logical_volume_name"] == "support_parent_lv"
+    assert result["rib_logical_volume_name"] == "fixture_support_ribs__rib_lv"
+
+    rib_solid = pm.current_geometry_state.solids[result["result_solid_name"]]
+    rib_lv = pm.current_geometry_state.logical_volumes[result["rib_logical_volume_name"]]
+    assert rib_solid.type == "box"
+    assert float(rib_solid.raw_parameters["x"]) == pytest.approx(1.5)
+    assert float(rib_solid.raw_parameters["y"]) == pytest.approx(30.0)
+    assert float(rib_solid.raw_parameters["z"]) == pytest.approx(4.0)
+    assert rib_lv.material_ref == "G4_Al"
+    assert rib_lv.is_sensitive is False
+
+    rib_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["support_parent_lv"].content
+        if pv.name.startswith("fixture_support_ribs__rib_")
+    ]
+    assert len(rib_pvs) == 3
+    assert [pv.name for pv in rib_pvs] == [
+        "fixture_support_ribs__rib_1_pv",
+        "fixture_support_ribs__rib_2_pv",
+        "fixture_support_ribs__rib_3_pv",
+    ]
+    assert [
+        (float(pv.position["x"]), float(pv.position["y"]), float(pv.position["z"]))
+        for pv in rib_pvs
+    ] == pytest.approx([
+        (-9.0, -2.0, 3.0),
+        (1.0, -2.0, 3.0),
+        (11.0, -2.0, 3.0),
+    ])
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    assert entry["realization"]["status"] == "generated"
+    assert entry["realization"]["mode"] == "placement_array"
+    assert entry["realization"]["result_solid_ref"] == {
+        "id": rib_solid.id,
+        "name": "fixture_support_ribs__rib_solid",
+    }
+    assert entry["realization"]["generated_object_refs"]["solid_refs"] == [
+        {"id": rib_solid.id, "name": "fixture_support_ribs__rib_solid"},
+    ]
+    assert entry["realization"]["generated_object_refs"]["logical_volume_refs"] == [
+        {"id": rib_lv.id, "name": "fixture_support_ribs__rib_lv"},
+    ]
+    assert len(entry["realization"]["generated_object_refs"]["placement_refs"]) == 3
+
+
+def test_support_rib_array_realization_reuses_generated_objects_and_replaces_old_placements():
+    pm = _make_pm()
+
+    _, error_msg = pm.add_solid(
+        "refresh_support_parent_box",
+        "box",
+        {"x": "36", "y": "24", "z": "18"},
+    )
+    assert error_msg is None
+
+    parent_lv, error_msg = pm.add_logical_volume("refresh_support_parent_lv", "refresh_support_parent_box", "G4_Galactic")
+    assert error_msg is None
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_support_ribs_refresh",
+            "name": "refresh_support_ribs",
+            "generator_type": "support_rib_array",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": parent_lv["id"],
+                    "name": "refresh_support_parent_lv",
+                },
+            },
+            "array": {
+                "count": 2,
+                "linear_pitch_mm": 12,
+                "axis": "y",
+                "origin_offset_mm": {"x": 0, "y": 1, "z": 2},
+            },
+            "rib": {
+                "width_mm": 2,
+                "height_mm": 3,
+                "material_ref": "G4_Al",
+                "is_sensitive": False,
+            },
+        }
+    ])
+
+    first_result, error_msg = pm.realize_detector_feature_generator("dfg_support_ribs_refresh")
+    assert error_msg is None
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    entry["array"]["count"] = 4
+    entry["array"]["linear_pitch_mm"] = 6.0
+    entry["array"]["axis"] = "x"
+    entry["rib"]["height_mm"] = 4.5
+
+    second_result, error_msg = pm.realize_detector_feature_generator("dfg_support_ribs_refresh")
+    assert error_msg is None
+    assert second_result["result_solid_name"] == first_result["result_solid_name"]
+    assert second_result["rib_logical_volume_name"] == first_result["rib_logical_volume_name"]
+    assert second_result["rib_count"] == 4
+
+    rib_solid = pm.current_geometry_state.solids[first_result["result_solid_name"]]
+    assert float(rib_solid.raw_parameters["x"]) == pytest.approx(2.0)
+    assert float(rib_solid.raw_parameters["y"]) == pytest.approx(24.0)
+    assert float(rib_solid.raw_parameters["z"]) == pytest.approx(4.5)
+
+    rib_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["refresh_support_parent_lv"].content
+        if pv.name.startswith("refresh_support_ribs__rib_")
+    ]
+    assert len(rib_pvs) == 4
+    assert [
+        (float(pv.position["x"]), float(pv.position["y"]), float(pv.position["z"]))
+        for pv in rib_pvs
+    ] == pytest.approx([
+        (-9.0, 1.0, 2.0),
+        (-3.0, 1.0, 2.0),
+        (3.0, 1.0, 2.0),
+        (9.0, 1.0, 2.0),
+    ])
+
+    placement_names = [
+        ref["name"]
+        for ref in pm.current_geometry_state.detector_feature_generators[0]["realization"]["generated_object_refs"]["placement_refs"]
+    ]
+    assert placement_names == [
+        "refresh_support_ribs__rib_1_pv",
+        "refresh_support_ribs__rib_2_pv",
+        "refresh_support_ribs__rib_3_pv",
+        "refresh_support_ribs__rib_4_pv",
+    ]
+
+
+def test_channel_cut_array_realization_creates_boolean_geometry_and_updates_targets():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "channel_block",
+        "box",
+        {"x": "24", "y": "18", "z": "12"},
+    )
+    assert error_msg is None
+
+    lv_a, error_msg = pm.add_logical_volume("channel_lv", "channel_block", "G4_Galactic")
+    assert error_msg is None
+    lv_b, error_msg = pm.add_logical_volume("channel_lv_copy", "channel_block", "G4_Galactic")
+    assert error_msg is None
+
+    pv_a, error_msg = pm.add_physical_volume(
+        "World",
+        "channel_pv",
+        "channel_lv",
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "1", "y": "1", "z": "1"},
+    )
+    assert error_msg is None
+    pv_b, error_msg = pm.add_physical_volume(
+        "World",
+        "channel_pv_copy",
+        "channel_lv_copy",
+        {"x": "30", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "1", "y": "1", "z": "1"},
+    )
+    assert error_msg is None
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_channel_runtime",
+            "name": "fixture_channels",
+            "generator_type": "channel_cut_array",
+            "target": {
+                "solid_ref": {
+                    "id": solid_dict["id"],
+                    "name": solid_dict["name"],
+                },
+            },
+            "array": {
+                "count": 4,
+                "linear_pitch_mm": 5,
+                "axis": "y",
+                "origin_offset_mm": {"x": 1, "y": -1.5},
+            },
+            "channel": {
+                "width_mm": 1.25,
+                "depth_mm": 7,
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_channel_runtime")
+    assert error_msg is None
+    assert result["channel_count"] == 4
+    assert result["updated_logical_volume_names"] == ["channel_lv", "channel_lv_copy"]
+
+    cutter_name = result["cutter_solid_name"]
+    result_name = result["result_solid_name"]
+    cutter_solid = pm.current_geometry_state.solids[cutter_name]
+    result_solid = pm.current_geometry_state.solids[result_name]
+
+    assert cutter_solid.type == "box"
+    assert float(cutter_solid.raw_parameters["x"]) == pytest.approx(24.0)
+    assert float(cutter_solid.raw_parameters["y"]) == pytest.approx(1.25)
+    assert float(cutter_solid.raw_parameters["z"]) == pytest.approx(7.0)
+
+    assert result_solid.type == "boolean"
+    recipe = result_solid.raw_parameters["recipe"]
+    assert recipe[0] == {"op": "base", "solid_ref": "channel_block"}
+    assert len(recipe) == 5
+    assert [
+        (
+            float(item["transform"]["position"]["x"]),
+            float(item["transform"]["position"]["y"]),
+            float(item["transform"]["position"]["z"]),
+        )
+        for item in recipe[1:]
+    ] == pytest.approx([
+        (1.0, -9.0, 2.5),
+        (1.0, -4.0, 2.5),
+        (1.0, 1.0, 2.5),
+        (1.0, 6.0, 2.5),
+    ])
+
+    assert pm.current_geometry_state.logical_volumes["channel_lv"].solid_ref == result_name
+    assert pm.current_geometry_state.logical_volumes["channel_lv_copy"].solid_ref == result_name
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    assert entry["realization"]["status"] == "generated"
+    assert entry["realization"]["result_solid_ref"] == {
+        "id": result_solid.id,
+        "name": result_name,
+    }
+    assert entry["realization"]["generated_object_refs"]["solid_refs"] == [
+        {"id": result_solid.id, "name": result_name},
+        {"id": cutter_solid.id, "name": cutter_name},
+    ]
+    assert entry["realization"]["generated_object_refs"]["logical_volume_refs"] == [
+        {"id": lv_a["id"], "name": "channel_lv"},
+        {"id": lv_b["id"], "name": "channel_lv_copy"},
+    ]
+    assert entry["realization"]["generated_object_refs"]["placement_refs"] == [
+        {"id": pv_a["id"], "name": "channel_pv"},
+        {"id": pv_b["id"], "name": "channel_pv_copy"},
     ]
 
 
