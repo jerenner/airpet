@@ -1017,6 +1017,70 @@ def test_ai_tool_manage_detector_feature_generator_supports_layered_stacks(pm):
     assert details["result"]["realization"]["mode"] == "layered_stack"
 
 
+def test_ai_tool_manage_detector_feature_generator_supports_tiled_sensor_arrays(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_sensor_array_fixture",
+        "type": "tiled_sensor_array",
+        "name": "ai_sensor_array",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "array": {
+            "count_x": 3,
+            "count_y": 2,
+            "pitch_mm": {"x": 7.5, "y": 6.0},
+            "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.25},
+        },
+        "sensor": {
+            "size_mm": {"x": 6.0, "y": 4.5},
+            "thickness_mm": 1.2,
+            "material_ref": "G4_Si",
+            "is_sensitive": True,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "tiled_sensor_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count_x": 3,
+        "count_y": 2,
+        "pitch_mm": {"x": 7.5, "y": 6.0},
+        "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.25},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["sensor"] == {
+        "size_mm": {"x": 6.0, "y": 4.5},
+        "thickness_mm": 1.2,
+        "material_ref": "G4_Si",
+        "is_sensitive": True,
+    }
+    assert result["detector_feature_realization"]["sensor_count"] == 6
+    assert result["detector_feature_realization"]["sensor_logical_volume_name"] == "ai_sensor_array__sensor_lv"
+
+    world_sensor_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_sensor_array__sensor_")
+    ]
+    assert len(world_sensor_pvs) == 6
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_sensor_array_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_sensor_array"
+    assert details["result"]["realization"]["mode"] == "placement_array"
+
+
 def test_ai_tool_create_primitive_solid(pm):
     res = dispatch_ai_tool(pm, "create_primitive_solid", {
         "name": "AI_Box",

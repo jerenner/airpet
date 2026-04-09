@@ -305,3 +305,94 @@ test('layered detector stack model and description stay deterministic', () => {
         'absorber 4 mm G4_Pb · sensor 1 mm G4_Si · support 2 mm G4_Al',
     );
 });
+
+test('tiled sensor array model and description stay deterministic', () => {
+    const projectState = {
+        solids: {
+            tiled_sensor_array__sensor_solid: {
+                id: 'solid-sensor-array-1',
+                name: 'tiled_sensor_array__sensor_solid',
+                type: 'box',
+            },
+        },
+        logical_volumes: {
+            World: { id: 'lv-world', name: 'World', solid_ref: 'world_box', content_type: 'physvol', content: [] },
+            tiled_sensor_array__sensor_lv: {
+                id: 'lv-sensor-array-1',
+                name: 'tiled_sensor_array__sensor_lv',
+                solid_ref: 'tiled_sensor_array__sensor_solid',
+                content_type: 'physvol',
+                content: [],
+            },
+        },
+    };
+
+    const entry = {
+        generator_id: 'dfg_tiled_sensor_fixture',
+        generator_type: 'tiled_sensor_array',
+        name: 'fixture_sensor_array',
+        target: {
+            parent_logical_volume_ref: { id: 'lv-world', name: 'World' },
+        },
+        array: {
+            count_x: 4,
+            count_y: 3,
+            pitch_mm: { x: 6.5, y: 5.0 },
+            origin_offset_mm: { x: 1.5, y: -2.0, z: 3.0 },
+        },
+        sensor: {
+            size_mm: { x: 5.8, y: 4.2 },
+            thickness_mm: 1.1,
+            material_ref: 'G4_Si',
+            is_sensitive: true,
+        },
+        realization: {
+            status: 'generated',
+            generated_object_refs: {
+                solid_refs: [
+                    { id: 'solid-sensor-array-1', name: 'tiled_sensor_array__sensor_solid' },
+                ],
+                logical_volume_refs: [
+                    { id: 'lv-sensor-array-1', name: 'tiled_sensor_array__sensor_lv' },
+                ],
+                placement_refs: [
+                    { id: 'pv-sensor-1', name: 'fixture_sensor_array__sensor_r1_c1_pv' },
+                    { id: 'pv-sensor-2', name: 'fixture_sensor_array__sensor_r1_c2_pv' },
+                    { id: 'pv-sensor-3', name: 'fixture_sensor_array__sensor_r1_c3_pv' },
+                    { id: 'pv-sensor-4', name: 'fixture_sensor_array__sensor_r1_c4_pv' },
+                ],
+            },
+        },
+    };
+
+    const model = buildDetectorFeatureGeneratorEditorModel(projectState, entry);
+    assert.equal(model.generatorType, 'tiled_sensor_array');
+    assert.equal(model.selectedStackTargetName, 'World');
+    assert.equal(model.countX, 4);
+    assert.equal(model.countY, 3);
+    assert.equal(model.pitchX, 6.5);
+    assert.equal(model.pitchY, 5.0);
+    assert.equal(model.tileSensorSizeX, 5.8);
+    assert.equal(model.tileSensorSizeY, 4.2);
+    assert.equal(model.tileSensorThickness, 1.1);
+    assert.equal(model.tileSensorMaterial, 'G4_Si');
+    assert.equal(model.tileSensorSensitive, true);
+
+    const described = describeDetectorFeatureGenerator(entry, projectState);
+    assert.equal(
+        described.summary,
+        'Tiled sensor array in World · 4 x 3 @ 6.5 x 5 mm pitch · 5.8 x 4.2 x 1.1 mm G4_Si',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Array Pattern').value,
+        '4 x 3 sensors @ 6.5 x 5 mm',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Sensor Cell').value,
+        '5.8 x 4.2 x 1.1 mm G4_Si',
+    );
+    assert.equal(
+        described.detailRows.find((row) => row.label === 'Sensitive').value,
+        'Yes',
+    );
+});

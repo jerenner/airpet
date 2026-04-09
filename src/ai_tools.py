@@ -355,7 +355,7 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
         "description": (
             "Create or update a saved detector feature generator. Current MVP supports "
             "rectangular drilled-hole arrays, a narrow circular bolt-circle variant, "
-            "and a fixed absorber/sensor/support layered detector stack. "
+            "a fixed absorber/sensor/support layered detector stack, and a rectangular tiled sensor array. "
             "Reuse generator_id to update an existing generator and keep realize_now=true "
             "when you want regenerated geometry plus a deterministic realization summary back."
         ),
@@ -376,6 +376,7 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                         "rectangular_drilled_hole_array",
                         "circular_drilled_hole_array",
                         "layered_detector_stack",
+                        "tiled_sensor_array",
                     ],
                     "description": "Detector feature generator type.",
                 },
@@ -403,7 +404,7 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                             "items": object_ref_schema,
                         },
                         "parent_logical_volume_ref": _detector_feature_object_ref_param(
-                            "Parent logical-volume reference for layered detector stacks."
+                            "Parent logical-volume reference for layered detector stacks and tiled sensor arrays."
                         ),
                     },
                 },
@@ -490,6 +491,56 @@ def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
                             "type": "string",
                             "enum": ["target_center"],
                         },
+                    },
+                },
+                "array": {
+                    "type": "object",
+                    "description": (
+                        "Rectangular tiled-sensor-array parameters. Tiled sensor arrays use "
+                        "count_x/count_y, pitch_mm, and origin_offset_mm."
+                    ),
+                    "properties": {
+                        "count_x": {"type": "integer"},
+                        "count_y": {"type": "integer"},
+                        "pitch_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                        },
+                        "origin_offset_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "z": {"type": "number"},
+                            },
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "enum": ["target_center"],
+                        },
+                    },
+                },
+                "sensor": {
+                    "type": "object",
+                    "description": (
+                        "Generated sensor-cell parameters for tiled sensor arrays. "
+                        "Provide size_mm, thickness_mm, material_ref, and optional is_sensitive."
+                    ),
+                    "properties": {
+                        "size_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                            "required": ["x", "y"],
+                        },
+                        "thickness_mm": {"type": "number"},
+                        "material_ref": {"type": "string"},
+                        "is_sensitive": {"type": "boolean"},
                     },
                 },
                 "layers": {

@@ -4668,6 +4668,7 @@
                         <option value="rectangular_drilled_hole_array">Rectangular Grid</option>
                         <option value="circular_drilled_hole_array">Circular (Bolt Circle)</option>
                         <option value="layered_detector_stack">Layered Detector Stack</option>
+                        <option value="tiled_sensor_array">Tiled Sensor Array</option>
                     </select>
                 </div>
                 <div class="property_item">
@@ -4755,6 +4756,28 @@
                         <input type="text" id="detectorFeatureGeneratorSupportMaterial" value="G4_Al" placeholder="e.g., G4_Al">
                     </div>
                 </div>
+                <div id="detectorFeatureGeneratorSensorArrayFields" hidden>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorTileSensorSizeX">Sensor Size X (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorTileSensorSizeX" min="0.001" step="any" value="6">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorTileSensorSizeY">Sensor Size Y (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorTileSensorSizeY" min="0.001" step="any" value="6">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorTileSensorThickness">Sensor Thickness (mm):</label>
+                        <input type="number" id="detectorFeatureGeneratorTileSensorThickness" min="0.001" step="any" value="1">
+                    </div>
+                    <div class="property_item">
+                        <label for="detectorFeatureGeneratorTileSensorMaterial">Sensor Material:</label>
+                        <input type="text" id="detectorFeatureGeneratorTileSensorMaterial" value="G4_Si" placeholder="e.g., G4_Si">
+                    </div>
+                    <div class="property_item">
+                        <input type="checkbox" id="detectorFeatureGeneratorTileSensorSensitive" checked>
+                        <label for="detectorFeatureGeneratorTileSensorSensitive" style="width:auto;">Mark generated sensors as sensitive</label>
+                    </div>
+                </div>
                 <div class="property_item">
                     <label for="detectorFeatureGeneratorOffsetX">Offset X (mm):</label>
                     <input type="number" id="detectorFeatureGeneratorOffsetX" step="any" value="0">
@@ -4777,7 +4800,7 @@
                         <input type="number" id="detectorFeatureGeneratorHoleDepth" min="0.001" step="any" value="5">
                     </div>
                 </div>
-                <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b;">Hole generators drill cylindrical holes along +Z into box solids. Layered stacks generate a fixed absorber/sensor/support sandwich and place repeated modules along +Z inside the selected parent logical volume.</p>
+                <p style="margin: 8px 0 0 0; font-size: 11px; color: #64748b;">Hole generators drill cylindrical holes along +Z into box solids. Layered stacks generate a fixed absorber/sensor/support sandwich, and tiled sensor arrays place repeated sensor cells on an X/Y grid inside the selected parent logical volume.</p>
             </div>
             <div class="modal-footer">
                 <button id="detectorFeatureGeneratorCancel">Cancel</button>

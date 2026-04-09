@@ -120,11 +120,14 @@ def test_detector_feature_generator_ai_schema_exposes_manage_and_inspect_tools()
         "rectangular_drilled_hole_array",
         "circular_drilled_hole_array",
         "layered_detector_stack",
+        "tiled_sensor_array",
     ]
     assert "target" in manage_properties
     assert "pattern" in manage_properties
     assert "hole" in manage_properties
     assert "stack" in manage_properties
+    assert "array" in manage_properties
+    assert "sensor" in manage_properties
     assert "layers" in manage_properties
     assert "realize_now" in manage_properties
     assert "generator_type" in manage_required

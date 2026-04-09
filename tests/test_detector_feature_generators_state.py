@@ -320,6 +320,63 @@ def test_layered_detector_stack_contract_defaults():
     }
 
 
+def test_tiled_sensor_array_contract_defaults():
+    loaded = GeometryState.from_dict(
+        {
+            "detector_feature_generators": [
+                {
+                    "generator_type": "tiled_sensor_array",
+                    "target": {
+                        "parent_logical_volume_ref": {"name": "World"},
+                    },
+                    "array": {
+                        "count_x": "4",
+                        "count_y": 3,
+                        "origin_offset_mm": {"x": "1.5", "y": -2, "z": "3.25"},
+                    },
+                    "sensor": {
+                        "size_mm": {"x": "6.0", "y": 4.5},
+                        "thickness_mm": "1.2",
+                        "material": "G4_Si",
+                    },
+                },
+            ]
+        }
+    )
+
+    assert len(loaded.detector_feature_generators) == 1
+    entry = loaded.detector_feature_generators[0]
+    assert entry["generator_id"].startswith("detector_feature_generator_")
+    assert entry["name"].startswith("tiled_sensor_array_")
+    assert entry["generator_type"] == "tiled_sensor_array"
+    assert entry["target"] == {
+        "parent_logical_volume_ref": {"name": "World"},
+    }
+    assert entry["array"] == {
+        "count_x": 4,
+        "count_y": 3,
+        "pitch_mm": {"x": 6.0, "y": 4.5},
+        "origin_offset_mm": {"x": 1.5, "y": -2.0, "z": 3.25},
+        "anchor": "target_center",
+    }
+    assert entry["sensor"] == {
+        "size_mm": {"x": 6.0, "y": 4.5},
+        "thickness_mm": 1.2,
+        "material_ref": "G4_Si",
+        "is_sensitive": True,
+    }
+    assert entry["realization"] == {
+        "mode": "placement_array",
+        "status": "spec_only",
+        "result_solid_ref": None,
+        "generated_object_refs": {
+            "solid_refs": [],
+            "logical_volume_refs": [],
+            "placement_refs": [],
+        },
+    }
+
+
 def test_detector_feature_generator_contract_roundtrips_through_project_manager():
     valid_payload = {
         "generator_id": "dfg_rect_holes_fixture",
@@ -1060,6 +1117,174 @@ def test_layered_detector_stack_realization_replaces_old_module_placements_on_re
         "refresh_layered_stack__absorber_pv",
         "refresh_layered_stack__sensor_pv",
         "refresh_layered_stack__support_pv",
+    ]
+
+
+def test_tiled_sensor_array_realization_creates_sensor_grid_and_generated_refs():
+    pm = _make_pm()
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_sensor_array_runtime",
+            "name": "fixture_sensor_array",
+            "generator_type": "tiled_sensor_array",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": world_lv.id,
+                    "name": "World",
+                },
+            },
+            "array": {
+                "count_x": 2,
+                "count_y": 3,
+                "pitch_mm": {"x": 7.0, "y": 5.5},
+                "origin_offset_mm": {"x": 1.5, "y": -2.0, "z": 3.0},
+            },
+            "sensor": {
+                "size_mm": {"x": 6.0, "y": 4.0},
+                "thickness_mm": 1.2,
+                "material_ref": "G4_Si",
+                "is_sensitive": True,
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_sensor_array_runtime")
+    assert error_msg is None
+    assert result["sensor_count"] == 6
+    assert result["parent_logical_volume_name"] == "World"
+    assert result["sensor_logical_volume_name"] == "fixture_sensor_array__sensor_lv"
+
+    sensor_solid = pm.current_geometry_state.solids[result["result_solid_name"]]
+    sensor_lv = pm.current_geometry_state.logical_volumes[result["sensor_logical_volume_name"]]
+    assert sensor_solid.type == "box"
+    assert float(sensor_solid.raw_parameters["x"]) == pytest.approx(6.0)
+    assert float(sensor_solid.raw_parameters["y"]) == pytest.approx(4.0)
+    assert float(sensor_solid.raw_parameters["z"]) == pytest.approx(1.2)
+    assert sensor_lv.material_ref == "G4_Si"
+    assert sensor_lv.is_sensitive is True
+
+    world_sensor_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("fixture_sensor_array__sensor_")
+    ]
+    assert len(world_sensor_pvs) == 6
+    assert [pv.name for pv in world_sensor_pvs] == [
+        "fixture_sensor_array__sensor_r1_c1_pv",
+        "fixture_sensor_array__sensor_r1_c2_pv",
+        "fixture_sensor_array__sensor_r2_c1_pv",
+        "fixture_sensor_array__sensor_r2_c2_pv",
+        "fixture_sensor_array__sensor_r3_c1_pv",
+        "fixture_sensor_array__sensor_r3_c2_pv",
+    ]
+    assert [
+        (float(pv.position["x"]), float(pv.position["y"]), float(pv.position["z"]))
+        for pv in world_sensor_pvs
+    ] == pytest.approx([
+        (-2.0, -7.5, 3.0),
+        (5.0, -7.5, 3.0),
+        (-2.0, -2.0, 3.0),
+        (5.0, -2.0, 3.0),
+        (-2.0, 3.5, 3.0),
+        (5.0, 3.5, 3.0),
+    ])
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    assert entry["realization"]["status"] == "generated"
+    assert entry["realization"]["mode"] == "placement_array"
+    assert entry["realization"]["result_solid_ref"] == {
+        "id": sensor_solid.id,
+        "name": "fixture_sensor_array__sensor_solid",
+    }
+    assert entry["realization"]["generated_object_refs"]["solid_refs"] == [
+        {"id": sensor_solid.id, "name": "fixture_sensor_array__sensor_solid"},
+    ]
+    assert entry["realization"]["generated_object_refs"]["logical_volume_refs"] == [
+        {"id": sensor_lv.id, "name": "fixture_sensor_array__sensor_lv"},
+    ]
+    assert len(entry["realization"]["generated_object_refs"]["placement_refs"]) == 6
+
+
+def test_tiled_sensor_array_realization_reuses_generated_sensor_objects_and_replaces_old_placements():
+    pm = _make_pm()
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_sensor_array_refresh",
+            "name": "refresh_sensor_array",
+            "generator_type": "tiled_sensor_array",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": world_lv.id,
+                    "name": "World",
+                },
+            },
+            "array": {
+                "count_x": 1,
+                "count_y": 2,
+                "pitch_mm": {"x": 6.0, "y": 5.0},
+                "origin_offset_mm": {"x": 0.0, "y": 0.0, "z": 1.0},
+            },
+            "sensor": {
+                "size_mm": {"x": 5.0, "y": 4.0},
+                "thickness_mm": 1.0,
+                "material_ref": "G4_Si",
+                "is_sensitive": True,
+            },
+        }
+    ])
+
+    first_result, error_msg = pm.realize_detector_feature_generator("dfg_sensor_array_refresh")
+    assert error_msg is None
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    entry["array"]["count_x"] = 3
+    entry["array"]["pitch_mm"]["x"] = 8.0
+    entry["array"]["origin_offset_mm"]["z"] = 4.0
+    entry["sensor"]["size_mm"]["y"] = 4.5
+    entry["sensor"]["thickness_mm"] = 1.4
+
+    second_result, error_msg = pm.realize_detector_feature_generator("dfg_sensor_array_refresh")
+    assert error_msg is None
+    assert second_result["result_solid_name"] == first_result["result_solid_name"]
+    assert second_result["sensor_logical_volume_name"] == first_result["sensor_logical_volume_name"]
+    assert second_result["sensor_count"] == 6
+
+    sensor_solid = pm.current_geometry_state.solids[first_result["result_solid_name"]]
+    assert float(sensor_solid.raw_parameters["x"]) == pytest.approx(5.0)
+    assert float(sensor_solid.raw_parameters["y"]) == pytest.approx(4.5)
+    assert float(sensor_solid.raw_parameters["z"]) == pytest.approx(1.4)
+
+    world_sensor_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("refresh_sensor_array__sensor_")
+    ]
+    assert len(world_sensor_pvs) == 6
+    assert [
+        (float(pv.position["x"]), float(pv.position["y"]), float(pv.position["z"]))
+        for pv in world_sensor_pvs
+    ] == pytest.approx([
+        (-8.0, -2.5, 4.0),
+        (0.0, -2.5, 4.0),
+        (8.0, -2.5, 4.0),
+        (-8.0, 2.5, 4.0),
+        (0.0, 2.5, 4.0),
+        (8.0, 2.5, 4.0),
+    ])
+
+    placement_names = [
+        ref["name"]
+        for ref in pm.current_geometry_state.detector_feature_generators[0]["realization"]["generated_object_refs"]["placement_refs"]
+    ]
+    assert placement_names == [
+        "refresh_sensor_array__sensor_r1_c1_pv",
+        "refresh_sensor_array__sensor_r1_c2_pv",
+        "refresh_sensor_array__sensor_r1_c3_pv",
+        "refresh_sensor_array__sensor_r2_c1_pv",
+        "refresh_sensor_array__sensor_r2_c2_pv",
+        "refresh_sensor_array__sensor_r2_c3_pv",
     ]
 
 

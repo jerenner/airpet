@@ -3,6 +3,7 @@ import { buildDetectorFeatureGeneratorEditorModel } from './detectorFeatureGener
 const RECTANGULAR_DRILLED_HOLE_ARRAY = 'rectangular_drilled_hole_array';
 const CIRCULAR_DRILLED_HOLE_ARRAY = 'circular_drilled_hole_array';
 const LAYERED_DETECTOR_STACK = 'layered_detector_stack';
+const TILED_SENSOR_ARRAY = 'tiled_sensor_array';
 
 let modalElement;
 let titleElement;
@@ -35,6 +36,12 @@ let sensorMaterialInput;
 let sensorSensitiveInput;
 let supportThicknessInput;
 let supportMaterialInput;
+let sensorArrayFields;
+let tileSensorSizeXInput;
+let tileSensorSizeYInput;
+let tileSensorThicknessInput;
+let tileSensorMaterialInput;
+let tileSensorSensitiveInput;
 let offsetXInput;
 let offsetYInput;
 let offsetZRow;
@@ -84,6 +91,12 @@ export function initDetectorFeatureGeneratorEditor(callbacks) {
     sensorSensitiveInput = document.getElementById('detectorFeatureGeneratorSensorSensitive');
     supportThicknessInput = document.getElementById('detectorFeatureGeneratorSupportThickness');
     supportMaterialInput = document.getElementById('detectorFeatureGeneratorSupportMaterial');
+    sensorArrayFields = document.getElementById('detectorFeatureGeneratorSensorArrayFields');
+    tileSensorSizeXInput = document.getElementById('detectorFeatureGeneratorTileSensorSizeX');
+    tileSensorSizeYInput = document.getElementById('detectorFeatureGeneratorTileSensorSizeY');
+    tileSensorThicknessInput = document.getElementById('detectorFeatureGeneratorTileSensorThickness');
+    tileSensorMaterialInput = document.getElementById('detectorFeatureGeneratorTileSensorMaterial');
+    tileSensorSensitiveInput = document.getElementById('detectorFeatureGeneratorTileSensorSensitive');
     offsetXInput = document.getElementById('detectorFeatureGeneratorOffsetX');
     offsetYInput = document.getElementById('detectorFeatureGeneratorOffsetY');
     offsetZRow = document.getElementById('detectorFeatureGeneratorOffsetZRow');
@@ -133,6 +146,11 @@ export function show(generatorEntry, projectState, selectedItems = []) {
     sensorSensitiveInput.checked = Boolean(model.sensorSensitive);
     supportThicknessInput.value = String(model.supportThickness);
     supportMaterialInput.value = model.supportMaterial;
+    tileSensorSizeXInput.value = String(model.tileSensorSizeX);
+    tileSensorSizeYInput.value = String(model.tileSensorSizeY);
+    tileSensorThicknessInput.value = String(model.tileSensorThickness);
+    tileSensorMaterialInput.value = model.tileSensorMaterial;
+    tileSensorSensitiveInput.checked = Boolean(model.tileSensorSensitive);
     offsetXInput.value = String(model.offsetX);
     offsetYInput.value = String(model.offsetY);
     offsetZInput.value = String(model.offsetZ);
@@ -168,14 +186,18 @@ function getCurrentGeneratorType() {
     return String(generatorTypeSelect?.value || RECTANGULAR_DRILLED_HOLE_ARRAY).trim();
 }
 
+function usesParentLogicalVolumeTarget(generatorType) {
+    return generatorType === LAYERED_DETECTOR_STACK || generatorType === TILED_SENSOR_ARRAY;
+}
+
 function getCurrentTargetOptions() {
-    return getCurrentGeneratorType() === LAYERED_DETECTOR_STACK
+    return usesParentLogicalVolumeTarget(getCurrentGeneratorType())
         ? currentStackTargetOptions
         : currentHoleTargetOptions;
 }
 
 function getCurrentSelectedTargetName() {
-    return getCurrentGeneratorType() === LAYERED_DETECTOR_STACK
+    return usesParentLogicalVolumeTarget(getCurrentGeneratorType())
         ? currentSelectedStackTargetName
         : currentSelectedHoleTargetName;
 }
@@ -210,15 +232,19 @@ function updateTargetSummary() {
     const optionData = getCurrentTargetOptions().find((option) => option.name === selectedName);
 
     if (!optionData) {
-        targetSummary.textContent = generatorType === LAYERED_DETECTOR_STACK
-            ? 'Select a parent logical volume for the generated stack.'
+        targetSummary.textContent = usesParentLogicalVolumeTarget(generatorType)
+            ? generatorType === TILED_SENSOR_ARRAY
+                ? 'Select a parent logical volume for the tiled sensors.'
+                : 'Select a parent logical volume for the generated stack.'
             : 'Select a box solid to target.';
         targetSummary.title = '';
         return;
     }
 
-    if (generatorType === LAYERED_DETECTOR_STACK) {
-        targetSummary.textContent = `Parent logical volume: ${optionData.placementSummary}. Generated modules will be centered on the saved offset.`;
+    if (usesParentLogicalVolumeTarget(generatorType)) {
+        targetSummary.textContent = generatorType === TILED_SENSOR_ARRAY
+            ? `Parent logical volume: ${optionData.placementSummary}. Generated sensor cells will be centered on the saved X/Y/Z offset.`
+            : `Parent logical volume: ${optionData.placementSummary}. Generated modules will be centered on the saved offset.`;
         targetSummary.title = '';
         currentSelectedStackTargetName = optionData.name;
         return;
@@ -242,9 +268,13 @@ function updateTargetSummary() {
 function updateGeneratorTypeSections() {
     const generatorType = getCurrentGeneratorType();
     const isLayeredStack = generatorType === LAYERED_DETECTOR_STACK;
+    const isTiledSensorArray = generatorType === TILED_SENSOR_ARRAY;
 
     if (rectangularFields) {
-        rectangularFields.hidden = generatorType !== RECTANGULAR_DRILLED_HOLE_ARRAY;
+        rectangularFields.hidden = (
+            generatorType !== RECTANGULAR_DRILLED_HOLE_ARRAY
+            && !isTiledSensorArray
+        );
     }
     if (circularFields) {
         circularFields.hidden = generatorType !== CIRCULAR_DRILLED_HOLE_ARRAY;
@@ -252,17 +282,20 @@ function updateGeneratorTypeSections() {
     if (layeredFields) {
         layeredFields.hidden = !isLayeredStack;
     }
+    if (sensorArrayFields) {
+        sensorArrayFields.hidden = !isTiledSensorArray;
+    }
     if (holeFields) {
-        holeFields.hidden = isLayeredStack;
+        holeFields.hidden = isLayeredStack || isTiledSensorArray;
     }
     if (offsetZRow) {
-        offsetZRow.hidden = !isLayeredStack;
+        offsetZRow.hidden = !isLayeredStack && !isTiledSensorArray;
     }
     if (targetLabel) {
-        targetLabel.textContent = isLayeredStack ? 'Parent LV:' : 'Target Solid:';
+        targetLabel.textContent = usesParentLogicalVolumeTarget(generatorType) ? 'Parent LV:' : 'Target Solid:';
     }
 
-    if (isLayeredStack) {
+    if (usesParentLogicalVolumeTarget(generatorType)) {
         populateTargetOptions(currentStackTargetOptions, currentSelectedStackTargetName, 'parent');
     } else {
         populateTargetOptions(currentHoleTargetOptions, currentSelectedHoleTargetName, 'solid');
@@ -367,6 +400,34 @@ function buildLayeredStackPayload() {
     };
 }
 
+function buildTiledSensorArrayPayload() {
+    return {
+        array: {
+            count_x: readPositiveInteger(countXInput, 'Count X'),
+            count_y: readPositiveInteger(countYInput, 'Count Y'),
+            pitch_mm: {
+                x: readPositiveNumber(pitchXInput, 'Pitch X'),
+                y: readPositiveNumber(pitchYInput, 'Pitch Y'),
+            },
+            origin_offset_mm: {
+                x: readFiniteNumber(offsetXInput, 'Offset X'),
+                y: readFiniteNumber(offsetYInput, 'Offset Y'),
+                z: readFiniteNumber(offsetZInput, 'Offset Z'),
+            },
+            anchor: 'target_center',
+        },
+        sensor: {
+            size_mm: {
+                x: readPositiveNumber(tileSensorSizeXInput, 'Sensor size X'),
+                y: readPositiveNumber(tileSensorSizeYInput, 'Sensor size Y'),
+            },
+            thickness_mm: readPositiveNumber(tileSensorThicknessInput, 'Sensor thickness'),
+            material_ref: readRequiredText(tileSensorMaterialInput, 'Sensor material'),
+            is_sensitive: Boolean(tileSensorSensitiveInput.checked),
+        },
+    };
+}
+
 function handleConfirm() {
     if (!onConfirmCallback) {
         return;
@@ -382,12 +443,12 @@ function handleConfirm() {
         const selectedOption = targetSelect.selectedOptions?.[0];
         const targetName = String(targetSelect.value || '').trim();
         if (!targetName) {
-            throw new Error(generatorType === LAYERED_DETECTOR_STACK
+            throw new Error(usesParentLogicalVolumeTarget(generatorType)
                 ? 'Please choose a parent logical volume.'
                 : 'Please choose a target solid.');
         }
 
-        if (generatorType === LAYERED_DETECTOR_STACK) {
+        if (usesParentLogicalVolumeTarget(generatorType)) {
             onConfirmCallback({
                 generator_id: currentGeneratorEntry?.generator_id,
                 generator_type: generatorType,
@@ -398,7 +459,9 @@ function handleConfirm() {
                         name: targetName,
                     },
                 },
-                ...buildLayeredStackPayload(),
+                ...(generatorType === TILED_SENSOR_ARRAY
+                    ? buildTiledSensorArrayPayload()
+                    : buildLayeredStackPayload()),
                 realize_now: true,
             });
             hide();

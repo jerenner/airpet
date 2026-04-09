@@ -2483,7 +2483,7 @@ function renderDetectorFeatureGeneratorsPanel(projectState) {
 
     const intro = document.createElement('p');
     intro.className = 'detector-feature-generators-intro';
-    intro.textContent = 'Create drilled-hole patterns against box solids or a fixed absorber/sensor/support detector stack inside a parent logical volume, then keep the saved generator parameters editable.';
+    intro.textContent = 'Create drilled-hole patterns against box solids, a fixed absorber/sensor/support detector stack, or a tiled sensor array inside a parent logical volume, then keep the saved generator parameters editable.';
     detectorFeatureGeneratorsPanelRoot.appendChild(intro);
 
     const toolbar = document.createElement('div');
@@ -2591,7 +2591,9 @@ function renderDetectorFeatureGeneratorsPanel(projectState) {
         note.className = 'detector-feature-note';
         note.textContent = rawEntry?.generator_type === 'layered_detector_stack'
             ? 'This first stack slice keeps the parent LV fixed after creation and focuses revisions on module layout plus absorber/sensor/support sandwich parameters.'
-            : 'This first patterned-hole slice keeps the target solid fixed after creation and focuses revisions on counts, pitch, offsets, and hole size.';
+            : rawEntry?.generator_type === 'tiled_sensor_array'
+                ? 'This first tiled-array slice keeps the parent LV fixed after creation and focuses revisions on grid counts, pitch, offsets, and the generated sensor-cell geometry.'
+                : 'This first patterned-hole slice keeps the target solid fixed after creation and focuses revisions on counts, pitch, offsets, and hole size.';
         body.appendChild(note);
 
         card.appendChild(body);

@@ -1785,6 +1785,195 @@ class ProjectManager:
             'layer_summary': ", ".join(layer_detail_parts),
         }, None
 
+    def _realize_tiled_sensor_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        sensor = generator_entry.get('sensor', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Tiled sensor-array generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+
+        if array.get('anchor') != 'target_center':
+            return None, "Tiled sensor-array generators currently require anchor 'target_center'."
+
+        count_x = int(array.get('count_x') or 0)
+        count_y = int(array.get('count_y') or 0)
+        pitch = array.get('pitch_mm') or {}
+        pitch_x = float(pitch.get('x') or 0.0)
+        pitch_y = float(pitch.get('y') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+        if count_x <= 0 or count_y <= 0:
+            return None, "Tiled sensor-array generators require positive x/y counts."
+        if pitch_x <= 0.0 or pitch_y <= 0.0:
+            return None, "Tiled sensor-array generators require positive x/y pitch values."
+
+        sensor_size = sensor.get('size_mm') or {}
+        sensor_size_x = float(sensor_size.get('x') or 0.0)
+        sensor_size_y = float(sensor_size.get('y') or 0.0)
+        sensor_thickness = float(sensor.get('thickness_mm') or 0.0)
+        sensor_material_ref = str(sensor.get('material_ref') or '').strip()
+        sensor_sensitive = bool(sensor.get('is_sensitive', True))
+        if sensor_size_x <= 0.0 or sensor_size_y <= 0.0:
+            return None, "Tiled sensor-array generators require positive sensor X/Y sizes."
+        if sensor_thickness <= 0.0:
+            return None, "Tiled sensor-array generators require positive sensor thickness."
+        if not sensor_material_ref:
+            return None, "Tiled sensor-array generators require a sensor material."
+        if pitch_x + 1e-9 < sensor_size_x or pitch_y + 1e-9 < sensor_size_y:
+            return None, (
+                f"Tiled sensor-array generator '{generator_name}' requires x/y pitch to be at least "
+                "the generated sensor size to avoid overlapping placements."
+            )
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        sensor_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__sensor_solid',
+            object_type='box',
+        )
+        if sensor_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'box':
+                sensor_solid_name = prior_result_name
+        if sensor_solid_name is None:
+            sensor_solid_name = self._generate_unique_name(
+                f"{generator_name}__sensor_solid",
+                state.solids,
+            )
+
+        sensor_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__sensor_lv',
+        )
+        if sensor_lv_name is None:
+            sensor_lv_name = self._generate_unique_name(
+                f"{generator_name}__sensor_lv",
+                state.logical_volumes,
+            )
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        sensor_solid = self._upsert_detector_feature_generated_solid(
+            sensor_solid_name,
+            'box',
+            {
+                'x': _fmt(sensor_size_x),
+                'y': _fmt(sensor_size_y),
+                'z': _fmt(sensor_thickness),
+            },
+        )
+
+        sensor_lv = self._upsert_detector_feature_generated_logical_volume(
+            sensor_lv_name,
+            solid_ref=sensor_solid_name,
+            material_ref=sensor_material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('sensor'),
+            is_sensitive=sensor_sensitive,
+        )
+        sensor_lv.content = []
+
+        parent_copy_start = self._get_next_copy_number(parent_lv)
+        x_origin = offset_x - (((count_x - 1) * pitch_x) / 2.0)
+        y_origin = offset_y - (((count_y - 1) * pitch_y) / 2.0)
+        sensor_placements = []
+        placement_index = 0
+        for row_index in range(count_y):
+            y_position = y_origin + (row_index * pitch_y)
+            for column_index in range(count_x):
+                x_position = x_origin + (column_index * pitch_x)
+                placement_index += 1
+                sensor_pv = PhysicalVolumePlacement(
+                    name=f"{generator_name}__sensor_r{row_index + 1}_c{column_index + 1}_pv",
+                    volume_ref=sensor_lv_name,
+                    parent_lv_name=parent_lv_name,
+                    copy_number_expr=str(parent_copy_start + placement_index - 1),
+                    position_val_or_ref={
+                        'x': _fmt(x_position),
+                        'y': _fmt(y_position),
+                        'z': _fmt(offset_z),
+                    },
+                    rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                    scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+                )
+                sensor_placements.append(sensor_pv)
+
+        parent_lv.content.extend(sensor_placements)
+
+        generator_entry['realization'] = {
+            'mode': 'placement_array',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(sensor_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(sensor_solid),
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(sensor_lv),
+                ],
+                'placement_refs': [
+                    self._build_detector_feature_object_ref(sensor_pv)
+                    for sensor_pv in sensor_placements
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [sensor_solid_name],
+            'generated_logical_volume_names': [sensor_lv_name],
+            'generated_placement_names': [sensor_pv.name for sensor_pv in sensor_placements],
+            'result_solid_name': sensor_solid_name,
+            'sensor_logical_volume_name': sensor_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'sensor_count': len(sensor_placements),
+            'count_x': count_x,
+            'count_y': count_y,
+            'pitch_x_mm': pitch_x,
+            'pitch_y_mm': pitch_y,
+            'sensor_size_x_mm': sensor_size_x,
+            'sensor_size_y_mm': sensor_size_y,
+            'sensor_thickness_mm': sensor_thickness,
+        }, None
+
     def _realize_detector_feature_generator_entry(self, generator_entry):
         generator_type = generator_entry.get('generator_type')
         if generator_type == 'rectangular_drilled_hole_array':
@@ -1793,6 +1982,8 @@ class ProjectManager:
             return self._realize_circular_drilled_hole_array(generator_entry)
         if generator_type == 'layered_detector_stack':
             return self._realize_layered_detector_stack(generator_entry)
+        if generator_type == 'tiled_sensor_array':
+            return self._realize_tiled_sensor_array(generator_entry)
 
         return None, (
             f"Detector feature generator type '{generator_type}' is not supported for realization."
@@ -1819,8 +2010,12 @@ class ProjectManager:
                 candidate_entry['pattern'] = deepcopy(existing_entry.get('pattern', {}))
             if 'stack' not in candidate_entry:
                 candidate_entry['stack'] = deepcopy(existing_entry.get('stack', {}))
+            if 'array' not in candidate_entry:
+                candidate_entry['array'] = deepcopy(existing_entry.get('array', {}))
             if 'layers' not in candidate_entry:
                 candidate_entry['layers'] = deepcopy(existing_entry.get('layers', {}))
+            if 'sensor' not in candidate_entry:
+                candidate_entry['sensor'] = deepcopy(existing_entry.get('sensor', {}))
             if 'hole' not in candidate_entry:
                 candidate_entry['hole'] = deepcopy(existing_entry.get('hole', {}))
             if 'realization' not in candidate_entry:
@@ -1861,6 +2056,8 @@ class ProjectManager:
                 realization_mode = (
                     'layered_stack'
                     if generator_entry.get('generator_type') == 'layered_detector_stack'
+                    else 'placement_array'
+                    if generator_entry.get('generator_type') == 'tiled_sensor_array'
                     else 'boolean_subtraction'
                 )
                 generator_entry['realization'] = {
