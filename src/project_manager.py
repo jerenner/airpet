@@ -1834,6 +1834,11 @@ class ProjectManager:
                 f"Tiled sensor-array generators require parent logical volume "
                 f"'{parent_lv_name}' to use standard placements."
             )
+        if not self._logical_volume_is_instantiated_in_scene(parent_lv_name):
+            return None, (
+                f"Tiled sensor-array generators require parent logical volume "
+                f"'{parent_lv_name}' to already be placed in the live scene so generated sensors are visible."
+            )
 
         if array.get('anchor') != 'target_center':
             return None, "Tiled sensor-array generators currently require anchor 'target_center'."
@@ -7992,6 +7997,22 @@ class ProjectManager:
                     placements.append(pv)
 
         return placements
+
+    def _logical_volume_is_instantiated_in_scene(self, lv_name):
+        """Returns True when the logical volume currently has at least one live scene instance."""
+        state = self.current_geometry_state
+        if not state or not lv_name:
+            return False
+        if lv_name == state.world_volume_ref:
+            return True
+
+        for scene_item in state.get_threejs_scene_description():
+            if scene_item.get('is_source'):
+                continue
+            if str(scene_item.get('volume_ref') or '').strip() == lv_name:
+                return True
+
+        return False
 
     def _calculate_global_transform_matrix(self, start_pv):
         """Returns the 4x4 global transform matrix for a placed physical volume."""

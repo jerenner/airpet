@@ -78,6 +78,90 @@ function getLogicalVolumeNamesForSolid(projectState, solidName) {
         .sort((a, b) => a.localeCompare(b));
 }
 
+function countInstantiatedLogicalVolumes(projectState) {
+    const logicalVolumes = projectState?.logical_volumes || {};
+    const assemblies = projectState?.assemblies || {};
+    const worldVolumeName = normalizeString(projectState?.world_volume_ref, '');
+    const instanceCounts = new Map();
+
+    function incrementLogicalVolume(name) {
+        const normalizedName = normalizeString(name, '');
+        if (!normalizedName) {
+            return;
+        }
+        instanceCounts.set(normalizedName, (instanceCounts.get(normalizedName) || 0) + 1);
+    }
+
+    function visitPlacedRef(volumeRef, path = []) {
+        const normalizedRef = normalizeString(volumeRef, '');
+        if (!normalizedRef) {
+            return;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(logicalVolumes, normalizedRef)) {
+            incrementLogicalVolume(normalizedRef);
+            visitLogicalVolume(normalizedRef, path);
+            return;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(assemblies, normalizedRef)) {
+            visitAssembly(normalizedRef, path);
+        }
+    }
+
+    function visitAssembly(assemblyName, path = []) {
+        const normalizedName = normalizeString(assemblyName, '');
+        const cycleKey = `ASM:${normalizedName}`;
+        if (!normalizedName || path.includes(cycleKey)) {
+            return;
+        }
+
+        const assembly = assemblies[normalizedName];
+        if (!assembly) {
+            return;
+        }
+
+        const nextPath = [...path, cycleKey];
+        const placements = Array.isArray(assembly.placements) ? assembly.placements : [];
+        placements.forEach((placement) => {
+            visitPlacedRef(placement?.volume_ref, nextPath);
+        });
+    }
+
+    function visitLogicalVolume(logicalVolumeName, path = []) {
+        const normalizedName = normalizeString(logicalVolumeName, '');
+        const cycleKey = `LV:${normalizedName}`;
+        if (!normalizedName || path.includes(cycleKey)) {
+            return;
+        }
+
+        const logicalVolume = logicalVolumes[normalizedName];
+        if (!logicalVolume) {
+            return;
+        }
+
+        const nextPath = [...path, cycleKey];
+        const contentType = normalizeString(logicalVolume.content_type, 'physvol');
+        if (contentType === 'physvol') {
+            const placements = Array.isArray(logicalVolume.content) ? logicalVolume.content : [];
+            placements.forEach((placement) => {
+                visitPlacedRef(placement?.volume_ref, nextPath);
+            });
+            return;
+        }
+
+        visitPlacedRef(logicalVolume.content?.volume_ref, nextPath);
+    }
+
+    if (!worldVolumeName || !Object.prototype.hasOwnProperty.call(logicalVolumes, worldVolumeName)) {
+        return instanceCounts;
+    }
+
+    incrementLogicalVolume(worldVolumeName);
+    visitLogicalVolume(worldVolumeName, []);
+    return instanceCounts;
+}
+
 function buildDefaultGeneratorName(targetName, generatorType) {
     const base = normalizeString(targetName, 'detector_feature').replace(/[^\w]+/g, '_');
     if (generatorType === LAYERED_DETECTOR_STACK) {
@@ -206,29 +290,44 @@ export function listDetectorFeatureGeneratorTargetOptions(projectState) {
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function listDetectorFeatureGeneratorParentOptions(projectState) {
+export function listDetectorFeatureGeneratorParentOptions(projectState, includeDetachedLogicalVolumeName = '') {
     const logicalVolumes = projectState?.logical_volumes || {};
+    const instantiatedLogicalVolumeCounts = countInstantiatedLogicalVolumes(projectState);
+    const includedDetachedName = normalizeString(includeDetachedLogicalVolumeName, '');
+    const shouldFilterByScenePlacement = instantiatedLogicalVolumeCounts.size > 0;
 
     return Object.values(logicalVolumes)
         .filter((lv) => lv && normalizeString(lv.content_type, 'physvol') === 'physvol')
         .map((lv) => {
             const placementCount = Array.isArray(lv.content) ? lv.content.length : 0;
+            const name = normalizeString(lv.name, '');
+            const scenePlacementCount = instantiatedLogicalVolumeCounts.get(name) || 0;
+            const isInstantiated = !shouldFilterByScenePlacement || scenePlacementCount > 0;
             return {
                 id: normalizeString(lv.id, ''),
-                name: normalizeString(lv.name, ''),
+                name,
                 placementCount,
                 placementSummary: placementCount > 0
                     ? pluralize(placementCount, 'child placement')
                     : 'no child placements yet',
+                scenePlacementCount,
+                scenePlacementSummary: isInstantiated
+                    ? pluralize(scenePlacementCount || 1, 'live scene instance')
+                    : 'not placed in the live scene yet',
+                isInstantiated,
             };
         })
         .filter((option) => option.name)
+        .filter((option) => option.isInstantiated || option.name === includedDetachedName)
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function buildDetectorFeatureGeneratorEditorModel(projectState, generatorEntry = null, selectedItems = []) {
     const holeTargetOptions = listDetectorFeatureGeneratorTargetOptions(projectState);
-    const stackTargetOptions = listDetectorFeatureGeneratorParentOptions(projectState);
+    const stackTargetOptions = listDetectorFeatureGeneratorParentOptions(
+        projectState,
+        resolveObjectName(generatorEntry?.target?.parent_logical_volume_ref, projectState?.logical_volumes || {}),
+    );
     const fallbackType = holeTargetOptions.length > 0
         ? RECTANGULAR_DRILLED_HOLE_ARRAY
         : SUPPORT_RIB_ARRAY;
@@ -268,6 +367,8 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
     const channel = generatorEntry?.channel || {};
     const shield = generatorEntry?.shield || {};
     const shieldOriginOffset = shield.origin_offset_mm || {};
+    const defaultTileSensorSizeX = Number.isFinite(Number(tiledSensorSize.x)) ? Number(tiledSensorSize.x) : 6;
+    const defaultTileSensorSizeY = Number.isFinite(Number(tiledSensorSize.y)) ? Number(tiledSensorSize.y) : 6;
     const parentOriginOffset = (
         generatorType === TILED_SENSOR_ARRAY || generatorType === SUPPORT_RIB_ARRAY
     )
@@ -307,10 +408,14 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
         )) ? Number(generatorType === TILED_SENSOR_ARRAY ? array.count_y : pattern.count_y) : 3,
         pitchX: Number.isFinite(Number(
             generatorType === TILED_SENSOR_ARRAY ? arrayPitch.x : pitch.x
-        )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayPitch.x : pitch.x) : 5,
+        )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayPitch.x : pitch.x) : (
+            generatorType === TILED_SENSOR_ARRAY ? defaultTileSensorSizeX : 5
+        ),
         pitchY: Number.isFinite(Number(
             generatorType === TILED_SENSOR_ARRAY ? arrayPitch.y : pitch.y
-        )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayPitch.y : pitch.y) : 5,
+        )) ? Number(generatorType === TILED_SENSOR_ARRAY ? arrayPitch.y : pitch.y) : (
+            generatorType === TILED_SENSOR_ARRAY ? defaultTileSensorSizeY : 5
+        ),
         linearCount: Number.isFinite(Number(array.count)) ? Number(array.count) : 4,
         linearPitch: Number.isFinite(Number(array.linear_pitch_mm)) ? Number(array.linear_pitch_mm) : 8,
         linearAxis: normalizeString(array.axis, 'x').toLowerCase() === 'y' ? 'y' : 'x',
@@ -361,8 +466,8 @@ export function buildDetectorFeatureGeneratorEditorModel(projectState, generator
         sensorSensitive: Boolean(sensor.is_sensitive ?? true),
         supportThickness: Number.isFinite(Number(support.thickness_mm)) ? Number(support.thickness_mm) : 2,
         supportMaterial: normalizeString(support.material_ref, 'G4_Al'),
-        tileSensorSizeX: Number.isFinite(Number(tiledSensorSize.x)) ? Number(tiledSensorSize.x) : 6,
-        tileSensorSizeY: Number.isFinite(Number(tiledSensorSize.y)) ? Number(tiledSensorSize.y) : 6,
+        tileSensorSizeX: defaultTileSensorSizeX,
+        tileSensorSizeY: defaultTileSensorSizeY,
         tileSensorThickness: Number.isFinite(Number(tiledSensor.thickness_mm)) ? Number(tiledSensor.thickness_mm) : 1,
         tileSensorMaterial: normalizeString(tiledSensor.material_ref, 'G4_Si'),
         tileSensorSensitive: Boolean(tiledSensor.is_sensitive ?? true),

@@ -1419,6 +1419,71 @@ def test_tiled_sensor_array_realization_creates_sensor_grid_and_generated_refs()
     ]
     assert len(entry["realization"]["generated_object_refs"]["placement_refs"]) == 6
 
+    scene_names = {
+        item["name"]
+        for item in pm.get_threejs_description()
+        if item.get("name", "").startswith("fixture_sensor_array__sensor_")
+    }
+    assert scene_names == {
+        "fixture_sensor_array__sensor_r1_c1_pv",
+        "fixture_sensor_array__sensor_r1_c2_pv",
+        "fixture_sensor_array__sensor_r2_c1_pv",
+        "fixture_sensor_array__sensor_r2_c2_pv",
+        "fixture_sensor_array__sensor_r3_c1_pv",
+        "fixture_sensor_array__sensor_r3_c2_pv",
+    }
+
+
+def test_tiled_sensor_array_realization_requires_instantiated_parent_lv():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "detached_sensor_parent_box",
+        "box",
+        {"x": "30", "y": "20", "z": "10"},
+    )
+    assert error_msg is None
+
+    parent_lv, error_msg = pm.add_logical_volume(
+        "detached_sensor_parent_lv",
+        solid_dict["name"],
+        pm.current_geometry_state.logical_volumes["World"].material_ref,
+    )
+    assert error_msg is None
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_detached_sensor_array",
+            "name": "detached_sensor_array",
+            "generator_type": "tiled_sensor_array",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": parent_lv["id"],
+                    "name": "detached_sensor_parent_lv",
+                },
+            },
+            "array": {
+                "count_x": 2,
+                "count_y": 2,
+                "pitch_mm": {"x": 6.0, "y": 6.0},
+                "origin_offset_mm": {"x": 0.0, "y": 0.0, "z": 0.0},
+            },
+            "sensor": {
+                "size_mm": {"x": 6.0, "y": 6.0},
+                "thickness_mm": 1.0,
+                "material_ref": "G4_Si",
+                "is_sensitive": True,
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_detached_sensor_array")
+    assert result is None
+    assert error_msg == (
+        "Tiled sensor-array generators require parent logical volume "
+        "'detached_sensor_parent_lv' to already be placed in the live scene so generated sensors are visible."
+    )
+
 
 def test_tiled_sensor_array_realization_reuses_generated_sensor_objects_and_replaces_old_placements():
     pm = _make_pm()

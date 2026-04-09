@@ -257,28 +257,29 @@ function getCurrentTargetOptions() {
 
 function getEmptyParentTargetSummary(generatorType) {
     if (generatorType === TILED_SENSOR_ARRAY) {
-        return 'Select a parent logical volume for the tiled sensors.';
+        return 'Select a placed parent logical volume for the tiled sensors.';
     }
     if (generatorType === SUPPORT_RIB_ARRAY) {
-        return 'Select a parent logical volume for the generated support ribs.';
+        return 'Select a placed parent logical volume for the generated support ribs.';
     }
     if (generatorType === ANNULAR_SHIELD_SLEEVE) {
-        return 'Select a parent logical volume for the generated shield sleeve.';
+        return 'Select a placed parent logical volume for the generated shield sleeve.';
     }
-    return 'Select a parent logical volume for the generated stack.';
+    return 'Select a placed parent logical volume for the generated stack.';
 }
 
 function getParentTargetSummary(generatorType, optionData) {
+    const placementContext = `${optionData.scenePlacementSummary}; ${optionData.placementSummary}`;
     if (generatorType === TILED_SENSOR_ARRAY) {
-        return `Parent logical volume: ${optionData.placementSummary}. Generated sensor cells will be centered on the saved X/Y/Z offset.`;
+        return `Parent logical volume: ${placementContext}. Generated sensor cells will be centered on the saved X/Y/Z offset.`;
     }
     if (generatorType === SUPPORT_RIB_ARRAY) {
-        return `Parent logical volume: ${optionData.placementSummary}. Generated ribs will be centered on the saved X/Y/Z offset.`;
+        return `Parent logical volume: ${placementContext}. Generated ribs will be centered on the saved X/Y/Z offset.`;
     }
     if (generatorType === ANNULAR_SHIELD_SLEEVE) {
-        return `Parent logical volume: ${optionData.placementSummary}. Generated shield sleeves will be centered on the saved X/Y/Z offset.`;
+        return `Parent logical volume: ${placementContext}. Generated shield sleeves will be centered on the saved X/Y/Z offset.`;
     }
-    return `Parent logical volume: ${optionData.placementSummary}. Generated modules will be centered on the saved offset.`;
+    return `Parent logical volume: ${placementContext}. Generated modules will be centered on the saved offset.`;
 }
 
 function populateTargetOptions(options, selectedName, targetType) {

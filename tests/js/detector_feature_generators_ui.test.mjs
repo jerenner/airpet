@@ -306,6 +306,62 @@ test('layered detector stack model and description stay deterministic', () => {
     );
 });
 
+test('tiled sensor array defaults pitch to the sensor size and hides detached parent volumes', () => {
+    const projectState = {
+        world_volume_ref: 'World',
+        logical_volumes: {
+            World: {
+                id: 'lv-world',
+                name: 'World',
+                solid_ref: 'world_box',
+                content_type: 'physvol',
+                content: [
+                    {
+                        id: 'pv-parent',
+                        name: 'placed_parent_pv',
+                        volume_ref: 'placed_parent_lv',
+                    },
+                ],
+            },
+            placed_parent_lv: {
+                id: 'lv-parent',
+                name: 'placed_parent_lv',
+                solid_ref: 'placed_parent_box',
+                content_type: 'physvol',
+                content: [],
+            },
+            detached_parent_lv: {
+                id: 'lv-detached',
+                name: 'detached_parent_lv',
+                solid_ref: 'detached_parent_box',
+                content_type: 'physvol',
+                content: [],
+            },
+        },
+        assemblies: {},
+        solids: {},
+    };
+
+    const parentOptions = listDetectorFeatureGeneratorParentOptions(projectState);
+    assert.deepEqual(parentOptions.map((option) => option.name), ['placed_parent_lv', 'World']);
+    assert.equal(
+        parentOptions.find((option) => option.name === 'placed_parent_lv')?.scenePlacementSummary,
+        '1 live scene instance',
+    );
+
+    const model = buildDetectorFeatureGeneratorEditorModel(projectState, {
+        generator_type: 'tiled_sensor_array',
+        target: {
+            parent_logical_volume_ref: { id: 'lv-world', name: 'World' },
+        },
+    });
+
+    assert.equal(model.pitchX, 6);
+    assert.equal(model.pitchY, 6);
+    assert.equal(model.tileSensorSizeX, 6);
+    assert.equal(model.tileSensorSizeY, 6);
+});
+
 test('tiled sensor array model and description stay deterministic', () => {
     const projectState = {
         solids: {
