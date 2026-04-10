@@ -2164,6 +2164,191 @@ def test_channel_cut_array_realization_creates_boolean_geometry_and_updates_targ
     ]
 
 
+def test_channel_cut_array_realization_requires_instantiated_target_lv():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "detached_channel_block",
+        "box",
+        {"x": "24", "y": "18", "z": "12"},
+    )
+    assert error_msg is None
+
+    target_lv, error_msg = pm.add_logical_volume(
+        "detached_channel_lv",
+        solid_dict["name"],
+        "G4_Galactic",
+    )
+    assert error_msg is None
+
+    target_lv_state = pm.current_geometry_state.logical_volumes[target_lv["name"]]
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_channel_detached_target",
+            "name": "detached_channels",
+            "generator_type": "channel_cut_array",
+            "target": {
+                "solid_ref": {
+                    "id": solid_dict["id"],
+                    "name": solid_dict["name"],
+                },
+                "logical_volume_refs": [
+                    {
+                        "id": target_lv_state.id,
+                        "name": target_lv_state.name,
+                    },
+                ],
+            },
+            "array": {
+                "count": 3,
+                "linear_pitch_mm": 5.0,
+                "axis": "y",
+                "origin_offset_mm": {"x": 0.0, "y": 0.0},
+            },
+            "channel": {
+                "width_mm": 1.25,
+                "depth_mm": 6.0,
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_channel_detached_target")
+
+    assert result is None
+    assert error_msg == (
+        "Channel-cut generators require at least one targeted "
+        "logical volume 'detached_channel_lv' to already be placed in the live scene "
+        "so generated cuts are visible."
+    )
+    assert target_lv_state.solid_ref == "detached_channel_block"
+
+
+def test_channel_cut_array_realization_reuses_result_and_keeps_targeted_lv_subset_on_revision():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "refresh_channel_block",
+        "box",
+        {"x": "24", "y": "18", "z": "12"},
+    )
+    assert error_msg is None
+
+    lv_a, error_msg = pm.add_logical_volume("refresh_channel_lv", "refresh_channel_block", "G4_Galactic")
+    assert error_msg is None
+    lv_b, error_msg = pm.add_logical_volume("refresh_channel_lv_copy", "refresh_channel_block", "G4_Galactic")
+    assert error_msg is None
+
+    pv_a, error_msg = pm.add_physical_volume(
+        "World",
+        "refresh_channel_pv",
+        "refresh_channel_lv",
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "1", "y": "1", "z": "1"},
+    )
+    assert error_msg is None
+    pv_b, error_msg = pm.add_physical_volume(
+        "World",
+        "refresh_channel_pv_copy",
+        "refresh_channel_lv_copy",
+        {"x": "30", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "1", "y": "1", "z": "1"},
+    )
+    assert error_msg is None
+
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_channel_refresh",
+            "name": "refresh_channels",
+            "generator_type": "channel_cut_array",
+            "target": {
+                "solid_ref": {
+                    "id": solid_dict["id"],
+                    "name": solid_dict["name"],
+                },
+                "logical_volume_refs": [
+                    {
+                        "id": lv_a["id"],
+                        "name": lv_a["name"],
+                    },
+                ],
+            },
+            "array": {
+                "count": 3,
+                "linear_pitch_mm": 6.0,
+                "axis": "x",
+                "origin_offset_mm": {"x": 0.0, "y": 1.0},
+            },
+            "channel": {
+                "width_mm": 1.5,
+                "depth_mm": 6.0,
+            },
+        }
+    ])
+
+    first_result, error_msg = pm.realize_detector_feature_generator("dfg_channel_refresh")
+    assert error_msg is None
+    assert first_result["updated_logical_volume_names"] == ["refresh_channel_lv"]
+
+    entry = pm.current_geometry_state.detector_feature_generators[0]
+    entry["array"]["count"] = 4
+    entry["array"]["linear_pitch_mm"] = 5.0
+    entry["array"]["axis"] = "y"
+    entry["array"]["origin_offset_mm"]["x"] = 1.0
+    entry["array"]["origin_offset_mm"]["y"] = -1.5
+    entry["channel"]["width_mm"] = 1.25
+    entry["channel"]["depth_mm"] = 7.0
+
+    second_result, error_msg = pm.realize_detector_feature_generator("dfg_channel_refresh")
+    assert error_msg is None
+    assert second_result["result_solid_name"] == first_result["result_solid_name"]
+    assert second_result["cutter_solid_name"] == first_result["cutter_solid_name"]
+    assert second_result["updated_logical_volume_names"] == ["refresh_channel_lv"]
+
+    result_solid = pm.current_geometry_state.solids[first_result["result_solid_name"]]
+    cutter_solid = pm.current_geometry_state.solids[first_result["cutter_solid_name"]]
+    assert float(cutter_solid.raw_parameters["x"]) == pytest.approx(24.0)
+    assert float(cutter_solid.raw_parameters["y"]) == pytest.approx(1.25)
+    assert float(cutter_solid.raw_parameters["z"]) == pytest.approx(7.0)
+    assert [
+        (
+            float(item["transform"]["position"]["x"]),
+            float(item["transform"]["position"]["y"]),
+            float(item["transform"]["position"]["z"]),
+        )
+        for item in result_solid.raw_parameters["recipe"][1:]
+    ] == pytest.approx([
+        (1.0, -9.0, 2.5),
+        (1.0, -4.0, 2.5),
+        (1.0, 1.0, 2.5),
+        (1.0, 6.0, 2.5),
+    ])
+
+    assert pm.current_geometry_state.logical_volumes["refresh_channel_lv"].solid_ref == first_result["result_solid_name"]
+    assert pm.current_geometry_state.logical_volumes["refresh_channel_lv_copy"].solid_ref == "refresh_channel_block"
+
+    assert entry["target"]["logical_volume_refs"] == [
+        {"id": lv_a["id"], "name": "refresh_channel_lv"},
+    ]
+    assert entry["realization"]["generated_object_refs"]["logical_volume_refs"] == [
+        {"id": lv_a["id"], "name": "refresh_channel_lv"},
+    ]
+    assert entry["realization"]["generated_object_refs"]["placement_refs"] == [
+        {"id": pv_a["id"], "name": "refresh_channel_pv"},
+    ]
+
+    scene_names = {
+        item["name"]
+        for item in pm.get_threejs_description()
+        if item.get("name", "").startswith("refresh_channel_pv")
+    }
+    assert scene_names == {
+        "refresh_channel_pv",
+        "refresh_channel_pv_copy",
+    }
+
+
 def test_patterned_hole_starter_example_roundtrips_saved_generators():
     pm = _load_patterned_hole_starter_pm()
 

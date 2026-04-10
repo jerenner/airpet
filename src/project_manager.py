@@ -2340,6 +2340,19 @@ class ProjectManager:
         )
         if error_msg:
             return None, error_msg
+        if target_lv_names and not any(
+            self._logical_volume_is_instantiated_in_scene(lv_name)
+            for lv_name in target_lv_names
+        ):
+            target_label = (
+                f"logical volume '{target_lv_names[0]}'"
+                if len(target_lv_names) == 1
+                else "logical volumes"
+            )
+            return None, (
+                "Channel-cut generators require at least one targeted "
+                f"{target_label} to already be placed in the live scene so generated cuts are visible."
+            )
 
         touched_logical_volumes = []
         touched_placement_refs = []
