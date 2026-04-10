@@ -57,6 +57,7 @@ import {
 } from './environmentFieldUi.js';
 import { buildCadImportBatchContext, buildCadImportSelectionContext, describeCadImportRecord } from './cadImportUi.js';
 import {
+    describeDetectorFeatureGeneratorLaunchState,
     describeDetectorFeatureGeneratorPanelState,
     describeDetectorFeatureGenerator,
     buildDetectorFeatureGeneratorSelectionContext,
