@@ -322,6 +322,33 @@ export function listDetectorFeatureGeneratorParentOptions(projectState, includeD
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export function describeDetectorFeatureGeneratorLaunchState(projectState) {
+    const holeTargetOptions = listDetectorFeatureGeneratorTargetOptions(projectState);
+    const parentTargetOptions = listDetectorFeatureGeneratorParentOptions(projectState);
+
+    if (holeTargetOptions.length > 0) {
+        return {
+            canLaunch: true,
+            title: 'Create a new detector generator from Hierarchy > + Tools.',
+            hint: 'Hierarchy > + Tools is the primary launch surface for drilled-hole patterns, stacks, tiled arrays, ribs, channels, and shield sleeves.',
+        };
+    }
+
+    if (parentTargetOptions.length > 0) {
+        return {
+            canLaunch: true,
+            title: 'Create a new detector generator from Hierarchy > + Tools.',
+            hint: 'No box-solid targets are available yet, but parent-logical-volume generators can still launch from Hierarchy > + Tools.',
+        };
+    }
+
+    return {
+        canLaunch: false,
+        title: 'Create a box solid or place a logical volume in the live scene before launching a detector generator.',
+        hint: 'Detector-generator launch is disabled until there is at least one eligible box solid or placed parent logical volume.',
+    };
+}
+
 export function buildDetectorFeatureGeneratorEditorModel(projectState, generatorEntry = null, selectedItems = []) {
     const holeTargetOptions = listDetectorFeatureGeneratorTargetOptions(projectState);
     const stackTargetOptions = listDetectorFeatureGeneratorParentOptions(

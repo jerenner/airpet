@@ -2231,12 +2231,12 @@ function handleEditDetectorFeatureGenerator(generatorEntry) {
 }
 
 async function handleSaveDetectorFeatureGenerator(payload) {
-    UIManager.showLoading('Saving patterned-hole generator...');
+    UIManager.showLoading('Saving detector generator...');
     try {
         const result = await APIService.upsertDetectorFeatureGenerator(payload);
         syncUIWithState(result);
     } catch (error) {
-        UIManager.showError('Failed to save patterned-hole generator: ' + (error.message || error));
+        UIManager.showError('Failed to save detector generator: ' + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }
@@ -2249,12 +2249,12 @@ async function handleRealizeDetectorFeatureGenerator(generatorEntry) {
         return;
     }
 
-    UIManager.showLoading('Regenerating patterned-hole geometry...');
+    UIManager.showLoading('Regenerating detector geometry...');
     try {
         const result = await APIService.realizeDetectorFeatureGenerator(generatorId);
         syncUIWithState(result);
     } catch (error) {
-        UIManager.showError('Failed to regenerate patterned-hole geometry: ' + (error.message || error));
+        UIManager.showError('Failed to regenerate detector geometry: ' + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }

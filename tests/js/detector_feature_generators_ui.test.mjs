@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import {
     buildDetectorFeatureGeneratorEditorModel,
+    describeDetectorFeatureGeneratorLaunchState,
     describeDetectorFeatureGenerator,
     listDetectorFeatureGeneratorParentOptions,
     listDetectorFeatureGeneratorTargetOptions,
@@ -360,6 +362,58 @@ test('tiled sensor array defaults pitch to the sensor size and hides detached pa
     assert.equal(model.pitchY, 6);
     assert.equal(model.tileSensorSizeX, 6);
     assert.equal(model.tileSensorSizeY, 6);
+});
+
+test('detector generator launch state stays deterministic for hierarchy tools', () => {
+    assert.deepEqual(
+        describeDetectorFeatureGeneratorLaunchState({
+            solids: {
+                detector_block: { id: 'solid-box-1', name: 'detector_block', type: 'box' },
+            },
+            logical_volumes: {
+                World: { id: 'lv-world', name: 'World', solid_ref: 'world_box', content_type: 'physvol', content: [] },
+            },
+            world_volume_ref: 'World',
+        }),
+        {
+            canLaunch: true,
+            title: 'Create a new detector generator from Hierarchy > + Tools.',
+            hint: 'Hierarchy > + Tools is the primary launch surface for drilled-hole patterns, stacks, tiled arrays, ribs, channels, and shield sleeves.',
+        },
+    );
+
+    assert.deepEqual(
+        describeDetectorFeatureGeneratorLaunchState({
+            logical_volumes: {
+                World: { id: 'lv-world', name: 'World', solid_ref: 'world_box', content_type: 'physvol', content: [] },
+            },
+            world_volume_ref: 'World',
+        }),
+        {
+            canLaunch: true,
+            title: 'Create a new detector generator from Hierarchy > + Tools.',
+            hint: 'No box-solid targets are available yet, but parent-logical-volume generators can still launch from Hierarchy > + Tools.',
+        },
+    );
+
+    assert.deepEqual(
+        describeDetectorFeatureGeneratorLaunchState({
+            solids: {},
+            logical_volumes: {},
+        }),
+        {
+            canLaunch: false,
+            title: 'Create a box solid or place a logical volume in the live scene before launching a detector generator.',
+            hint: 'Detector-generator launch is disabled until there is at least one eligible box solid or placed parent logical volume.',
+        },
+    );
+});
+
+test('hierarchy tools template includes both detector generator and ring array launchers', () => {
+    const templateText = fs.readFileSync(new URL('../../templates/index.html', import.meta.url), 'utf8');
+
+    assert.match(templateText, /id="createDetectorFeatureGeneratorButton">Create Detector Generator</);
+    assert.match(templateText, /id="createRingArrayButton">Create Ring Array</);
 });
 
 test('tiled sensor array model and description stay deterministic', () => {

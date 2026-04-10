@@ -57,8 +57,8 @@ import {
 } from './environmentFieldUi.js';
 import { buildCadImportBatchContext, buildCadImportSelectionContext, describeCadImportRecord } from './cadImportUi.js';
 import {
+    describeDetectorFeatureGeneratorLaunchState,
     describeDetectorFeatureGenerator,
-    listDetectorFeatureGeneratorTargetOptions,
 } from './detectorFeatureGeneratorsUi.js';
 
 // --- Module-level variables for DOM elements ---
@@ -109,6 +109,7 @@ let addPVButton;
 
 // Button for creating ring arrays
 let createRingArrayButton;
+let createDetectorFeatureGeneratorButton;
 
 // Loading overlay
 let loadingOverlay, loadingMessage;
@@ -316,6 +317,7 @@ export function initUI(cb) {
 
     // Create ring array
     createRingArrayButton = document.getElementById('createRingArrayButton');
+    createDetectorFeatureGeneratorButton = document.getElementById('createDetectorFeatureGeneratorButton');
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
@@ -556,12 +558,34 @@ export function initUI(cb) {
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
 
-    // Create ring array button
-    createRingArrayButton.addEventListener('click', () => callbacks.onAddRingArrayClicked());
-
     // Tools dropdown toggle
     const toolsDropdownButton = document.getElementById('toolsDropdownButton');
     const toolsDropdownContent = document.getElementById('toolsDropdownContent');
+    const closeToolsDropdown = () => {
+        const dropdown = toolsDropdownButton?.parentElement;
+        if (dropdown) {
+            dropdown.classList.remove('show');
+        }
+    };
+
+    if (createDetectorFeatureGeneratorButton) {
+        createDetectorFeatureGeneratorButton.disabled = true;
+        createDetectorFeatureGeneratorButton.title = 'Open or create a project with eligible geometry before launching a detector generator.';
+        createDetectorFeatureGeneratorButton.addEventListener('click', () => {
+            closeToolsDropdown();
+            callbacks.onAddDetectorFeatureGeneratorClicked();
+        });
+    }
+
+    if (createRingArrayButton) {
+        createRingArrayButton.disabled = true;
+        createRingArrayButton.title = 'Open or create a project before launching the ring-array tool.';
+        createRingArrayButton.addEventListener('click', () => {
+            closeToolsDropdown();
+            callbacks.onAddRingArrayClicked();
+        });
+    }
+
     if (toolsDropdownButton && toolsDropdownContent) {
         toolsDropdownButton.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2476,44 +2500,27 @@ function renderDetectorFeatureGeneratorsPanel(projectState) {
 
     detectorFeatureGeneratorsPanelRoot.innerHTML = '';
 
-    const targetOptions = listDetectorFeatureGeneratorTargetOptions(projectState);
+    const launchState = describeDetectorFeatureGeneratorLaunchState(projectState);
     const generators = Array.isArray(projectState?.detector_feature_generators)
         ? projectState.detector_feature_generators.filter((entry) => entry && typeof entry === 'object')
         : [];
 
     const intro = document.createElement('p');
     intro.className = 'detector-feature-generators-intro';
-    intro.textContent = 'Create drilled-hole patterns or straight channel cuts against box solids, plus fixed detector stacks, support-rib arrays, tiled sensor arrays, or annular shield sleeves inside a parent logical volume, then keep the saved generator parameters editable.';
+    intro.textContent = 'Start new detector generators from Hierarchy > + Tools. This Properties panel is reserved for inspecting saved generator parameters, editing them, and rerunning realization.';
     detectorFeatureGeneratorsPanelRoot.appendChild(intro);
 
-    const toolbar = document.createElement('div');
-    toolbar.className = 'detector-feature-generators-toolbar';
-
-    const addButton = document.createElement('button');
-    addButton.type = 'button';
-    addButton.className = 'history-action-btn';
-    addButton.textContent = 'New Generator...';
-    addButton.title = 'Create a new detector feature generator.';
-    addButton.disabled = targetOptions.length === 0 && Object.keys(projectState?.logical_volumes || {}).length === 0;
-    addButton.addEventListener('click', () => {
-        if (callbacks.onAddDetectorFeatureGeneratorClicked) {
-            callbacks.onAddDetectorFeatureGeneratorClicked();
-        }
-    });
-    toolbar.appendChild(addButton);
-    detectorFeatureGeneratorsPanelRoot.appendChild(toolbar);
-
-    if (targetOptions.length === 0) {
-        const empty = document.createElement('p');
-        empty.className = 'detector-feature-generators-empty';
-        empty.textContent = 'No box solids are available yet. You can still create a layered detector stack, support-rib array, or annular shield sleeve under an existing logical volume.';
-        detectorFeatureGeneratorsPanelRoot.appendChild(empty);
-    }
+    const launchHint = document.createElement('p');
+    launchHint.className = 'detector-feature-note';
+    launchHint.textContent = launchState.hint;
+    detectorFeatureGeneratorsPanelRoot.appendChild(launchHint);
 
     if (generators.length === 0) {
         const empty = document.createElement('p');
         empty.className = 'detector-feature-generators-empty';
-        empty.textContent = 'No detector feature generators saved yet.';
+        empty.textContent = launchState.canLaunch
+            ? 'No detector feature generators saved yet.'
+            : 'No detector feature generators saved yet, and launch is currently unavailable.';
         detectorFeatureGeneratorsPanelRoot.appendChild(empty);
         return;
     }
@@ -2686,6 +2693,7 @@ export function triggerFileInput(inputId) {
 // --- Hierarchy Panel Management ---
 export function updateHierarchy(projectState, sceneUpdate) {
     if (!projectState) {
+        updateHierarchyToolButtons(null);
         clearHierarchy();
         return;
     }
@@ -2732,6 +2740,7 @@ export function updateHierarchy(projectState, sceneUpdate) {
     renderEnvironmentPanel(projectState);
     renderCadImportsPanel(projectState);
     renderDetectorFeatureGeneratorsPanel(projectState);
+    updateHierarchyToolButtons(projectState);
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot && sceneUpdate) {
@@ -2796,6 +2805,22 @@ export function updateHierarchy(projectState, sceneUpdate) {
         } else {
             structureTreeRoot.innerHTML = '<li>World volume data is missing or invalid.</li>';
         }
+    }
+}
+
+function updateHierarchyToolButtons(projectState) {
+    const launchState = describeDetectorFeatureGeneratorLaunchState(projectState);
+    if (createDetectorFeatureGeneratorButton) {
+        createDetectorFeatureGeneratorButton.disabled = !launchState.canLaunch;
+        createDetectorFeatureGeneratorButton.title = launchState.title;
+    }
+
+    if (createRingArrayButton) {
+        const hasProjectState = Boolean(projectState);
+        createRingArrayButton.disabled = !hasProjectState;
+        createRingArrayButton.title = hasProjectState
+            ? 'Create a detector ring array from Hierarchy > + Tools.'
+            : 'Open or create a project before launching the ring-array tool.';
     }
 }
 
