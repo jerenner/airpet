@@ -1256,6 +1256,17 @@ def test_layered_detector_stack_realization_creates_module_geometry_and_repeated
     ]
     assert len(entry["realization"]["generated_object_refs"]["placement_refs"]) == 6
 
+    scene_names = {
+        item["name"]
+        for item in pm.get_threejs_description()
+        if item.get("name", "").startswith("fixture_layered_stack__module_")
+    }
+    assert scene_names == {
+        "fixture_layered_stack__module_1_pv",
+        "fixture_layered_stack__module_2_pv",
+        "fixture_layered_stack__module_3_pv",
+    }
+
 
 def test_layered_detector_stack_realization_replaces_old_module_placements_on_revision():
     pm = _make_pm()
@@ -1332,6 +1343,71 @@ def test_layered_detector_stack_realization_replaces_old_module_placements_on_re
         "refresh_layered_stack__sensor_pv",
         "refresh_layered_stack__support_pv",
     ]
+
+    scene_names = {
+        item["name"]
+        for item in pm.get_threejs_description()
+        if item.get("name", "").startswith("refresh_layered_stack__module_")
+    }
+    assert scene_names == {
+        "refresh_layered_stack__module_1_pv",
+        "refresh_layered_stack__module_2_pv",
+        "refresh_layered_stack__module_3_pv",
+        "refresh_layered_stack__module_4_pv",
+    }
+
+
+def test_layered_detector_stack_realization_requires_instantiated_parent_lv():
+    pm = _make_pm()
+
+    solid_dict, error_msg = pm.add_solid(
+        "detached_layered_parent_box",
+        "box",
+        {"x": "30", "y": "20", "z": "10"},
+    )
+    assert error_msg is None
+
+    parent_lv, error_msg = pm.add_logical_volume(
+        "detached_layered_parent_lv",
+        solid_dict["name"],
+        "G4_Galactic",
+    )
+    assert error_msg is None
+
+    parent_lv_state = pm.current_geometry_state.logical_volumes[parent_lv["name"]]
+    pm.current_geometry_state.detector_feature_generators = _normalize_detector_feature_generators([
+        {
+            "generator_id": "dfg_layered_detached_parent",
+            "name": "detached_layered_stack",
+            "generator_type": "layered_detector_stack",
+            "target": {
+                "parent_logical_volume_ref": {
+                    "id": parent_lv_state.id,
+                    "name": parent_lv_state.name,
+                },
+            },
+            "stack": {
+                "module_size_mm": {"x": 20, "y": 12},
+                "module_count": 2,
+                "module_pitch_mm": 7.0,
+                "origin_offset_mm": {"x": 0.0, "y": 0.0, "z": 0.0},
+            },
+            "layers": {
+                "absorber": {"material_ref": "G4_Pb", "thickness_mm": 3.0},
+                "sensor": {"material_ref": "G4_Si", "thickness_mm": 1.0, "is_sensitive": True},
+                "support": {"material_ref": "G4_Al", "thickness_mm": 1.0},
+            },
+        }
+    ])
+
+    result, error_msg = pm.realize_detector_feature_generator("dfg_layered_detached_parent")
+
+    assert result is None
+    assert error_msg == (
+        "Layered detector-stack generators require parent logical volume "
+        "'detached_layered_parent_lv' to already be placed in the live scene so generated modules are visible."
+    )
+    assert parent_lv_state.content == []
 
 
 def test_tiled_sensor_array_realization_creates_sensor_grid_and_generated_refs():
