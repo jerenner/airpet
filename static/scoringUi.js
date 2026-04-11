@@ -13,6 +13,18 @@ export const SUPPORTED_SCORING_TALLY_QUANTITIES = [
 
 export const RUNTIME_READY_SCORING_QUANTITIES = ['energy_deposit', 'n_of_step'];
 
+export const SCORING_SAVED_RUN_CONTROL_KEYS = [
+    'threads',
+    'seed1',
+    'seed2',
+    'print_progress',
+    'save_hits',
+    'save_hit_metadata',
+    'save_particles',
+    'production_cut',
+    'hit_energy_threshold',
+];
+
 const DEFAULT_RUN_MANIFEST_DEFAULTS = {
     events: 1000,
     threads: 1,
@@ -24,6 +36,12 @@ const DEFAULT_RUN_MANIFEST_DEFAULTS = {
     save_particles: false,
     production_cut: '1.0 mm',
     hit_energy_threshold: '1 eV',
+};
+
+const DEFAULT_TRANSIENT_SIMULATION_OPTIONS = {
+    save_tracks_range: '0-99',
+    physics_list: 'FTFP_BERT',
+    optical_physics: false,
 };
 
 function normalizeString(value, fallback = '') {
@@ -113,6 +131,37 @@ function normalizeTallyQuantity(value) {
     return SUPPORTED_SCORING_TALLY_QUANTITIES.includes(quantity) ? quantity : 'energy_deposit';
 }
 
+function normalizeRunManifestDefaults(rawDefaults) {
+    const defaults = rawDefaults && typeof rawDefaults === 'object' ? rawDefaults : {};
+    return {
+        events: normalizePositiveInt(defaults.events, DEFAULT_RUN_MANIFEST_DEFAULTS.events),
+        threads: normalizePositiveInt(defaults.threads, DEFAULT_RUN_MANIFEST_DEFAULTS.threads),
+        seed1: normalizeNonNegativeInt(defaults.seed1, DEFAULT_RUN_MANIFEST_DEFAULTS.seed1),
+        seed2: normalizeNonNegativeInt(defaults.seed2, DEFAULT_RUN_MANIFEST_DEFAULTS.seed2),
+        print_progress: normalizeNonNegativeInt(
+            defaults.print_progress,
+            DEFAULT_RUN_MANIFEST_DEFAULTS.print_progress,
+        ),
+        save_hits: normalizeBoolean(defaults.save_hits, DEFAULT_RUN_MANIFEST_DEFAULTS.save_hits),
+        save_hit_metadata: normalizeBoolean(
+            defaults.save_hit_metadata,
+            DEFAULT_RUN_MANIFEST_DEFAULTS.save_hit_metadata,
+        ),
+        save_particles: normalizeBoolean(
+            defaults.save_particles,
+            DEFAULT_RUN_MANIFEST_DEFAULTS.save_particles,
+        ),
+        production_cut: normalizeString(
+            defaults.production_cut,
+            DEFAULT_RUN_MANIFEST_DEFAULTS.production_cut,
+        ),
+        hit_energy_threshold: normalizeString(
+            defaults.hit_energy_threshold,
+            DEFAULT_RUN_MANIFEST_DEFAULTS.hit_energy_threshold,
+        ),
+    };
+}
+
 function normalizeScoringTally(rawTally, index = 0) {
     const tally = rawTally && typeof rawTally === 'object' ? rawTally : {};
     const quantity = normalizeTallyQuantity(tally.quantity);
@@ -138,9 +187,7 @@ export function normalizeScoringState(rawState) {
     const tallyRequests = Array.isArray(state.tally_requests)
         ? state.tally_requests.map((tally, index) => normalizeScoringTally(tally, index))
         : [];
-    const runManifestDefaults = state.run_manifest_defaults && typeof state.run_manifest_defaults === 'object'
-        ? { ...DEFAULT_RUN_MANIFEST_DEFAULTS, ...state.run_manifest_defaults }
-        : { ...DEFAULT_RUN_MANIFEST_DEFAULTS };
+    const runManifestDefaults = normalizeRunManifestDefaults(state.run_manifest_defaults);
 
     return {
         schema_version: 1,
@@ -148,6 +195,17 @@ export function normalizeScoringState(rawState) {
         tally_requests: tallyRequests,
         run_manifest_defaults: runManifestDefaults,
     };
+}
+
+function normalizeRunManifestDefaultsWithOverrides(rawScoringState, overrides = {}) {
+    const scoringState = normalizeScoringState(rawScoringState);
+    return normalizeScoringState({
+        ...scoringState,
+        run_manifest_defaults: {
+            ...scoringState.run_manifest_defaults,
+            ...(overrides && typeof overrides === 'object' ? overrides : {}),
+        },
+    }).run_manifest_defaults;
 }
 
 function findNextAvailableToken(existingValues, prefix) {
@@ -231,6 +289,14 @@ export function buildScoringStateWithRemovedMesh(rawScoringState, meshId) {
         ...scoringState,
         scoring_meshes: scoringState.scoring_meshes.filter((mesh) => mesh.mesh_id !== normalizedMeshId),
         tally_requests: scoringState.tally_requests.filter((tally) => tally.mesh_ref.mesh_id !== normalizedMeshId),
+    };
+}
+
+export function buildScoringStateWithUpdatedRunManifestDefaults(rawScoringState, updates) {
+    const scoringState = normalizeScoringState(rawScoringState);
+    return {
+        ...scoringState,
+        run_manifest_defaults: normalizeRunManifestDefaultsWithOverrides(scoringState, updates),
     };
 }
 
@@ -338,6 +404,87 @@ export function describeScoringPanelState(projectState) {
         empty: 'No scoring meshes saved yet. Add one world-space box mesh to start a scoring study.',
         defaultExpandedIndex: scoringState.scoring_meshes.length === 1 ? 0 : -1,
     };
+}
+
+export function describeScoringRunControls(rawScoringState) {
+    const scoringState = normalizeScoringState(rawScoringState);
+    const runDefaults = scoringState.run_manifest_defaults;
+    const seedText = runDefaults.seed1 > 0 && runDefaults.seed2 > 0
+        ? `seeds ${runDefaults.seed1}/${runDefaults.seed2}`
+        : 'random seeds';
+    const printProgressText = runDefaults.print_progress > 0
+        ? `print every ${runDefaults.print_progress} event(s)`
+        : 'print progress off';
+    const savedOutputs = [];
+    if (runDefaults.save_hits) {
+        savedOutputs.push('hits');
+    }
+    if (runDefaults.save_hit_metadata) {
+        savedOutputs.push('hit metadata');
+    }
+    if (runDefaults.save_particles) {
+        savedOutputs.push('particles');
+    }
+
+    return {
+        title: 'Expert Run Controls',
+        statusBadge: 'saved defaults',
+        summary: `${pluralize(runDefaults.threads, 'thread')} · ${seedText} · ${printProgressText} · cut ${runDefaults.production_cut} · hit threshold ${runDefaults.hit_energy_threshold}`,
+        detailLines: [
+            savedOutputs.length > 0
+                ? `Saved outputs: ${savedOutputs.join(', ')}`
+                : 'Saved outputs: none',
+            'Simulation Options can override these defaults for a single run.',
+        ],
+    };
+}
+
+export function buildResolvedSimulationOptions(projectState, rawOverrides = {}) {
+    const overrides = rawOverrides && typeof rawOverrides === 'object' ? rawOverrides : {};
+    const resolvedRunManifest = normalizeRunManifestDefaultsWithOverrides(
+        projectState?.scoring,
+        overrides,
+    );
+
+    return {
+        ...resolvedRunManifest,
+        save_tracks_range: normalizeString(
+            overrides.save_tracks_range,
+            DEFAULT_TRANSIENT_SIMULATION_OPTIONS.save_tracks_range,
+        ),
+        physics_list: normalizeString(
+            overrides.physics_list,
+            DEFAULT_TRANSIENT_SIMULATION_OPTIONS.physics_list,
+        ),
+        optical_physics: normalizeBoolean(
+            overrides.optical_physics,
+            DEFAULT_TRANSIENT_SIMULATION_OPTIONS.optical_physics,
+        ),
+    };
+}
+
+export function buildSimulationOptionOverrides(projectState, rawOptions = {}) {
+    const scoringState = normalizeScoringState(projectState?.scoring);
+    const resolvedOptions = buildResolvedSimulationOptions(projectState, rawOptions);
+    const overrides = {};
+
+    SCORING_SAVED_RUN_CONTROL_KEYS.forEach((key) => {
+        if (resolvedOptions[key] !== scoringState.run_manifest_defaults[key]) {
+            overrides[key] = resolvedOptions[key];
+        }
+    });
+
+    if (resolvedOptions.save_tracks_range !== DEFAULT_TRANSIENT_SIMULATION_OPTIONS.save_tracks_range) {
+        overrides.save_tracks_range = resolvedOptions.save_tracks_range;
+    }
+    if (resolvedOptions.physics_list !== DEFAULT_TRANSIENT_SIMULATION_OPTIONS.physics_list) {
+        overrides.physics_list = resolvedOptions.physics_list;
+    }
+    if (resolvedOptions.optical_physics !== DEFAULT_TRANSIENT_SIMULATION_OPTIONS.optical_physics) {
+        overrides.optical_physics = resolvedOptions.optical_physics;
+    }
+
+    return overrides;
 }
 
 function formatScoringResultValue(value, unit = '') {

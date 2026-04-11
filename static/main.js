@@ -37,6 +37,10 @@ import * as UIManager from './uiManager.js';
 import * as AIAssistant from './aiAssistant.js';
 import { mergeProjectStateWithExclusions } from './projectStateMerge.js';
 import {
+    buildResolvedSimulationOptions,
+    buildSimulationOptionOverrides,
+} from './scoringUi.js';
+import {
     getNormalizedGpsDirectionVector,
     isDirectedGpsAngularType,
 } from './gpsAngularMode.js';
@@ -65,17 +69,9 @@ const AppState = {
     },
 
     simOptions: {
-        threads: 1,
-        events: 1000,
-        seed1: 0,
-        seed2: 0,
-        print_progress: 1000,
-        hit_energy_threshold: "1 eV",
-        production_cut: "1.0 mm",
-        save_hits: true,
-        save_hit_metadata: true,
-        save_particles: false,
         save_tracks_range: "0-99", // Default to saving the first 100 tracks
+        physics_list: 'FTFP_BERT',
+        optical_physics: false,
     }
 };
 
@@ -3751,8 +3747,8 @@ async function handleRunSimulation(simSettings) {
 
     // Prepare the final parameters to send to the backend
     const sim_params = {
-        ...AppState.simOptions, // Use the globally stored options
-        events: numEvents
+        ...buildResolvedSimulationOptions(AppState.currentProjectState, AppState.simOptions),
+        events: numEvents,
     };
 
     try {
@@ -3886,12 +3882,17 @@ async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
 }
 
 function handleOpenSimOptions() {
-    UIManager.setSimOptions(AppState.simOptions); // Pre-fill the modal with current settings
+    UIManager.setSimOptions(
+        buildResolvedSimulationOptions(AppState.currentProjectState, AppState.simOptions),
+    );
     UIManager.showSimOptionsModal();
 }
 
 function handleSaveSimOptions() {
-    AppState.simOptions = UIManager.getSimOptions(); // Get values from modal and save to state
+    AppState.simOptions = buildSimulationOptionOverrides(
+        AppState.currentProjectState,
+        UIManager.getSimOptions(),
+    );
     UIManager.hideSimOptionsModal();
     //UIManager.showNotification("Simulation options saved for the next run.");
 }

@@ -63,6 +63,7 @@ import {
     buildDetectorFeatureGeneratorSelectionContext,
 } from './detectorFeatureGeneratorsUi.js';
 import {
+    buildScoringStateWithUpdatedRunManifestDefaults,
     buildScoringResultSummary,
     SCORING_OBJECT_ID,
     SCORING_OBJECT_TYPE,
@@ -73,6 +74,7 @@ import {
     buildScoringStateWithRemovedMesh,
     describeScoringMesh,
     describeScoringPanelState,
+    describeScoringRunControls,
     describeScoringResultComparison,
     describeScoringResultSummary,
     formatScoringQuantityLabel,
@@ -1984,6 +1986,37 @@ function createScoringIntegerInput(parent, { labelText, id, value, onChange, fie
     parent.appendChild(fieldWrap);
 }
 
+function createScoringNonNegativeIntegerInput(parent, { labelText, id, value, onChange, fieldLabel }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '1';
+    input.id = id;
+    input.value = String(value);
+    input.addEventListener('change', () => {
+        const nextValue = Number.parseInt(input.value, 10);
+        if (!Number.isInteger(nextValue) || nextValue < 0) {
+            const axisLabel = labelText.replace(/\s*\([^)]+\)$/, '');
+            showError(`${fieldLabel} ${axisLabel} must be a non-negative integer.`);
+            input.value = String(value);
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
 function appendScoringResultCard(parent, described, quantityLinesKey = 'quantityLines') {
     if (!parent || !described) return;
 
@@ -2085,6 +2118,16 @@ function renderScoringPanel(projectState) {
 
     const scoringState = normalizeScoringState(projectState?.scoring);
     const panelState = describeScoringPanelState(projectState);
+    const persistScoringState = (nextScoringState) => {
+        if (callbacks.onInspectorPropertyChanged) {
+            callbacks.onInspectorPropertyChanged(
+                SCORING_OBJECT_TYPE,
+                SCORING_OBJECT_ID,
+                'state',
+                nextScoringState,
+            );
+        }
+    };
 
     const intro = document.createElement('p');
     intro.className = 'scoring-intro';
@@ -2109,6 +2152,167 @@ function renderScoringPanel(projectState) {
     if (describedComparison) {
         appendScoringResultCard(scoringPanelRoot, describedComparison, 'deltaLines');
     }
+
+    const describedRunControls = describeScoringRunControls(scoringState);
+    const runControlsCard = document.createElement('details');
+    runControlsCard.className = 'scoring-card';
+    runControlsCard.open = true;
+
+    const runControlsSummary = document.createElement('summary');
+    runControlsSummary.className = 'scoring-card-summary';
+    runControlsSummary.title = 'Inspect and revise the saved scoring-focused run defaults.';
+
+    const runControlsSummaryLayout = document.createElement('div');
+    runControlsSummaryLayout.className = 'scoring-card-summary-layout';
+
+    const runControlsSummaryText = document.createElement('div');
+    runControlsSummaryText.className = 'scoring-card-summary-text';
+
+    const runControlsTitle = document.createElement('div');
+    runControlsTitle.className = 'scoring-title';
+    runControlsTitle.textContent = describedRunControls.title;
+    runControlsSummaryText.appendChild(runControlsTitle);
+
+    const runControlsSummaryLine = document.createElement('div');
+    runControlsSummaryLine.className = 'scoring-summary';
+    runControlsSummaryLine.textContent = describedRunControls.summary;
+    runControlsSummaryText.appendChild(runControlsSummaryLine);
+
+    const runControlsSummaryMeta = document.createElement('div');
+    runControlsSummaryMeta.className = 'scoring-summary-meta';
+
+    const runControlsStatus = document.createElement('code');
+    runControlsStatus.className = 'scoring-status';
+    runControlsStatus.textContent = describedRunControls.statusBadge;
+    runControlsSummaryMeta.appendChild(runControlsStatus);
+
+    runControlsSummaryLayout.appendChild(runControlsSummaryText);
+    runControlsSummaryLayout.appendChild(runControlsSummaryMeta);
+    runControlsSummary.appendChild(runControlsSummaryLayout);
+    runControlsCard.appendChild(runControlsSummary);
+
+    const runControlsBody = document.createElement('div');
+    runControlsBody.className = 'scoring-card-body';
+
+    const persistRunManifestDefaults = (updates) => {
+        persistScoringState(buildScoringStateWithUpdatedRunManifestDefaults(scoringState, updates));
+    };
+
+    const executionRow = document.createElement('div');
+    executionRow.className = 'environment-vector-row';
+    createScoringIntegerInput(executionRow, {
+        labelText: 'Threads',
+        id: 'scoring_run_defaults_threads',
+        value: scoringState.run_manifest_defaults.threads,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ threads: nextValue });
+        },
+    });
+    createScoringNonNegativeIntegerInput(executionRow, {
+        labelText: 'Print Progress',
+        id: 'scoring_run_defaults_print_progress',
+        value: scoringState.run_manifest_defaults.print_progress,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ print_progress: nextValue });
+        },
+    });
+    runControlsBody.appendChild(executionRow);
+
+    const seedRow = document.createElement('div');
+    seedRow.className = 'environment-vector-row';
+    createScoringNonNegativeIntegerInput(seedRow, {
+        labelText: 'Seed 1',
+        id: 'scoring_run_defaults_seed1',
+        value: scoringState.run_manifest_defaults.seed1,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ seed1: nextValue });
+        },
+    });
+    createScoringNonNegativeIntegerInput(seedRow, {
+        labelText: 'Seed 2',
+        id: 'scoring_run_defaults_seed2',
+        value: scoringState.run_manifest_defaults.seed2,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ seed2: nextValue });
+        },
+    });
+    runControlsBody.appendChild(seedRow);
+
+    const thresholdRow = document.createElement('div');
+    thresholdRow.className = 'environment-vector-row';
+    createEnvironmentPlainTextInput(thresholdRow, {
+        labelText: 'Production Cut',
+        id: 'scoring_run_defaults_production_cut',
+        value: scoringState.run_manifest_defaults.production_cut,
+        placeholder: '1.0 mm',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ production_cut: nextValue });
+        },
+    });
+    createEnvironmentPlainTextInput(thresholdRow, {
+        labelText: 'Hit Threshold',
+        id: 'scoring_run_defaults_hit_threshold',
+        value: scoringState.run_manifest_defaults.hit_energy_threshold,
+        placeholder: '1 eV',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ hit_energy_threshold: nextValue });
+        },
+    });
+    runControlsBody.appendChild(thresholdRow);
+
+    const outputToggleSpecs = [
+        {
+            key: 'save_hits',
+            label: 'Save Hits',
+        },
+        {
+            key: 'save_hit_metadata',
+            label: 'Save Hit Metadata',
+        },
+        {
+            key: 'save_particles',
+            label: 'Save Particles',
+        },
+    ];
+    outputToggleSpecs.forEach(({ key, label }) => {
+        const toggleRow = document.createElement('div');
+        toggleRow.className = 'environment-toggle-row';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = `scoring_run_defaults_${key}`;
+        input.checked = Boolean(scoringState.run_manifest_defaults[key]);
+        input.addEventListener('change', () => {
+            persistRunManifestDefaults({ [key]: input.checked });
+        });
+        toggleRow.appendChild(input);
+
+        const labelEl = document.createElement('label');
+        labelEl.htmlFor = input.id;
+        labelEl.textContent = label;
+        toggleRow.appendChild(labelEl);
+
+        runControlsBody.appendChild(toggleRow);
+    });
+
+    (describedRunControls.detailLines || []).forEach((line) => {
+        const note = document.createElement('p');
+        note.className = 'scoring-note';
+        note.textContent = line;
+        runControlsBody.appendChild(note);
+    });
+
+    const runControlsEventsNote = document.createElement('p');
+    runControlsEventsNote.className = 'scoring-note';
+    runControlsEventsNote.textContent = 'Event count stays on the main run bar; these saved controls set the scoring-friendly defaults for the rest of the run manifest.';
+    runControlsBody.appendChild(runControlsEventsNote);
+
+    runControlsCard.appendChild(runControlsBody);
+    scoringPanelRoot.appendChild(runControlsCard);
 
     const toolbar = document.createElement('div');
     toolbar.className = 'scoring-toolbar';
@@ -2138,17 +2342,6 @@ function renderScoringPanel(projectState) {
         scoringPanelRoot.appendChild(empty);
         return;
     }
-
-    const persistMeshState = (nextScoringState) => {
-        if (callbacks.onInspectorPropertyChanged) {
-            callbacks.onInspectorPropertyChanged(
-                SCORING_OBJECT_TYPE,
-                SCORING_OBJECT_ID,
-                'state',
-                nextScoringState,
-            );
-        }
-    };
 
     scoringState.scoring_meshes.forEach((mesh, index) => {
         const described = describeScoringMesh(mesh, scoringState);
@@ -2198,7 +2391,7 @@ function renderScoringPanel(projectState) {
             if (!confirmAction(`Delete scoring mesh '${mesh.name}' and its saved tally requests?`)) {
                 return;
             }
-            persistMeshState(buildScoringStateWithRemovedMesh(scoringState, mesh.mesh_id));
+            persistScoringState(buildScoringStateWithRemovedMesh(scoringState, mesh.mesh_id));
         });
         summaryActions.appendChild(deleteButton);
 
@@ -2219,7 +2412,7 @@ function renderScoringPanel(projectState) {
         enabledInput.id = `scoring_mesh_enabled_${mesh.mesh_id}`;
         enabledInput.checked = Boolean(mesh.enabled);
         enabledInput.addEventListener('change', () => {
-            persistMeshState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+            persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
                 ...mesh,
                 enabled: enabledInput.checked,
             }));
@@ -2241,7 +2434,7 @@ function renderScoringPanel(projectState) {
             value: mesh.name,
             placeholder: 'study_mesh',
             onChange: (nextValue) => {
-                persistMeshState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
                     ...mesh,
                     name: nextValue,
                 }));
@@ -2258,7 +2451,7 @@ function renderScoringPanel(projectState) {
                 value: mesh.geometry.center_mm[axis],
                 fieldLabel: 'Scoring mesh center',
                 onChange: (nextValue) => {
-                    persistMeshState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
                         ...mesh,
                         geometry: {
                             ...mesh.geometry,
@@ -2286,7 +2479,7 @@ function renderScoringPanel(projectState) {
                         showError(`Scoring mesh size ${axis.toUpperCase()} must be greater than zero.`);
                         return;
                     }
-                    persistMeshState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
                         ...mesh,
                         geometry: {
                             ...mesh.geometry,
@@ -2310,7 +2503,7 @@ function renderScoringPanel(projectState) {
                 value: mesh.bins[axis],
                 fieldLabel: 'Scoring mesh bins',
                 onChange: (nextValue) => {
-                    persistMeshState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
                         ...mesh,
                         bins: {
                             ...mesh.bins,
@@ -2341,7 +2534,7 @@ function renderScoringPanel(projectState) {
             quantityInput.type = 'checkbox';
             quantityInput.checked = isMeshTallyEnabled(scoringState, mesh.mesh_id, quantity);
             quantityInput.addEventListener('change', () => {
-                persistMeshState(setMeshTallyEnabled(scoringState, mesh, quantity, quantityInput.checked));
+                persistScoringState(setMeshTallyEnabled(scoringState, mesh, quantity, quantityInput.checked));
             });
             quantityWrap.appendChild(quantityInput);
 

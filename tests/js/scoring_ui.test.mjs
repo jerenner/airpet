@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildResolvedSimulationOptions,
     buildScoringResultSummary,
     buildScoringStateWithAddedMesh,
     buildScoringStateWithRemovedMesh,
+    buildScoringStateWithUpdatedRunManifestDefaults,
+    buildSimulationOptionOverrides,
     compareScoringResultSummaries,
     describeScoringMesh,
     describeScoringPanelState,
+    describeScoringRunControls,
     describeScoringResultComparison,
     describeScoringResultSummary,
     formatScoringQuantityLabel,
@@ -42,6 +46,94 @@ test('adding a scoring mesh creates a default energy deposit tally and determini
         panelState.hint,
         'energy_deposit and n_of_step tallies currently emit runtime scoring artifacts. Other saved tallies remain editable here for upcoming runtime slices.',
     );
+});
+
+test('saved scoring run controls normalize cleanly and drive resolved simulation defaults', () => {
+    const projectState = {
+        scoring: {
+            run_manifest_defaults: {
+                threads: '3',
+                seed1: '11',
+                seed2: 22,
+                print_progress: '250',
+                save_hits: false,
+                save_hit_metadata: false,
+                save_particles: true,
+                production_cut: '0.25 mm',
+                hit_energy_threshold: '7 eV',
+            },
+        },
+    };
+
+    const nextScoringState = buildScoringStateWithUpdatedRunManifestDefaults(projectState.scoring, {
+        print_progress: '0',
+        save_hits: true,
+    });
+    assert.deepEqual(nextScoringState.run_manifest_defaults, {
+        events: 1000,
+        threads: 3,
+        seed1: 11,
+        seed2: 22,
+        print_progress: 0,
+        save_hits: true,
+        save_hit_metadata: false,
+        save_particles: true,
+        production_cut: '0.25 mm',
+        hit_energy_threshold: '7 eV',
+    });
+
+    const described = describeScoringRunControls(projectState.scoring);
+    assert.equal(
+        described.summary,
+        '3 threads · seeds 11/22 · print every 250 event(s) · cut 0.25 mm · hit threshold 7 eV',
+    );
+    assert.deepEqual(described.detailLines, [
+        'Saved outputs: particles',
+        'Simulation Options can override these defaults for a single run.',
+    ]);
+
+    const resolvedOptions = buildResolvedSimulationOptions(projectState, {
+        threads: 4,
+        save_tracks_range: '12-18',
+        physics_list: 'QGSP_BERT',
+        optical_physics: true,
+    });
+    assert.deepEqual(resolvedOptions, {
+        events: 1000,
+        threads: 4,
+        seed1: 11,
+        seed2: 22,
+        print_progress: 250,
+        save_hits: false,
+        save_hit_metadata: false,
+        save_particles: true,
+        production_cut: '0.25 mm',
+        hit_energy_threshold: '7 eV',
+        save_tracks_range: '12-18',
+        physics_list: 'QGSP_BERT',
+        optical_physics: true,
+    });
+
+    const overrides = buildSimulationOptionOverrides(projectState, {
+        threads: 3,
+        seed1: 11,
+        seed2: 22,
+        print_progress: 250,
+        save_hits: false,
+        save_hit_metadata: false,
+        save_particles: true,
+        production_cut: '0.5 mm',
+        hit_energy_threshold: '7 eV',
+        save_tracks_range: '4-9',
+        physics_list: 'QGSP_BERT',
+        optical_physics: true,
+    });
+    assert.deepEqual(overrides, {
+        production_cut: '0.5 mm',
+        save_tracks_range: '4-9',
+        physics_list: 'QGSP_BERT',
+        optical_physics: true,
+    });
 });
 
 test('replacing a scoring mesh name keeps linked tally references aligned', () => {
