@@ -25,6 +25,7 @@ from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
 from .objective_formula import evaluate_objective_formula
+from .scoring_artifacts import build_scoring_runtime_plan
 
 AUTOSAVE_VERSION_ID = "autosave"
 
@@ -9416,6 +9417,11 @@ class ProjectManager:
             # The GDML writer needs a GeometryState object
             temp_state = GeometryState.from_dict(state_dict)
             resolved_run_manifest = self.resolve_saved_run_manifest(raw_sim_params, state=temp_state)
+            scoring_runtime = build_scoring_runtime_plan(temp_state.scoring.to_dict())
+            forced_run_manifest_overrides = {}
+            if scoring_runtime.get('requires_hits') and not resolved_run_manifest.get('save_hits', False):
+                resolved_run_manifest['save_hits'] = True
+                forced_run_manifest_overrides['save_hits'] = True
             gdml_string = GDMLWriter(temp_state).get_gdml_string()
             metadata['total_events'] = resolved_run_manifest.get('events', 1)
             metadata['resolved_run_manifest'] = resolved_run_manifest
@@ -9423,6 +9429,15 @@ class ProjectManager:
             metadata['environment_summary'] = temp_state.environment.to_summary_dict()
             metadata['scoring'] = temp_state.scoring.to_dict()
             metadata['scoring_summary'] = temp_state.scoring.to_summary_dict()
+            metadata['scoring_runtime'] = {
+                'schema_version': scoring_runtime.get('schema_version', 1),
+                'supported_quantities': deepcopy(scoring_runtime.get('supported_quantities', [])),
+                'artifact_request_count': int(scoring_runtime.get('artifact_request_count', 0)),
+                'skipped_tally_count': int(scoring_runtime.get('skipped_tally_count', 0)),
+                'requires_hits': bool(scoring_runtime.get('requires_hits')),
+                'skipped_tallies': deepcopy(scoring_runtime.get('skipped_tallies', [])),
+                'forced_run_manifest_overrides': forced_run_manifest_overrides,
+            }
             with open(metadata_path, 'w') as f:
                 json.dump(metadata, f, indent=2)
             

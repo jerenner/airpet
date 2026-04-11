@@ -5689,6 +5689,92 @@ def test_run_g4_simulation_preserves_save_hits_and_passes_sim_params_to_geant4_e
     assert "/g4pet/run/saveParticles true" in written_macro
 
 
+def test_run_g4_simulation_writes_scoring_artifact_bundle_when_scoring_mesh_is_configured(tmp_path):
+    from app import SIMULATION_PROCESSES, SIMULATION_STATUS, run_g4_simulation
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.mac").write_text(
+        "\n".join([
+            "# Base macro",
+            "/analysis/setFileName output.hdf5",
+            "/run/beamOn 2",
+        ]),
+        encoding="utf-8",
+    )
+    (run_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job-scoring-artifact",
+                "scoring": {
+                    "schema_version": 1,
+                    "scoring_meshes": [
+                        {
+                            "mesh_id": "mesh_main",
+                            "name": "mesh_main",
+                            "enabled": True,
+                            "mesh_type": "box",
+                            "reference_frame": "world",
+                            "geometry": {
+                                "center_mm": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                "size_mm": {"x": 4.0, "y": 4.0, "z": 4.0},
+                            },
+                            "bins": {"x": 2, "y": 2, "z": 2},
+                        }
+                    ],
+                    "tally_requests": [
+                        {
+                            "tally_id": "tally_main",
+                            "name": "tally_main",
+                            "enabled": True,
+                            "mesh_ref": {"mesh_id": "mesh_main", "name": "mesh_main"},
+                            "quantity": "energy_deposit",
+                        }
+                    ],
+                    "run_manifest_defaults": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with h5py.File(run_dir / "output.hdf5", "w") as handle:
+        hits = handle.create_group("default_ntuples/Hits")
+        hits.create_dataset("entries", data=2)
+        hits.create_dataset("Edep", data=np.array([1.25, 2.75], dtype=float))
+        hits.create_dataset("PosX", data=np.array([-0.5, 0.5], dtype=float))
+        hits.create_dataset("PosY", data=np.array([-0.5, 0.5], dtype=float))
+        hits.create_dataset("PosZ", data=np.array([-0.5, 0.5], dtype=float))
+
+    sim_params = {
+        "events": 2,
+        "threads": 1,
+        "physics_list": "FTFP_BERT",
+    }
+
+    proc = MagicMock()
+    proc.stdout = MagicMock()
+    proc.stdout.readline.return_value = ""
+    proc.stderr = MagicMock()
+    proc.stderr.readline.return_value = ""
+    proc.communicate.return_value = ("", "")
+    proc.returncode = 0
+
+    with patch.dict(SIMULATION_STATUS, {}, clear=True), \
+         patch.dict(SIMULATION_PROCESSES, {}, clear=True), \
+         patch("app.get_geant4_env", return_value={"G4PHYSICSLIST": "FTFP_BERT"}), \
+         patch("app.subprocess.Popen", return_value=proc):
+        run_g4_simulation("job-scoring-artifact", str(run_dir), "/fake/geant4", sim_params)
+
+    scoring_bundle = json.loads((run_dir / "scoring_artifacts.json").read_text(encoding="utf-8"))
+    updated_metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+
+    assert scoring_bundle["summary"]["generated_artifact_count"] == 1
+    assert scoring_bundle["summary"]["total_value"] == 4.0
+    assert updated_metadata["scoring_artifacts"]["artifact_bundle_path"] == "scoring_artifacts.json"
+    assert SIMULATION_STATUS["job-scoring-artifact"]["status"] == "Completed"
+    assert "Scoring artifacts written to scoring_artifacts.json." in SIMULATION_STATUS["job-scoring-artifact"]["stdout"]
+
+
 def test_ai_and_http_run_simulation_share_advanced_option_payload(pm, tmp_path):
     advanced_sim_params = {
         "events": 250,

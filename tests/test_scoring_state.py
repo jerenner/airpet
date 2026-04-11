@@ -303,7 +303,7 @@ def test_generate_macro_records_scoring_contract_and_resolves_saved_run_manifest
     assert "/random/setSeeds 101 202" in macro_text
     assert "/run/setCut 0.25 mm" in macro_text
     assert "/g4pet/run/saveParticles true" in macro_text
-    assert "/g4pet/run/saveHits false" in macro_text
+    assert "/g4pet/run/saveHits true" in macro_text
     assert "/g4pet/run/saveHitMetadata false" in macro_text
     assert "/g4pet/run/hitEnergyThreshold 7 eV" in macro_text
     assert "/run/printProgress 3" in macro_text
@@ -317,7 +317,7 @@ def test_generate_macro_records_scoring_contract_and_resolves_saved_run_manifest
         "seed1": 101,
         "seed2": 202,
         "print_progress": 3,
-        "save_hits": False,
+        "save_hits": True,
         "save_hit_metadata": False,
         "save_particles": True,
         "production_cut": "0.25 mm",
@@ -325,3 +325,12 @@ def test_generate_macro_records_scoring_contract_and_resolves_saved_run_manifest
     }
     assert metadata["scoring"] == state.scoring.to_dict()
     assert metadata["scoring_summary"] == state.scoring.to_summary_dict()
+    assert metadata["scoring_runtime"] == {
+        "schema_version": 1,
+        "supported_quantities": ["energy_deposit"],
+        "artifact_request_count": 1,
+        "skipped_tally_count": 0,
+        "requires_hits": True,
+        "skipped_tallies": [],
+        "forced_run_manifest_overrides": {"save_hits": True},
+    }

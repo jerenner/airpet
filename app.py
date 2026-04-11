@@ -53,6 +53,7 @@ from src.surrogate_experiment import run_surrogate_experiment, run_surrogate_exp
 from src.surrogate_synthetic import generate_synthetic_surrogate_benchmark
 from src.objective_engine import extract_objective_values_from_hdf5
 from src.objective_formula import get_allowed_formula_functions
+from src.scoring_artifacts import write_scoring_artifact_bundle
 from src.ai_backend_adapters import (
     ADAPTER_CONTRACT_VERSION,
     LlamaCppAdapterConfig,
@@ -1561,6 +1562,23 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                 with SIMULATION_LOCK:
                     SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
                     for f in t_files: os.remove(f)
+
+        if final_return_code == 0:
+            try:
+                scoring_artifacts = write_scoring_artifact_bundle(run_dir)
+                if scoring_artifacts and scoring_artifacts.get("artifact_request_count", 0) > 0:
+                    with SIMULATION_LOCK:
+                        bundle_path = scoring_artifacts.get("artifact_bundle_path")
+                        if bundle_path:
+                            SIMULATION_STATUS[job_id]["stdout"].append(
+                                f"Scoring artifacts written to {bundle_path}."
+                            )
+            except Exception as e:
+                final_return_code = 1
+                with SIMULATION_LOCK:
+                    SIMULATION_STATUS[job_id]["stderr"].append(
+                        f"Failed to generate scoring artifacts: {e}"
+                    )
 
         with SIMULATION_LOCK:
             if final_return_code == 0:
@@ -3496,317 +3514,18 @@ def run_simulation():
             job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
         )
 
-        # This will be the function run in a separate thread
-        def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
-            num_threads = int(sim_params.get('threads', 1))
-            total_events = int(sim_params.get('events', 1))
-            
+        def run_g4_simulation_for_http(job_id, run_dir, executable_path, sim_params):
+            global LATEST_COMPLETED_JOB_ID
+            run_g4_simulation(job_id, run_dir, executable_path, sim_params)
             with SIMULATION_LOCK:
-                SIMULATION_STATUS[job_id] = {
-                    "status": "Running",
-                    "progress": 0,
-                    "total_events": total_events,
-                    "stdout": [],
-                    "stderr": []
-                }
-
-            try:
-                # --- SINGLE PROCESS MODE ---
-                if num_threads <= 1:
-                    command = [executable_path, "run.mac"]
-                    process = subprocess.Popen(
-                        command, cwd=run_dir,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=True, bufsize=1,
-                        env=get_geant4_env(sim_params)
-                    )
-                    with SIMULATION_LOCK:
-                         SIMULATION_PROCESSES[job_id] = process
-                    
-                    # Monitor
-                    if process.stdout:
-                        for line in iter(process.stdout.readline, ''):
-                            line = line.strip()
-                            if line:
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stdout'].append(line)
-                                    if ">>> Event" in line and "starts" in line:
-                                        try:
-                                            # Using regex might be safer but split is okay
-                                            parts = line.split()
-                                            # format: ">>> Event N starts..."
-                                            if len(parts) > 2 and parts[2].isdigit():
-                                                SIMULATION_STATUS[job_id]['progress'] = int(parts[2]) + 1
-                                        except: pass
-                    
-                    stdout_remainder, stderr_output = process.communicate()
-                    if stderr_output:
-                         with SIMULATION_LOCK:
-                             SIMULATION_STATUS[job_id]['stderr'].append(stderr_output)
-                             
-                    final_return_code = process.returncode
-
-                # --- MULTI-PROCESS MODE ---
-                else:
-                    msg = f"Starting {num_threads} parallel processes for {total_events} events..."
-                    with SIMULATION_LOCK:
-                        SIMULATION_STATUS[job_id]['stdout'].append(msg)
-                    
-                    # 1. Prepare Macros
-                    base_macro_path = os.path.join(run_dir, "run.mac")
-                    with open(base_macro_path, 'r') as f:
-                        base_lines = f.readlines()
-                    
-                    # Filter out commands we will override
-                    filtered_lines = []
-                    for line in base_lines:
-                        s = line.strip()
-                        if s.startswith("/run/beamOn"): continue
-                        if s.startswith("/random/setSeeds"): continue
-                        if s.startswith("/analysis/setFileName"): continue
-                        if s.startswith("/run/numberOfThreads"): continue 
-                        filtered_lines.append(line)
-                    
-                    # Base seeds
-                    seed1 = int(sim_params.get('seed1', 12345))
-                    seed2 = int(sim_params.get('seed2', 67890))
-                    
-                    events_per_thread = total_events // num_threads
-                    remainder = total_events % num_threads
-                    
-                    procs = []
-                    
-                    for i in range(num_threads):
-                        n_events = events_per_thread + (1 if i < remainder else 0)
-                        if n_events <= 0: continue
-                        
-                        macro_name = f"run_t{i}.mac"
-                        out_name = f"output_t{i}.hdf5"
-                        
-                        # Unique seeds
-                        s1 = seed1 + i*1000
-                        s2 = seed2 + i*1000
-                        
-                        # Write specific macro
-                        with open(os.path.join(run_dir, macro_name), 'w') as f:
-                            f.writelines(filtered_lines)
-                            f.write(f"\n/random/setSeeds {s1} {s2}")
-                            f.write(f"\n/analysis/setFileName {out_name}")
-                            f.write(f"\n/run/beamOn {n_events}\n")
-                        
-                        cmd = [executable_path, macro_name]
-                        p = subprocess.Popen(
-                            cmd, cwd=run_dir,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, bufsize=1,
-                            env=get_geant4_env(sim_params)
-                        )
-                        procs.append(p)
-                    
-                    with SIMULATION_LOCK:
-                        SIMULATION_PROCESSES[job_id] = procs # Store list for parallel stop handling
-
-                    # 2. Monitor Loop
-                    # We launch threads to continuously drain stdout/stderr of all processes
-                    # to prevent deadlocks and update progress.
-                    monitor_threads = []
-                    
-                    def stdout_reader(proc, idx):
-                        for line in iter(proc.stdout.readline, ''):
-                            line = line.strip()
-                            if not line: continue
-                            
-                            # Filter spammy lines
-                            if "Checking overlaps for volume" in line: continue
-                            
-                            # Log T0 fully, others only on error/warning
-                            is_interesting = (idx == 0) or ("error" in line.lower()) or ("warning" in line.lower()) or ("exception" in line.lower())
-                            
-                            if is_interesting:
-                                prefix = f"[T{idx}] "
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stdout'].append(prefix + line)
-                                    
-                                    # Parse progress (T0 only) to avoid jitter
-                                    if idx == 0 and ">>> Event" in line and "starts" in line:
-                                        try:
-                                            # Example: ">>> Event 123 starts..."
-                                            parts = line.split()
-                                            if len(parts) > 2 and parts[2].isdigit():
-                                                local_ev = int(parts[2])
-                                                SIMULATION_STATUS[job_id]['progress'] = (local_ev + 1) * num_threads
-                                        except: pass
-                        proc.stdout.close()
-
-                    def stderr_reader(proc, idx):
-                        for line in iter(proc.stderr.readline, ''):
-                            line = line.strip()
-                            if line:
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stderr'].append(f"[T{idx}] {line}")
-                        proc.stderr.close()
-
-                    for i, p in enumerate(procs):
-                        # Start stdout reader
-                        t_out = threading.Thread(target=stdout_reader, args=(p, i))
-                        t_out.start()
-                        monitor_threads.append(t_out)
-                        
-                        # Start stderr reader
-                        t_err = threading.Thread(target=stderr_reader, args=(p, i))
-                        t_err.start()
-                        monitor_threads.append(t_err)
-                    
-                    # Wait for all streaming to finish
-                    for t in monitor_threads:
-                        t.join()
-                    
-                    # Ensure all processes have exited and set return code
-                    final_return_code = 0
-                    for p in procs:
-                        p.wait()
-                        if p.returncode != 0:
-                            final_return_code = p.returncode
-                    
-                    # (The following code expects final_return_code and cleanup)
-
-                    if final_return_code == 0:
-                         with SIMULATION_LOCK:
-                            SIMULATION_STATUS[job_id]['stdout'].append("Parallel tasks completed. Merging...")
-
-                # --- MERGE LOGIC ---
-                if final_return_code == 0:
-                    import glob
-                    import shutil
-                    print(f"[Merge] Searching for output files in {run_dir}...")
-                    # Look for separate files and sort humerically to ensure correct EventID order
-                    t_files = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
-                    if not t_files or len(t_files) == 0:
-                         t_files = glob.glob(os.path.join(run_dir, "run_t*.hdf5"))
-
-                    if t_files:
-                        print(f"[Merge] Found {len(t_files)} fragments. Starting merge...")
-                        try:
-                            t_files.sort(key=lambda x: int(os.path.basename(x).split('_t')[1].split('.')[0]))
-                        except:
-                            t_files.sort()
-                        
-                        target_path = os.path.join(run_dir, "output.hdf5")
-                        shutil.copyfile(t_files[0], target_path)
-                        print(f"[Merge] Initialized target file from {t_files[0]}")
-
-                        # Robust Iterative Merge Logic (Matches repair_full_merge.py)
-                        # 1. Clean T0 (Base)
-                        try:
-                            with h5py.File(target_path, 'r+') as f:
-                                if 'default_ntuples/Hits' in f:
-                                    hits = f['default_ntuples/Hits']
-                                    
-                                    # Detect limit
-                                    lim_t0 = 0
-                                    if 'EventID' in hits and 'pages' in hits['EventID']:
-                                        ev = hits['EventID']['pages'][:]
-                                        nz = np.nonzero(ev)[0]
-                                        lim_t0 = nz[-1] + 1 if len(nz) > 0 else 0
-                                    
-                                    # Clean T0 Columns
-                                    for c in hits:
-                                        if isinstance(hits[c], h5py.Group) and 'pages' in hits[c]:
-                                            dset = hits[c]['pages']
-                                            data = dset[:lim_t0]
-                                            attrs = dict(dset.attrs)
-                                            del hits[c]['pages']
-                                            # Create Chunked + Compressed
-                                            dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
-                                            for k,v in attrs.items(): dn.attrs[k] = v
-                                    print(f"T0 Initialized: {lim_t0} rows (Compressed)")
-                        except Exception as e:
-                            print(f"T0 Clean Error: {e}")
-
-                        # 2. Append T1..TN
-                        evt_per_thread = total_events // num_threads
-                        
-                        try:
-                            with h5py.File(target_path, 'r+') as f_dst:
-                                if 'default_ntuples/Hits' in f_dst:
-                                    grp_dst_hits = f_dst['default_ntuples/Hits']
-                                    
-                                    for src_path in t_files[1:]:
-                                        fname = os.path.basename(src_path)
-                                        current_offset = 0
-                                        try:
-                                            t_idx = int(fname.split('_t')[1].split('.')[0])
-                                            current_offset = t_idx * evt_per_thread
-                                        except: pass
-                                        
-                                        with h5py.File(src_path, 'r') as f_src:
-                                            if 'default_ntuples/Hits' not in f_src: continue
-                                            grp_src_hits = f_src['default_ntuples/Hits']
-                                            
-                                            # Detect Source Limit
-                                            lim_src = 0
-                                            if 'EventID' in grp_src_hits:
-                                                 ev = grp_src_hits['EventID']['pages'][:]
-                                                 nz = np.nonzero(ev)[0]
-                                                 if len(nz)>0: lim_src = nz[-1]+1
-                                            
-                                            print(f"Merging {fname}: Limit={lim_src} Offset={current_offset}")
-
-                                            # Merge Columns Iteratively
-                                            for col in grp_dst_hits:
-                                                if col not in grp_src_hits: continue
-                                                
-                                                dst_node = grp_dst_hits[col]
-                                                src_node = grp_src_hits[col]
-                                                
-                                                # Handle Pages (Data)
-                                                if isinstance(dst_node, h5py.Group) and 'pages' in dst_node:
-                                                    dst_d = dst_node['pages']
-                                                    src_d = src_node['pages']
-                                                    
-                                                    # Read valid data
-                                                    data = src_d[:lim_src]
-                                                    
-                                                    # Apply Offset to EventID
-                                                    if col == "EventID":
-                                                        data = data.astype(np.int64)
-                                                        if current_offset > 0: data += current_offset
-                                                    
-                                                    # Write
-                                                    old_len = dst_d.shape[0]
-                                                    add_len = len(data)
-                                                    dst_d.resize((old_len+add_len,) + dst_d.shape[1:])
-                                                    dst_d[old_len:old_len+add_len] = data
-                                                
-                                                # Handle Metadata (entries)
-                                                elif isinstance(dst_node, h5py.Dataset) and col=='entries':
-                                                    dst_node[...] += src_node[...]
-                        except Exception as e:
-                             print(f"Merge Loop Error: {e}")
-                                                
-                        with SIMULATION_LOCK:
-                            SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
-                            # Cleanup (DISABLE FOR DEBUGGING)
-                            for f in t_files: os.remove(f)
-
-                with SIMULATION_LOCK:
-                    if final_return_code == 0:
-                        SIMULATION_STATUS[job_id]['progress'] = total_events
-                        SIMULATION_STATUS[job_id]['status'] = 'Completed'
-                        LATEST_COMPLETED_JOB_ID = job_id
-                    else:
-                        SIMULATION_STATUS[job_id]['status'] = 'Error'
-                    SIMULATION_PROCESSES.pop(job_id, None)
-
-            except Exception as e:
-                traceback.print_exc()
-                with SIMULATION_LOCK:
-                    SIMULATION_STATUS[job_id]['status'] = 'Error'
-                    SIMULATION_STATUS[job_id]['stderr'].append(str(e))
-                SIMULATION_PROCESSES.pop(job_id, None)
+                if SIMULATION_STATUS.get(job_id, {}).get('status') == 'Completed':
+                    LATEST_COMPLETED_JOB_ID = job_id
 
         # Start the background task
-        thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
+        thread = threading.Thread(
+            target=run_g4_simulation_for_http,
+            args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params),
+        )
         thread.start()
 
         return jsonify({
