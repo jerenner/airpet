@@ -63,14 +63,18 @@ import {
     buildDetectorFeatureGeneratorSelectionContext,
 } from './detectorFeatureGeneratorsUi.js';
 import {
+    buildScoringResultSummary,
     SCORING_OBJECT_ID,
     SCORING_OBJECT_TYPE,
     SUPPORTED_SCORING_TALLY_QUANTITIES,
     RUNTIME_READY_SCORING_QUANTITIES,
     buildScoringStateWithAddedMesh,
+    compareScoringResultSummaries,
     buildScoringStateWithRemovedMesh,
     describeScoringMesh,
     describeScoringPanelState,
+    describeScoringResultComparison,
+    describeScoringResultSummary,
     formatScoringQuantityLabel,
     isMeshTallyEnabled,
     normalizeScoringState,
@@ -99,6 +103,8 @@ let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, ma
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot,
     borderSurfacesListRoot;
 let inspectorContentDiv, environmentPanelRoot, cadImportsPanelRoot, detectorFeatureGeneratorsPanelRoot, scoringPanelRoot;
+let loadedScoringResultSummary = null;
+let previousLoadedScoringResultSummary = null;
 
 function setCadImportsAccordionVisibility(hasCadImports) {
     if (!cadImportsPanelRoot) return;
@@ -1978,6 +1984,93 @@ function createScoringIntegerInput(parent, { labelText, id, value, onChange, fie
     parent.appendChild(fieldWrap);
 }
 
+function appendScoringResultCard(parent, described, quantityLinesKey = 'quantityLines') {
+    if (!parent || !described) return;
+
+    const card = document.createElement('div');
+    card.className = 'scoring-run-card';
+
+    const header = document.createElement('div');
+    header.className = 'scoring-run-card-header';
+
+    const titleWrap = document.createElement('div');
+
+    const title = document.createElement('div');
+    title.className = 'scoring-title';
+    title.textContent = described.title;
+    titleWrap.appendChild(title);
+
+    if (described.meta) {
+        const meta = document.createElement('div');
+        meta.className = 'scoring-run-meta';
+        meta.textContent = described.meta;
+        titleWrap.appendChild(meta);
+    }
+
+    header.appendChild(titleWrap);
+
+    if (described.statusBadge) {
+        const badge = document.createElement('code');
+        badge.className = 'scoring-status';
+        badge.textContent = described.statusBadge;
+        header.appendChild(badge);
+    }
+
+    card.appendChild(header);
+
+    if (described.summary) {
+        const summary = document.createElement('div');
+        summary.className = 'scoring-summary';
+        summary.textContent = described.summary;
+        card.appendChild(summary);
+    }
+
+    if (Array.isArray(described.detailLines) && described.detailLines.length > 0) {
+        const detailList = document.createElement('div');
+        detailList.className = 'scoring-run-details';
+        described.detailLines.forEach((line) => {
+            const detail = document.createElement('div');
+            detail.className = 'scoring-note';
+            detail.textContent = line;
+            detailList.appendChild(detail);
+        });
+        card.appendChild(detailList);
+    }
+
+    const quantityLines = Array.isArray(described[quantityLinesKey]) ? described[quantityLinesKey] : [];
+    if (quantityLines.length > 0) {
+        const quantityWrap = document.createElement('div');
+        quantityWrap.className = 'scoring-run-quantities';
+        quantityLines.forEach((line) => {
+            const pill = document.createElement('div');
+            pill.className = 'scoring-run-quantity';
+            pill.textContent = line;
+            quantityWrap.appendChild(pill);
+        });
+        card.appendChild(quantityWrap);
+    }
+
+    parent.appendChild(card);
+}
+
+export function clearLoadedScoringResultMetadata({ clearPrevious = true } = {}) {
+    loadedScoringResultSummary = null;
+    if (clearPrevious) {
+        previousLoadedScoringResultSummary = null;
+    }
+    renderScoringPanel(callbacks.getProjectState ? callbacks.getProjectState() : null);
+}
+
+export function setLoadedScoringResultMetadata(versionId, jobId, metadata, { shiftPrevious = true } = {}) {
+    const nextSummary = buildScoringResultSummary(metadata, { versionId, jobId });
+    const currentRunKey = loadedScoringResultSummary?.runKey || '';
+    if (shiftPrevious && loadedScoringResultSummary && currentRunKey && currentRunKey !== nextSummary.runKey) {
+        previousLoadedScoringResultSummary = loadedScoringResultSummary;
+    }
+    loadedScoringResultSummary = nextSummary;
+    renderScoringPanel(callbacks.getProjectState ? callbacks.getProjectState() : null);
+}
+
 function renderScoringPanel(projectState) {
     if (!scoringPanelRoot) return;
 
@@ -2003,6 +2096,18 @@ function renderScoringPanel(projectState) {
         hint.className = 'scoring-note';
         hint.textContent = panelState.hint;
         scoringPanelRoot.appendChild(hint);
+    }
+
+    const describedLoadedResult = describeScoringResultSummary(loadedScoringResultSummary);
+    if (describedLoadedResult) {
+        appendScoringResultCard(scoringPanelRoot, describedLoadedResult);
+    }
+
+    const describedComparison = describeScoringResultComparison(
+        compareScoringResultSummaries(previousLoadedScoringResultSummary, loadedScoringResultSummary),
+    );
+    if (describedComparison) {
+        appendScoringResultCard(scoringPanelRoot, describedComparison, 'deltaLines');
     }
 
     const toolbar = document.createElement('div');

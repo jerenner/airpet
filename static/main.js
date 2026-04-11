@@ -1179,6 +1179,7 @@ async function refreshHistoryPanel(projectName = AppState.currentProjectName) {
 function clearLoadedSimulationRunState() {
     AppState.lastSimVersionId = null;
     AppState.lastSimJobId = null;
+    UIManager.clearLoadedScoringResultMetadata();
     UIManager.clearSimStatusDisplay();
     UIManager.hideAnalysisModal();
     UIManager.setAnalysisModalButtonEnabled(false);
@@ -1254,11 +1255,14 @@ async function handleLoadRunResults(versionId, jobId) {
         // Step 2: Fetch the metadata for this specific run
         const metaResult = await APIService.getSimulationMetadata(versionId, jobId);
         if (!metaResult.success) throw new Error(metaResult.error);
+        UIManager.setLoadedScoringResultMetadata(versionId, jobId, metaResult.metadata);
 
         // Step 3: Update the application state with the loaded run info
         AppState.lastSimVersionId = versionId;
         AppState.lastSimJobId = jobId;
-        const totalEvents = metaResult.metadata.total_events;
+        const totalEvents = metaResult.metadata.total_events
+            ?? metaResult.metadata?.run_manifest_summary?.resolved_run_manifest?.events
+            ?? 0;
 
         // Step 4: Update the UI to reflect the loaded run
         UIManager.updateSimStatusDisplay(jobId, totalEvents);
@@ -3804,6 +3808,21 @@ async function pollSimStatus() {
                     UIManager.setAnalysisModalButtonEnabled(true);
                     UIManager.setReconModalButtonEnabled(true);
                     UIManager.setDownloadButtonEnabled(true);
+                    try {
+                        const metaResult = await APIService.getSimulationMetadata(
+                            AppState.lastSimVersionId,
+                            AppState.lastSimJobId,
+                        );
+                        if (metaResult.success) {
+                            UIManager.setLoadedScoringResultMetadata(
+                                AppState.lastSimVersionId,
+                                AppState.lastSimJobId,
+                                metaResult.metadata,
+                            );
+                        }
+                    } catch (metadataError) {
+                        console.warn('Failed to load scoring metadata for completed run:', metadataError);
+                    }
                     // Update status display on completion
                     UIManager.updateSimStatusDisplay(AppState.lastSimJobId, status.total_events);
                 }

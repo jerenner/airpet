@@ -62,6 +62,11 @@ function normalizePositiveInt(value, fallback = 10) {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizeNonNegativeInt(value, fallback = 0) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function formatNumber(value) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -332,5 +337,303 @@ export function describeScoringPanelState(projectState) {
         hint: 'energy_deposit and n_of_step tallies currently emit runtime scoring artifacts. Other saved tallies remain editable here for upcoming runtime slices.',
         empty: 'No scoring meshes saved yet. Add one world-space box mesh to start a scoring study.',
         defaultExpandedIndex: scoringState.scoring_meshes.length === 1 ? 0 : -1,
+    };
+}
+
+function formatScoringResultValue(value, unit = '') {
+    const normalizedUnit = normalizeString(unit, '');
+    return `${formatNumber(value)}${normalizedUnit ? ` ${normalizedUnit}` : ''}`;
+}
+
+function normalizeQuantitySummary(rawSummary) {
+    const summary = rawSummary && typeof rawSummary === 'object' ? rawSummary : {};
+    const quantity = normalizeString(summary.quantity, '');
+    if (!quantity) {
+        return null;
+    }
+
+    const unit = normalizeString(summary.unit, '');
+    const totalValue = Number(summary.total_value);
+    const generatedArtifactCount = normalizeNonNegativeInt(summary.generated_artifact_count, 0);
+
+    return {
+        quantity,
+        label: formatScoringQuantityLabel(quantity),
+        unit,
+        generatedArtifactCount,
+        totalValue: Number.isFinite(totalValue) ? Number(totalValue.toFixed(6)) : 0,
+        totalValueText: formatScoringResultValue(totalValue, unit),
+    };
+}
+
+function normalizeComparisonKeys(rawKeys) {
+    const keys = rawKeys && typeof rawKeys === 'object' ? rawKeys : {};
+    return {
+        geometrySha256: normalizeString(keys.geometrySha256 ?? keys.geometry_sha256, ''),
+        environmentSignature: normalizeString(keys.environmentSignature ?? keys.environment_signature, ''),
+        scoringSignature: normalizeString(keys.scoringSignature ?? keys.scoring_signature, ''),
+        runManifestSignature: normalizeString(keys.runManifestSignature ?? keys.run_manifest_signature, ''),
+        executionSignature: normalizeString(keys.executionSignature ?? keys.execution_signature, ''),
+    };
+}
+
+function buildScoringResultRunLabel(summary) {
+    const jobId = normalizeString(summary?.jobId, '');
+    const versionId = normalizeString(summary?.versionId, '');
+    const shortJobId = jobId ? `${jobId.slice(0, 8)}...` : 'unknown';
+    return versionId ? `${versionId} · ${shortJobId}` : `Run ${shortJobId}`;
+}
+
+export function buildScoringResultSummary(rawMetadata, context = {}) {
+    const metadata = rawMetadata && typeof rawMetadata === 'object' ? rawMetadata : {};
+    const runManifestSummary = metadata.run_manifest_summary && typeof metadata.run_manifest_summary === 'object'
+        ? metadata.run_manifest_summary
+        : {};
+    const artifactBundle = runManifestSummary.artifact_bundle && typeof runManifestSummary.artifact_bundle === 'object'
+        ? runManifestSummary.artifact_bundle
+        : {};
+    const scoringArtifacts = metadata.scoring_artifacts && typeof metadata.scoring_artifacts === 'object'
+        ? metadata.scoring_artifacts
+        : {};
+    const scoringArtifactSummary = scoringArtifacts.summary && typeof scoringArtifacts.summary === 'object'
+        ? scoringArtifacts.summary
+        : {};
+    const scoringSummary = metadata.scoring_summary && typeof metadata.scoring_summary === 'object'
+        ? metadata.scoring_summary
+        : (
+            runManifestSummary.scoring && typeof runManifestSummary.scoring === 'object'
+                && runManifestSummary.scoring.summary && typeof runManifestSummary.scoring.summary === 'object'
+                ? runManifestSummary.scoring.summary
+                : {}
+        );
+    const scoringRuntime = runManifestSummary.scoring && typeof runManifestSummary.scoring === 'object'
+        && runManifestSummary.scoring.runtime && typeof runManifestSummary.scoring.runtime === 'object'
+        ? runManifestSummary.scoring.runtime
+        : {};
+    const resolvedRunManifest = runManifestSummary.resolved_run_manifest
+        && typeof runManifestSummary.resolved_run_manifest === 'object'
+        ? runManifestSummary.resolved_run_manifest
+        : {};
+    const executionSettings = runManifestSummary.execution_settings
+        && typeof runManifestSummary.execution_settings === 'object'
+        ? runManifestSummary.execution_settings
+        : {};
+    const quantitySource = Array.isArray(scoringArtifactSummary.quantity_summaries)
+        && scoringArtifactSummary.quantity_summaries.length > 0
+        ? scoringArtifactSummary.quantity_summaries
+        : (
+            Array.isArray(artifactBundle.quantity_summaries)
+                ? artifactBundle.quantity_summaries
+                : []
+        );
+    const quantitySummaries = quantitySource
+        .map((entry) => normalizeQuantitySummary(entry))
+        .filter(Boolean);
+    const versionId = normalizeString(context.versionId ?? runManifestSummary.version_id, '');
+    const jobId = normalizeString(context.jobId ?? metadata.job_id ?? runManifestSummary.job_id, '');
+    const generatedArtifactCount = normalizeNonNegativeInt(
+        scoringArtifacts.generated_artifact_count ?? artifactBundle.generated_artifact_count,
+        quantitySummaries.reduce((count, entry) => count + entry.generatedArtifactCount, 0),
+    );
+    const artifactRequestCount = normalizeNonNegativeInt(
+        scoringSummary.artifact_request_count ?? scoringRuntime.artifact_request_count,
+        0,
+    );
+    const summaryText = quantitySummaries.length > 0
+        ? quantitySummaries.map((entry) => `${entry.label} ${entry.totalValueText}`).join(' · ')
+        : (
+            generatedArtifactCount > 0
+                ? `${pluralize(generatedArtifactCount, 'scoring artifact')} recorded for this run.`
+                : (
+                    artifactRequestCount > 0
+                        ? `Requested ${pluralize(artifactRequestCount, 'scoring artifact')}, but no scoring bundle was recorded.`
+                        : 'No scoring artifacts recorded for this run.'
+                )
+        );
+
+    return {
+        runKey: `${versionId}:${jobId}`,
+        versionId,
+        jobId,
+        runLabel: buildScoringResultRunLabel({ versionId, jobId }),
+        timestamp: normalizeString(metadata.timestamp ?? runManifestSummary.timestamp, ''),
+        totalEvents: normalizeNonNegativeInt(metadata.total_events ?? resolvedRunManifest.events, 0),
+        threads: normalizeNonNegativeInt(resolvedRunManifest.threads, 0),
+        physicsList: normalizeString(executionSettings.physics_list ?? metadata?.sim_options?.physics_list, ''),
+        opticalPhysics: Boolean(
+            executionSettings.optical_physics
+            ?? metadata?.sim_options?.optical_physics
+        ),
+        enabledMeshCount: normalizeNonNegativeInt(scoringSummary.enabled_mesh_count, 0),
+        enabledTallyCount: normalizeNonNegativeInt(scoringSummary.enabled_tally_count, 0),
+        artifactRequestCount,
+        generatedArtifactCount,
+        skippedTallyCount: normalizeNonNegativeInt(
+            scoringArtifacts.skipped_tally_count ?? artifactBundle.skipped_tally_count,
+            0,
+        ),
+        bundlePath: normalizeString(scoringArtifacts.artifact_bundle_path ?? artifactBundle.path, ''),
+        bundleExists: Boolean(
+            artifactBundle.exists
+            ?? normalizeString(scoringArtifacts.artifact_bundle_path, '')
+        ),
+        sourceOutputExists: Boolean(artifactBundle?.source_output?.exists),
+        quantitySummaries,
+        comparisonKeys: normalizeComparisonKeys(runManifestSummary.comparison_keys),
+        hasScoringOutputs: quantitySummaries.length > 0 || generatedArtifactCount > 0,
+        summaryText,
+    };
+}
+
+export function compareScoringResultSummaries(rawBaseline, rawCandidate) {
+    const baseline = rawBaseline && typeof rawBaseline === 'object' ? rawBaseline : null;
+    const candidate = rawCandidate && typeof rawCandidate === 'object' ? rawCandidate : null;
+    if (!baseline || !candidate || baseline.runKey === candidate.runKey) {
+        return null;
+    }
+
+    const changedFlags = {
+        geometry: baseline.comparisonKeys?.geometrySha256 !== candidate.comparisonKeys?.geometrySha256,
+        environment: baseline.comparisonKeys?.environmentSignature !== candidate.comparisonKeys?.environmentSignature,
+        scoringSetup: baseline.comparisonKeys?.scoringSignature !== candidate.comparisonKeys?.scoringSignature,
+        runManifest: baseline.comparisonKeys?.runManifestSignature !== candidate.comparisonKeys?.runManifestSignature,
+        execution: baseline.comparisonKeys?.executionSignature !== candidate.comparisonKeys?.executionSignature,
+    };
+    const changedSections = [
+        changedFlags.geometry ? 'geometry' : '',
+        changedFlags.environment ? 'environment' : '',
+        changedFlags.scoringSetup ? 'scoring setup' : '',
+        changedFlags.runManifest ? 'run manifest' : '',
+        changedFlags.execution ? 'execution settings' : '',
+    ].filter(Boolean);
+
+    const baselineQuantities = new Map(
+        Array.isArray(baseline.quantitySummaries)
+            ? baseline.quantitySummaries.map((entry) => [entry.quantity, entry])
+            : [],
+    );
+    const candidateQuantities = new Map(
+        Array.isArray(candidate.quantitySummaries)
+            ? candidate.quantitySummaries.map((entry) => [entry.quantity, entry])
+            : [],
+    );
+    const quantities = [...new Set([
+        ...baselineQuantities.keys(),
+        ...candidateQuantities.keys(),
+    ])].sort();
+    const quantityDeltas = quantities.map((quantity) => {
+        const baselineQuantity = baselineQuantities.get(quantity) || null;
+        const candidateQuantity = candidateQuantities.get(quantity) || null;
+        const unit = normalizeString(candidateQuantity?.unit ?? baselineQuantity?.unit, '');
+        const baselineTotalValue = Number(baselineQuantity?.totalValue ?? 0);
+        const candidateTotalValue = Number(candidateQuantity?.totalValue ?? 0);
+        const deltaValue = Number((candidateTotalValue - baselineTotalValue).toFixed(6));
+        const direction = deltaValue > 0 ? 'up' : (deltaValue < 0 ? 'down' : 'unchanged');
+        const prefix = deltaValue > 0 ? '+' : '';
+        return {
+            quantity,
+            label: formatScoringQuantityLabel(quantity),
+            unit,
+            baselineTotalValue,
+            candidateTotalValue,
+            deltaValue,
+            deltaText: `${prefix}${formatScoringResultValue(deltaValue, unit)}`,
+            baselineArtifactCount: normalizeNonNegativeInt(baselineQuantity?.generatedArtifactCount, 0),
+            candidateArtifactCount: normalizeNonNegativeInt(candidateQuantity?.generatedArtifactCount, 0),
+            direction,
+        };
+    });
+    const changedQuantityDeltas = quantityDeltas.filter((entry) => (
+        entry.deltaValue !== 0
+        || entry.baselineArtifactCount !== entry.candidateArtifactCount
+    ));
+    const summaryParts = [];
+    if (changedQuantityDeltas.length > 0) {
+        summaryParts.push(
+            changedQuantityDeltas
+                .map((entry) => `${entry.label} ${entry.deltaText}`)
+                .join(' · '),
+        );
+    }
+    if (changedSections.length > 0) {
+        summaryParts.push(`Changed ${changedSections.join(', ')}`);
+    }
+
+    return {
+        baselineRunKey: baseline.runKey,
+        baselineRunLabel: baseline.runLabel,
+        baselineVersionId: baseline.versionId,
+        baselineJobId: baseline.jobId,
+        candidateRunKey: candidate.runKey,
+        candidateRunLabel: candidate.runLabel,
+        candidateVersionId: candidate.versionId,
+        candidateJobId: candidate.jobId,
+        changedFlags,
+        changedSections,
+        quantityDeltas,
+        summaryText: summaryParts.length > 0
+            ? summaryParts.join(' | ')
+            : 'No scoring-result or manifest changes versus the previous loaded run.',
+    };
+}
+
+export function describeScoringResultSummary(rawSummary) {
+    const summary = rawSummary && typeof rawSummary === 'object' ? rawSummary : null;
+    if (!summary) {
+        return null;
+    }
+
+    const metaBits = [];
+    if (summary.totalEvents > 0) {
+        metaBits.push(`${summary.totalEvents} events`);
+    }
+    if (summary.threads > 0) {
+        metaBits.push(pluralize(summary.threads, 'thread'));
+    }
+    if (summary.physicsList) {
+        metaBits.push(summary.physicsList);
+    }
+    if (summary.opticalPhysics) {
+        metaBits.push('optical on');
+    }
+
+    const detailLines = [
+        `${pluralize(summary.enabledMeshCount, 'enabled mesh')} · ${pluralize(summary.enabledTallyCount, 'enabled tally request')}`,
+        summary.bundleExists
+            ? `Bundle: ${summary.bundlePath || 'scoring_artifacts.json'}`
+            : 'Bundle: not recorded',
+    ];
+
+    return {
+        title: summary.runLabel,
+        statusBadge: summary.hasScoringOutputs ? 'artifacts ready' : 'no artifacts',
+        summary: summary.summaryText,
+        meta: metaBits.join(' · '),
+        detailLines,
+        quantityLines: (summary.quantitySummaries || []).map((entry) => (
+            `${entry.label}: ${entry.totalValueText} across ${pluralize(entry.generatedArtifactCount, 'artifact')}`
+        )),
+    };
+}
+
+export function describeScoringResultComparison(rawComparison) {
+    const comparison = rawComparison && typeof rawComparison === 'object' ? rawComparison : null;
+    if (!comparison) {
+        return null;
+    }
+
+    const deltaLines = (comparison.quantityDeltas || [])
+        .filter((entry) => entry.deltaValue !== 0 || entry.baselineArtifactCount !== entry.candidateArtifactCount)
+        .map((entry) => `${entry.label}: ${entry.deltaText}`);
+
+    return {
+        title: 'Compared To Previous Loaded Run',
+        statusBadge: deltaLines.length > 0 || comparison.changedSections.length > 0 ? 'delta detected' : 'matched',
+        summary: comparison.summaryText,
+        meta: `Baseline ${comparison.baselineRunLabel || 'previous run'}`,
+        detailLines: comparison.changedSections.length > 0
+            ? [`Changed: ${comparison.changedSections.join(', ')}`]
+            : ['Changed: none'],
+        deltaLines,
     };
 }

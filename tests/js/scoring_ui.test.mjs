@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+    buildScoringResultSummary,
     buildScoringStateWithAddedMesh,
     buildScoringStateWithRemovedMesh,
+    compareScoringResultSummaries,
     describeScoringMesh,
     describeScoringPanelState,
+    describeScoringResultComparison,
+    describeScoringResultSummary,
     formatScoringQuantityLabel,
     isMeshTallyEnabled,
     replaceScoringMesh,
@@ -91,4 +95,236 @@ test('tally toggles add and remove per-mesh quantity requests deterministically'
     const removedMeshState = buildScoringStateWithRemovedMesh(withoutEnergyDeposit, mesh.mesh_id);
     assert.deepEqual(removedMeshState.scoring_meshes, []);
     assert.deepEqual(removedMeshState.tally_requests, []);
+});
+
+test('buildScoringResultSummary derives compact loaded-run scoring totals from metadata', () => {
+    const summary = buildScoringResultSummary({
+        timestamp: '2026-04-11T15:00:00',
+        total_events: 12,
+        scoring_summary: {
+            enabled_mesh_count: 2,
+            enabled_tally_count: 2,
+        },
+        scoring_artifacts: {
+            artifact_bundle_path: 'scoring_artifacts.json',
+            generated_artifact_count: 2,
+            skipped_tally_count: 0,
+            summary: {
+                quantity_summaries: [
+                    {
+                        quantity: 'energy_deposit',
+                        unit: 'MeV',
+                        generated_artifact_count: 1,
+                        total_value: 7.25,
+                    },
+                    {
+                        quantity: 'n_of_step',
+                        unit: 'steps',
+                        generated_artifact_count: 1,
+                        total_value: 12,
+                    },
+                ],
+            },
+        },
+        run_manifest_summary: {
+            version_id: 'version_a',
+            job_id: 'job_a_12345678',
+            resolved_run_manifest: {
+                events: 12,
+                threads: 2,
+            },
+            execution_settings: {
+                physics_list: 'FTFP_BERT',
+                optical_physics: true,
+            },
+            artifact_bundle: {
+                exists: true,
+                path: 'scoring_artifacts.json',
+                source_output: {
+                    exists: true,
+                },
+            },
+            comparison_keys: {
+                geometry_sha256: 'geom-a',
+                environment_signature: 'env-a',
+                scoring_signature: 'score-a',
+                run_manifest_signature: 'manifest-a',
+                execution_signature: 'exec-a',
+            },
+        },
+    });
+
+    assert.equal(summary.runKey, 'version_a:job_a_12345678');
+    assert.equal(summary.summaryText, 'energy deposit 7.25 MeV · n of step 12 steps');
+    assert.equal(summary.bundleExists, true);
+    assert.equal(summary.totalEvents, 12);
+    assert.equal(summary.threads, 2);
+    assert.equal(summary.physicsList, 'FTFP_BERT');
+    assert.equal(summary.opticalPhysics, true);
+    assert.deepEqual(summary.quantitySummaries, [
+        {
+            quantity: 'energy_deposit',
+            label: 'energy deposit',
+            unit: 'MeV',
+            generatedArtifactCount: 1,
+            totalValue: 7.25,
+            totalValueText: '7.25 MeV',
+        },
+        {
+            quantity: 'n_of_step',
+            label: 'n of step',
+            unit: 'steps',
+            generatedArtifactCount: 1,
+            totalValue: 12,
+            totalValueText: '12 steps',
+        },
+    ]);
+
+    const described = describeScoringResultSummary(summary);
+    assert.equal(described.statusBadge, 'artifacts ready');
+    assert.equal(described.meta, '12 events · 2 threads · FTFP_BERT · optical on');
+    assert.deepEqual(described.quantityLines, [
+        'energy deposit: 7.25 MeV across 1 artifact',
+        'n of step: 12 steps across 1 artifact',
+    ]);
+});
+
+test('compareScoringResultSummaries reports quantity deltas and manifest drift', () => {
+    const baseline = buildScoringResultSummary({
+        scoring_summary: {
+            enabled_mesh_count: 1,
+            enabled_tally_count: 1,
+        },
+        scoring_artifacts: {
+            generated_artifact_count: 1,
+            summary: {
+                quantity_summaries: [
+                    {
+                        quantity: 'energy_deposit',
+                        unit: 'MeV',
+                        generated_artifact_count: 1,
+                        total_value: 3.5,
+                    },
+                ],
+            },
+        },
+        run_manifest_summary: {
+            version_id: 'version_a',
+            job_id: 'job_old_12345678',
+            resolved_run_manifest: {
+                events: 8,
+                threads: 1,
+            },
+            execution_settings: {
+                physics_list: 'FTFP_BERT',
+                optical_physics: false,
+            },
+            artifact_bundle: {
+                exists: true,
+                path: 'scoring_artifacts.json',
+            },
+            comparison_keys: {
+                geometry_sha256: 'geom-a',
+                environment_signature: 'env-a',
+                scoring_signature: 'score-a',
+                run_manifest_signature: 'manifest-a',
+                execution_signature: 'exec-a',
+            },
+        },
+    });
+    const candidate = buildScoringResultSummary({
+        scoring_summary: {
+            enabled_mesh_count: 1,
+            enabled_tally_count: 2,
+        },
+        scoring_artifacts: {
+            generated_artifact_count: 2,
+            summary: {
+                quantity_summaries: [
+                    {
+                        quantity: 'energy_deposit',
+                        unit: 'MeV',
+                        generated_artifact_count: 1,
+                        total_value: 5,
+                    },
+                    {
+                        quantity: 'n_of_step',
+                        unit: 'steps',
+                        generated_artifact_count: 1,
+                        total_value: 9,
+                    },
+                ],
+            },
+        },
+        run_manifest_summary: {
+            version_id: 'version_b',
+            job_id: 'job_new_12345678',
+            resolved_run_manifest: {
+                events: 10,
+                threads: 2,
+            },
+            execution_settings: {
+                physics_list: 'QGSP_BERT',
+                optical_physics: true,
+            },
+            artifact_bundle: {
+                exists: true,
+                path: 'scoring_artifacts.json',
+            },
+            comparison_keys: {
+                geometry_sha256: 'geom-b',
+                environment_signature: 'env-a',
+                scoring_signature: 'score-b',
+                run_manifest_signature: 'manifest-b',
+                execution_signature: 'exec-b',
+            },
+        },
+    });
+
+    const comparison = compareScoringResultSummaries(baseline, candidate);
+    assert.equal(
+        comparison.summaryText,
+        'energy deposit +1.5 MeV · n of step +9 steps | Changed geometry, scoring setup, run manifest, execution settings',
+    );
+    assert.deepEqual(comparison.changedSections, [
+        'geometry',
+        'scoring setup',
+        'run manifest',
+        'execution settings',
+    ]);
+    assert.deepEqual(comparison.quantityDeltas, [
+        {
+            quantity: 'energy_deposit',
+            label: 'energy deposit',
+            unit: 'MeV',
+            baselineTotalValue: 3.5,
+            candidateTotalValue: 5,
+            deltaValue: 1.5,
+            deltaText: '+1.5 MeV',
+            baselineArtifactCount: 1,
+            candidateArtifactCount: 1,
+            direction: 'up',
+        },
+        {
+            quantity: 'n_of_step',
+            label: 'n of step',
+            unit: 'steps',
+            baselineTotalValue: 0,
+            candidateTotalValue: 9,
+            deltaValue: 9,
+            deltaText: '+9 steps',
+            baselineArtifactCount: 0,
+            candidateArtifactCount: 1,
+            direction: 'up',
+        },
+    ]);
+
+    const described = describeScoringResultComparison(comparison);
+    assert.equal(described.statusBadge, 'delta detected');
+    assert.equal(described.meta, `Baseline ${baseline.runLabel}`);
+    assert.deepEqual(described.detailLines, ['Changed: geometry, scoring setup, run manifest, execution settings']);
+    assert.deepEqual(described.deltaLines, [
+        'energy deposit: +1.5 MeV',
+        'n of step: +9 steps',
+    ]);
 });
