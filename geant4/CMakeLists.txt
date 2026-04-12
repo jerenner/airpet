@@ -10,7 +10,7 @@ project(AirPetSim LANGUAGES C CXX)
 # This command will locate your Geant4 installation. For this to work,
 # the user must have sourced the geant4.sh script from their Geant4 build
 # before running cmake. (e.g., source /path/to/geant4-install/bin/geant4.sh)
-find_package(Geant4 REQUIRED COMPONENTS ui_all vis_all)
+find_package(Geant4 REQUIRED COMPONENTS ui_all vis_all gdml)
 
 # Add Geant4 include directories and compile definitions to our target.
 # G4vis_USE_QT is needed for the GUI. G4UI_USE_QT for UI sessions.
