@@ -3,6 +3,7 @@
 import ast
 import glob
 import json
+import logging
 import os
 import re
 import requests
@@ -28,6 +29,14 @@ from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, session, send_file, has_request_context
 from flask_cors import CORS
 from typing import Dict, Any, List, Optional, Tuple
+
+# Configure logging based on APP_MODE
+APP_MODE = os.getenv("APP_MODE", "local")
+if APP_MODE == 'production':
+    logging.basicConfig(level=logging.WARNING)
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
@@ -104,7 +113,6 @@ if os.getenv("APP_MODE") == 'production':
     app.config['SESSION_COOKIE_SECURE'] = True
 
 # --- Read server-wide config on startup ---
-APP_MODE = os.getenv("APP_MODE", "local")  # Default to 'local' if not set
 SERVER_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
@@ -144,7 +152,7 @@ def get_project_manager_for_session() -> ProjectManager:
 
     # 2. Check if a ProjectManager already exists for this session
     if user_id not in project_managers:
-        print(f"Creating new session and ProjectManager for user_id: {user_id}")
+        logger.info(f"Creating new session and ProjectManager for user_id: {user_id}")
         # 3. Create a new ProjectManager if one doesn't exist
         expression_evaluator = ExpressionEvaluator()
         pm = ProjectManager(expression_evaluator)
@@ -167,7 +175,7 @@ def get_project_manager_for_session() -> ProjectManager:
 
         # --- Seed the API key on first-time session creation ---
         if 'gemini_api_key' not in session and SERVER_GEMINI_API_KEY:
-            print("Using SERVER_GEMINI_API_KEY for this session.")
+            logger.info("Using SERVER_GEMINI_API_KEY for this session.")
             session['gemini_api_key'] = SERVER_GEMINI_API_KEY
 
         # --- Seed Example Projects ---
@@ -177,7 +185,7 @@ def get_project_manager_for_session() -> ProjectManager:
                 if os.path.isdir(example_path):
                     target_path = os.path.join(pm.projects_dir, example_name)
                     if not os.path.exists(target_path):
-                        print(f"Seeding example project: {example_name}")
+                        logger.info(f"Seeding example project: {example_name}")
                         shutil.copytree(example_path, target_path)
 
     last_access[user_id] = time.time()
@@ -214,41 +222,17 @@ def get_gemini_client_for_session() -> client.Client | None:
     if cached_client_info and cached_client_info['key'] == api_key:
         return cached_client_info['client']
 
-    print(f"Configuring Gemini client for user session: {user_id}")
+    logger.info(f"Configuring Gemini client for user session: {user_id}")
     try:
         new_client = genai.Client(api_key=api_key)
         gemini_clients[user_id] = {'client': new_client, 'key': api_key}
         return new_client
     except Exception as e:
-        print(f"Warning: Failed to configure Gemini client: {e}")
+        logger.warning(f"Failed to configure Gemini client: {e}")
         if user_id in gemini_clients:
             del gemini_clients[user_id]
         return None
     
-# GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# gemini_client: client.Client | None = None # Configure Gemini client
-
-# # Configure the Gemini client
-# def configure_gemini_client():
-#     """Initializes or re-initializes the Gemini client with the current API key."""
-#     global GEMINI_API_KEY, gemini_client
-#     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-#     if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
-#         try:
-#             gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-#             print("Google Gemini client configured successfully.")
-#             return True
-#         except Exception as e:
-#             print(f"Warning: Failed to configure Google Gemini client: {e}")
-#             gemini_client = None
-#             return False
-#     else:
-#         print("Warning: GEMINI_API_KEY not found or not set. Gemini models will be unavailable.")
-#         gemini_client = None
-#         return False
-
-# # Initial configuration on startup
-# configure_gemini_client()
 
 # --------------------------------------------------------------------------
 # Geant4 integration
@@ -1524,7 +1508,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                                     del hits[c]['pages']
                                     dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
                                     for k,v in attrs.items(): dn.attrs[k] = v
-                except Exception as e: print(f"T0 Clean Error: {e}")
+                except Exception as e: logger.error(f"T0 Clean Error: {e}")
                 evt_per_thread = total_events // num_threads
                 try:
                     with h5py.File(target_path, 'r+') as f_dst:
@@ -1562,11 +1546,12 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                                             dst_d[old_len:old_len+add_len] = data
                                         elif isinstance(dst_node, h5py.Dataset) and col=='entries':
                                             dst_node[...] += src_node[...]
-                except Exception as e: print(f"Merge Loop Error: {e}")
+                except Exception as e: logger.error(f"Merge Loop Error: {e}")
                 with SIMULATION_LOCK:
                     SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
                     for f in t_files: os.remove(f)
 
+        scoring_artifact_error = None
         if final_return_code == 0:
             try:
                 scoring_artifacts = write_scoring_artifact_bundle(run_dir)
@@ -1578,16 +1563,16 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                                 f"Scoring artifacts written to {bundle_path}."
                             )
             except Exception as e:
-                final_return_code = 1
-                with SIMULATION_LOCK:
-                    SIMULATION_STATUS[job_id]["stderr"].append(
-                        f"Failed to generate scoring artifacts: {e}"
-                    )
+                scoring_artifact_error = str(e)
 
         with SIMULATION_LOCK:
             if final_return_code == 0:
                 SIMULATION_STATUS[job_id]['progress'] = total_events
                 SIMULATION_STATUS[job_id]['status'] = 'Completed'
+                if scoring_artifact_error:
+                    SIMULATION_STATUS[job_id]["stderr"].append(
+                        f"Warning: Failed to generate scoring artifacts: {scoring_artifact_error}"
+                    )
             else:
                 SIMULATION_STATUS[job_id]['status'] = 'Error'
             SIMULATION_PROCESSES.pop(job_id, None)
@@ -5462,10 +5447,11 @@ def run_reconstruction_route(version_id, job_id):
                 x = x * back_projection
 
             print(f"Iteration {i+1} done.")
-            print(f"  [Debug] ybar: min={float(xp.min(ybar)):.4e}, max={float(xp.max(ybar)):.4e}, mean={float(xp.mean(ybar)):.4e}")
-            print(f"  [Debug] ratio_denom: min={float(xp.min(ratio_denominator)):.4e}, max={float(xp.max(ratio_denominator)):.4e}, mean={float(xp.mean(ratio_denominator)):.4e}")
-            print(f"  [Debug] back_proj: min={float(xp.min(back_projection)):.4e}, max={float(xp.max(back_projection)):.4e}, mean={float(xp.mean(back_projection)):.4e}")
-            print(f"  [Debug] x (image): min={float(xp.min(x)):.4e}, max={float(xp.max(x)):.4e}, mean={float(xp.mean(x)):.4e}")
+            if APP_MODE != 'production':
+                logger.debug(f"ybar: min={float(xp.min(ybar)):.4e}, max={float(xp.max(ybar)):.4e}, mean={float(xp.mean(ybar)):.4e}")
+                logger.debug(f"ratio_denom: min={float(xp.min(ratio_denominator)):.4e}, max={float(xp.max(ratio_denominator)):.4e}, mean={float(xp.mean(ratio_denominator)):.4e}")
+                logger.debug(f"back_proj: min={float(xp.min(back_projection)):.4e}, max={float(xp.max(back_projection)):.4e}, mean={float(xp.mean(back_projection)):.4e}")
+                logger.debug(f"x (image): min={float(xp.min(x)):.4e}, max={float(xp.max(x)):.4e}, mean={float(xp.mean(x)):.4e}")
 
         # Save the final numpy array to HDF5
         reconstructed_image_np = parallelproj.to_numpy_array(x)
@@ -8031,7 +8017,7 @@ def get_project_state_route():
 
     # Check if the project is empty (no world volume defined)
     if not state or not state.get('world_volume_ref'):
-        print("No active project found, creating a new default world.")
+        logger.info("No active project found, creating a new default world.")
         
         # Call the same logic as the /new_project route
         pm.create_empty_project()
@@ -8675,10 +8661,10 @@ def ai_health_check_route():
                         discovered_names.append(row.get('name'))
             response_data["models"]["ollama"] = _normalize_model_names(discovered_names)
     except requests.exceptions.RequestException:
-        print("Ollama service is unreachable.")
+        logger.error("Ollama service is unreachable.")
         # We don't fail the whole request, just show no Ollama models
     except Exception as e:
-        print(f"Error fetching Ollama models: {e}")
+        logger.error(f"Error fetching Ollama models: {e}")
         response_data["error_ollama"] = str(e)
 
     # 2. Check local OpenAI-compatible model servers (llama.cpp + LM Studio)
@@ -8719,7 +8705,7 @@ def ai_health_check_route():
                     gemini_models.append(model_name)
             response_data["models"]["gemini"] = _normalize_model_names(gemini_models)
         except Exception as e:
-            print(f"Error fetching Gemini models: {e}")
+            logger.error(f"Error fetching Gemini models: {e}")
             response_data["error_gemini"] = str(e)
 
     return jsonify(response_data)
@@ -8760,7 +8746,8 @@ def ai_process_prompt_route():
             if not gemini_client:
                 return jsonify({"success": False, "error": "Gemini client is not configured on the server."}), 500
             
-            print(f"Sending prompt to Gemini model: {model_name}")
+            if APP_MODE != "production":
+                logger.info(f"Sending prompt to Gemini model: {model_name}")
             # Use the global client instance to generate content
             gemini_response = gemini_client.models.generate_content(
                 model=model_name,
@@ -8772,16 +8759,19 @@ def ai_process_prompt_route():
             )
             ai_json_string = gemini_response.text
             print(f"GEMINI RESPONSE ({model_name}):\n")
-            print(ai_json_string)
+            if APP_MODE != "production":
+                logger.info(ai_json_string)
 
         else: # Assume it's an Ollama model
-            print(f"Sending prompt to Ollama model: {model_name}")
+            if APP_MODE != "production":
+                logger.info(f"Sending prompt to Ollama model: {model_name}")
 
             # Process the response
             ollama_response = ollama.generate(model=model_name, prompt=full_prompt)
             ai_json_string = ollama_response['response'].strip()
             print(f"OLLAMA RESPONSE ({model_name}):\n")
-            print(ai_json_string)
+            if APP_MODE != "production":
+                logger.info(ai_json_string)
 
         # Step 3: Parse and process the response using a new ProjectManager method
         ai_data = json.loads(ai_json_string)
@@ -9290,25 +9280,14 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
         # This helps when AI provides incomplete parameters
         if "z" not in mapped:
             mapped["z"] = "100"
-            print(f"[VALIDATE] Auto-populated default z=100 for trap", flush=True, file=sys.stderr)
-        if "y1" not in mapped:
-            mapped["y1"] = "20"
-            print(f"[VALIDATE] Auto-populated default y1=20 for trap", flush=True, file=sys.stderr)
-        if "x1" not in mapped:
-            mapped["x1"] = "10"
-            print(f"[VALIDATE] Auto-populated default x1=10 for trap", flush=True, file=sys.stderr)
-        if "x2" not in mapped:
-            mapped["x2"] = "10"
-            print(f"[VALIDATE] Auto-populated default x2=10 for trap", flush=True, file=sys.stderr)
-        if "y2" not in mapped:
-            mapped["y2"] = "20"
-            print(f"[VALIDATE] Auto-populated default y2=20 for trap", flush=True, file=sys.stderr)
-        if "x3" not in mapped:
-            mapped["x3"] = "10"
-            print(f"[VALIDATE] Auto-populated default x3=10 for trap", flush=True, file=sys.stderr)
-        if "x4" not in mapped:
-            mapped["x4"] = "10"
-            print(f"[VALIDATE] Auto-populated default x4=10 for trap", flush=True, file=sys.stderr)
+            if APP_MODE != 'production':
+                logger.debug("Auto-populated default z=100 for trap")
+                logger.debug("Auto-populated default y1=20 for trap")
+                logger.debug("Auto-populated default x1=10 for trap")
+                logger.debug("Auto-populated default x2=10 for trap")
+                logger.debug("Auto-populated default y2=20 for trap")
+                logger.debug("Auto-populated default x3=10 for trap")
+                logger.debug("Auto-populated default x4=10 for trap")
 
     # 5) Auto-convert common AI mistakes: xtru-style sections -> rzpoints for genericPolyhedra/genericPolycone
     # AI often confuses these solid types and provides sections (for xtru) instead of rzpoints
@@ -9329,18 +9308,21 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
                     rzpoints.append({"r": r_val, "z": z_val})
             if rzpoints:
                 mapped["rzpoints"] = rzpoints
-                print(f"[VALIDATE] Auto-converted sections->rzpoints for {st}: {rzpoints}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-converted sections->rzpoints for {st}: {rzpoints}")
         elif isinstance(sections, list) and len(sections) == 0:
             # AI provided empty sections - provide sensible defaults
             # This is a common AI mistake when it doesn't know what values to use
             if st == "genericPolyhedra":
                 # Default: tapered cylinder (small radius at -z, large at +z)
                 mapped["rzpoints"] = [{"r": "10", "z": "-50"}, {"r": "50", "z": "50"}]
-                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-populated default rzpoints for {st} (AI provided empty sections)")
             elif st == "genericPolycone":
                 # Default: cone (zero radius at -z, expanding to +z)
                 mapped["rzpoints"] = [{"r": "0", "z": "-50"}, {"r": "50", "z": "50"}]
-                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-populated default rzpoints for {st} (AI provided empty sections)")
         # Remove the useless empty sections key
         if "sections" in mapped and not mapped["sections"]:
             del mapped["sections"]
@@ -9494,7 +9476,8 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     solid_type = args.get('solid_type')
     params = args.get('params')
 
-    print(f"[VALIDATE] solid_type={solid_type}, params keys={list(params.keys()) if isinstance(params, dict) else 'not dict'}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"solid_type={solid_type}, params keys={list(params.keys()) if isinstance(params, dict) else 'not dict'}")
 
     if not isinstance(params, dict):
         return "Tool 'create_primitive_solid' expects 'params' to be an object."
@@ -9509,14 +9492,16 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     normalized_params = normalize_primitive_solid_params(solid_type, params)
     args['params'] = normalized_params
 
-    print(f"[VALIDATE] normalized params={normalized_params}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"normalized params={normalized_params}")
 
     required_params = spec.get('required', [])
     missing = [
         key for key in required_params
         if key not in normalized_params or normalized_params.get(key) in (None, "")
     ]
-    print(f"[VALIDATE] required={required_params}, missing={missing}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"required={required_params}, missing={missing}")
     if not missing:
         return None
 
@@ -9690,8 +9675,8 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
 
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
-    import sys
-    print(f"[DISPATCH] tool_name={tool_name}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"tool_name={tool_name}")
 
     # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
     def to_vec_dict(val, default_val='0'):
@@ -9965,13 +9950,14 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
-            import sys
             try:
-                print(">>> CREATE_PRIMITIVE_SOLID CALLED <<<", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug("CREATE_PRIMITIVE_SOLID CALLED")
                 stype = args.get('solid_type')
                 p = args.get('params')
 
-                print(f"  [create_primitive_solid] solid_type={stype}, params={p}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"solid_type={stype}, params={p}")
 
                 if isinstance(p, list) and len(p) == 3:
                     p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
@@ -9985,31 +9971,32 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     # Filter out invalid parameters and warn
                     invalid_params = set(p.keys()) - valid_params
                     if invalid_params:
-                        print(f"  [create_primitive_solid] WARNING: Ignoring invalid params for {stype}: {invalid_params}", flush=True, file=sys.stderr)
+                        logger.warning(f"Ignoring invalid params for {stype}: {invalid_params}")
                         p = {k: v for k, v in p.items() if k in valid_params}
                     
                     # Check required parameters
                     missing_params = required_params - set(p.keys())
                     if missing_params:
                         error_msg = f"Missing required parameters for {stype}: {missing_params}. Required: {required_params}"
-                        print(f"  [create_primitive_solid] ERROR: {error_msg}", flush=True, file=sys.stderr)
+                        logger.error(error_msg)
                         return {"success": False, "error": error_msg}
 
                 p = normalize_primitive_solid_params(stype, p)
 
-                print(f"  [create_primitive_solid] normalized params={p}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"normalized params={p}")
 
                 res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
                 if res:
                     pm.recalculate_geometry_state()
-                    print(f"  [create_primitive_solid] SUCCESS: {res['name']}", flush=True, file=sys.stderr)
+                    if APP_MODE != 'production':
+                        logger.debug(f"SUCCESS: {res['name']}")
                     return {"success": True, "message": f"Solid '{res['name']}' created."}
-                print(f"  [create_primitive_solid] ERROR: {error}", flush=True, file=sys.stderr)
+                logger.error(f"create_primitive_solid error: {error}")
                 return {"success": False, "error": error}
                 
             except Exception as e:
-                print(f"  [create_primitive_solid] EXCEPTION: {e}", flush=True, file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logger.error(f"create_primitive_solid exception: {e}", exc_info=True)
                 return {"success": False, "error": str(e)}
 
         elif tool_name == "modify_solid":
@@ -13754,7 +13741,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
             }
 
             for turn in range(turn_limit):
-                print(f"\n=== Stream Turn {turn + 1}/{turn_limit} ===", flush=True)
+                if APP_MODE != 'production':
+                    logger.info(f"\n=== Stream Turn {turn + 1}/{turn_limit} ===")
                 yield f"data: {json.dumps({'type': 'turn_start', 'turn': turn + 1, 'turn_limit': turn_limit})}\n\n"
                 
                 invocation_request = TextGenerationRequest(
@@ -13794,7 +13782,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
 
                 tool_names = [tc.get("name") for tc in executable_tool_calls if tc.get("name")]
                 if tool_names:
-                    print(f"  Stream Tool Calls: {tool_names}", flush=True)
+                    if APP_MODE != 'production':
+                        logger.info(f"Stream Tool Calls: {tool_names}")
                     yield f"data: {json.dumps({'type': 'tool_calls', 'turn': turn + 1, 'tools': tool_names})}\n\n"
                     time.sleep(1.5)
 
@@ -13838,7 +13827,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                     )
 
                     pm.end_transaction(f"AI: {user_message[:50]}")
-                    print(f"  Stream Complete", flush=True)
+                    if APP_MODE != 'production':
+                        logger.info("Stream Complete")
                     
                     complete_payload = build_success_payload(
                         pm,
@@ -13896,7 +13886,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 } if selected_backend_id else None),
             )
             pm.end_transaction(f"AI: {user_message[:50]}")
-            print(f"  Stream Complete (turn limit)", flush=True)
+            if APP_MODE != "production":
+                logger.info("Stream Complete (turn limit)")
             complete_payload = build_success_payload(
                 pm,
                 message=turn_limit_text,
@@ -13911,7 +13902,7 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
             pm._clear_change_tracker()
             yield f"data: {json.dumps(complete_payload)}\n\n"
         except Exception as stream_err:
-            print(f"  Stream Error (local backend): {stream_err}", flush=True)
+            logger.error(f"Stream Error (local backend): {stream_err}")
             import traceback
             traceback.print_exc()
             pm.end_transaction(f"AI Error: {user_message[:50]}")
@@ -14089,7 +14080,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 final_text=turn_limit_text,
             )
             pm.end_transaction(f"AI: {user_message[:50]}")
-            print(f"  Stream Complete (turn limit)", flush=True)
+            if APP_MODE != "production":
+                logger.info("Stream Complete (turn limit)")
             complete_payload = build_success_payload(
                 pm,
                 message=turn_limit_text,
@@ -14104,7 +14096,7 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
             pm._clear_change_tracker()
             yield f"data: {json.dumps(complete_payload)}\n\n"
         except Exception as stream_err:
-            print(f"  Stream Error (Gemini): {stream_err}", flush=True)
+            logger.error(f"Stream Error (Gemini): {stream_err}")
             import traceback
             traceback.print_exc()
             pm.end_transaction(f"AI Error: {user_message[:50]}")
@@ -14122,7 +14114,7 @@ def ai_chat_stream_route():
     pm = get_project_manager_for_session()
     data = request.get_json() or {}
     user_message = data.get('message')
-    model_id = data.get('model', 'models/gemini-2.0-flash-exp')
+    model_id = data.get('model', 'models/gemini-3.1-flash-lite-preview')
     turn_limit = data.get('turn_limit', 50)
 
     if not user_message:
@@ -14269,9 +14261,10 @@ def ai_chat_route():
     pm = get_project_manager_for_session()
     data = request.get_json() or {}
     user_message = data.get('message')
-    model_id = data.get('model', 'models/gemini-2.0-flash-exp')
+    model_id = data.get('model', 'models/gemini-3.1-flash-lite-preview')
     turn_limit = data.get('turn_limit', 50)
-    print(f"[CHAT] Received turn_limit: {turn_limit}", flush=True, file=sys.stderr)
+    if APP_MODE != "production":
+        logger.debug(f"Received turn_limit: {turn_limit}")
 
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
@@ -14481,7 +14474,8 @@ def ai_chat_route():
 
             for turn in range(turn_limit):
                 print(f"\n=== Turn {turn + 1}/{turn_limit} ===", flush=True)
-                print(f"  Messages: {len(local_messages)}, Tools: {effective_require_tools}", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Messages: {len(local_messages)}, Tools: {effective_require_tools}")
                 invocation_request = TextGenerationRequest(
                     messages=tuple(local_messages),
                     require_tools=effective_require_tools,
@@ -14492,12 +14486,15 @@ def ai_chat_route():
                     tool_choice="auto" if effective_require_tools else None,
                 )
 
-                print(f"  Calling llama.cpp...", flush=True)
+                if APP_MODE != "production":
+                    logger.debug("Calling llama.cpp...")
                 import json
-                print(f"  Tool schemas being sent: {len(openai_tool_schemas)} tools", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Tool schemas being sent: {len(openai_tool_schemas)} tools")
                 if turn == 0:
                     for ts in openai_tool_schemas[:1]:  # Just log first tool as sample
-                        print(f"    Sample tool: {ts.get('name')} with {len(ts.get('function', {}).get('parameters', {}).get('properties', {}))} params", flush=True)
+                        if APP_MODE != "production":
+                            logger.debug(f"Sample tool: {ts.get('name')} with {len(ts.get('function', {}).get('parameters', {}).get('properties', {}))} params")
                 adapter_response = invoke_text_request_for_backend(
                     selected_backend_id,
                     invocation_request,
@@ -14521,12 +14518,15 @@ def ai_chat_route():
                 if not parsed_tool_calls and isinstance(adapter_response.tool_calls, list):
                     parsed_tool_calls = _normalize_tool_calls_payload(adapter_response.tool_calls)
 
-                print(f"  Parsed {len(parsed_tool_calls)} tool calls", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Parsed {len(parsed_tool_calls)} tool calls")
                 for tc in parsed_tool_calls:
-                    print(f"    Tool call: {tc.get('name')} args: {json.dumps(tc.get('arguments'))[:200]}", flush=True)
+                    if APP_MODE != "production":
+                        logger.debug(f"Tool call: {tc.get('name')} args: {json.dumps(tc.get('arguments'))[:200]}")
 
                 executable_tool_calls = _build_executable_tool_calls(parsed_tool_calls, turn)
-                print(f"  Executable tool calls: {len(executable_tool_calls)}", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Executable tool calls: {len(executable_tool_calls)}")
                 assistant_openai_tool_calls = _to_openai_tool_calls(executable_tool_calls, id_prefix=f"turn_{turn}")
 
                 assistant_history_entry: Dict[str, Any] = {
@@ -14574,7 +14574,8 @@ def ai_chat_route():
                         continue
 
                     args = tool_call.get("arguments", {})
-                    print(f"Local Adapter AI Calling Tool: {tool_name}")
+                    if APP_MODE != "production":
+                        logger.info(f"Local Adapter AI Calling Tool: {tool_name}")
                     result = dispatch_ai_tool(pm, tool_name, args)
 
                     if isinstance(result, dict):
@@ -14659,7 +14660,8 @@ def ai_chat_route():
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
-                print(f"AI Turn {turn+1}/{turn_limit}...")
+                if APP_MODE != "production":
+                    logger.info(f"AI Turn {turn+1}/{turn_limit}...")
                 try:
                     response = client_instance.models.generate_content(
                         model=model_id,
@@ -14730,7 +14732,8 @@ def ai_chat_route():
                         tool_name = part.function_call.name
                         args = part.function_call.args
                         
-                        print(f"AI Calling Tool: {tool_name}")
+                        if APP_MODE != "production":
+                            logger.info(f"AI Calling Tool: {tool_name}")
                         result = dispatch_ai_tool(pm, tool_name, args)
                         
                         # Capture simulation metadata for the frontend
@@ -14810,18 +14813,19 @@ def ai_chat_route():
                     }
                 })
 
-            # --- DEBUG: Dump payload to file ---
-            try:
-                debug_payload = {
-                    "model": model_id,
-                    "messages": pm.chat_history,
-                    "tools": ollama_tools
-                }
-                with open("ai_debug_payload.json", "w") as df:
-                    json.dump(debug_payload, df, indent=2, default=str)
-            except Exception as e:
-                print(f"Warning: Could not write debug payload: {e}")
-            # -----------------------------------
+            # --- DEBUG: Dump payload to file (dev mode only) ---
+            if APP_MODE != 'production':
+                try:
+                    debug_payload = {
+                        "model": model_id,
+                        "messages": pm.chat_history,
+                        "tools": ollama_tools
+                    }
+                    with open("ai_debug_payload.json", "w") as df:
+                        json.dump(debug_payload, df, indent=2, default=str)
+                except Exception as e:
+                    print(f"Warning: Could not write debug payload: {e}")
+            # ----------------------------------------------------
 
             # Sanitize history for Ollama API (remove metadata)
             sanitized_history = []
@@ -14838,7 +14842,8 @@ def ai_chat_route():
             # Tool loop for Ollama
             for turn in range(turn_limit):
                 time.sleep(1)
-                print(f"Ollama Turn {turn+1}/{turn_limit}...")
+                if APP_MODE != "production":
+                    logger.info(f"Ollama Turn {turn+1}/{turn_limit}...")
                 
                 try:
                     response = ollama.chat(
@@ -14901,7 +14906,8 @@ def ai_chat_route():
                     f_name = tool_call['function']['name']
                     f_args = tool_call['function']['arguments']
                     
-                    print(f"Ollama AI Calling Tool: {f_name}")
+                    if APP_MODE != "production":
+                        logger.info(f"Ollama AI Calling Tool: {f_name}")
                     result = dispatch_ai_tool(pm, f_name, f_args)
                     
                     if "job_id" in result: job_id = result["job_id"]
@@ -15070,7 +15076,7 @@ def import_ai_json_route():
     if file.filename == '':
         return jsonify({"success": False, "error": "No selected file"}), 400
 
-    print("Importing AI Response...");
+    logger.info("Importing AI Response...")
     try:
         ai_json_string = file.read().decode('utf-8')
         ai_data = None
@@ -15078,13 +15084,13 @@ def import_ai_json_route():
             # First, try the standard, strict JSON parser
             ai_data = json.loads(ai_json_string)
         except json.JSONDecodeError:
-            print("AI response was not valid JSON, attempting to parse as Python literal...")
+            logger.warning("AI response was not valid JSON, attempting to parse as Python literal...")
             try:
                 # If JSON fails, try parsing it as a Python dictionary literal.
                 # This is much safer than eval().
                 ai_data = ast.literal_eval(ai_json_string)
             except (ValueError, SyntaxError) as e:
-                print(f"Failed to parse AI response as Python literal: {e}")
+                logger.error(f"Failed to parse AI response as Python literal: {e}")
                 return jsonify({"success": False, "error": "AI returned an invalid JSON or Python dictionary string."}), 500
 
         # Use the existing AI processing logic!
@@ -15605,7 +15611,7 @@ def cleanup_inactive_sessions():
         ]
 
         for user_id in inactive_sessions:
-            print(f"Cleaning up inactive session: {user_id}")
+            logger.info(f"Cleaning up inactive session: {user_id}")
             # Remove from the manager cache
             if user_id in project_managers:
                 del project_managers[user_id]
@@ -15637,4 +15643,5 @@ scheduler_thread.daemon = True
 scheduler_thread.start()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5003)
+    debug_mode = APP_MODE != 'production'
+    app.run(debug=debug_mode, port=5003)

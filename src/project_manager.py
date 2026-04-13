@@ -3565,6 +3565,9 @@ class ProjectManager:
         self.history = []
         self.history_index = -1
         self._capture_history_state("Loaded project from JSON")
+        
+        # Mark as changed so simulation will export fresh GDML
+        self.is_changed = True
 
         return self.current_geometry_state
 

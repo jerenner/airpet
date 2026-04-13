@@ -3462,13 +3462,13 @@
                         <button id="newProjectButton">New Geometry</button>
                         <hr>
                         <!-- Open entire projects -->
-                        <button id="openGdmlButton" title="Loads a single self-contained GDML file. Modular &lt;file&gt; includes are not supported.">Load Geometry (GDML, self-contained only)...</button>
+                        <button id="openGdmlButton" title="Loads a single self-contained GDML file. Modular &lt;file&gt; includes are not supported.">Load Geometry (GDML)...</button>
                         <input type="file" id="gdmlFile" accept=".gdml,.xml" style="display: none;">
                         <button id="openProjectButton">Load Geometry (JSON)...</button>
                         <input type="file" id="projectFile" accept=".json" style="display: none;">
                         <hr style="margin: 5px 0;">
                         <!-- Import functionality -->
-                        <button id="importGdmlButton" title="Imports self-contained GDML only. Modular &lt;file&gt; includes are not supported.">Import Part(s) (GDML, self-contained only)...</button>
+                        <button id="importGdmlButton" title="Imports self-contained GDML only. Modular &lt;file&gt; includes are not supported.">Import Part(s) (GDML)...</button>
                         <input type="file" id="gdmlPartFile" accept=".gdml,.xml" style="display: none;">
                         <button id="importProjectButton">Import Part(s) (JSON)...</button>
                         <input type="file" id="jsonPartFile" accept=".json" style="display: none;">
@@ -5676,7 +5676,7 @@
     <script type="module" src="{{ url_for('static', filename='main.js') }}?v=29"></script>
     {% if app_mode != 'local' %}
     <div id="app-footer"
-        style="position: fixed; bottom: 5px; right: 10px; font-size: 11px; z-index: 2000; color: #888;">
+        style="position: fixed; bottom: 5px; left: 10px; font-size: 11px; z-index: 2000; color: #888;">
         <a href="/legal" target="_blank" style="color: #BBB;">Terms & Privacy</a>
     </div>
     <div id="cookie-notice"

@@ -1821,6 +1821,33 @@ export async function populateInspector(itemContext, projectState) {
         else { // It's a standard LV (or another procedural type for later)
             createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
             createReadOnlyProperty(inspectorContentDiv, "Material Ref:", data.material_ref);
+            
+            const sensitiveCheckbox = document.createElement('input');
+            sensitiveCheckbox.type = 'checkbox';
+            sensitiveCheckbox.id = 'inspector_lv_sensitive';
+            sensitiveCheckbox.checked = data.is_sensitive || false;
+            sensitiveCheckbox.style.margin = '5px 0';
+            
+            const sensitiveLabel = document.createElement('label');
+            sensitiveLabel.htmlFor = 'inspector_lv_sensitive';
+            sensitiveLabel.textContent = 'Sensitive Detector';
+            sensitiveLabel.style.display = 'block';
+            sensitiveLabel.style.marginTop = '10px';
+            sensitiveLabel.style.paddingTop = '10px';
+            sensitiveLabel.style.borderTop = '1px solid #ccc';
+            
+            sensitiveCheckbox.addEventListener('change', () => {
+                callbacks.onInspectorPropertyChanged(
+                    'logical_volume',
+                    id || name,
+                    'is_sensitive',
+                    sensitiveCheckbox.checked
+                );
+            });
+            
+            inspectorContentDiv.appendChild(sensitiveLabel);
+            inspectorContentDiv.appendChild(sensitiveCheckbox);
+            
             // Could add a list of its physvol children here if desired
         }
     } else if (type === 'replica') {
@@ -4361,8 +4388,8 @@ export function populateAiModelSelector(models, localBackendDiagnostics = null) 
         aiModelSelect.appendChild(option);
     } else {
         // --- Set Default Model Preference ---
-        // Prioritize user request, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
-        const preferredModels = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+        // Prioritize user request, then gemini-3.1-flash-lite-preview, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
+        const preferredModels = ['gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
 
         for (const pref of preferredModels) {
             // Check if any option value contains the preferred model name
