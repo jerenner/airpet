@@ -185,12 +185,8 @@ def parse_step_file(file_path, options):
         default_mat = Material(name=default_mat_name, density_expr="8.0", state="solid", Z_expr="26", A_expr="55.845")
         imported_state.add_material(default_mat)
 
-    assembly_name = os.path.splitext(os.path.basename(file_path))[0].replace(" ", "_")
-    main_assembly = Assembly(name=assembly_name)
-    imported_state.add_assembly(main_assembly)
-
-    # Use the grouping name from options.
-    grouping_name = options.get('groupingName', 'STEP_Import')
+    # Use the grouping name from options for the imported top-level assembly.
+    grouping_name = str(options.get('groupingName', 'STEP_Import'))
     imported_state.grouping_name = grouping_name
 
     # This list will store all the LVs created from the top-level solids.

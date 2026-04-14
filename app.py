@@ -3,6 +3,7 @@
 import ast
 import glob
 import json
+import logging
 import os
 import re
 import requests
@@ -29,6 +30,14 @@ from flask import Flask, request, jsonify, render_template, Response, session, s
 from flask_cors import CORS
 from typing import Dict, Any, List, Optional, Tuple
 
+# Configure logging based on APP_MODE
+APP_MODE = os.getenv("APP_MODE", "local")
+if APP_MODE == 'production':
+    logging.basicConfig(level=logging.WARNING)
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 from dotenv import load_dotenv, set_key, find_dotenv
 from google import genai  # Correct top-level import
 from google.genai import types # Often useful for advanced features
@@ -39,14 +48,25 @@ from src.expression_evaluator import ExpressionEvaluator
 from src.project_manager import ProjectManager, AUTOSAVE_VERSION_ID
 from src.geometry_types import get_unit_value
 from src.geometry_types import Material, Solid, LogicalVolume
-from src.geometry_types import GeometryState
-from src.ai_tools import AI_GEOMETRY_TOOLS, PRIMITIVE_SOLID_PARAM_SPECS, get_project_summary, get_component_details
+from src.geometry_types import EnvironmentState, GeometryState
+from src.ai_tools import (
+    AI_GEOMETRY_TOOLS,
+    PRIMITIVE_SOLID_PARAM_SPECS,
+    RUN_SIMULATION_OPTION_KEYS,
+    get_project_summary,
+    get_component_details,
+)
 from src.templates import PHYSICS_TEMPLATES
 from src.surrogate_dataset import build_surrogate_dataset_from_payloads
 from src.surrogate_experiment import run_surrogate_experiment, run_surrogate_experiment_from_path
 from src.surrogate_synthetic import generate_synthetic_surrogate_benchmark
 from src.objective_engine import extract_objective_values_from_hdf5
 from src.objective_formula import get_allowed_formula_functions
+from src.scoring_artifacts import (
+    build_run_manifest_summary,
+    build_scoring_run_summary,
+    write_scoring_artifact_bundle,
+)
 from src.ai_backend_adapters import (
     ADAPTER_CONTRACT_VERSION,
     LlamaCppAdapterConfig,
@@ -93,7 +113,6 @@ if os.getenv("APP_MODE") == 'production':
     app.config['SESSION_COOKIE_SECURE'] = True
 
 # --- Read server-wide config on startup ---
-APP_MODE = os.getenv("APP_MODE", "local")  # Default to 'local' if not set
 SERVER_GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
@@ -133,7 +152,7 @@ def get_project_manager_for_session() -> ProjectManager:
 
     # 2. Check if a ProjectManager already exists for this session
     if user_id not in project_managers:
-        print(f"Creating new session and ProjectManager for user_id: {user_id}")
+        logger.info(f"Creating new session and ProjectManager for user_id: {user_id}")
         # 3. Create a new ProjectManager if one doesn't exist
         expression_evaluator = ExpressionEvaluator()
         pm = ProjectManager(expression_evaluator)
@@ -156,7 +175,7 @@ def get_project_manager_for_session() -> ProjectManager:
 
         # --- Seed the API key on first-time session creation ---
         if 'gemini_api_key' not in session and SERVER_GEMINI_API_KEY:
-            print("Using SERVER_GEMINI_API_KEY for this session.")
+            logger.info("Using SERVER_GEMINI_API_KEY for this session.")
             session['gemini_api_key'] = SERVER_GEMINI_API_KEY
 
         # --- Seed Example Projects ---
@@ -166,7 +185,7 @@ def get_project_manager_for_session() -> ProjectManager:
                 if os.path.isdir(example_path):
                     target_path = os.path.join(pm.projects_dir, example_name)
                     if not os.path.exists(target_path):
-                        print(f"Seeding example project: {example_name}")
+                        logger.info(f"Seeding example project: {example_name}")
                         shutil.copytree(example_path, target_path)
 
     last_access[user_id] = time.time()
@@ -203,41 +222,17 @@ def get_gemini_client_for_session() -> client.Client | None:
     if cached_client_info and cached_client_info['key'] == api_key:
         return cached_client_info['client']
 
-    print(f"Configuring Gemini client for user session: {user_id}")
+    logger.info(f"Configuring Gemini client for user session: {user_id}")
     try:
         new_client = genai.Client(api_key=api_key)
         gemini_clients[user_id] = {'client': new_client, 'key': api_key}
         return new_client
     except Exception as e:
-        print(f"Warning: Failed to configure Gemini client: {e}")
+        logger.warning(f"Failed to configure Gemini client: {e}")
         if user_id in gemini_clients:
             del gemini_clients[user_id]
         return None
     
-# GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# gemini_client: client.Client | None = None # Configure Gemini client
-
-# # Configure the Gemini client
-# def configure_gemini_client():
-#     """Initializes or re-initializes the Gemini client with the current API key."""
-#     global GEMINI_API_KEY, gemini_client
-#     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-#     if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_API_KEY_HERE":
-#         try:
-#             gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-#             print("Google Gemini client configured successfully.")
-#             return True
-#         except Exception as e:
-#             print(f"Warning: Failed to configure Google Gemini client: {e}")
-#             gemini_client = None
-#             return False
-#     else:
-#         print("Warning: GEMINI_API_KEY not found or not set. Gemini models will be unavailable.")
-#         gemini_client = None
-#         return False
-
-# # Initial configuration on startup
-# configure_gemini_client()
 
 # --------------------------------------------------------------------------
 # Geant4 integration
@@ -708,6 +703,7 @@ def _objective_builder_example_payload(pm: Optional[ProjectManager], template_id
             'save_hit_metadata': True,
             'save_particles': True,
             'hit_energy_threshold': '1 eV',
+            'production_cut': '1.0 mm',
         },
         'surrogate': {
             'warmup_runs': 4,
@@ -768,6 +764,18 @@ def _validate_formula_expression_for_builder(expression: Any):
     return True, None, sorted(var_names)
 
 
+def _normalize_selected_source_id_list(values: Any) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for value in values if isinstance(values, list) else []:
+        source_id = str(value or '').strip()
+        if not source_id or source_id in seen:
+            continue
+        seen.add(source_id)
+        normalized.append(source_id)
+    return normalized
+
+
 def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = None):
     data = dict(payload or {})
     errors = []
@@ -781,6 +789,9 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
 
     study_objectives = data.get('study_objectives') or []
     study_parameters = data.get('study_parameters') or []
+    selected_source_ids = data.get('selected_source_ids')
+    if selected_source_ids is None:
+        selected_source_ids = data.get('source_ids')
 
     if not isinstance(extract_objectives, list):
         errors.append("extract_objectives must be a list.")
@@ -791,6 +802,28 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
     if study_parameters and not isinstance(study_parameters, list):
         errors.append("study_parameters must be a list when provided.")
         study_parameters = []
+    if selected_source_ids is not None and not isinstance(selected_source_ids, list):
+        errors.append("selected_source_ids must be a list when provided.")
+        selected_source_ids = []
+
+    selected_source_ids = _normalize_selected_source_id_list(selected_source_ids)
+    selected_sources = []
+    if pm and pm.current_geometry_state:
+        available_sources = {
+            str(source.id): str(source.name)
+            for source in (pm.current_geometry_state.sources or {}).values()
+        }
+        missing_sources = [source_id for source_id in selected_source_ids if source_id not in available_sources]
+        if missing_sources:
+            warnings.append(
+                "selected_source_ids contains unknown source ids: "
+                + ", ".join(missing_sources[:5])
+                + ("..." if len(missing_sources) > 5 else "")
+            )
+        selected_sources = [
+            {"id": source_id, "name": available_sources.get(source_id, source_id)}
+            for source_id in selected_source_ids
+        ]
 
     extract_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('simulation_extract_metrics', [])}
     study_metric_specs = {m['metric']: m for m in _objective_builder_schema().get('study_objective_metrics', [])}
@@ -908,10 +941,13 @@ def _validate_objective_builder_payload(payload, pm: Optional[ProjectManager] = 
 
     normalized = {
         'extract_objectives': extract_objectives,
+        'selected_source_ids': selected_source_ids,
+        'selected_sources': selected_sources,
         'study': {
             'name': study_name,
             'mode': study_mode,
             'parameters': study_parameters,
+            'simulation_source_ids': selected_source_ids,
             'objectives': study_objectives,
             'grid': data.get('study_grid', {'steps': 3}) or {'steps': 3},
             'random': data.get('study_random', {'samples': 10, 'seed': 42}) or {'samples': 10, 'seed': 42},
@@ -934,6 +970,8 @@ def _build_objective_builder_payload(payload, validation):
     study = dict(normalized.get('study', {}) or {})
     study_name = study.get('name') or data.get('study_name') or '__objective_builder_study__'
     study_objectives = list(study.get('objectives', []) or [])
+    selected_source_ids = list(normalized.get('selected_source_ids', []) or [])
+    selected_sources = list(normalized.get('selected_sources', []) or [])
 
     primary_obj = None
     for candidate in study_objectives:
@@ -968,6 +1006,7 @@ def _build_objective_builder_payload(payload, validation):
         'save_hit_metadata': True,
         'save_particles': True,
         'hit_energy_threshold': '1 eV',
+        'production_cut': '1.0 mm',
     }
 
     surrogate = data.get('surrogate') or {
@@ -999,6 +1038,8 @@ def _build_objective_builder_payload(payload, validation):
             'context': data.get('context', {}) or {},
             'keep_candidate_runs': bool(data.get('keep_candidate_runs', False)),
             'candidate_runs_root': data.get('candidate_runs_root'),
+            'selected_source_ids': selected_source_ids,
+            'selected_sources': selected_sources,
         },
         'verify_payload_template': {
             'run_id': '<optimizer_run_id>',
@@ -1319,7 +1360,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                 command, cwd=run_dir,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
-                env=get_geant4_env()
+                env=get_geant4_env(sim_params)
             )
             with SIMULATION_LOCK:
                     SIMULATION_PROCESSES[job_id] = process
@@ -1362,8 +1403,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                 if s.startswith("/run/beamOn"): continue
                 if s.startswith("/random/setSeeds"): continue
                 if s.startswith("/analysis/setFileName"): continue
-                if s.startswith("/run/numberOfThreads"): continue 
-                if s.startswith("/g4pet/run/saveHits"): continue 
+                if s.startswith("/run/numberOfThreads"): continue
                 filtered_lines.append(line)
             
             seed1 = int(sim_params.get('seed1', 12345))
@@ -1390,7 +1430,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                     cmd, cwd=run_dir,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, bufsize=1,
-                    env=get_geant4_env()
+                    env=get_geant4_env(sim_params)
                 )
                 procs.append(p)
             
@@ -1468,7 +1508,7 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                                     del hits[c]['pages']
                                     dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
                                     for k,v in attrs.items(): dn.attrs[k] = v
-                except Exception as e: print(f"T0 Clean Error: {e}")
+                except Exception as e: logger.error(f"T0 Clean Error: {e}")
                 evt_per_thread = total_events // num_threads
                 try:
                     with h5py.File(target_path, 'r+') as f_dst:
@@ -1506,15 +1546,33 @@ def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
                                             dst_d[old_len:old_len+add_len] = data
                                         elif isinstance(dst_node, h5py.Dataset) and col=='entries':
                                             dst_node[...] += src_node[...]
-                except Exception as e: print(f"Merge Loop Error: {e}")
+                except Exception as e: logger.error(f"Merge Loop Error: {e}")
                 with SIMULATION_LOCK:
                     SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
                     for f in t_files: os.remove(f)
+
+        scoring_artifact_error = None
+        if final_return_code == 0:
+            try:
+                scoring_artifacts = write_scoring_artifact_bundle(run_dir)
+                if scoring_artifacts and scoring_artifacts.get("artifact_request_count", 0) > 0:
+                    with SIMULATION_LOCK:
+                        bundle_path = scoring_artifacts.get("artifact_bundle_path")
+                        if bundle_path:
+                            SIMULATION_STATUS[job_id]["stdout"].append(
+                                f"Scoring artifacts written to {bundle_path}."
+                            )
+            except Exception as e:
+                scoring_artifact_error = str(e)
 
         with SIMULATION_LOCK:
             if final_return_code == 0:
                 SIMULATION_STATUS[job_id]['progress'] = total_events
                 SIMULATION_STATUS[job_id]['status'] = 'Completed'
+                if scoring_artifact_error:
+                    SIMULATION_STATUS[job_id]["stderr"].append(
+                        f"Warning: Failed to generate scoring artifacts: {scoring_artifact_error}"
+                    )
             else:
                 SIMULATION_STATUS[job_id]['status'] = 'Error'
             SIMULATION_PROCESSES.pop(job_id, None)
@@ -3445,318 +3503,18 @@ def run_simulation():
             job_id, sim_params, GEANT4_BUILD_DIR, run_dir, version_dir
         )
 
-        # This will be the function run in a separate thread
-        def run_g4_simulation(job_id, run_dir, executable_path, sim_params):
-            num_threads = int(sim_params.get('threads', 1))
-            total_events = int(sim_params.get('events', 1))
-            
+        def run_g4_simulation_for_http(job_id, run_dir, executable_path, sim_params):
+            global LATEST_COMPLETED_JOB_ID
+            run_g4_simulation(job_id, run_dir, executable_path, sim_params)
             with SIMULATION_LOCK:
-                SIMULATION_STATUS[job_id] = {
-                    "status": "Running",
-                    "progress": 0,
-                    "total_events": total_events,
-                    "stdout": [],
-                    "stderr": []
-                }
-
-            try:
-                # --- SINGLE PROCESS MODE ---
-                if num_threads <= 1:
-                    command = [executable_path, "run.mac"]
-                    process = subprocess.Popen(
-                        command, cwd=run_dir,
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=True, bufsize=1,
-                        env=get_geant4_env(sim_params)
-                    )
-                    with SIMULATION_LOCK:
-                         SIMULATION_PROCESSES[job_id] = process
-                    
-                    # Monitor
-                    if process.stdout:
-                        for line in iter(process.stdout.readline, ''):
-                            line = line.strip()
-                            if line:
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stdout'].append(line)
-                                    if ">>> Event" in line and "starts" in line:
-                                        try:
-                                            # Using regex might be safer but split is okay
-                                            parts = line.split()
-                                            # format: ">>> Event N starts..."
-                                            if len(parts) > 2 and parts[2].isdigit():
-                                                SIMULATION_STATUS[job_id]['progress'] = int(parts[2]) + 1
-                                        except: pass
-                    
-                    stdout_remainder, stderr_output = process.communicate()
-                    if stderr_output:
-                         with SIMULATION_LOCK:
-                             SIMULATION_STATUS[job_id]['stderr'].append(stderr_output)
-                             
-                    final_return_code = process.returncode
-
-                # --- MULTI-PROCESS MODE ---
-                else:
-                    msg = f"Starting {num_threads} parallel processes for {total_events} events..."
-                    with SIMULATION_LOCK:
-                        SIMULATION_STATUS[job_id]['stdout'].append(msg)
-                    
-                    # 1. Prepare Macros
-                    base_macro_path = os.path.join(run_dir, "run.mac")
-                    with open(base_macro_path, 'r') as f:
-                        base_lines = f.readlines()
-                    
-                    # Filter out commands we will override
-                    filtered_lines = []
-                    for line in base_lines:
-                        s = line.strip()
-                        if s.startswith("/run/beamOn"): continue
-                        if s.startswith("/random/setSeeds"): continue
-                        if s.startswith("/analysis/setFileName"): continue
-                        if s.startswith("/run/numberOfThreads"): continue 
-                        if s.startswith("/g4pet/run/saveHits"): continue # We force true usually, but read params
-                        filtered_lines.append(line)
-                    
-                    # Base seeds
-                    seed1 = int(sim_params.get('seed1', 12345))
-                    seed2 = int(sim_params.get('seed2', 67890))
-                    
-                    events_per_thread = total_events // num_threads
-                    remainder = total_events % num_threads
-                    
-                    procs = []
-                    
-                    for i in range(num_threads):
-                        n_events = events_per_thread + (1 if i < remainder else 0)
-                        if n_events <= 0: continue
-                        
-                        macro_name = f"run_t{i}.mac"
-                        out_name = f"output_t{i}.hdf5"
-                        
-                        # Unique seeds
-                        s1 = seed1 + i*1000
-                        s2 = seed2 + i*1000
-                        
-                        # Write specific macro
-                        with open(os.path.join(run_dir, macro_name), 'w') as f:
-                            f.writelines(filtered_lines)
-                            f.write(f"\n/random/setSeeds {s1} {s2}")
-                            f.write(f"\n/analysis/setFileName {out_name}")
-                            f.write(f"\n/run/beamOn {n_events}\n")
-                        
-                        cmd = [executable_path, macro_name]
-                        p = subprocess.Popen(
-                            cmd, cwd=run_dir,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, bufsize=1,
-                            env=get_geant4_env(sim_params)
-                        )
-                        procs.append(p)
-                    
-                    with SIMULATION_LOCK:
-                        SIMULATION_PROCESSES[job_id] = procs # Store list for parallel stop handling
-
-                    # 2. Monitor Loop
-                    # We launch threads to continuously drain stdout/stderr of all processes
-                    # to prevent deadlocks and update progress.
-                    monitor_threads = []
-                    
-                    def stdout_reader(proc, idx):
-                        for line in iter(proc.stdout.readline, ''):
-                            line = line.strip()
-                            if not line: continue
-                            
-                            # Filter spammy lines
-                            if "Checking overlaps for volume" in line: continue
-                            
-                            # Log T0 fully, others only on error/warning
-                            is_interesting = (idx == 0) or ("error" in line.lower()) or ("warning" in line.lower()) or ("exception" in line.lower())
-                            
-                            if is_interesting:
-                                prefix = f"[T{idx}] "
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stdout'].append(prefix + line)
-                                    
-                                    # Parse progress (T0 only) to avoid jitter
-                                    if idx == 0 and ">>> Event" in line and "starts" in line:
-                                        try:
-                                            # Example: ">>> Event 123 starts..."
-                                            parts = line.split()
-                                            if len(parts) > 2 and parts[2].isdigit():
-                                                local_ev = int(parts[2])
-                                                SIMULATION_STATUS[job_id]['progress'] = (local_ev + 1) * num_threads
-                                        except: pass
-                        proc.stdout.close()
-
-                    def stderr_reader(proc, idx):
-                        for line in iter(proc.stderr.readline, ''):
-                            line = line.strip()
-                            if line:
-                                with SIMULATION_LOCK:
-                                    SIMULATION_STATUS[job_id]['stderr'].append(f"[T{idx}] {line}")
-                        proc.stderr.close()
-
-                    for i, p in enumerate(procs):
-                        # Start stdout reader
-                        t_out = threading.Thread(target=stdout_reader, args=(p, i))
-                        t_out.start()
-                        monitor_threads.append(t_out)
-                        
-                        # Start stderr reader
-                        t_err = threading.Thread(target=stderr_reader, args=(p, i))
-                        t_err.start()
-                        monitor_threads.append(t_err)
-                    
-                    # Wait for all streaming to finish
-                    for t in monitor_threads:
-                        t.join()
-                    
-                    # Ensure all processes have exited and set return code
-                    final_return_code = 0
-                    for p in procs:
-                        p.wait()
-                        if p.returncode != 0:
-                            final_return_code = p.returncode
-                    
-                    # (The following code expects final_return_code and cleanup)
-
-                    if final_return_code == 0:
-                         with SIMULATION_LOCK:
-                            SIMULATION_STATUS[job_id]['stdout'].append("Parallel tasks completed. Merging...")
-
-                # --- MERGE LOGIC ---
-                if final_return_code == 0:
-                    import glob
-                    import shutil
-                    print(f"[Merge] Searching for output files in {run_dir}...")
-                    # Look for separate files and sort humerically to ensure correct EventID order
-                    t_files = glob.glob(os.path.join(run_dir, "output_t*.hdf5"))
-                    if not t_files or len(t_files) == 0:
-                         t_files = glob.glob(os.path.join(run_dir, "run_t*.hdf5"))
-
-                    if t_files:
-                        print(f"[Merge] Found {len(t_files)} fragments. Starting merge...")
-                        try:
-                            t_files.sort(key=lambda x: int(os.path.basename(x).split('_t')[1].split('.')[0]))
-                        except:
-                            t_files.sort()
-                        
-                        target_path = os.path.join(run_dir, "output.hdf5")
-                        shutil.copyfile(t_files[0], target_path)
-                        print(f"[Merge] Initialized target file from {t_files[0]}")
-
-                        # Robust Iterative Merge Logic (Matches repair_full_merge.py)
-                        # 1. Clean T0 (Base)
-                        try:
-                            with h5py.File(target_path, 'r+') as f:
-                                if 'default_ntuples/Hits' in f:
-                                    hits = f['default_ntuples/Hits']
-                                    
-                                    # Detect limit
-                                    lim_t0 = 0
-                                    if 'EventID' in hits and 'pages' in hits['EventID']:
-                                        ev = hits['EventID']['pages'][:]
-                                        nz = np.nonzero(ev)[0]
-                                        lim_t0 = nz[-1] + 1 if len(nz) > 0 else 0
-                                    
-                                    # Clean T0 Columns
-                                    for c in hits:
-                                        if isinstance(hits[c], h5py.Group) and 'pages' in hits[c]:
-                                            dset = hits[c]['pages']
-                                            data = dset[:lim_t0]
-                                            attrs = dict(dset.attrs)
-                                            del hits[c]['pages']
-                                            # Create Chunked + Compressed
-                                            dn = hits[c].create_dataset('pages', data=data, maxshape=(None,)+data.shape[1:], chunks=True, compression="gzip")
-                                            for k,v in attrs.items(): dn.attrs[k] = v
-                                    print(f"T0 Initialized: {lim_t0} rows (Compressed)")
-                        except Exception as e:
-                            print(f"T0 Clean Error: {e}")
-
-                        # 2. Append T1..TN
-                        evt_per_thread = total_events // num_threads
-                        
-                        try:
-                            with h5py.File(target_path, 'r+') as f_dst:
-                                if 'default_ntuples/Hits' in f_dst:
-                                    grp_dst_hits = f_dst['default_ntuples/Hits']
-                                    
-                                    for src_path in t_files[1:]:
-                                        fname = os.path.basename(src_path)
-                                        current_offset = 0
-                                        try:
-                                            t_idx = int(fname.split('_t')[1].split('.')[0])
-                                            current_offset = t_idx * evt_per_thread
-                                        except: pass
-                                        
-                                        with h5py.File(src_path, 'r') as f_src:
-                                            if 'default_ntuples/Hits' not in f_src: continue
-                                            grp_src_hits = f_src['default_ntuples/Hits']
-                                            
-                                            # Detect Source Limit
-                                            lim_src = 0
-                                            if 'EventID' in grp_src_hits:
-                                                 ev = grp_src_hits['EventID']['pages'][:]
-                                                 nz = np.nonzero(ev)[0]
-                                                 if len(nz)>0: lim_src = nz[-1]+1
-                                            
-                                            print(f"Merging {fname}: Limit={lim_src} Offset={current_offset}")
-
-                                            # Merge Columns Iteratively
-                                            for col in grp_dst_hits:
-                                                if col not in grp_src_hits: continue
-                                                
-                                                dst_node = grp_dst_hits[col]
-                                                src_node = grp_src_hits[col]
-                                                
-                                                # Handle Pages (Data)
-                                                if isinstance(dst_node, h5py.Group) and 'pages' in dst_node:
-                                                    dst_d = dst_node['pages']
-                                                    src_d = src_node['pages']
-                                                    
-                                                    # Read valid data
-                                                    data = src_d[:lim_src]
-                                                    
-                                                    # Apply Offset to EventID
-                                                    if col == "EventID":
-                                                        data = data.astype(np.int64)
-                                                        if current_offset > 0: data += current_offset
-                                                    
-                                                    # Write
-                                                    old_len = dst_d.shape[0]
-                                                    add_len = len(data)
-                                                    dst_d.resize((old_len+add_len,) + dst_d.shape[1:])
-                                                    dst_d[old_len:old_len+add_len] = data
-                                                
-                                                # Handle Metadata (entries)
-                                                elif isinstance(dst_node, h5py.Dataset) and col=='entries':
-                                                    dst_node[...] += src_node[...]
-                        except Exception as e:
-                             print(f"Merge Loop Error: {e}")
-                                                
-                        with SIMULATION_LOCK:
-                            SIMULATION_STATUS[job_id]['stdout'].append("Merge finished.")
-                            # Cleanup (DISABLE FOR DEBUGGING)
-                            for f in t_files: os.remove(f)
-
-                with SIMULATION_LOCK:
-                    if final_return_code == 0:
-                        SIMULATION_STATUS[job_id]['progress'] = total_events
-                        SIMULATION_STATUS[job_id]['status'] = 'Completed'
-                        LATEST_COMPLETED_JOB_ID = job_id
-                    else:
-                        SIMULATION_STATUS[job_id]['status'] = 'Error'
-                    SIMULATION_PROCESSES.pop(job_id, None)
-
-            except Exception as e:
-                traceback.print_exc()
-                with SIMULATION_LOCK:
-                    SIMULATION_STATUS[job_id]['status'] = 'Error'
-                    SIMULATION_STATUS[job_id]['stderr'].append(str(e))
-                SIMULATION_PROCESSES.pop(job_id, None)
+                if SIMULATION_STATUS.get(job_id, {}).get('status') == 'Completed':
+                    LATEST_COMPLETED_JOB_ID = job_id
 
         # Start the background task
-        thread = threading.Thread(target=run_g4_simulation, args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params))
+        thread = threading.Thread(
+            target=run_g4_simulation_for_http,
+            args=(job_id, run_dir, GEANT4_EXECUTABLE, sim_params),
+        )
         thread.start()
 
         return jsonify({
@@ -4091,9 +3849,101 @@ def get_simulation_metadata(version_id, job_id):
     try:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
+        environment_summary = _environment_summary_from_metadata(metadata)
+        if environment_summary is not None and 'environment_summary' not in metadata:
+            metadata['environment_summary'] = environment_summary
         return jsonify({"success": True, "metadata": metadata})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _load_scoring_artifact_bundle(run_dir, metadata):
+    run_path = Path(run_dir)
+    metadata_payload = metadata if isinstance(metadata, dict) else {}
+    scoring_artifacts = (
+        metadata_payload.get("scoring_artifacts")
+        if isinstance(metadata_payload.get("scoring_artifacts"), dict)
+        else {}
+    )
+
+    candidate_names = []
+    bundle_name = scoring_artifacts.get("artifact_bundle_path")
+    if isinstance(bundle_name, str) and bundle_name.strip():
+        candidate_names.append(bundle_name.strip())
+    if "scoring_artifacts.json" not in candidate_names:
+        candidate_names.append("scoring_artifacts.json")
+
+    for candidate_name in candidate_names:
+        candidate_path = run_path / candidate_name
+        if not candidate_path.exists():
+            continue
+        with candidate_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    return None
+
+
+def _load_simulation_run_metadata(pm, version_id, job_id):
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+    metadata_path = os.path.join(run_dir, "metadata.json")
+
+    if not os.path.exists(metadata_path):
+        return None
+
+    try:
+        with open(metadata_path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+@app.route('/api/simulation/scoring_summary/<version_id>/<job_id>', methods=['GET'])
+def get_simulation_scoring_summary(version_id, job_id):
+    pm = get_project_manager_for_session()
+    version_dir = pm._get_version_dir(version_id)
+    run_dir = os.path.join(version_dir, "sim_runs", job_id)
+
+    metadata = _load_simulation_run_metadata(pm, version_id, job_id)
+    if metadata is None:
+        return jsonify({"success": False, "error": "Simulation metadata not found."}), 404
+
+    try:
+        scoring_bundle = _load_scoring_artifact_bundle(run_dir, metadata)
+        run_manifest_summary = (
+            metadata.get("run_manifest_summary")
+            if isinstance(metadata.get("run_manifest_summary"), dict)
+            else build_run_manifest_summary(metadata, run_dir, version_id=version_id)
+        )
+        scoring_summary = build_scoring_run_summary(
+            metadata,
+            scoring_bundle=scoring_bundle,
+            run_manifest_summary=run_manifest_summary,
+            version_id=version_id,
+            job_id=job_id,
+        )
+        return jsonify({"success": True, "scoring_summary": scoring_summary})
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+def _environment_summary_from_metadata(metadata):
+    if not isinstance(metadata, dict):
+        return None
+
+    summary = metadata.get("environment_summary")
+    if isinstance(summary, dict):
+        return summary
+
+    environment = metadata.get("environment")
+    if not isinstance(environment, dict):
+        return None
+
+    try:
+        return EnvironmentState.from_dict(environment).to_summary_dict()
+    except Exception:
+        return None
+
 
 def _build_simulation_candidate_evaluator(
     pm,
@@ -4103,6 +3953,7 @@ def _build_simulation_candidate_evaluator(
     context_static=None,
     keep_candidate_runs=False,
     candidate_runs_root=None,
+    selected_source_ids=None,
 ):
     static_ctx = dict(context_static or {})
     keep_runs = bool(keep_candidate_runs)
@@ -4111,99 +3962,175 @@ def _build_simulation_candidate_evaluator(
     if keep_runs:
         os.makedirs(candidate_runs_root, exist_ok=True)
 
+    requested_source_ids = _normalize_selected_source_id_list(selected_source_ids)
+
     def evaluator(*, run_record, project_manager, study):
         job_id = str(uuid.uuid4())
+        previous_active_source_ids = list(project_manager.current_geometry_state.active_source_ids or [])
+        selected_source_names = None
 
-        with tempfile.TemporaryDirectory(prefix="simloop_") as tmp:
-            version_dir = os.path.join(tmp, "version")
-            os.makedirs(version_dir, exist_ok=True)
+        if requested_source_ids:
+            available_source_map = {
+                str(source.id): str(source.name)
+                for source in (project_manager.current_geometry_state.sources or {}).values()
+            }
+            missing_source_ids = [source_id for source_id in requested_source_ids if source_id not in available_source_map]
+            if missing_source_ids:
+                return {
+                    "success": False,
+                    "error": (
+                        "Selected simulation sources are missing from the current geometry state: "
+                        + ", ".join(missing_source_ids)
+                    ),
+                    "sim_metrics": {},
+                    "simulation": {
+                        "job_id": job_id,
+                        "selected_source_ids": requested_source_ids,
+                    },
+                }
 
-            state_payload = json.dumps(project_manager.current_geometry_state.to_dict(), indent=2)
-            with open(os.path.join(version_dir, "version.json"), "w", encoding="utf-8") as f:
-                f.write(state_payload)
+            project_manager.current_geometry_state.active_source_ids = list(requested_source_ids)
+            selected_source_names = [available_source_map[source_id] for source_id in requested_source_ids]
 
-            run_dir = os.path.join(version_dir, "sim_runs", job_id)
-            os.makedirs(run_dir, exist_ok=True)
+        try:
+            with tempfile.TemporaryDirectory(prefix="simloop_") as tmp:
+                version_dir = os.path.join(tmp, "version")
+                os.makedirs(version_dir, exist_ok=True)
 
-            try:
-                project_manager.generate_macro_file(
-                    job_id=job_id,
-                    sim_params=sim_params,
-                    build_dir=GEANT4_BUILD_DIR,
-                    run_dir=run_dir,
-                    version_dir=version_dir,
+                state_payload = json.dumps(project_manager.current_geometry_state.to_dict(), indent=2)
+                with open(os.path.join(version_dir, "version.json"), "w", encoding="utf-8") as f:
+                    f.write(state_payload)
+
+                run_dir = os.path.join(version_dir, "sim_runs", job_id)
+                os.makedirs(run_dir, exist_ok=True)
+
+                try:
+                    project_manager.generate_macro_file(
+                        job_id=job_id,
+                        sim_params=sim_params,
+                        build_dir=GEANT4_BUILD_DIR,
+                        run_dir=run_dir,
+                        version_dir=version_dir,
+                    )
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Failed to generate macro for candidate: {e}",
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                run_g4_simulation(job_id=job_id, run_dir=run_dir, executable_path=GEANT4_EXECUTABLE, sim_params=sim_params)
+
+                with SIMULATION_LOCK:
+                    status = dict(SIMULATION_STATUS.get(job_id, {}))
+                    SIMULATION_STATUS.pop(job_id, None)
+                    SIMULATION_PROCESSES.pop(job_id, None)
+
+                if status.get("status") != "Completed":
+                    err_lines = status.get("stderr", []) if isinstance(status.get("stderr"), list) else []
+                    err_msg = err_lines[-1] if err_lines else "Simulation run failed."
+                    return {
+                        "success": False,
+                        "error": err_msg,
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "status": status.get("status", "Error"),
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                output_path = os.path.join(run_dir, "output.hdf5")
+                if not os.path.exists(output_path):
+                    return {
+                        "success": False,
+                        "error": "Simulation completed but output.hdf5 was not found.",
+                        "sim_metrics": {},
+                        "simulation": {
+                            "job_id": job_id,
+                            "status": "CompletedWithoutOutput",
+                            "selected_source_ids": list(requested_source_ids),
+                            "selected_source_names": selected_source_names,
+                        },
+                    }
+
+                context = {}
+                context.update(static_ctx)
+                context.update(run_record.get("values", {}) or {})
+                context.update(run_record.get("metrics", {}) or {})
+
+                sim_metrics, warnings, _available = extract_objective_values_from_hdf5(
+                    output_path=output_path,
+                    objectives=sim_objectives,
+                    context=context,
                 )
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Failed to generate macro for candidate: {e}",
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                    },
+
+                simulation_info = {
+                    "job_id": job_id,
+                    "status": "Completed",
+                    "warnings": warnings,
+                    "selected_source_ids": list(requested_source_ids),
+                    "selected_source_names": selected_source_names,
                 }
 
-            run_g4_simulation(job_id=job_id, run_dir=run_dir, executable_path=GEANT4_EXECUTABLE, sim_params=sim_params)
+                if keep_runs:
+                    candidate_dir = os.path.join(candidate_runs_root, f"candidate_{run_record.get('run_index', 0):04d}_{job_id}")
+                    shutil.copytree(run_dir, candidate_dir, dirs_exist_ok=True)
+                    simulation_info["saved_run_dir"] = candidate_dir
 
-            with SIMULATION_LOCK:
-                status = dict(SIMULATION_STATUS.get(job_id, {}))
-                SIMULATION_STATUS.pop(job_id, None)
-                SIMULATION_PROCESSES.pop(job_id, None)
-
-            if status.get("status") != "Completed":
-                err_lines = status.get("stderr", []) if isinstance(status.get("stderr"), list) else []
-                err_msg = err_lines[-1] if err_lines else "Simulation run failed."
                 return {
-                    "success": False,
-                    "error": err_msg,
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                        "status": status.get("status", "Error"),
-                    },
+                    "success": True,
+                    "sim_metrics": sim_metrics,
+                    "simulation": simulation_info,
                 }
-
-            output_path = os.path.join(run_dir, "output.hdf5")
-            if not os.path.exists(output_path):
-                return {
-                    "success": False,
-                    "error": "Simulation completed but output.hdf5 was not found.",
-                    "sim_metrics": {},
-                    "simulation": {
-                        "job_id": job_id,
-                        "status": "CompletedWithoutOutput",
-                    },
-                }
-
-            context = {}
-            context.update(static_ctx)
-            context.update(run_record.get("values", {}) or {})
-            context.update(run_record.get("metrics", {}) or {})
-
-            sim_metrics, warnings, _available = extract_objective_values_from_hdf5(
-                output_path=output_path,
-                objectives=sim_objectives,
-                context=context,
-            )
-
-            simulation_info = {
-                "job_id": job_id,
-                "status": "Completed",
-                "warnings": warnings,
-            }
-
-            if keep_runs:
-                candidate_dir = os.path.join(candidate_runs_root, f"candidate_{run_record.get('run_index', 0):04d}_{job_id}")
-                shutil.copytree(run_dir, candidate_dir, dirs_exist_ok=True)
-                simulation_info["saved_run_dir"] = candidate_dir
-
-            return {
-                "success": True,
-                "sim_metrics": sim_metrics,
-                "simulation": simulation_info,
-            }
+        finally:
+            project_manager.current_geometry_state.active_source_ids = previous_active_source_ids
 
     return evaluator
+
+
+def _normalize_run_selected_sources(pm: ProjectManager, run_payload: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload = dict(run_payload or {})
+    raw_selected_source_ids = payload.get('selected_source_ids')
+    if raw_selected_source_ids is None:
+        raw_selected_source_ids = payload.get('source_ids')
+    if raw_selected_source_ids is None:
+        return payload, None
+    if not isinstance(raw_selected_source_ids, list):
+        return None, {"success": False, "error": "selected_source_ids must be a list when provided."}
+
+    selected_source_ids = _normalize_selected_source_id_list(raw_selected_source_ids)
+    available_sources = {
+        str(source.id): str(source.name)
+        for source in (pm.current_geometry_state.sources or {}).values()
+    }
+
+    if available_sources and not selected_source_ids:
+        return None, {
+            "success": False,
+            "error": "Select at least one particle source for the simulation sweep.",
+        }
+
+    missing_source_ids = [source_id for source_id in selected_source_ids if source_id not in available_sources]
+    if missing_source_ids:
+        return None, {
+            "success": False,
+            "error": "One or more selected sources are no longer available.",
+            "details": missing_source_ids,
+        }
+
+    payload['selected_source_ids'] = selected_source_ids
+    payload['selected_sources'] = [
+        {"id": source_id, "name": available_sources[source_id]}
+        for source_id in selected_source_ids
+    ]
+    return payload, None
 
 
 def _read_hits_columns_for_objectives(output_path):
@@ -4455,6 +4382,9 @@ def objective_builder_launch_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     run_payload = normalized_run
+    run_payload, source_error = _normalize_run_selected_sources(pm, run_payload)
+    if source_error:
+        return jsonify(source_error), 400
 
     preflight_report = pm.run_preflight_checks()
     preflight_summary = preflight_report.get('summary', {})
@@ -4509,6 +4439,7 @@ def objective_builder_launch_route():
         context_static=(run_payload.get('context') or {}),
         keep_candidate_runs=bool(run_payload.get('keep_candidate_runs', False)),
         candidate_runs_root=run_payload.get('candidate_runs_root'),
+        selected_source_ids=run_payload.get('selected_source_ids'),
     )
 
     control, response, status = _start_managed_optimizer_run(
@@ -4937,6 +4868,11 @@ def get_simulation_analysis(version_id, job_id):
                 'available_sensitive_detectors': available_sensitive_detectors,
                 'selected_sensitive_detector': selected_sensitive_detector,
             }
+
+        metadata = _load_simulation_run_metadata(pm, version_id, job_id)
+        environment_summary = _environment_summary_from_metadata(metadata)
+        if environment_summary is not None:
+            analysis_data['environment_summary'] = environment_summary
 
         return jsonify({"success": True, "analysis": analysis_data})
 
@@ -5511,10 +5447,11 @@ def run_reconstruction_route(version_id, job_id):
                 x = x * back_projection
 
             print(f"Iteration {i+1} done.")
-            print(f"  [Debug] ybar: min={float(xp.min(ybar)):.4e}, max={float(xp.max(ybar)):.4e}, mean={float(xp.mean(ybar)):.4e}")
-            print(f"  [Debug] ratio_denom: min={float(xp.min(ratio_denominator)):.4e}, max={float(xp.max(ratio_denominator)):.4e}, mean={float(xp.mean(ratio_denominator)):.4e}")
-            print(f"  [Debug] back_proj: min={float(xp.min(back_projection)):.4e}, max={float(xp.max(back_projection)):.4e}, mean={float(xp.mean(back_projection)):.4e}")
-            print(f"  [Debug] x (image): min={float(xp.min(x)):.4e}, max={float(xp.max(x)):.4e}, mean={float(xp.mean(x)):.4e}")
+            if APP_MODE != 'production':
+                logger.debug(f"ybar: min={float(xp.min(ybar)):.4e}, max={float(xp.max(ybar)):.4e}, mean={float(xp.mean(ybar)):.4e}")
+                logger.debug(f"ratio_denom: min={float(xp.min(ratio_denominator)):.4e}, max={float(xp.max(ratio_denominator)):.4e}, mean={float(xp.mean(ratio_denominator)):.4e}")
+                logger.debug(f"back_proj: min={float(xp.min(back_projection)):.4e}, max={float(xp.max(back_projection)):.4e}, mean={float(xp.mean(back_projection)):.4e}")
+                logger.debug(f"x (image): min={float(xp.min(x)):.4e}, max={float(xp.max(x)):.4e}, mean={float(xp.mean(x)):.4e}")
 
         # Save the final numpy array to HDF5
         reconstructed_image_np = parallelproj.to_numpy_array(x)
@@ -5991,10 +5928,35 @@ def load_system_prompt():
         return "You are a helpful assistant." # Fallback prompt
 
 # Function for Consistent API Responses
-def create_success_response(project_manager, message="Success", exclude_unchanged_tessellated=True, extra_payload=None):
-    """
-    Helper to create a standard success response object, including history state.
-    """
+def _get_excluded_static_tessellated_solid_names(project_manager):
+    state = getattr(project_manager, "current_geometry_state", None)
+    if state is None:
+        return []
+
+    changed_solids_set = getattr(project_manager, "changed_object_ids", {}).get("solids") or set()
+    excluded_names = []
+
+    for name, solid in getattr(state, "solids", {}).items():
+        if getattr(solid, "type", None) != "tessellated":
+            continue
+
+        raw_parameters = getattr(solid, "raw_parameters", None)
+        if not isinstance(raw_parameters, dict):
+            continue
+
+        facets = raw_parameters.get("facets", [])
+        if (
+            facets
+            and isinstance(facets[0], dict)
+            and "vertices" in facets[0]
+            and name not in changed_solids_set
+        ):
+            excluded_names.append(name)
+
+    return excluded_names
+
+
+def build_success_payload(project_manager, message="Success", exclude_unchanged_tessellated=True, extra_payload=None):
     state = project_manager.get_full_project_state_dict(exclude_unchanged_tessellated=exclude_unchanged_tessellated)
     scene = project_manager.get_threejs_description()
     project_name = project_manager.project_name
@@ -6004,9 +5966,6 @@ def create_success_response(project_manager, message="Success", exclude_unchange
         response_type = "full_with_exclusions"
     else:
         response_type = "full"
-
-    # Reset the object change tracking.
-    project_manager._clear_change_tracker()
 
     payload = {
         "success": True,
@@ -6022,8 +5981,28 @@ def create_success_response(project_manager, message="Success", exclude_unchange
         }
     }
 
+    if exclude_unchanged_tessellated:
+        payload["excluded_solid_names"] = _get_excluded_static_tessellated_solid_names(project_manager)
+
     if isinstance(extra_payload, dict):
         payload.update(extra_payload)
+
+    return payload
+
+
+def create_success_response(project_manager, message="Success", exclude_unchanged_tessellated=True, extra_payload=None):
+    """
+    Helper to create a standard success response object, including history state.
+    """
+    payload = build_success_payload(
+        project_manager,
+        message=message,
+        exclude_unchanged_tessellated=exclude_unchanged_tessellated,
+        extra_payload=extra_payload,
+    )
+
+    # Reset the object change tracking.
+    project_manager._clear_change_tracker()
 
     return jsonify(payload)
 
@@ -6433,10 +6412,15 @@ def import_gdml_part_route():
         gdml_content_str = file.read().decode('utf-8')
         # Parse into a temporary state object
         temp_state = pm.gdml_parser.parse_gdml_string(gdml_content_str)
+        import_warnings = list(pm.gdml_parser.import_warnings)
         # Call the new merge method
         success, error_msg = pm.merge_from_state(temp_state)
         if success:
-            return create_success_response(pm, "GDML part(s) imported successfully.")
+            return create_success_response(
+                pm,
+                "GDML part(s) imported successfully.",
+                extra_payload={"import_warnings": import_warnings},
+            )
         else:
             return jsonify({"success": False, "error": error_msg or "Failed to merge GDML part."}), 500
     except Exception as e:
@@ -6486,7 +6470,13 @@ def process_gdml_route():
         gdml_content_str = file.read().decode('utf-8')
         try:
             pm.load_gdml_from_string(gdml_content_str)
-            return create_success_response(pm, "GDML file processed successfully.",exclude_unchanged_tessellated=False)
+            import_warnings = list(pm.gdml_parser.import_warnings)
+            return create_success_response(
+                pm,
+                "GDML file processed successfully.",
+                exclude_unchanged_tessellated=False,
+                extra_payload={"import_warnings": import_warnings},
+            )
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -6536,6 +6526,8 @@ UPDATE_PROPERTY_ALLOWED_OBJECT_TYPES = {
     "solid",
     "logical_volume",
     "physical_volume",
+    "environment",
+    "scoring",
 }
 
 
@@ -7195,6 +7187,9 @@ def param_optimizer_run_simulation_in_loop_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     data = normalized
+    data, source_error = _normalize_run_selected_sources(pm, data)
+    if source_error:
+        return jsonify(source_error), 400
     sim_params = data['sim_params']
 
     preflight_report = pm.run_preflight_checks()
@@ -7214,6 +7209,7 @@ def param_optimizer_run_simulation_in_loop_route():
         context_static=(data.get('context') or {}),
         keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
         candidate_runs_root=data.get('candidate_runs_root'),
+        selected_source_ids=data.get('selected_source_ids'),
     )
 
     _, response, status = _start_managed_optimizer_run(
@@ -7298,6 +7294,9 @@ def param_optimizer_head_to_head_simulation_in_loop_route():
     if policy_error:
         return jsonify({"success": False, **policy_error}), 400
     data = normalized
+    data, source_error = _normalize_run_selected_sources(pm, data)
+    if source_error:
+        return jsonify(source_error), 400
     sim_params = data['sim_params']
 
     preflight_report = pm.run_preflight_checks()
@@ -7315,6 +7314,7 @@ def param_optimizer_head_to_head_simulation_in_loop_route():
         context_static=(data.get('context') or {}),
         keep_candidate_runs=bool(data.get('keep_candidate_runs', False)),
         candidate_runs_root=data.get('candidate_runs_root'),
+        selected_source_ids=data.get('selected_source_ids'),
     )
 
     _, response, status = _start_managed_optimizer_run(
@@ -7868,6 +7868,30 @@ def update_logical_volume_route():
     else:
         return jsonify({"success": False, "error": error_msg}), 500
 
+@app.route('/api/update_logical_volume_batch', methods=['POST'])
+def update_logical_volume_batch_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json() or {}
+    updates_list = data.get('updates')
+    if not isinstance(updates_list, list):
+        return jsonify({"success": False, "error": "Invalid request: 'updates' must be a list."}), 400
+
+    success, error_msg, updated_lv_names = pm.update_logical_volume_batch(updates_list)
+
+    if success:
+        updated_count = len(updated_lv_names)
+        return create_success_response(
+            pm,
+            f"Updated {updated_count} logical volume(s).",
+            extra_payload={
+                "updated_logical_volume_names": updated_lv_names,
+                "updated_logical_volume_count": updated_count,
+            },
+        )
+
+    return jsonify({"success": False, "error": error_msg or "Failed to update logical volumes."}), 500
+
 @app.route('/add_physical_volume', methods=['POST'])
 def add_physical_volume_route():
     pm = get_project_manager_for_session()
@@ -7993,7 +8017,7 @@ def get_project_state_route():
 
     # Check if the project is empty (no world volume defined)
     if not state or not state.get('world_volume_ref'):
-        print("No active project found, creating a new default world.")
+        logger.info("No active project found, creating a new default world.")
         
         # Call the same logic as the /new_project route
         pm.create_empty_project()
@@ -8041,7 +8065,11 @@ def get_object_details_route():
     if details:
         return jsonify(details)
     
-    error_key = "ID" if obj_type in ["physical_volume", "particle_source"] else "name"
+    error_key = (
+        "id or name"
+        if obj_type == "detector_feature_generator"
+        else "ID" if obj_type in ["physical_volume", "particle_source", "environment"] else "name"
+    )
     return jsonify({"error": f"{obj_type} with {error_key} '{obj_id}' not found"}), 404
 
 @app.route('/save_project_json', methods=['GET'])
@@ -8633,10 +8661,10 @@ def ai_health_check_route():
                         discovered_names.append(row.get('name'))
             response_data["models"]["ollama"] = _normalize_model_names(discovered_names)
     except requests.exceptions.RequestException:
-        print("Ollama service is unreachable.")
+        logger.error("Ollama service is unreachable.")
         # We don't fail the whole request, just show no Ollama models
     except Exception as e:
-        print(f"Error fetching Ollama models: {e}")
+        logger.error(f"Error fetching Ollama models: {e}")
         response_data["error_ollama"] = str(e)
 
     # 2. Check local OpenAI-compatible model servers (llama.cpp + LM Studio)
@@ -8677,7 +8705,7 @@ def ai_health_check_route():
                     gemini_models.append(model_name)
             response_data["models"]["gemini"] = _normalize_model_names(gemini_models)
         except Exception as e:
-            print(f"Error fetching Gemini models: {e}")
+            logger.error(f"Error fetching Gemini models: {e}")
             response_data["error_gemini"] = str(e)
 
     return jsonify(response_data)
@@ -8718,7 +8746,8 @@ def ai_process_prompt_route():
             if not gemini_client:
                 return jsonify({"success": False, "error": "Gemini client is not configured on the server."}), 500
             
-            print(f"Sending prompt to Gemini model: {model_name}")
+            if APP_MODE != "production":
+                logger.info(f"Sending prompt to Gemini model: {model_name}")
             # Use the global client instance to generate content
             gemini_response = gemini_client.models.generate_content(
                 model=model_name,
@@ -8730,16 +8759,19 @@ def ai_process_prompt_route():
             )
             ai_json_string = gemini_response.text
             print(f"GEMINI RESPONSE ({model_name}):\n")
-            print(ai_json_string)
+            if APP_MODE != "production":
+                logger.info(ai_json_string)
 
         else: # Assume it's an Ollama model
-            print(f"Sending prompt to Ollama model: {model_name}")
+            if APP_MODE != "production":
+                logger.info(f"Sending prompt to Ollama model: {model_name}")
 
             # Process the response
             ollama_response = ollama.generate(model=model_name, prompt=full_prompt)
             ai_json_string = ollama_response['response'].strip()
             print(f"OLLAMA RESPONSE ({model_name}):\n")
-            print(ai_json_string)
+            if APP_MODE != "production":
+                logger.info(ai_json_string)
 
         # Step 3: Parse and process the response using a new ProjectManager method
         ai_data = json.loads(ai_json_string)
@@ -8792,6 +8824,14 @@ AI_TOOL_ARG_ALIASES = {
         "type": "define_type",
         "raw_expression": "value"
     },
+    "update_property": {
+        "type": "object_type",
+        "id": "object_id",
+        "name": "object_id",
+        "path": "property_path",
+        "property": "property_path",
+        "value": "new_value",
+    },
     "create_primitive_solid": {
         "dimensions": "params",
         "type": "solid_type"
@@ -8799,6 +8839,11 @@ AI_TOOL_ARG_ALIASES = {
     "create_boolean_solid": {
         "operations": "recipe",
         "ops": "recipe"
+    },
+    "manage_detector_feature_generator": {
+        "id": "generator_id",
+        "type": "generator_type",
+        "realize": "realize_now",
     },
     "manage_logical_volume": {
         "solid": "solid_ref",
@@ -9025,6 +9070,9 @@ AI_TOOL_ARG_ALIASES = {
     "get_simulation_metadata": {
         "version": "version_id"
     },
+    "get_scoring_summary": {
+        "version": "version_id"
+    },
     "get_simulation_analysis": {
         "version": "version_id"
     },
@@ -9232,25 +9280,14 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
         # This helps when AI provides incomplete parameters
         if "z" not in mapped:
             mapped["z"] = "100"
-            print(f"[VALIDATE] Auto-populated default z=100 for trap", flush=True, file=sys.stderr)
-        if "y1" not in mapped:
-            mapped["y1"] = "20"
-            print(f"[VALIDATE] Auto-populated default y1=20 for trap", flush=True, file=sys.stderr)
-        if "x1" not in mapped:
-            mapped["x1"] = "10"
-            print(f"[VALIDATE] Auto-populated default x1=10 for trap", flush=True, file=sys.stderr)
-        if "x2" not in mapped:
-            mapped["x2"] = "10"
-            print(f"[VALIDATE] Auto-populated default x2=10 for trap", flush=True, file=sys.stderr)
-        if "y2" not in mapped:
-            mapped["y2"] = "20"
-            print(f"[VALIDATE] Auto-populated default y2=20 for trap", flush=True, file=sys.stderr)
-        if "x3" not in mapped:
-            mapped["x3"] = "10"
-            print(f"[VALIDATE] Auto-populated default x3=10 for trap", flush=True, file=sys.stderr)
-        if "x4" not in mapped:
-            mapped["x4"] = "10"
-            print(f"[VALIDATE] Auto-populated default x4=10 for trap", flush=True, file=sys.stderr)
+            if APP_MODE != 'production':
+                logger.debug("Auto-populated default z=100 for trap")
+                logger.debug("Auto-populated default y1=20 for trap")
+                logger.debug("Auto-populated default x1=10 for trap")
+                logger.debug("Auto-populated default x2=10 for trap")
+                logger.debug("Auto-populated default y2=20 for trap")
+                logger.debug("Auto-populated default x3=10 for trap")
+                logger.debug("Auto-populated default x4=10 for trap")
 
     # 5) Auto-convert common AI mistakes: xtru-style sections -> rzpoints for genericPolyhedra/genericPolycone
     # AI often confuses these solid types and provides sections (for xtru) instead of rzpoints
@@ -9271,18 +9308,21 @@ def normalize_primitive_solid_params(solid_type: Any, raw_params: Any) -> Any:
                     rzpoints.append({"r": r_val, "z": z_val})
             if rzpoints:
                 mapped["rzpoints"] = rzpoints
-                print(f"[VALIDATE] Auto-converted sections->rzpoints for {st}: {rzpoints}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-converted sections->rzpoints for {st}: {rzpoints}")
         elif isinstance(sections, list) and len(sections) == 0:
             # AI provided empty sections - provide sensible defaults
             # This is a common AI mistake when it doesn't know what values to use
             if st == "genericPolyhedra":
                 # Default: tapered cylinder (small radius at -z, large at +z)
                 mapped["rzpoints"] = [{"r": "10", "z": "-50"}, {"r": "50", "z": "50"}]
-                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-populated default rzpoints for {st} (AI provided empty sections)")
             elif st == "genericPolycone":
                 # Default: cone (zero radius at -z, expanding to +z)
                 mapped["rzpoints"] = [{"r": "0", "z": "-50"}, {"r": "50", "z": "50"}]
-                print(f"[VALIDATE] Auto-populated default rzpoints for {st} (AI provided empty sections)", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"Auto-populated default rzpoints for {st} (AI provided empty sections)")
         # Remove the useless empty sections key
         if "sections" in mapped and not mapped["sections"]:
             del mapped["sections"]
@@ -9436,7 +9476,8 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     solid_type = args.get('solid_type')
     params = args.get('params')
 
-    print(f"[VALIDATE] solid_type={solid_type}, params keys={list(params.keys()) if isinstance(params, dict) else 'not dict'}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"solid_type={solid_type}, params keys={list(params.keys()) if isinstance(params, dict) else 'not dict'}")
 
     if not isinstance(params, dict):
         return "Tool 'create_primitive_solid' expects 'params' to be an object."
@@ -9451,14 +9492,16 @@ def _validate_create_primitive_solid_args(args: Dict[str, Any]) -> Optional[str]
     normalized_params = normalize_primitive_solid_params(solid_type, params)
     args['params'] = normalized_params
 
-    print(f"[VALIDATE] normalized params={normalized_params}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"normalized params={normalized_params}")
 
     required_params = spec.get('required', [])
     missing = [
         key for key in required_params
         if key not in normalized_params or normalized_params.get(key) in (None, "")
     ]
-    print(f"[VALIDATE] required={required_params}, missing={missing}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"required={required_params}, missing={missing}")
     if not missing:
         return None
 
@@ -9632,8 +9675,8 @@ def _validate_tool_args(tool_name: str, args: Dict[str, Any]) -> Optional[str]:
 
 def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatches a tool call from the AI to the appropriate ProjectManager method."""
-    import sys
-    print(f"[DISPATCH] tool_name={tool_name}", flush=True, file=sys.stderr)
+    if APP_MODE != 'production':
+        logger.debug(f"tool_name={tool_name}")
 
     # Helper to convert list [x,y,z] to dict {'x':x,'y':y,'z':z}
     def to_vec_dict(val, default_val='0'):
@@ -9667,6 +9710,99 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
         rgb = names.get(str(color_str).lower(), (0.8, 0.8, 0.8))
         return {'color': {'r': rgb[0], 'g': rgb[1], 'b': rgb[2], 'a': opacity}}
 
+    def to_detector_feature_object_ref(raw_ref, objects_by_name=None):
+        if raw_ref is None:
+            return None
+
+        normalized_ref = None
+        if isinstance(raw_ref, str):
+            ref_name = raw_ref.strip()
+            if ref_name:
+                normalized_ref = {'name': ref_name}
+        elif isinstance(raw_ref, dict):
+            normalized_ref = {}
+            ref_id = raw_ref.get('id')
+            ref_name = raw_ref.get('name')
+            if ref_id is not None:
+                ref_id = str(ref_id).strip()
+                if ref_id:
+                    normalized_ref['id'] = ref_id
+            if ref_name is not None:
+                ref_name = str(ref_name).strip()
+                if ref_name:
+                    normalized_ref['name'] = ref_name
+            normalized_ref = normalized_ref or None
+        else:
+            return raw_ref
+
+        if not normalized_ref or not isinstance(objects_by_name, dict):
+            return normalized_ref
+
+        resolved_name = pm._resolve_detector_feature_object_name(normalized_ref, objects_by_name)
+        if not resolved_name:
+            return normalized_ref
+
+        resolved_obj = objects_by_name.get(resolved_name)
+        resolved_ref = pm._build_detector_feature_object_ref(resolved_obj)
+        return resolved_ref or normalized_ref
+
+    def normalize_detector_feature_generator_payload(raw_args):
+        normalized_args = dict(raw_args or {})
+        raw_target = normalized_args.get('target')
+
+        if isinstance(raw_target, str):
+            if normalized_args.get('generator_type') in {'layered_detector_stack', 'tiled_sensor_array', 'support_rib_array', 'annular_shield_sleeve'}:
+                raw_target = {'parent_logical_volume_ref': raw_target}
+            else:
+                raw_target = {'solid_ref': raw_target}
+
+        if isinstance(raw_target, dict):
+            normalized_target = dict(raw_target)
+            raw_solid_ref = normalized_target.get('solid_ref')
+            if raw_solid_ref is None and normalized_target.get('solid') is not None:
+                raw_solid_ref = normalized_target.get('solid')
+
+            normalized_target['solid_ref'] = to_detector_feature_object_ref(
+                raw_solid_ref,
+                pm.current_geometry_state.solids,
+            )
+
+            raw_lv_refs = normalized_target.get('logical_volume_refs')
+            if raw_lv_refs is None:
+                raw_lv_refs = normalized_target.get('logical_volume_ref')
+            if raw_lv_refs is None:
+                raw_lv_refs = normalized_target.get('logical_volumes')
+            if raw_lv_refs is None:
+                raw_lv_refs = []
+            if not isinstance(raw_lv_refs, list):
+                raw_lv_refs = [raw_lv_refs]
+
+            normalized_lv_refs = []
+            for raw_lv_ref in raw_lv_refs:
+                normalized_lv_ref = to_detector_feature_object_ref(
+                    raw_lv_ref,
+                    pm.current_geometry_state.logical_volumes,
+                )
+                if normalized_lv_ref:
+                    normalized_lv_refs.append(normalized_lv_ref)
+            normalized_target['logical_volume_refs'] = normalized_lv_refs
+
+            raw_parent_lv_ref = normalized_target.get('parent_logical_volume_ref')
+            if raw_parent_lv_ref is None and normalized_target.get('parent_logical_volume') is not None:
+                raw_parent_lv_ref = normalized_target.get('parent_logical_volume')
+            if raw_parent_lv_ref is None and normalized_target.get('parent_lv_ref') is not None:
+                raw_parent_lv_ref = normalized_target.get('parent_lv_ref')
+            if raw_parent_lv_ref is None and normalized_target.get('parent_lv_name') is not None:
+                raw_parent_lv_ref = normalized_target.get('parent_lv_name')
+
+            normalized_target['parent_logical_volume_ref'] = to_detector_feature_object_ref(
+                raw_parent_lv_ref,
+                pm.current_geometry_state.logical_volumes,
+            )
+            normalized_args['target'] = normalized_target
+
+        return normalized_args
+
     def call_route_json(route_fn, route_args=None, payload=None, query_params=None):
         """Call an existing Flask route function with a synthetic JSON request context."""
         route_args = route_args or []
@@ -9680,7 +9816,13 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if current_api_key is not None:
                 session['gemini_api_key'] = current_api_key
 
-            route_result = route_fn(*route_args)
+            route_pm_getter = globals().get('get_project_manager_for_session')
+            try:
+                globals()['get_project_manager_for_session'] = lambda: pm
+                route_result = route_fn(*route_args)
+            finally:
+                if route_pm_getter is not None:
+                    globals()['get_project_manager_for_session'] = route_pm_getter
 
         status_code = 200
         response_obj = route_result
@@ -9716,6 +9858,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
     if normalize_error:
         return {"success": False, "error": normalize_error}
 
+    if tool_name == "manage_detector_feature_generator":
+        args = normalize_detector_feature_generator_payload(args)
+
     validation_error = _validate_tool_args(tool_name, args)
     if validation_error:
         return {"success": False, "error": validation_error}
@@ -9729,6 +9874,42 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
             if details:
                 return {"success": True, "result": details}
             return {"success": False, "error": f"Component '{args['name']}' not found."}
+
+        elif tool_name == "update_property":
+            success, error = pm.update_object_property(
+                args["object_type"],
+                args["object_id"],
+                args["property_path"],
+                args["new_value"],
+            )
+            if success:
+                return {
+                    "success": True,
+                    "message": (
+                        f"Property '{args['property_path']}' updated on "
+                        f"{args['object_type']} '{args['object_id']}'."
+                    ),
+                }
+            return {"success": False, "error": error}
+
+        elif tool_name == "manage_detector_feature_generator":
+            generator_payload = dict(args)
+            realize_now = bool(generator_payload.pop("realize_now", True))
+            entry, realization_result, error = pm.upsert_detector_feature_generator(
+                generator_payload,
+                realize_now=realize_now,
+            )
+            if error:
+                return {"success": False, "error": error}
+
+            description = entry.get("name") or entry.get("generator_id") or "detector feature generator"
+            action_verb = "saved and realized" if realize_now else "saved"
+            return {
+                "success": True,
+                "message": f"Detector feature generator '{description}' {action_verb}.",
+                "detector_feature_generator": entry,
+                "detector_feature_realization": realization_result,
+            }
 
         elif tool_name == "manage_define":
             name = args.get('name')
@@ -9769,13 +9950,14 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": error}
 
         elif tool_name == "create_primitive_solid":
-            import sys
             try:
-                print(">>> CREATE_PRIMITIVE_SOLID CALLED <<<", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug("CREATE_PRIMITIVE_SOLID CALLED")
                 stype = args.get('solid_type')
                 p = args.get('params')
 
-                print(f"  [create_primitive_solid] solid_type={stype}, params={p}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"solid_type={stype}, params={p}")
 
                 if isinstance(p, list) and len(p) == 3:
                     p = {'x': str(p[0]), 'y': str(p[1]), 'z': str(p[2])}
@@ -9789,31 +9971,32 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                     # Filter out invalid parameters and warn
                     invalid_params = set(p.keys()) - valid_params
                     if invalid_params:
-                        print(f"  [create_primitive_solid] WARNING: Ignoring invalid params for {stype}: {invalid_params}", flush=True, file=sys.stderr)
+                        logger.warning(f"Ignoring invalid params for {stype}: {invalid_params}")
                         p = {k: v for k, v in p.items() if k in valid_params}
                     
                     # Check required parameters
                     missing_params = required_params - set(p.keys())
                     if missing_params:
                         error_msg = f"Missing required parameters for {stype}: {missing_params}. Required: {required_params}"
-                        print(f"  [create_primitive_solid] ERROR: {error_msg}", flush=True, file=sys.stderr)
+                        logger.error(error_msg)
                         return {"success": False, "error": error_msg}
 
                 p = normalize_primitive_solid_params(stype, p)
 
-                print(f"  [create_primitive_solid] normalized params={p}", flush=True, file=sys.stderr)
+                if APP_MODE != 'production':
+                    logger.debug(f"normalized params={p}")
 
                 res, error = pm.add_solid(args.get('name', 'AI_Solid'), stype, p)
                 if res:
                     pm.recalculate_geometry_state()
-                    print(f"  [create_primitive_solid] SUCCESS: {res['name']}", flush=True, file=sys.stderr)
+                    if APP_MODE != 'production':
+                        logger.debug(f"SUCCESS: {res['name']}")
                     return {"success": True, "message": f"Solid '{res['name']}' created."}
-                print(f"  [create_primitive_solid] ERROR: {error}", flush=True, file=sys.stderr)
+                logger.error(f"create_primitive_solid error: {error}")
                 return {"success": False, "error": error}
                 
             except Exception as e:
-                print(f"  [create_primitive_solid] EXCEPTION: {e}", flush=True, file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
+                logger.error(f"create_primitive_solid exception: {e}", exc_info=True)
                 return {"success": False, "error": str(e)}
 
         elif tool_name == "modify_solid":
@@ -10489,8 +10672,15 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
 
             sim_params = {
                 "events": events,
-                "threads": threads
+                "threads": threads,
             }
+            for key in RUN_SIMULATION_OPTION_KEYS:
+                value = args.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                sim_params[key] = value
             version_id = pm.current_version_id
             if pm.is_changed or not version_id:
                 version_id, _ = pm.save_project_version(f"AI_Sim_Run_{job_id[:8]}")
@@ -10677,12 +10867,18 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                             n_str = n.decode('utf-8') if isinstance(n, bytes) else str(n)
                             particles[n_str] = particles.get(n_str, 0) + 1
 
+                    summary = {
+                        "total_hits": total_hits,
+                        "particle_breakdown": particles,
+                    }
+                    metadata = _load_simulation_run_metadata(pm, version_id, job_id)
+                    environment_summary = _environment_summary_from_metadata(metadata)
+                    if environment_summary is not None:
+                        summary["environment_summary"] = environment_summary
+
                     return {
                         "success": True,
-                        "summary": {
-                            "total_hits": total_hits,
-                            "particle_breakdown": particles
-                        }
+                        "summary": summary
                     }
             except Exception as e:
                 return {"success": False, "error": str(e)}
@@ -11051,6 +11247,19 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 return {"success": False, "error": body.get('error', f"Could not fetch simulation metadata (status {status_code}).")}
             return {"success": True, "metadata": body.get('metadata', {})}
 
+        elif tool_name == "get_scoring_summary":
+            version_id = args.get('version_id') or pm.current_version_id
+            if not version_id:
+                return {"success": False, "error": "No active version. Provide 'version_id'."}
+
+            status_code, body = call_route_json(
+                get_simulation_scoring_summary,
+                [version_id, args['job_id']],
+            )
+            if status_code >= 400 or body.get('success') is False:
+                return {"success": False, "error": body.get('error', f"Could not fetch scoring summary (status {status_code}).")}
+            return {"success": True, "scoring_summary": body.get('scoring_summary', {})}
+
         elif tool_name == "get_simulation_analysis":
             version_id = args.get('version_id') or pm.current_version_id
             if not version_id:
@@ -11060,6 +11269,9 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 "energy_bins": args.get('energy_bins', 100),
                 "spatial_bins": args.get('spatial_bins', 50)
             }
+            sensitive_detector = args.get('sensitive_detector')
+            if sensitive_detector not in (None, ""):
+                query["sensitive_detector"] = sensitive_detector
             status_code, body = call_route_json(get_simulation_analysis, [version_id, args['job_id']], query_params=query)
             if status_code >= 400 or body.get('success') is False:
                 return {"success": False, "error": body.get('error', f"Could not fetch simulation analysis (status {status_code}).")}
@@ -11116,6 +11328,16 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 'random': args.get('random') if isinstance(args.get('random'), dict) else {},
             }
 
+            requested_source_ids = args.get('simulation_source_ids')
+            if requested_source_ids is None:
+                requested_source_ids = args.get('selected_source_ids')
+            if requested_source_ids is None:
+                requested_source_ids = args.get('source_ids')
+            if requested_source_ids is not None:
+                if not isinstance(requested_source_ids, list):
+                    return {"success": False, "error": "simulation_source_ids must be a list when provided."}
+                config['simulation_source_ids'] = _normalize_selected_source_id_list(requested_source_ids)
+
             result, err = pm.upsert_param_study(study_name, config)
             if err:
                 return {"success": False, "error": err}
@@ -11168,6 +11390,16 @@ def dispatch_ai_tool(pm: ProjectManager, tool_name: str, args: Dict[str, Any]) -
                 payload['candidate_runs_root'] = args.get('candidate_runs_root')
             if args.get('keep_candidate_runs') is not None:
                 payload['keep_candidate_runs'] = bool(args.get('keep_candidate_runs'))
+
+            requested_source_ids = args.get('selected_source_ids')
+            if requested_source_ids is None:
+                requested_source_ids = args.get('simulation_source_ids')
+            if requested_source_ids is None:
+                requested_source_ids = args.get('source_ids')
+            if requested_source_ids is not None:
+                if not isinstance(requested_source_ids, list):
+                    return {"success": False, "error": "selected_source_ids must be a list when provided."}
+                payload['selected_source_ids'] = _normalize_selected_source_id_list(requested_source_ids)
 
             simulation_in_loop = bool(args.get('simulation_in_loop', False) or args.get('sim_objectives') is not None)
             if simulation_in_loop:
@@ -13509,7 +13741,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
             }
 
             for turn in range(turn_limit):
-                print(f"\n=== Stream Turn {turn + 1}/{turn_limit} ===", flush=True)
+                if APP_MODE != 'production':
+                    logger.info(f"\n=== Stream Turn {turn + 1}/{turn_limit} ===")
                 yield f"data: {json.dumps({'type': 'turn_start', 'turn': turn + 1, 'turn_limit': turn_limit})}\n\n"
                 
                 invocation_request = TextGenerationRequest(
@@ -13549,7 +13782,8 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
 
                 tool_names = [tc.get("name") for tc in executable_tool_calls if tc.get("name")]
                 if tool_names:
-                    print(f"  Stream Tool Calls: {tool_names}", flush=True)
+                    if APP_MODE != 'production':
+                        logger.info(f"Stream Tool Calls: {tool_names}")
                     yield f"data: {json.dumps({'type': 'tool_calls', 'turn': turn + 1, 'tools': tool_names})}\n\n"
                     time.sleep(1.5)
 
@@ -13593,24 +13827,21 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                     )
 
                     pm.end_transaction(f"AI: {user_message[:50]}")
-                    print(f"  Stream Complete", flush=True)
+                    if APP_MODE != 'production':
+                        logger.info("Stream Complete")
                     
-                    complete_payload = {
+                    complete_payload = build_success_payload(
+                        pm,
+                        message=final_text,
+                        exclude_unchanged_tessellated=True,
+                        extra_payload=local_extra_payload,
+                    )
+                    complete_payload.update({
                         'type': 'complete',
-                        'message': final_text,
-                        'extra_payload': local_extra_payload,
                         'job_id': job_id,
                         'version_id': version_id or pm.current_version_id,
-                        'project_state': pm.get_full_project_state_dict(exclude_unchanged_tessellated=True),
-                        'scene_update': pm.get_threejs_description(),
-                        'response_type': 'full_with_exclusions',
-                        'project_name': pm.project_name,
-                        'success': True,
-                        'history_status': {
-                            'can_undo': pm.history_index > 0,
-                            'can_redo': pm.history_index < len(pm.history) - 1
-                        }
-                    }
+                    })
+                    pm._clear_change_tracker()
                     yield f"data: {json.dumps(complete_payload)}\n\n"
                     return
 
@@ -13655,10 +13886,23 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 } if selected_backend_id else None),
             )
             pm.end_transaction(f"AI: {user_message[:50]}")
-            print(f"  Stream Complete (turn limit)", flush=True)
-            yield f"data: {json.dumps({'type': 'complete', 'message': turn_limit_text, 'extra_payload': chat_extra_payload, 'job_id': job_id, 'version_id': version_id or pm.current_version_id, 'project_state': pm.get_full_project_state_dict(exclude_unchanged_tessellated=True), 'scene_update': pm.get_threejs_description(), 'response_type': 'full_with_exclusions', 'project_name': pm.project_name, 'success': True, 'history_status': {'can_undo': pm.history_index > 0, 'can_redo': pm.history_index < len(pm.history) - 1}})}\n\n"
+            if APP_MODE != "production":
+                logger.info("Stream Complete (turn limit)")
+            complete_payload = build_success_payload(
+                pm,
+                message=turn_limit_text,
+                exclude_unchanged_tessellated=True,
+                extra_payload=chat_extra_payload,
+            )
+            complete_payload.update({
+                'type': 'complete',
+                'job_id': job_id,
+                'version_id': version_id or pm.current_version_id,
+            })
+            pm._clear_change_tracker()
+            yield f"data: {json.dumps(complete_payload)}\n\n"
         except Exception as stream_err:
-            print(f"  Stream Error (local backend): {stream_err}", flush=True)
+            logger.error(f"Stream Error (local backend): {stream_err}")
             import traceback
             traceback.print_exc()
             pm.end_transaction(f"AI Error: {user_message[:50]}")
@@ -13810,22 +14054,18 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                     pm.end_transaction(f"AI: {user_message[:50]}")
                     
                     print(f"  Stream Complete", flush=True)
-                    complete_payload = {
+                    complete_payload = build_success_payload(
+                        pm,
+                        message=final_text,
+                        exclude_unchanged_tessellated=True,
+                        extra_payload=chat_extra_payload,
+                    )
+                    complete_payload.update({
                         'type': 'complete',
-                        'message': final_text,
-                        'extra_payload': chat_extra_payload,
                         'job_id': job_id,
                         'version_id': version_id or pm.current_version_id,
-                        'project_state': pm.get_full_project_state_dict(exclude_unchanged_tessellated=True),
-                        'scene_update': pm.get_threejs_description(),
-                        'response_type': 'full_with_exclusions',
-                        'project_name': pm.project_name,
-                        'success': True,
-                        'history_status': {
-                            'can_undo': pm.history_index > 0,
-                            'can_redo': pm.history_index < len(pm.history) - 1
-                        }
-                    }
+                    })
+                    pm._clear_change_tracker()
                     yield f"data: {json.dumps(complete_payload)}\n\n"
                     return
                 
@@ -13840,10 +14080,23 @@ def _stream_ai_chat_response(pm, user_message, model_id, turn_limit, backend_sel
                 final_text=turn_limit_text,
             )
             pm.end_transaction(f"AI: {user_message[:50]}")
-            print(f"  Stream Complete (turn limit)", flush=True)
-            yield f"data: {json.dumps({'type': 'complete', 'message': turn_limit_text, 'extra_payload': chat_extra_payload, 'job_id': job_id, 'version_id': version_id or pm.current_version_id, 'project_state': pm.get_full_project_state_dict(exclude_unchanged_tessellated=True), 'scene_update': pm.get_threejs_description(), 'response_type': 'full_with_exclusions', 'project_name': pm.project_name, 'success': True, 'history_status': {'can_undo': pm.history_index > 0, 'can_redo': pm.history_index < len(pm.history) - 1}})}\n\n"
+            if APP_MODE != "production":
+                logger.info("Stream Complete (turn limit)")
+            complete_payload = build_success_payload(
+                pm,
+                message=turn_limit_text,
+                exclude_unchanged_tessellated=True,
+                extra_payload=chat_extra_payload,
+            )
+            complete_payload.update({
+                'type': 'complete',
+                'job_id': job_id,
+                'version_id': version_id or pm.current_version_id,
+            })
+            pm._clear_change_tracker()
+            yield f"data: {json.dumps(complete_payload)}\n\n"
         except Exception as stream_err:
-            print(f"  Stream Error (Gemini): {stream_err}", flush=True)
+            logger.error(f"Stream Error (Gemini): {stream_err}")
             import traceback
             traceback.print_exc()
             pm.end_transaction(f"AI Error: {user_message[:50]}")
@@ -13861,7 +14114,7 @@ def ai_chat_stream_route():
     pm = get_project_manager_for_session()
     data = request.get_json() or {}
     user_message = data.get('message')
-    model_id = data.get('model', 'models/gemini-2.0-flash-exp')
+    model_id = data.get('model', 'models/gemini-3.1-flash-lite-preview')
     turn_limit = data.get('turn_limit', 50)
 
     if not user_message:
@@ -14008,9 +14261,10 @@ def ai_chat_route():
     pm = get_project_manager_for_session()
     data = request.get_json() or {}
     user_message = data.get('message')
-    model_id = data.get('model', 'models/gemini-2.0-flash-exp')
+    model_id = data.get('model', 'models/gemini-3.1-flash-lite-preview')
     turn_limit = data.get('turn_limit', 50)
-    print(f"[CHAT] Received turn_limit: {turn_limit}", flush=True, file=sys.stderr)
+    if APP_MODE != "production":
+        logger.debug(f"Received turn_limit: {turn_limit}")
 
     if not user_message:
         return jsonify({"success": False, "error": "No message provided."}), 400
@@ -14220,7 +14474,8 @@ def ai_chat_route():
 
             for turn in range(turn_limit):
                 print(f"\n=== Turn {turn + 1}/{turn_limit} ===", flush=True)
-                print(f"  Messages: {len(local_messages)}, Tools: {effective_require_tools}", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Messages: {len(local_messages)}, Tools: {effective_require_tools}")
                 invocation_request = TextGenerationRequest(
                     messages=tuple(local_messages),
                     require_tools=effective_require_tools,
@@ -14231,12 +14486,15 @@ def ai_chat_route():
                     tool_choice="auto" if effective_require_tools else None,
                 )
 
-                print(f"  Calling llama.cpp...", flush=True)
+                if APP_MODE != "production":
+                    logger.debug("Calling llama.cpp...")
                 import json
-                print(f"  Tool schemas being sent: {len(openai_tool_schemas)} tools", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Tool schemas being sent: {len(openai_tool_schemas)} tools")
                 if turn == 0:
                     for ts in openai_tool_schemas[:1]:  # Just log first tool as sample
-                        print(f"    Sample tool: {ts.get('name')} with {len(ts.get('function', {}).get('parameters', {}).get('properties', {}))} params", flush=True)
+                        if APP_MODE != "production":
+                            logger.debug(f"Sample tool: {ts.get('name')} with {len(ts.get('function', {}).get('parameters', {}).get('properties', {}))} params")
                 adapter_response = invoke_text_request_for_backend(
                     selected_backend_id,
                     invocation_request,
@@ -14260,12 +14518,15 @@ def ai_chat_route():
                 if not parsed_tool_calls and isinstance(adapter_response.tool_calls, list):
                     parsed_tool_calls = _normalize_tool_calls_payload(adapter_response.tool_calls)
 
-                print(f"  Parsed {len(parsed_tool_calls)} tool calls", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Parsed {len(parsed_tool_calls)} tool calls")
                 for tc in parsed_tool_calls:
-                    print(f"    Tool call: {tc.get('name')} args: {json.dumps(tc.get('arguments'))[:200]}", flush=True)
+                    if APP_MODE != "production":
+                        logger.debug(f"Tool call: {tc.get('name')} args: {json.dumps(tc.get('arguments'))[:200]}")
 
                 executable_tool_calls = _build_executable_tool_calls(parsed_tool_calls, turn)
-                print(f"  Executable tool calls: {len(executable_tool_calls)}", flush=True)
+                if APP_MODE != "production":
+                    logger.debug(f"Executable tool calls: {len(executable_tool_calls)}")
                 assistant_openai_tool_calls = _to_openai_tool_calls(executable_tool_calls, id_prefix=f"turn_{turn}")
 
                 assistant_history_entry: Dict[str, Any] = {
@@ -14313,7 +14574,8 @@ def ai_chat_route():
                         continue
 
                     args = tool_call.get("arguments", {})
-                    print(f"Local Adapter AI Calling Tool: {tool_name}")
+                    if APP_MODE != "production":
+                        logger.info(f"Local Adapter AI Calling Tool: {tool_name}")
                     result = dispatch_ai_tool(pm, tool_name, args)
 
                     if isinstance(result, dict):
@@ -14398,7 +14660,8 @@ def ai_chat_route():
                 # Add a small delay to avoid hitting rate limits on free-tier keys
                 time.sleep(1)
                 
-                print(f"AI Turn {turn+1}/{turn_limit}...")
+                if APP_MODE != "production":
+                    logger.info(f"AI Turn {turn+1}/{turn_limit}...")
                 try:
                     response = client_instance.models.generate_content(
                         model=model_id,
@@ -14469,7 +14732,8 @@ def ai_chat_route():
                         tool_name = part.function_call.name
                         args = part.function_call.args
                         
-                        print(f"AI Calling Tool: {tool_name}")
+                        if APP_MODE != "production":
+                            logger.info(f"AI Calling Tool: {tool_name}")
                         result = dispatch_ai_tool(pm, tool_name, args)
                         
                         # Capture simulation metadata for the frontend
@@ -14549,18 +14813,19 @@ def ai_chat_route():
                     }
                 })
 
-            # --- DEBUG: Dump payload to file ---
-            try:
-                debug_payload = {
-                    "model": model_id,
-                    "messages": pm.chat_history,
-                    "tools": ollama_tools
-                }
-                with open("ai_debug_payload.json", "w") as df:
-                    json.dump(debug_payload, df, indent=2, default=str)
-            except Exception as e:
-                print(f"Warning: Could not write debug payload: {e}")
-            # -----------------------------------
+            # --- DEBUG: Dump payload to file (dev mode only) ---
+            if APP_MODE != 'production':
+                try:
+                    debug_payload = {
+                        "model": model_id,
+                        "messages": pm.chat_history,
+                        "tools": ollama_tools
+                    }
+                    with open("ai_debug_payload.json", "w") as df:
+                        json.dump(debug_payload, df, indent=2, default=str)
+                except Exception as e:
+                    print(f"Warning: Could not write debug payload: {e}")
+            # ----------------------------------------------------
 
             # Sanitize history for Ollama API (remove metadata)
             sanitized_history = []
@@ -14577,7 +14842,8 @@ def ai_chat_route():
             # Tool loop for Ollama
             for turn in range(turn_limit):
                 time.sleep(1)
-                print(f"Ollama Turn {turn+1}/{turn_limit}...")
+                if APP_MODE != "production":
+                    logger.info(f"Ollama Turn {turn+1}/{turn_limit}...")
                 
                 try:
                     response = ollama.chat(
@@ -14640,7 +14906,8 @@ def ai_chat_route():
                     f_name = tool_call['function']['name']
                     f_args = tool_call['function']['arguments']
                     
-                    print(f"Ollama AI Calling Tool: {f_name}")
+                    if APP_MODE != "production":
+                        logger.info(f"Ollama AI Calling Tool: {f_name}")
                     result = dispatch_ai_tool(pm, f_name, f_args)
                     
                     if "job_id" in result: job_id = result["job_id"]
@@ -14809,7 +15076,7 @@ def import_ai_json_route():
     if file.filename == '':
         return jsonify({"success": False, "error": "No selected file"}), 400
 
-    print("Importing AI Response...");
+    logger.info("Importing AI Response...")
     try:
         ai_json_string = file.read().decode('utf-8')
         ai_data = None
@@ -14817,13 +15084,13 @@ def import_ai_json_route():
             # First, try the standard, strict JSON parser
             ai_data = json.loads(ai_json_string)
         except json.JSONDecodeError:
-            print("AI response was not valid JSON, attempting to parse as Python literal...")
+            logger.warning("AI response was not valid JSON, attempting to parse as Python literal...")
             try:
                 # If JSON fails, try parsing it as a Python dictionary literal.
                 # This is much safer than eval().
                 ai_data = ast.literal_eval(ai_json_string)
             except (ValueError, SyntaxError) as e:
-                print(f"Failed to parse AI response as Python literal: {e}")
+                logger.error(f"Failed to parse AI response as Python literal: {e}")
                 return jsonify({"success": False, "error": "AI returned an invalid JSON or Python dictionary string."}), 500
 
         # Use the existing AI processing logic!
@@ -14950,6 +15217,55 @@ def import_step_with_options_route():
         print(f"An unexpected error occurred during STEP import: {e}")
         traceback.print_exc()
         return jsonify({"error": "An unexpected error occurred on the server while importing the STEP file."}), 500
+
+
+@app.route('/api/detector_feature_generators/upsert', methods=['POST'])
+def upsert_detector_feature_generator_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "Detector feature generator payload must be an object."}), 400
+
+    realize_now = bool(data.pop('realize_now', True))
+    entry, realization_result, error_msg = pm.upsert_detector_feature_generator(
+        data,
+        realize_now=realize_now,
+    )
+    if error_msg:
+        return jsonify({"success": False, "error": error_msg}), 400
+
+    action_verb = "saved and generated" if realize_now else "saved"
+    generator_name = entry.get('name') or entry.get('generator_id') or 'detector feature generator'
+    return create_success_response(
+        pm,
+        f"Detector feature generator '{generator_name}' {action_verb}.",
+        extra_payload={
+            "detector_feature_generator": entry,
+            "detector_feature_realization": realization_result,
+        },
+    )
+
+
+@app.route('/api/detector_feature_generators/realize', methods=['POST'])
+def realize_detector_feature_generator_route():
+    pm = get_project_manager_for_session()
+
+    data = request.get_json(silent=True) or {}
+    generator_id = str(data.get('generator_id') or '').strip()
+    if not generator_id:
+        return jsonify({"success": False, "error": "generator_id is required."}), 400
+
+    result, error_msg = pm.realize_detector_feature_generator(generator_id)
+    if error_msg:
+        status_code = 404 if "was not found" in error_msg else 400
+        return jsonify({"success": False, "error": error_msg}), status_code
+
+    return create_success_response(
+        pm,
+        f"Detector feature generator '{generator_id}' regenerated.",
+        extra_payload={"detector_feature_realization": result},
+    )
 
 @app.route('/add_assembly', methods=['POST'])
 def add_assembly_route():
@@ -15295,7 +15611,7 @@ def cleanup_inactive_sessions():
         ]
 
         for user_id in inactive_sessions:
-            print(f"Cleaning up inactive session: {user_id}")
+            logger.info(f"Cleaning up inactive session: {user_id}")
             # Remove from the manager cache
             if user_id in project_managers:
                 del project_managers[user_id]
@@ -15327,4 +15643,5 @@ scheduler_thread.daemon = True
 scheduler_thread.start()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5003)
+    debug_mode = APP_MODE != 'production'
+    app.run(debug=debug_mode, port=5003)

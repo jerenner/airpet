@@ -13,15 +13,33 @@ import * as ElementEditor from './elementEditor.js';
 import * as MaterialEditor from './materialEditor.js';
 import * as OpticalSurfaceEditor from './opticalSurfaceEditor.js';
 import * as PVEditor from './physicalVolumeEditor.js';
+import * as DetectorFeatureGeneratorEditor from './detectorFeatureGeneratorEditor.js';
 import * as RingArrayEditor from './ringArrayEditor.js';
 import * as SceneManager from './sceneManager.js';
 import * as SkinSurfaceEditor from './skinSurfaceEditor.js';
 import * as SolidEditor from './solidEditor.js';
+import { buildCadImportBatchContext } from './cadImportUi.js';
 import * as StepImportEditor from './stepImportEditor.js';
 import * as ParameterRegistryEditor from './parameterRegistryEditor.js';
 import * as ParamStudyEditor from './paramStudyEditor.js';
+import {
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+    setTargetVolumeMembership,
+} from './environmentFieldUi.js';
+import {
+    buildHistoryDeleteConfirmationMessage,
+    normalizeHistoryDeleteSelection,
+} from './historyDeleteFlow.js';
 import * as UIManager from './uiManager.js';
 import * as AIAssistant from './aiAssistant.js';
+import { mergeProjectStateWithExclusions } from './projectStateMerge.js';
+import {
+    buildResolvedSimulationOptions,
+    buildSimulationOptionOverrides,
+} from './scoringUi.js';
 import {
     getNormalizedGpsDirectionVector,
     isDirectedGpsAngularType,
@@ -51,16 +69,9 @@ const AppState = {
     },
 
     simOptions: {
-        threads: 1,
-        events: 1000,
-        seed1: 0,
-        seed2: 0,
-        print_progress: 1000,
-        hit_energy_threshold: "1 eV",
-        save_hits: true,
-        save_hit_metadata: true,
-        save_particles: false,
         save_tracks_range: "0-99", // Default to saving the first 100 tracks
+        physics_list: 'FTFP_BERT',
+        optical_physics: false,
     }
 };
 
@@ -184,6 +195,8 @@ async function initializeApp() {
         onImportProjectClicked: handleImportJsonPart,
         onImportAiResponseClicked: handleImportAiResponse,
         onImportStepClicked: handleImportStep,
+        onReimportStepClicked: handleReimportStepImport,
+        onCadImportBatchActionClicked: handleCadImportBatchAction,
         // Other File Handlers
         onSaveProjectClicked: handleSaveProject,
         onExportGdmlClicked: handleExportGdml,
@@ -237,6 +250,9 @@ async function initializeApp() {
         onEditGpsClicked: handleEditGps,
         // Add ring array
         onAddRingArrayClicked: handleAddRingArray,
+        onAddDetectorFeatureGeneratorClicked: handleAddDetectorFeatureGenerator,
+        onEditDetectorFeatureGeneratorClicked: handleEditDetectorFeatureGenerator,
+        onRealizeDetectorFeatureGeneratorClicked: handleRealizeDetectorFeatureGenerator,
 
         onPVVisibilityToggle: handlePVVisibilityToggle,
         onDeleteSelectedClicked: handleDeleteSelected,
@@ -287,7 +303,8 @@ async function initializeApp() {
         onProcessLorsClicked: handleProcessLors,
         onGenerateSensitivityClicked: handleGenerateSensitivity,
         onRefreshAnalysisClicked: handleRefreshAnalysis,
-        onDownloadSimDataClicked: handleDownloadSimData
+        onDownloadSimDataClicked: handleDownloadSimData,
+        onSelectHierarchyItems: handleHierarchySelectionByIds
     });
 
     // Bind object-menu launchers early so menu actions remain available
@@ -359,6 +376,10 @@ async function initializeApp() {
     // Ring array editor
     RingArrayEditor.initRingArrayEditor({
         onConfirm: handleCreateRingArray
+    });
+
+    DetectorFeatureGeneratorEditor.initDetectorFeatureGeneratorEditor({
+        onConfirm: handleSaveDetectorFeatureGenerator
     });
 
     // Initialize solid editor
@@ -609,26 +630,11 @@ function syncUIWithState(responseData, selectionToRestore = []) {
     // --- MERGE LOGIC for partial updates ---
     if (responseData.response_type === 'full_with_exclusions') {
         console.log("Merging with exclusions")
-        // This is a partial state update. We need to merge it.
-        // We can't just replace the whole state.
-        const newSolids = responseData.project_state.solids || {};
-
-        // Keep all existing solids that are NOT in the incoming update.
-        // This preserves our large, static tessellated solids on the client.
-        const preservedSolids = {};
-        for (const solidName in AppState.currentProjectState.solids) {
-            if (!newSolids.hasOwnProperty(solidName)) {
-                preservedSolids[solidName] = AppState.currentProjectState.solids[solidName];
-            }
-        }
-
-        // Combine the preserved solids with the newly received ones.
-        const combinedSolids = { ...preservedSolids, ...newSolids };
-
-        // Update the project state with the combined solids list.
-        AppState.currentProjectState = responseData.project_state;
-        AppState.currentProjectState.solids = combinedSolids;
-
+        AppState.currentProjectState = mergeProjectStateWithExclusions(
+            AppState.currentProjectState,
+            responseData.project_state,
+            responseData.excluded_solid_names,
+        );
     } else {
         // This is a full state update (e.g., from loading a file). Replace everything.
         AppState.currentProjectState = responseData.project_state;
@@ -1000,6 +1006,16 @@ function handle3DMultiSelection(selectedMeshes, isCtrlHeld) {
     handleHierarchySelection(finalSelection);
 }
 
+function showGdmlImportWarnings(result, actionLabel) {
+    const warnings = Array.isArray(result?.import_warnings) ? result.import_warnings.filter(Boolean) : [];
+    if (warnings.length === 0) return;
+
+    UIManager.showNotification(
+        `${actionLabel} completed with warnings:\n` +
+        warnings.map((warning) => `- ${warning}`).join('\n')
+    );
+}
+
 async function handleOpenGdmlProject(file) {
     if (!file) return;
     if (!UIManager.confirmAction("This will replace your current project. Are you sure?")) {
@@ -1010,8 +1026,8 @@ async function handleOpenGdmlProject(file) {
     try {
         const result = await APIService.openGdmlProject(file);
         syncUIWithState(result);
+        showGdmlImportWarnings(result, "GDML project load");
         AIAssistant.reloadHistory();
-        //UIManager.showNotification("GDML project loaded successfully. Note: Any <file> or <!ENTITY> references were ignored.");
     } catch (error) {
         // Show the specific error message from the backend
         UIManager.showError("Failed to open GDML Project: " + error.message);
@@ -1046,7 +1062,7 @@ async function handleImportGdmlPart(file) {
     try {
         const result = await APIService.importGdmlPart(file);
         syncUIWithState(result); // The sync function handles the refresh perfectly
-        //UIManager.showNotification("GDML part(s) imported. Note: Any <file> or <!ENTITY> references were ignored.");
+        showGdmlImportWarnings(result, "GDML part import");
     } catch (error) {
         // Show the specific error from the backend
         UIManager.showError("Failed to import GDML Part: " + error.message);
@@ -1159,6 +1175,7 @@ async function refreshHistoryPanel(projectName = AppState.currentProjectName) {
 function clearLoadedSimulationRunState() {
     AppState.lastSimVersionId = null;
     AppState.lastSimJobId = null;
+    UIManager.clearLoadedScoringResultMetadata();
     UIManager.clearSimStatusDisplay();
     UIManager.hideAnalysisModal();
     UIManager.setAnalysisModalButtonEnabled(false);
@@ -1234,11 +1251,14 @@ async function handleLoadRunResults(versionId, jobId) {
         // Step 2: Fetch the metadata for this specific run
         const metaResult = await APIService.getSimulationMetadata(versionId, jobId);
         if (!metaResult.success) throw new Error(metaResult.error);
+        UIManager.setLoadedScoringResultMetadata(versionId, jobId, metaResult.metadata);
 
         // Step 3: Update the application state with the loaded run info
         AppState.lastSimVersionId = versionId;
         AppState.lastSimJobId = jobId;
-        const totalEvents = metaResult.metadata.total_events;
+        const totalEvents = metaResult.metadata.total_events
+            ?? metaResult.metadata?.run_manifest_summary?.resolved_run_manifest?.events
+            ?? 0;
 
         // Step 4: Update the UI to reflect the loaded run
         UIManager.updateSimStatusDisplay(jobId, totalEvents);
@@ -1296,24 +1316,11 @@ async function handleDeleteRun(projectName, versionId, jobId, versionDescription
 }
 
 async function handleDeleteHistorySelection(projectName, selection) {
-    const versionIds = [...new Set((selection?.versionIds || []).filter(Boolean))];
-    const versionIdSet = new Set(versionIds);
-    const runs = [...new Map(
-        (selection?.runs || [])
-            .filter(item => item && item.versionId && item.runId)
-            .filter(item => !versionIdSet.has(item.versionId))
-            .map(item => [`${item.versionId}::${item.runId}`, item])
-    ).values()];
-
-    const versionCount = versionIds.length;
-    const runCount = runs.length;
+    const normalizedSelection = normalizeHistoryDeleteSelection(selection);
+    const { versionIds, runs, versionCount, runCount } = normalizedSelection;
     if (versionCount === 0 && runCount === 0) return;
 
-    const parts = [];
-    if (versionCount > 0) parts.push(`${versionCount} version${versionCount === 1 ? '' : 's'}`);
-    if (runCount > 0) parts.push(`${runCount} run${runCount === 1 ? '' : 's'}`);
-
-    const confirmMessage = `Delete ${parts.join(' and ')}? This cannot be undone.`;
+    const confirmMessage = buildHistoryDeleteConfirmationMessage(normalizedSelection);
     if (!UIManager.confirmAction(confirmMessage)) return;
 
     UIManager.showLoading("Deleting selected history items...");
@@ -1623,6 +1630,30 @@ async function handleHierarchySelection(newSelection) {
     } else {
         UIManager.clearInspector();
     }
+}
+
+async function handleHierarchySelectionByIds(itemIds) {
+    const selection = [];
+    const seenIds = new Set();
+
+    if (Array.isArray(itemIds)) {
+        itemIds.forEach((itemId) => {
+            const normalizedId = typeof itemId === 'string' ? itemId.trim() : '';
+            if (!normalizedId || seenIds.has(normalizedId)) return;
+            const item = findItemInState(normalizedId);
+            if (item) {
+                selection.push(item);
+                seenIds.add(normalizedId);
+            }
+        });
+    }
+
+    if (selection.length === 0) {
+        UIManager.showError('Could not resolve the requested hierarchy selection in the current project.');
+        return;
+    }
+
+    await handleHierarchySelection(selection);
 }
 
 // Called by SceneManager when an object is clicked in 3D
@@ -2004,14 +2035,85 @@ function handleEditLV(lvData) {
     LVEditor.show(lvData, AppState.currentProjectState);
 }
 
+function resolveCreatedLogicalVolumeName(nameSuggestion, previousProjectState, nextProjectState) {
+    const previousNames = new Set(Object.keys(previousProjectState?.logical_volumes || {}));
+    const nextNames = Object.keys(nextProjectState?.logical_volumes || {});
+    const newlyCreatedName = nextNames.find((name) => !previousNames.has(name));
+
+    if (newlyCreatedName) {
+        return newlyCreatedName;
+    }
+    if (nextProjectState?.logical_volumes?.[nameSuggestion]) {
+        return nameSuggestion;
+    }
+    return nextNames.find((name) => name.startsWith(nameSuggestion)) || nameSuggestion;
+}
+
+function areStringArraysEqual(left, right) {
+    if (left === right) {
+        return true;
+    }
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+        return false;
+    }
+    return left.every((value, index) => value === right[index]);
+}
+
+async function applyLocalFieldMembershipChanges(result, lvName, localFieldAssignments) {
+    if (!result?.project_state || !lvName || !localFieldAssignments) {
+        return result;
+    }
+
+    const updates = [
+        {
+            includeInField: localFieldAssignments.include_in_local_magnetic_field,
+            objectType: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+            objectId: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+            stateKey: 'local_uniform_magnetic_field',
+        },
+        {
+            includeInField: localFieldAssignments.include_in_local_electric_field,
+            objectType: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+            objectId: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+            stateKey: 'local_uniform_electric_field',
+        },
+    ];
+
+    let nextResult = result;
+
+    for (const update of updates) {
+        const currentTargets = nextResult.project_state?.environment?.[update.stateKey]?.target_volume_names || [];
+        const nextTargets = setTargetVolumeMembership(currentTargets, lvName, update.includeInField);
+        if (areStringArraysEqual(currentTargets, nextTargets)) {
+            continue;
+        }
+
+        nextResult = await APIService.updateProperty(
+            update.objectType,
+            update.objectId,
+            'target_volume_names',
+            nextTargets
+        );
+    }
+
+    return nextResult;
+}
+
 async function handleLVEditorConfirm(data) {
     const selectionContext = getSelectionContext();
+    const previousProjectState = AppState.currentProjectState;
+    let result = null;
+    let selectionForSync = selectionContext;
     if (data.isEdit) {
         UIManager.showLoading("Updating Logical Volume...");
         try {
-            const result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
-            syncUIWithState(result, selectionContext);
+            result = await APIService.updateLogicalVolume(data.id, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
+            result = await applyLocalFieldMembershipChanges(result, data.id, data.local_field_assignments);
+            syncUIWithState(result, selectionForSync);
         } catch (error) {
+            if (result) {
+                syncUIWithState(result, selectionForSync);
+            }
             UIManager.showError("Error updating LV: " + (error.message || error));
         } finally {
             UIManager.hideLoading();
@@ -2019,9 +2121,23 @@ async function handleLVEditorConfirm(data) {
     } else {
         UIManager.showLoading("Creating Logical Volume...");
         try {
-            const result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
-            syncUIWithState(result, [{ type: 'logical_volume', id: data.name, name: data.name, data: result.project_state.logical_volumes[data.name] }]);
-        } catch (error) { UIManager.showError("Error creating LV: " + (error.message || error)); }
+            result = await APIService.addLogicalVolume(data.name, data.solid_ref, data.material_ref, data.vis_attributes, data.is_sensitive, data.content_type, data.content);
+            const createdLvName = resolveCreatedLogicalVolumeName(data.name, previousProjectState, result.project_state);
+            selectionForSync = [{
+                type: 'logical_volume',
+                id: createdLvName,
+                name: createdLvName,
+                data: result.project_state.logical_volumes[createdLvName],
+            }];
+            result = await applyLocalFieldMembershipChanges(result, createdLvName, data.local_field_assignments);
+            selectionForSync[0].data = result.project_state.logical_volumes[createdLvName];
+            syncUIWithState(result, selectionForSync);
+        } catch (error) {
+            if (result) {
+                syncUIWithState(result, selectionForSync);
+            }
+            UIManager.showError("Error creating LV: " + (error.message || error));
+        }
         finally { UIManager.hideLoading(); }
     }
 }
@@ -2079,6 +2195,52 @@ async function handleCreateRingArray(params) {
         syncUIWithState(result); // This will update everything
     } catch (error) {
         UIManager.showError("Failed to create ring array: " + error.message);
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+function handleAddDetectorFeatureGenerator() {
+    DetectorFeatureGeneratorEditor.show(
+        null,
+        AppState.currentProjectState,
+        AppState.selectedHierarchyItems,
+    );
+}
+
+function handleEditDetectorFeatureGenerator(generatorEntry) {
+    DetectorFeatureGeneratorEditor.show(
+        generatorEntry,
+        AppState.currentProjectState,
+        AppState.selectedHierarchyItems,
+    );
+}
+
+async function handleSaveDetectorFeatureGenerator(payload) {
+    UIManager.showLoading('Saving detector generator...');
+    try {
+        const result = await APIService.upsertDetectorFeatureGenerator(payload);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError('Failed to save detector generator: ' + (error.message || error));
+    } finally {
+        UIManager.hideLoading();
+    }
+}
+
+async function handleRealizeDetectorFeatureGenerator(generatorEntry) {
+    const generatorId = String(generatorEntry?.generator_id || '').trim();
+    if (!generatorId) {
+        UIManager.showError('Could not determine which detector feature generator to regenerate.');
+        return;
+    }
+
+    UIManager.showLoading('Regenerating detector geometry...');
+    try {
+        const result = await APIService.realizeDetectorFeatureGenerator(generatorId);
+        syncUIWithState(result);
+    } catch (error) {
+        UIManager.showError('Failed to regenerate detector geometry: ' + (error.message || error));
     } finally {
         UIManager.hideLoading();
     }
@@ -2341,10 +2503,121 @@ async function handleAiGenerate(promptText) {
     }
 }
 
-// Handler for STEP file import
-async function handleImportStep(file) {
+// Handler for STEP file import and supported reimport
+async function handleImportStep(file, importRecord = null) {
     if (!file) return;
-    StepImportEditor.show(file, AppState.currentProjectState);
+    StepImportEditor.show(file, AppState.currentProjectState, importRecord);
+}
+
+async function handleReimportStepImport(file, importRecord) {
+    await handleImportStep(file, importRecord);
+}
+
+function getImportedCadLogicalVolumeIdSet(importRecord) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    return new Set(batchContext.logicalVolumeIds);
+}
+
+function getImportedCadMaterialSuggestion(importRecord) {
+    const logicalVolumeIdSet = getImportedCadLogicalVolumeIdSet(importRecord);
+    const projectState = AppState.currentProjectState || {};
+    const logicalVolumes = projectState.logical_volumes || {};
+    const materialRefs = [];
+
+    for (const lv of Object.values(logicalVolumes)) {
+        if (!lv || !logicalVolumeIdSet.has(lv.id)) continue;
+        const materialRef = typeof lv.material_ref === 'string' ? lv.material_ref.trim() : '';
+        if (materialRef) materialRefs.push(materialRef);
+    }
+
+    if (materialRefs.length === 0) {
+        const materialNames = Object.keys(projectState.materials || {});
+        return materialNames.length > 0 ? materialNames[0] : '';
+    }
+
+    return materialRefs[0];
+}
+
+function buildCadImportLogicalVolumeBatchUpdates(importRecord, partialUpdate) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    return batchContext.logicalVolumeIds.map((id) => ({
+        id,
+        ...partialUpdate,
+    }));
+}
+
+async function handleCadImportBatchAction(action, importRecord) {
+    const batchContext = buildCadImportBatchContext(importRecord);
+    if (!batchContext.hasLogicalVolumes) {
+        UIManager.showError("This STEP import did not record any logical volumes for batch editing.");
+        return;
+    }
+
+    const selectionContext = getSelectionContext();
+    const projectState = AppState.currentProjectState || {};
+
+    if (action === 'material') {
+        const availableMaterials = Object.keys(projectState.materials || {});
+        if (availableMaterials.length === 0) {
+            UIManager.showError("Create a material before applying one to imported logical volumes.");
+            return;
+        }
+
+        const suggestedMaterial = getImportedCadMaterialSuggestion(importRecord) || availableMaterials[0];
+        const promptMessage = `Assign a material to ${batchContext.logicalVolumeSummary}:`;
+        const materialName = prompt(promptMessage, suggestedMaterial || '');
+        if (materialName == null) {
+            return;
+        }
+
+        const materialRef = materialName.trim();
+        if (!materialRef) {
+            return;
+        }
+
+        if (!projectState.materials || !projectState.materials[materialRef]) {
+            UIManager.showError(`Material '${materialRef}' was not found.`);
+            return;
+        }
+
+        const updates = buildCadImportLogicalVolumeBatchUpdates(importRecord, {
+            material_ref: materialRef,
+        });
+
+        UIManager.showLoading(`Applying material to ${batchContext.logicalVolumeSummary}...`);
+        try {
+            const result = await APIService.updateLogicalVolumeBatch(updates);
+            syncUIWithState(result, selectionContext);
+        } catch (error) {
+            UIManager.showError("Error applying material to imported CAD geometry: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+        return;
+    }
+
+    if (action === 'sensitive') {
+        if (!UIManager.confirmAction(`Mark ${batchContext.logicalVolumeSummary} as sensitive?`)) {
+            return;
+        }
+
+        const updates = buildCadImportLogicalVolumeBatchUpdates(importRecord, {
+            is_sensitive: true,
+        });
+
+        UIManager.showLoading(`Marking ${batchContext.logicalVolumeSummary} sensitive...`);
+        try {
+            const result = await APIService.updateLogicalVolumeBatch(updates);
+            syncUIWithState(result, selectionContext);
+        } catch (error) {
+            UIManager.showError("Error marking imported CAD geometry sensitive: " + (error.message || error));
+        } finally {
+            UIManager.hideLoading();
+        }
+        return;
+    }
+
+    UIManager.showError(`Unknown CAD import batch action '${action}'.`);
 }
 
 // NEW Handlers for the Assembly Definition Editor
@@ -2711,13 +2984,16 @@ function handleCameraModeChange(mode) {
     }
 }
 
-function formatStepImportReportMessage(report, smartImportRequested = false) {
+function formatStepImportReportMessage(report, smartImportRequested = false, isReimport = false) {
+    const actionLabel = isReimport ? 'reimport' : 'import';
     if (!report) {
-        return smartImportRequested ? "STEP file imported. Smart CAD report unavailable." : "STEP file imported successfully.";
+        return smartImportRequested
+            ? `STEP file ${actionLabel}ed. Smart CAD report unavailable.`
+            : `STEP file ${actionLabel}ed successfully.`;
     }
 
     if (!report.enabled) {
-        return "STEP file imported successfully (smart import disabled).";
+        return `STEP file ${actionLabel}ed successfully (smart import disabled).`;
     }
 
     const summary = report.summary || {};
@@ -2743,7 +3019,7 @@ function formatStepImportReportMessage(report, smartImportRequested = false) {
         .map(([reason, count]) => `${reason}: ${count}`);
 
     const lines = [
-        "STEP import complete (Smart CAD).",
+        `STEP ${actionLabel} complete (Smart CAD).`,
         `Total solids: ${total}`,
         `Selected primitives: ${primitiveSelected} (${ratioPct}%)`,
         `Selected tessellated fallback: ${tessSelected}`,
@@ -2775,7 +3051,11 @@ async function handleConfirmStepImport(options) {
         syncUIWithState(result);
         UIManager.hideLoading();
 
-        const reportMessage = formatStepImportReportMessage(result.step_import_report, optionsForJson.smartImport);
+        const reportMessage = formatStepImportReportMessage(
+            result.step_import_report,
+            optionsForJson.smartImport,
+            Boolean(optionsForJson.reimportTargetImportId)
+        );
         if (reportMessage) {
             UIManager.showNotification(reportMessage);
         }
@@ -3467,8 +3747,8 @@ async function handleRunSimulation(simSettings) {
 
     // Prepare the final parameters to send to the backend
     const sim_params = {
-        ...AppState.simOptions, // Use the globally stored options
-        events: numEvents
+        ...buildResolvedSimulationOptions(AppState.currentProjectState, AppState.simOptions),
+        events: numEvents,
     };
 
     try {
@@ -3524,6 +3804,21 @@ async function pollSimStatus() {
                     UIManager.setAnalysisModalButtonEnabled(true);
                     UIManager.setReconModalButtonEnabled(true);
                     UIManager.setDownloadButtonEnabled(true);
+                    try {
+                        const metaResult = await APIService.getSimulationMetadata(
+                            AppState.lastSimVersionId,
+                            AppState.lastSimJobId,
+                        );
+                        if (metaResult.success) {
+                            UIManager.setLoadedScoringResultMetadata(
+                                AppState.lastSimVersionId,
+                                AppState.lastSimJobId,
+                                metaResult.metadata,
+                            );
+                        }
+                    } catch (metadataError) {
+                        console.warn('Failed to load scoring metadata for completed run:', metadataError);
+                    }
                     // Update status display on completion
                     UIManager.updateSimStatusDisplay(AppState.lastSimJobId, status.total_events);
                 }
@@ -3587,12 +3882,17 @@ async function fetchAndDrawTracks(versionId, jobId, eventSpec) {
 }
 
 function handleOpenSimOptions() {
-    UIManager.setSimOptions(AppState.simOptions); // Pre-fill the modal with current settings
+    UIManager.setSimOptions(
+        buildResolvedSimulationOptions(AppState.currentProjectState, AppState.simOptions),
+    );
     UIManager.showSimOptionsModal();
 }
 
 function handleSaveSimOptions() {
-    AppState.simOptions = UIManager.getSimOptions(); // Get values from modal and save to state
+    AppState.simOptions = buildSimulationOptionOverrides(
+        AppState.currentProjectState,
+        UIManager.getSimOptions(),
+    );
     UIManager.hideSimOptionsModal();
     //UIManager.showNotification("Simulation options saved for the next run.");
 }

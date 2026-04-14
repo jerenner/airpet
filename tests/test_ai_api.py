@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -5,10 +6,11 @@ import h5py
 import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch
-from flask import jsonify, session
+from flask import jsonify, request, session
 from src.project_manager import ProjectManager
 from src.expression_evaluator import ExpressionEvaluator
-from src.geometry_types import DivisionVolume, ReplicaVolume
+from src.geometry_types import DivisionVolume, EnvironmentState, ReplicaVolume
+from src.scoring_artifacts import build_run_manifest_summary
 from app import dispatch_ai_tool, app as flask_app, _persist_final_stream_reply
 
 @pytest.fixture
@@ -46,6 +48,18 @@ def _build_multi_cycle_lv_triangle(pm):
             {'x': '1', 'y': '1', 'z': '1'},
         )
         assert err is None
+
+
+def _add_basic_particle_source(pm, name):
+    source, err = pm.add_source(
+        name,
+        {"particle": "gamma", "energy": "511 keV"},
+        {"x": "0", "y": "0", "z": "0"},
+        {"x": "0", "y": "0", "z": "0"},
+        activity=1.0,
+    )
+    assert source is not None and err is None
+    return source
 
 
 def _assert_single_cycle_truncation_issue(issues):
@@ -590,6 +604,744 @@ def test_ai_tool_manage_define(pm):
     })
     assert res['success']
     assert pm.current_geometry_state.defines['test_var'].value == 500
+
+
+def test_ai_tool_update_property_and_get_component_details_cover_environment_field(pm):
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "environment",
+        "name": "global_uniform_magnetic_field",
+    })
+
+    assert details["success"], details
+    assert details["result"] == {
+        "global_uniform_magnetic_field": {
+            "enabled": False,
+            "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
+        "global_uniform_electric_field": {
+            "enabled": False,
+            "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
+        "local_uniform_magnetic_field": {
+            "enabled": False,
+            "target_volume_names": [],
+            "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
+        "local_uniform_electric_field": {
+            "enabled": False,
+            "target_volume_names": [],
+            "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
+        "region_cuts_and_limits": {
+            "enabled": False,
+            "region_name": "airpet_region",
+            "target_volume_names": [],
+            "production_cut_mm": 1.0,
+            "max_step_mm": 0.0,
+            "max_track_length_mm": 0.0,
+            "max_time_ns": 0.0,
+            "min_kinetic_energy_mev": 0.0,
+            "min_range_mm": 0.0,
+        },
+    }
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "global_uniform_magnetic_field",
+        "property_path": "enabled",
+        "new_value": True,
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_magnetic_field",
+        "property_path": "target_volume_names",
+        "new_value": "box_LV, detector_LV",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_magnetic_field",
+        "property_path": "field_vector_tesla.z",
+        "new_value": "2.25",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "global_uniform_electric_field",
+        "property_path": "enabled",
+        "new_value": True,
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_electric_field",
+        "property_path": "target_volume_names",
+        "new_value": "box_LV",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "local_uniform_electric_field",
+        "property_path": "field_vector_volt_per_meter.y",
+        "new_value": "-1.5",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "enabled",
+        "new_value": True,
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "region_name",
+        "new_value": "tracker_region",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "target_volume_names",
+        "new_value": "box_LV, detector_LV",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "production_cut_mm",
+        "new_value": "0.5",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "max_step_mm",
+        "new_value": "0.1",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "max_track_length_mm",
+        "new_value": "4.5",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "max_time_ns",
+        "new_value": "25",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "min_kinetic_energy_mev",
+        "new_value": "0.002",
+    })
+    assert res["success"], res
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "environment",
+        "object_id": "region_cuts_and_limits",
+        "property_path": "min_range_mm",
+        "new_value": "0.05",
+    })
+    assert res["success"], res
+
+    updated_details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "environment",
+        "name": "environment",
+    })
+    assert updated_details["success"], updated_details
+    assert updated_details["result"]["global_uniform_magnetic_field"] == {
+        "enabled": True,
+        "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 0.0},
+    }
+    assert updated_details["result"]["global_uniform_electric_field"] == {
+        "enabled": True,
+        "field_vector_volt_per_meter": {"x": 0.0, "y": 0.0, "z": 0.0},
+    }
+    assert updated_details["result"]["local_uniform_magnetic_field"] == {
+        "enabled": False,
+        "target_volume_names": ["box_LV", "detector_LV"],
+        "field_vector_tesla": {"x": 0.0, "y": 0.0, "z": 2.25},
+    }
+    assert updated_details["result"]["local_uniform_electric_field"] == {
+        "enabled": False,
+        "target_volume_names": ["box_LV"],
+        "field_vector_volt_per_meter": {"x": 0.0, "y": -1.5, "z": 0.0},
+    }
+    assert updated_details["result"]["region_cuts_and_limits"] == {
+        "enabled": True,
+        "region_name": "tracker_region",
+        "target_volume_names": ["box_LV", "detector_LV"],
+        "production_cut_mm": 0.5,
+        "max_step_mm": 0.1,
+        "max_track_length_mm": 4.5,
+        "max_time_ns": 25.0,
+        "min_kinetic_energy_mev": 0.002,
+        "min_range_mm": 0.05,
+    }
+
+
+def test_ai_tool_update_property_and_get_component_details_cover_scoring_state(pm):
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "scoring",
+        "name": "scoring_state",
+    })
+
+    assert details["success"], details
+    assert details["result"] == pm.current_geometry_state.scoring.to_dict()
+
+    scoring_state = {
+        "schema_version": 1,
+        "scoring_meshes": [
+            {
+                "mesh_id": "mesh_ai_main",
+                "name": "mesh_ai_main",
+                "enabled": True,
+                "mesh_type": "box",
+                "reference_frame": "world",
+                "geometry": {
+                    "center_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+                    "size_mm": {"x": 20.0, "y": 10.0, "z": 5.0},
+                },
+                "bins": {"x": 4, "y": 2, "z": 1},
+            }
+        ],
+        "tally_requests": [
+            {
+                "tally_id": "tally_ai_edep",
+                "name": "tally_ai_edep",
+                "enabled": True,
+                "mesh_ref": {"mesh_id": "mesh_ai_main", "name": "mesh_ai_main"},
+                "quantity": "energy_deposit",
+            }
+        ],
+        "run_manifest_defaults": {
+            "events": 400,
+            "threads": 2,
+            "save_hits": False,
+        },
+    }
+
+    res = dispatch_ai_tool(pm, "update_property", {
+        "object_type": "scoring",
+        "object_id": "scoring_state",
+        "property_path": "state",
+        "new_value": scoring_state,
+    })
+    assert res["success"], res
+
+    updated_details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "scoring",
+        "name": "scoring",
+    })
+    assert updated_details["success"], updated_details
+    assert updated_details["result"] == pm.current_geometry_state.scoring.to_dict()
+    assert updated_details["result"]["scoring_meshes"][0]["name"] == "mesh_ai_main"
+    assert updated_details["result"]["tally_requests"][0]["quantity"] == "energy_deposit"
+    assert updated_details["result"]["run_manifest_defaults"]["events"] == 400
+    assert updated_details["result"]["run_manifest_defaults"]["threads"] == 2
+
+    summary = dispatch_ai_tool(pm, "get_project_summary", {})
+    assert summary["success"], summary
+    assert summary["result"]["counts"]["scoring_meshes"] == 1
+    assert summary["result"]["counts"]["scoring_tally_requests"] == 1
+    assert summary["result"]["names"]["scoring_meshes"] == ["mesh_ai_main"]
+    assert summary["result"]["names"]["scoring_tally_requests"] == ["tally_ai_edep"]
+
+
+def test_ai_tool_manage_detector_feature_generator_and_get_component_details(pm):
+    solid, error = pm.add_solid(
+        "ai_detector_block",
+        "box",
+        {"x": "24", "y": "18", "z": "12"},
+    )
+    assert error is None
+
+    logical_volume, error = pm.add_logical_volume(
+        "ai_detector_lv",
+        "ai_detector_block",
+        "G4_Galactic",
+    )
+    assert error is None
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_tool_fixture",
+        "type": "rectangular_drilled_hole_array",
+        "name": "ai_detector_holes",
+        "target": {
+            "solid_ref": "ai_detector_block",
+            "logical_volume_refs": ["ai_detector_lv"],
+        },
+        "pattern": {
+            "count_x": 3,
+            "count_y": 2,
+            "pitch_mm": {"x": 5.0, "y": 6.5},
+            "origin_offset_mm": {"x": 0.5, "y": -1.0},
+        },
+        "hole": {
+            "diameter_mm": 1.25,
+            "depth_mm": 8.0,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_id"] == "dfg_ai_tool_fixture"
+    assert result["detector_feature_generator"]["target"] == {
+        "solid_ref": {
+            "id": solid["id"],
+            "name": solid["name"],
+        },
+        "logical_volume_refs": [
+            {
+                "id": logical_volume["id"],
+                "name": logical_volume["name"],
+            },
+        ],
+    }
+    assert result["detector_feature_realization"]["hole_count"] == 6
+    assert (
+        pm.current_geometry_state.logical_volumes["ai_detector_lv"].solid_ref
+        == result["detector_feature_realization"]["result_solid_name"]
+    )
+
+    details_by_id = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_tool_fixture",
+    })
+    assert details_by_id["success"], details_by_id
+    assert details_by_id["result"]["name"] == "ai_detector_holes"
+    assert details_by_id["result"]["realization"]["result_solid_ref"]["name"] == (
+        result["detector_feature_realization"]["result_solid_name"]
+    )
+
+    details_by_name = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "ai_detector_holes",
+    })
+    assert details_by_name["success"], details_by_name
+    assert details_by_name["result"]["generator_id"] == "dfg_ai_tool_fixture"
+
+    summary = dispatch_ai_tool(pm, "get_project_summary", {})
+    assert summary["success"], summary
+    assert summary["result"]["counts"]["detector_feature_generators"] == 1
+    assert summary["result"]["names"]["detector_feature_generators"] == ["ai_detector_holes"]
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_circular_patterns(pm):
+    solid, error = pm.add_solid(
+        "ai_circular_block",
+        "box",
+        {"x": "30", "y": "30", "z": "12"},
+    )
+    assert error is None
+
+    logical_volume, error = pm.add_logical_volume(
+        "ai_circular_lv",
+        "ai_circular_block",
+        "G4_Galactic",
+    )
+    assert error is None
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_circular_fixture",
+        "type": "circular_drilled_hole_array",
+        "name": "ai_circular_holes",
+        "target": {
+            "solid_ref": "ai_circular_block",
+            "logical_volume_refs": ["ai_circular_lv"],
+        },
+        "pattern": {
+            "count": 4,
+            "radius_mm": 6.0,
+            "orientation_deg": 45.0,
+            "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        },
+        "hole": {
+            "diameter_mm": 1.5,
+            "depth_mm": 9.0,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "circular_drilled_hole_array"
+    assert result["detector_feature_generator"]["pattern"] == {
+        "count": 4,
+        "radius_mm": 6.0,
+        "orientation_deg": 45.0,
+        "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_realization"]["hole_count"] == 4
+    assert (
+        pm.current_geometry_state.logical_volumes["ai_circular_lv"].solid_ref
+        == result["detector_feature_realization"]["result_solid_name"]
+    )
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_circular_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_circular_holes"
+    assert details["result"]["target"] == {
+        "solid_ref": {
+            "id": solid["id"],
+            "name": solid["name"],
+        },
+        "logical_volume_refs": [
+            {
+                "id": logical_volume["id"],
+                "name": logical_volume["name"],
+            },
+        ],
+    }
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_layered_stacks(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_layered_fixture",
+        "type": "layered_detector_stack",
+        "name": "ai_layered_stack",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "stack": {
+            "module_size_mm": {"x": 22.0, "y": 14.0},
+            "module_count": 2,
+            "module_pitch_mm": 7.5,
+            "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.5},
+        },
+        "layers": {
+            "absorber": {
+                "material_ref": "G4_Pb",
+                "thickness_mm": 3.0,
+            },
+            "sensor": {
+                "material_ref": "G4_Si",
+                "thickness_mm": 1.0,
+                "is_sensitive": True,
+            },
+            "support": {
+                "material_ref": "G4_Al",
+                "thickness_mm": 1.5,
+            },
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "layered_detector_stack"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["stack"] == {
+        "module_size_mm": {"x": 22.0, "y": 14.0},
+        "module_count": 2,
+        "module_pitch_mm": 7.5,
+        "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_realization"]["module_count"] == 2
+    assert result["detector_feature_realization"]["module_logical_volume_name"] == "ai_layered_stack__module_lv"
+
+    world_module_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_layered_stack__module_")
+    ]
+    assert len(world_module_pvs) == 2
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_layered_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_layered_stack"
+    assert details["result"]["realization"]["mode"] == "layered_stack"
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_tiled_sensor_arrays(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_sensor_array_fixture",
+        "type": "tiled_sensor_array",
+        "name": "ai_sensor_array",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "array": {
+            "count_x": 3,
+            "count_y": 2,
+            "pitch_mm": {"x": 7.5, "y": 6.0},
+            "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.25},
+        },
+        "sensor": {
+            "size_mm": {"x": 6.0, "y": 4.5},
+            "thickness_mm": 1.2,
+            "material_ref": "G4_Si",
+            "is_sensitive": True,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "tiled_sensor_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count_x": 3,
+        "count_y": 2,
+        "pitch_mm": {"x": 7.5, "y": 6.0},
+        "origin_offset_mm": {"x": 1.0, "y": -1.5, "z": 2.25},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["sensor"] == {
+        "size_mm": {"x": 6.0, "y": 4.5},
+        "thickness_mm": 1.2,
+        "material_ref": "G4_Si",
+        "is_sensitive": True,
+    }
+    assert result["detector_feature_realization"]["sensor_count"] == 6
+    assert result["detector_feature_realization"]["sensor_logical_volume_name"] == "ai_sensor_array__sensor_lv"
+
+    world_sensor_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_sensor_array__sensor_")
+    ]
+    assert len(world_sensor_pvs) == 6
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_sensor_array_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_sensor_array"
+    assert details["result"]["realization"]["mode"] == "placement_array"
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_support_rib_arrays(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_support_ribs_fixture",
+        "type": "support_rib_array",
+        "name": "ai_support_ribs",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "array": {
+            "count": 3,
+            "linear_pitch_mm": 9.0,
+            "axis": "x",
+            "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        },
+        "rib": {
+            "width_mm": 1.5,
+            "height_mm": 2.5,
+            "material_ref": "G4_Al",
+            "is_sensitive": False,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "support_rib_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count": 3,
+        "linear_pitch_mm": 9.0,
+        "axis": "x",
+        "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["rib"] == {
+        "width_mm": 1.5,
+        "height_mm": 2.5,
+        "material_ref": "G4_Al",
+        "is_sensitive": False,
+    }
+    assert result["detector_feature_realization"]["rib_count"] == 3
+    assert result["detector_feature_realization"]["rib_logical_volume_name"] == "ai_support_ribs__rib_lv"
+
+    world_rib_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_support_ribs__rib_")
+    ]
+    assert len(world_rib_pvs) == 3
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_support_ribs_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_support_ribs"
+    assert details["result"]["realization"]["mode"] == "placement_array"
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_annular_shield_sleeves(pm):
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_shield_fixture",
+        "type": "annular_shield_sleeve",
+        "name": "ai_shield_sleeve",
+        "target": {
+            "parent_logical_volume": "World",
+        },
+        "shield": {
+            "inner_radius_mm": 10.0,
+            "outer_radius_mm": 14.5,
+            "length_mm": 36.0,
+            "material_ref": "G4_Pb",
+            "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "annular_shield_sleeve"
+    assert result["detector_feature_generator"]["target"] == {
+        "parent_logical_volume_ref": {
+            "id": world_lv.id,
+            "name": "World",
+        },
+    }
+    assert result["detector_feature_generator"]["shield"] == {
+        "inner_radius_mm": 10.0,
+        "outer_radius_mm": 14.5,
+        "length_mm": 36.0,
+        "material_ref": "G4_Pb",
+        "origin_offset_mm": {"x": 1.0, "y": -2.0, "z": 3.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_realization"]["shield_logical_volume_name"] == "ai_shield_sleeve__shield_lv"
+
+    world_shield_pvs = [
+        pv for pv in pm.current_geometry_state.logical_volumes["World"].content
+        if pv.name.startswith("ai_shield_sleeve__shield")
+    ]
+    assert len(world_shield_pvs) == 1
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_shield_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_shield_sleeve"
+    assert details["result"]["realization"]["mode"] == "placement_array"
+
+
+def test_ai_tool_manage_detector_feature_generator_supports_channel_cut_arrays(pm):
+    solid, error = pm.add_solid(
+        "ai_channel_block",
+        "box",
+        {"x": "30", "y": "20", "z": "12"},
+    )
+    assert error is None
+
+    logical_volume, error = pm.add_logical_volume(
+        "ai_channel_lv",
+        "ai_channel_block",
+        "G4_Galactic",
+    )
+    assert error is None
+
+    result = dispatch_ai_tool(pm, "manage_detector_feature_generator", {
+        "id": "dfg_ai_channel_fixture",
+        "type": "channel_cut_array",
+        "name": "ai_channels",
+        "target": {
+            "solid_ref": "ai_channel_block",
+            "logical_volume_refs": ["ai_channel_lv"],
+        },
+        "array": {
+            "count": 4,
+            "linear_pitch_mm": 6.0,
+            "axis": "y",
+            "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        },
+        "channel": {
+            "width_mm": 1.25,
+            "depth_mm": 7.0,
+        },
+        "realize": True,
+    })
+
+    assert result["success"], result
+    assert result["detector_feature_generator"]["generator_type"] == "channel_cut_array"
+    assert result["detector_feature_generator"]["target"] == {
+        "solid_ref": {
+            "id": solid["id"],
+            "name": solid["name"],
+        },
+        "logical_volume_refs": [
+            {
+                "id": logical_volume["id"],
+                "name": logical_volume["name"],
+            },
+        ],
+    }
+    assert result["detector_feature_generator"]["array"] == {
+        "count": 4,
+        "linear_pitch_mm": 6.0,
+        "axis": "y",
+        "origin_offset_mm": {"x": 1.0, "y": -1.5},
+        "anchor": "target_center",
+    }
+    assert result["detector_feature_generator"]["channel"] == {
+        "width_mm": 1.25,
+        "depth_mm": 7.0,
+    }
+    assert result["detector_feature_realization"]["channel_count"] == 4
+    assert (
+        pm.current_geometry_state.logical_volumes["ai_channel_lv"].solid_ref
+        == result["detector_feature_realization"]["result_solid_name"]
+    )
+
+    details = dispatch_ai_tool(pm, "get_component_details", {
+        "component_type": "detector_feature_generator",
+        "name": "dfg_ai_channel_fixture",
+    })
+    assert details["success"], details
+    assert details["result"]["name"] == "ai_channels"
+    assert details["result"]["realization"]["mode"] == "boolean_subtraction"
+
 
 def test_ai_tool_create_primitive_solid(pm):
     res = dispatch_ai_tool(pm, "create_primitive_solid", {
@@ -4889,6 +5641,44 @@ def test_ai_simulation_tools(pm):
         assert res_status['status'] == "Finished"
 
 
+def test_ai_run_simulation_forwards_advanced_simulation_options(pm, tmp_path):
+    advanced_sim_params = {
+        "events": 250,
+        "threads": 4,
+        "production_cut": "0.5 mm",
+        "hit_energy_threshold": "20 eV",
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "save_tracks_range": "3-7",
+        "seed1": 11,
+        "seed2": 22,
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+    }
+
+    expected_sim_params = dict(advanced_sim_params)
+    version_dir = tmp_path / "version"
+    version_dir.mkdir()
+
+    pm.current_version_id = "version-kept"
+    pm.is_changed = False
+
+    with patch.object(pm, 'run_preflight_checks', return_value={'summary': {'can_run': True, 'issue_count': 0}, 'issues': []}), \
+         patch.object(pm, '_get_version_dir', return_value=str(version_dir)), \
+         patch.object(pm, 'generate_macro_file', return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as MockGenerateMacro, \
+         patch('threading.Thread') as MockThread:
+
+        MockThread.return_value.start.return_value = None
+        res = dispatch_ai_tool(pm, "run_simulation", advanced_sim_params)
+
+    assert res['success'], res
+    assert MockGenerateMacro.call_args.args[1] == expected_sim_params
+    assert MockThread.call_args.kwargs["args"][3] == expected_sim_params
+    MockThread.return_value.start.assert_called_once()
+
+
 def test_ai_run_simulation_blocks_on_preflight_failure(pm):
     failing_preflight = {
         'summary': {'can_run': False, 'issue_count': 1},
@@ -4905,6 +5695,205 @@ def test_ai_run_simulation_blocks_on_preflight_failure(pm):
     assert res['preflight_summary']['can_run'] is False
     assert res['preflight_report'] == failing_preflight
     assert not MockThread.called
+
+
+def test_run_g4_simulation_preserves_save_hits_and_passes_sim_params_to_geant4_env(tmp_path):
+    from app import SIMULATION_PROCESSES, SIMULATION_STATUS, run_g4_simulation
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.mac").write_text(
+        "\n".join([
+            "# Base macro",
+            "/tracking/storeTrajectory 0",
+            "/g4pet/run/saveHits false",
+            "/g4pet/run/saveHitMetadata false",
+            "/g4pet/run/saveParticles true",
+            "/g4pet/run/hitEnergyThreshold 20 eV",
+            "/run/setCut 0.5 mm",
+            "/run/printProgress 250",
+            "/analysis/setFileName output.hdf5",
+            "/run/beamOn 4",
+        ]),
+        encoding="utf-8",
+    )
+
+    sim_params = {
+        "events": 4,
+        "threads": 2,
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "hit_energy_threshold": "20 eV",
+        "production_cut": "0.5 mm",
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+        "seed1": 11,
+        "seed2": 22,
+    }
+
+    def make_process():
+        proc = MagicMock()
+        proc.stdout = MagicMock()
+        proc.stdout.readline.return_value = ""
+        proc.stderr = MagicMock()
+        proc.stderr.readline.return_value = ""
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        proc.wait.return_value = 0
+        return proc
+
+    with patch.dict(SIMULATION_STATUS, {}, clear=True), \
+         patch.dict(SIMULATION_PROCESSES, {}, clear=True), \
+         patch('app.get_geant4_env', return_value={"G4PHYSICSLIST": "FTFP_BERT", "G4OPTICALPHYSICS": "true"}) as MockEnv, \
+         patch('app.subprocess.Popen', side_effect=[make_process(), make_process()]):
+
+        run_g4_simulation("job-save-hits", str(run_dir), "/fake/geant4", sim_params)
+
+    assert all(call_args.args == (sim_params,) for call_args in MockEnv.call_args_list)
+    written_macro = (run_dir / "run_t0.mac").read_text(encoding="utf-8")
+    assert "/g4pet/run/saveHits false" in written_macro
+    assert "/g4pet/run/saveHitMetadata false" in written_macro
+    assert "/g4pet/run/saveParticles true" in written_macro
+
+
+def test_run_g4_simulation_writes_scoring_artifact_bundle_when_scoring_mesh_is_configured(tmp_path):
+    from app import SIMULATION_PROCESSES, SIMULATION_STATUS, run_g4_simulation
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.mac").write_text(
+        "\n".join([
+            "# Base macro",
+            "/analysis/setFileName output.hdf5",
+            "/run/beamOn 2",
+        ]),
+        encoding="utf-8",
+    )
+    (run_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "job_id": "job-scoring-artifact",
+                "scoring": {
+                    "schema_version": 1,
+                    "scoring_meshes": [
+                        {
+                            "mesh_id": "mesh_main",
+                            "name": "mesh_main",
+                            "enabled": True,
+                            "mesh_type": "box",
+                            "reference_frame": "world",
+                            "geometry": {
+                                "center_mm": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                "size_mm": {"x": 4.0, "y": 4.0, "z": 4.0},
+                            },
+                            "bins": {"x": 2, "y": 2, "z": 2},
+                        }
+                    ],
+                    "tally_requests": [
+                        {
+                            "tally_id": "tally_main",
+                            "name": "tally_main",
+                            "enabled": True,
+                            "mesh_ref": {"mesh_id": "mesh_main", "name": "mesh_main"},
+                            "quantity": "energy_deposit",
+                        }
+                    ],
+                    "run_manifest_defaults": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with h5py.File(run_dir / "output.hdf5", "w") as handle:
+        hits = handle.create_group("default_ntuples/Hits")
+        hits.create_dataset("entries", data=2)
+        hits.create_dataset("Edep", data=np.array([1.25, 2.75], dtype=float))
+        hits.create_dataset("PosX", data=np.array([-0.5, 0.5], dtype=float))
+        hits.create_dataset("PosY", data=np.array([-0.5, 0.5], dtype=float))
+        hits.create_dataset("PosZ", data=np.array([-0.5, 0.5], dtype=float))
+
+    sim_params = {
+        "events": 2,
+        "threads": 1,
+        "physics_list": "FTFP_BERT",
+    }
+
+    proc = MagicMock()
+    proc.stdout = MagicMock()
+    proc.stdout.readline.return_value = ""
+    proc.stderr = MagicMock()
+    proc.stderr.readline.return_value = ""
+    proc.communicate.return_value = ("", "")
+    proc.returncode = 0
+
+    with patch.dict(SIMULATION_STATUS, {}, clear=True), \
+         patch.dict(SIMULATION_PROCESSES, {}, clear=True), \
+         patch("app.get_geant4_env", return_value={"G4PHYSICSLIST": "FTFP_BERT"}), \
+         patch("app.subprocess.Popen", return_value=proc):
+        run_g4_simulation("job-scoring-artifact", str(run_dir), "/fake/geant4", sim_params)
+
+    scoring_bundle = json.loads((run_dir / "scoring_artifacts.json").read_text(encoding="utf-8"))
+    updated_metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
+
+    assert scoring_bundle["summary"]["generated_artifact_count"] == 1
+    assert scoring_bundle["summary"]["total_value"] == 4.0
+    assert updated_metadata["scoring_artifacts"]["artifact_bundle_path"] == "scoring_artifacts.json"
+    assert SIMULATION_STATUS["job-scoring-artifact"]["status"] == "Completed"
+    assert "Scoring artifacts written to scoring_artifacts.json." in SIMULATION_STATUS["job-scoring-artifact"]["stdout"]
+
+
+def test_ai_and_http_run_simulation_share_advanced_option_payload(pm, tmp_path):
+    advanced_sim_params = {
+        "events": 250,
+        "threads": 4,
+        "production_cut": "0.5 mm",
+        "hit_energy_threshold": "20 eV",
+        "save_hits": False,
+        "save_hit_metadata": False,
+        "save_particles": True,
+        "save_tracks_range": "3-7",
+        "seed1": 11,
+        "seed2": 22,
+        "print_progress": 250,
+        "physics_list": "FTFP_BERT",
+        "optical_physics": True,
+    }
+
+    version_dir = tmp_path / "version_ai_http_run"
+    version_dir.mkdir()
+    pm.current_version_id = "version-kept"
+    pm.is_changed = False
+
+    with patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True, "issue_count": 0}, "issues": []}), \
+         patch.object(pm, "_get_version_dir", return_value=str(version_dir)), \
+         patch.object(pm, "generate_macro_file", return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as mock_generate, \
+         patch("threading.Thread") as MockThread:
+        MockThread.return_value.start.return_value = None
+        ai_res = dispatch_ai_tool(pm, "run_simulation", advanced_sim_params)
+
+    assert ai_res["success"], ai_res
+    ai_sim_params = mock_generate.call_args.args[1]
+    assert ai_sim_params == advanced_sim_params
+    assert MockThread.call_count == 1
+
+    with patch.object(pm, "run_preflight_checks", return_value={"summary": {"can_run": True, "issue_count": 0}, "issues": []}), \
+         patch.object(pm, "_get_version_dir", return_value=str(version_dir)), \
+         patch.object(pm, "generate_macro_file", return_value=str(version_dir / "sim_runs" / "job" / "run.mac")) as mock_generate, \
+         patch("threading.Thread") as MockThread, \
+         patch("app.os.path.exists", return_value=True), \
+         patch("app.get_project_manager_for_session", return_value=pm):
+        MockThread.return_value.start.return_value = None
+        with flask_app.test_client() as client:
+            http_res = client.post("/api/simulation/run", json=advanced_sim_params)
+
+    assert http_res.status_code == 200, http_res.get_json()
+    assert http_res.get_json()["success"] is True
+    http_sim_params = mock_generate.call_args.args[1]
+    assert http_sim_params == advanced_sim_params
+    assert http_sim_params == ai_sim_params
+    assert MockThread.call_count == 1
 
 
 def test_ai_tool_get_simulation_status_supports_since_cursor(pm):
@@ -5338,12 +6327,28 @@ def test_ai_tool_get_simulation_status_can_disable_log_summary(pm):
     assert "log_summary" not in res
 
 
-def test_ai_analysis_summary(pm):
+def test_ai_analysis_summary(pm, tmp_path):
     # Mocking h5py File
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_summary_project"
+    version_id = "test-version"
+    job_id = "test-job-id"
+    pm.current_version_id = version_id
+
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "job_id": job_id,
+        "environment": EnvironmentState.from_dict({
+            "global_uniform_magnetic_field": {
+                "enabled": True,
+                "field_vector_tesla": {"x": 0.0, "y": 1.5, "z": -0.25},
+            }
+        }).to_dict(),
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
     with patch('h5py.File') as MockFile:
-        job_id = "test-job-id"
-        pm.current_version_id = "test-version"
-        
         mock_f = MockFile.return_value.__enter__.return_value
         
         # Mock 'default_ntuples/Hits' group
@@ -5374,6 +6379,11 @@ def test_ai_analysis_summary(pm):
             assert res['success'], f"Error: {res.get('error')}"
             assert res['summary']['total_hits'] == 10
             assert res['summary']['particle_breakdown']['gamma'] == 10
+            assert res['summary']['environment_summary']['has_active_controls'] is True
+            assert res['summary']['environment_summary']['active_control_count'] == 1
+            assert res['summary']['environment_summary']['summary_text'] == (
+                "Global magnetic field: (0, 1.5, -0.25) T"
+            )
 
 def test_ai_physics_template(pm):
     # Test inserting a phantom template
@@ -5391,6 +6401,29 @@ def test_ai_physics_template(pm):
     # Check if PV was placed
     world_lv = pm.current_geometry_state.logical_volumes["World"]
     assert any("Phantom_LV" in pv.volume_ref for pv in world_lv.content)
+
+
+def test_ai_field_probe_slab_template(pm):
+    res = dispatch_ai_tool(pm, "insert_physics_template", {
+        "template_name": "field_probe_slab",
+        "params": {"size": 12, "thickness": 0.5},
+        "parent_lv_name": "World",
+        "position": {"x": 0, "y": 0, "z": 0}
+    })
+
+    assert res["success"]
+
+    probe_solid_names = [name for name in pm.current_geometry_state.solids if name.startswith("FieldProbe_Solid_")]
+    probe_lv_names = [name for name in pm.current_geometry_state.logical_volumes if name.startswith("FieldProbe_LV_")]
+
+    assert probe_solid_names
+    assert probe_lv_names
+
+    probe_lv = pm.current_geometry_state.logical_volumes[probe_lv_names[0]]
+    assert probe_lv.is_sensitive is True
+
+    world_lv = pm.current_geometry_state.logical_volumes["World"]
+    assert any(pv.volume_ref == probe_lv.name for pv in world_lv.content)
 
 
 def test_ai_tool_accepts_stringified_json_args(pm):
@@ -5658,6 +6691,7 @@ def test_generate_macro_uses_low_default_hit_energy_threshold(pm, tmp_path):
 
     assert "/g4pet/run/hitEnergyThreshold 1 eV" in macro_text
     assert "/g4pet/run/saveHitMetadata true" in macro_text
+    assert "/run/setCut 1.0 mm" in macro_text
 
 
 def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
@@ -5675,6 +6709,23 @@ def test_generate_macro_respects_explicit_hit_energy_threshold(pm, tmp_path):
     macro_text = Path(macro_path).read_text(encoding="utf-8")
 
     assert "/g4pet/run/hitEnergyThreshold 25 eV" in macro_text
+
+
+def test_generate_macro_respects_explicit_production_cut(pm, tmp_path):
+    version_dir = tmp_path / "version_production_cut_override"
+    version_dir.mkdir()
+    (version_dir / "version.json").write_text("{}", encoding="utf-8")
+
+    macro_path = pm.generate_macro_file(
+        "production-cut-override",
+        {"events": 1, "production_cut": "1 um"},
+        str(tmp_path),
+        str(tmp_path),
+        str(version_dir),
+    )
+    macro_text = Path(macro_path).read_text(encoding="utf-8")
+
+    assert "/run/setCut 1 um" in macro_text
 
 
 def test_generate_macro_allows_disabling_hit_metadata(pm, tmp_path):
@@ -5873,6 +6924,78 @@ def test_ai_tool_stop_simulation(pm):
     assert fake_proc.terminate.called
 
 
+def test_ai_tool_setup_param_study_persists_simulation_source_ids(pm):
+    define_obj, err = pm.add_define("study_scale", "constant", "1", "mm", "geometry")
+    assert define_obj is not None and err is None
+
+    registry_entry, err = pm.upsert_parameter_registry_entry("study_scale_param", {
+        "target_type": "define",
+        "target_ref": {"name": define_obj["name"]},
+        "bounds": {"min": 0.5, "max": 2.0},
+        "default": 1.0,
+        "units": "mm",
+        "enabled": True,
+    })
+    assert registry_entry is not None and err is None
+
+    source_a = _add_basic_particle_source(pm, "source_a")
+    source_b = _add_basic_particle_source(pm, "source_b")
+
+    res = dispatch_ai_tool(pm, "setup_param_study", {
+        "study_name": "source_subset_study",
+        "mode": "random",
+        "parameters": ["study_scale_param"],
+        "objectives": [
+            {"metric": "success_flag", "name": "success", "direction": "maximize"}
+        ],
+        "random": {"samples": 2, "seed": 7},
+        "simulation_source_ids": [f"  {source_b['id']}  ", source_b["id"]],
+    })
+
+    assert res["success"], res
+    assert res["study"]["simulation_source_ids"] == [source_b["id"]]
+    assert pm.current_geometry_state.param_studies["source_subset_study"]["simulation_source_ids"] == [source_b["id"]]
+
+
+def test_ai_tool_run_optimization_forwards_selected_source_ids_to_simulation_in_loop_route(pm):
+    source_a = _add_basic_particle_source(pm, "source_a")
+    source_b = _add_basic_particle_source(pm, "source_b")
+
+    captured = {}
+
+    def fake_route():
+        captured["payload"] = request.get_json(silent=True) or {}
+        return jsonify({
+            "success": True,
+            "optimizer_result": {"run_id": "opt-1"},
+            "preflight_summary": {"can_run": True},
+        })
+
+    with patch("app.param_optimizer_run_simulation_in_loop_route", side_effect=fake_route):
+        res = dispatch_ai_tool(pm, "run_optimization", {
+            "study_name": "source_subset_run",
+            "method": "random_search",
+            "budget": 4,
+            "simulation_in_loop": True,
+            "sim_objectives": [
+                {
+                    "name": "edep_sum",
+                    "metric": "hdf5_reduce",
+                    "dataset_path": "default_ntuples/Hits/Edep",
+                    "reduce": "sum",
+                }
+            ],
+            "selected_source_ids": [f"  {source_b['id']}  ", source_b["id"], source_a["id"]],
+            "sim_params": {"events": 12, "threads": 1},
+        })
+
+    assert res["success"], res
+    assert res["optimization_result"]["run_id"] == "opt-1"
+    assert captured["payload"]["selected_source_ids"] == [source_b["id"], source_a["id"]]
+    assert captured["payload"]["sim_objectives"][0]["name"] == "edep_sum"
+    assert captured["payload"]["sim_params"] == {"events": 12, "threads": 1}
+
+
 def test_ai_tool_set_active_source(pm):
     create_res = dispatch_ai_tool(pm, "manage_particle_source", {
         "action": "create",
@@ -5903,41 +7026,306 @@ def test_ai_tool_route_bridge_get_metadata_and_analysis(pm):
     with flask_app.test_request_context('/api/ai/chat', json={}):
         session['user_id'] = 'local_user'
 
-        with patch('app.get_simulation_metadata', return_value=jsonify({"success": True, "metadata": {"events": 1000}})):
+        with patch(
+            'app.get_simulation_metadata',
+            return_value=jsonify({
+                "success": True,
+                "metadata": {
+                    "events": 1000,
+                    "environment_summary": {
+                        "has_active_controls": True,
+                        "active_control_count": 1,
+                        "summary_text": "Global magnetic field: (0, 1.5, -0.25) T",
+                        "active_controls": [],
+                    },
+                },
+            }),
+        ):
             meta_res = dispatch_ai_tool(pm, "get_simulation_metadata", {
                 "version_id": "v1",
                 "job_id": "job-1"
             })
 
-        with patch('app.get_simulation_analysis', return_value=jsonify({"success": True, "analysis": {"total_hits": 5}})):
+        def fake_get_simulation_analysis(version_id, job_id):
+            return jsonify({
+                "success": True,
+                "analysis": {
+                    "total_hits": 5,
+                    "version_id": version_id,
+                    "job_id": job_id,
+                    "energy_bins": request.args.get("energy_bins"),
+                    "spatial_bins": request.args.get("spatial_bins"),
+                    "sensitive_detector": request.args.get("sensitive_detector", ""),
+                    "environment_summary": {
+                        "has_active_controls": True,
+                        "active_control_count": 1,
+                        "summary_text": "Global magnetic field: (0, 1.5, -0.25) T",
+                        "active_controls": [],
+                    },
+                }
+            })
+
+        with patch('app.get_simulation_analysis', side_effect=fake_get_simulation_analysis):
             analysis_res = dispatch_ai_tool(pm, "get_simulation_analysis", {
                 "version_id": "v1",
                 "job_id": "job-1",
                 "energy_bins": 64,
-                "spatial_bins": 32
+                "spatial_bins": 32,
+                "sensitive_detector": "SD_B",
             })
 
     assert meta_res['success'], meta_res
     assert meta_res['metadata']['events'] == 1000
+    assert meta_res['metadata']['environment_summary']['active_control_count'] == 1
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 5
+    assert analysis_res['analysis']['version_id'] == 'v1'
+    assert analysis_res['analysis']['job_id'] == 'job-1'
+    assert analysis_res['analysis']['energy_bins'] == '64'
+    assert analysis_res['analysis']['spatial_bins'] == '32'
+    assert analysis_res['analysis']['sensitive_detector'] == 'SD_B'
+    assert analysis_res['analysis']['environment_summary']['has_active_controls'] is True
 
 
 def test_ai_tool_route_bridge_get_analysis_without_request_context(pm):
     with patch(
         'app.get_simulation_analysis',
-        side_effect=lambda version_id, job_id: jsonify({"success": True, "analysis": {"total_hits": 7, "job_id": job_id}})
+        side_effect=lambda version_id, job_id: jsonify({
+            "success": True,
+            "analysis": {
+                "total_hits": 7,
+                "job_id": job_id,
+                "sensitive_detector": request.args.get("sensitive_detector", ""),
+            }
+        })
     ):
         analysis_res = dispatch_ai_tool(pm, "get_simulation_analysis", {
             "version_id": "v2",
             "job_id": "job-ctxless",
             "energy_bins": 32,
             "spatial_bins": 16,
+            "sensitive_detector": "SD_A",
         })
 
     assert analysis_res['success'], analysis_res
     assert analysis_res['analysis']['total_hits'] == 7
     assert analysis_res['analysis']['job_id'] == 'job-ctxless'
+    assert analysis_res['analysis']['sensitive_detector'] == 'SD_A'
+
+
+def _seed_scoring_summary_route_ai_fixture(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "scoring_summary_route_ai_project"
+
+    version_id = "version-scoring-summary"
+    job_id = "job-scoring-summary"
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.mac").write_text("/run/beamOn 12\n", encoding="utf-8")
+    (run_dir / "geometry.gdml").write_text("<gdml />\n", encoding="utf-8")
+    (run_dir / "output.hdf5").write_text("stub", encoding="utf-8")
+
+    metadata = {
+        "job_id": job_id,
+        "timestamp": "2026-04-11T16:20:00",
+        "resolved_run_manifest": {
+            "events": 12,
+            "threads": 2,
+            "save_hits": True,
+        },
+        "sim_options": {
+            "physics_list": "FTFP_BERT",
+            "optical_physics": False,
+        },
+        "scoring_summary": {
+            "has_configured_scoring": True,
+            "enabled_scoring_mesh_count": 1,
+            "enabled_tally_request_count": 2,
+            "summary_text": (
+                "1 of 1 scoring mesh(es) enabled; 2 of 2 tally request(s) enabled; "
+                "Run manifest defaults unchanged"
+            ),
+        },
+        "scoring_runtime": {
+            "supported_quantities": ["energy_deposit", "n_of_step"],
+            "artifact_request_count": 2,
+            "skipped_tally_count": 0,
+            "requires_hits": True,
+        },
+        "scoring_artifacts": {
+            "artifact_bundle_path": "scoring_artifacts.json",
+            "generated_artifact_count": 2,
+            "skipped_tally_count": 0,
+            "summary": {
+                "quantity_summaries": [
+                    {
+                        "quantity": "energy_deposit",
+                        "unit": "MeV",
+                        "generated_artifact_count": 1,
+                        "total_value": 4.0,
+                    },
+                    {
+                        "quantity": "n_of_step",
+                        "unit": "steps",
+                        "generated_artifact_count": 1,
+                        "total_value": 2.0,
+                    },
+                ],
+            },
+        },
+    }
+
+    scoring_bundle = {
+        "schema_version": 1,
+        "job_id": job_id,
+        "source_output": "output.hdf5",
+        "summary": {
+            "schema_version": 1,
+            "supported_quantities": ["energy_deposit", "n_of_step"],
+            "hit_count_total": 2,
+            "enabled_mesh_count": 1,
+            "enabled_tally_count": 2,
+            "generated_artifact_count": 2,
+            "skipped_tally_count": 0,
+            "quantity_summaries": [
+                {
+                    "quantity": "energy_deposit",
+                    "unit": "MeV",
+                    "generated_artifact_count": 1,
+                    "total_value": 4.0,
+                },
+                {
+                    "quantity": "n_of_step",
+                    "unit": "steps",
+                    "generated_artifact_count": 1,
+                    "total_value": 2.0,
+                },
+            ],
+        },
+        "artifacts": [],
+        "skipped_tallies": [],
+    }
+    (run_dir / "scoring_artifacts.json").write_text(
+        json.dumps(scoring_bundle),
+        encoding="utf-8",
+    )
+
+    metadata["run_manifest_summary"] = build_run_manifest_summary(
+        metadata,
+        str(run_dir),
+        version_id=version_id,
+    )
+    scoring_bundle["run_manifest_summary"] = metadata["run_manifest_summary"]
+    (run_dir / "scoring_artifacts.json").write_text(
+        json.dumps(scoring_bundle),
+        encoding="utf-8",
+    )
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    return version_id, job_id
+
+
+def test_scoring_summary_route_and_ai_wrapper_share_success_payloads(pm, tmp_path):
+    version_id, job_id = _seed_scoring_summary_route_ai_fixture(pm, tmp_path)
+
+    with flask_app.test_client() as client, patch('app.get_project_manager_for_session', return_value=pm):
+        response = client.get(f"/api/simulation/scoring_summary/{version_id}/{job_id}")
+        assert response.status_code == 200
+        route_data = response.get_json()
+
+    ai_data = dispatch_ai_tool(pm, "get_scoring_summary", {
+        "version_id": version_id,
+        "job_id": job_id,
+    })
+
+    assert route_data == ai_data
+    summary = ai_data["scoring_summary"]
+    assert summary["status"] == "artifacts_ready"
+    assert summary["summary_text"] == "energy deposit 4 MeV · n of step 2 steps"
+    assert summary["setup_summary_text"].startswith("1 of 1 scoring mesh(es) enabled")
+    assert summary["enabled_mesh_count"] == 1
+    assert summary["enabled_tally_count"] == 2
+    assert summary["artifact_request_count"] == 2
+    assert summary["generated_artifact_count"] == 2
+    assert summary["bundle_exists"] is True
+    assert summary["source_output_exists"] is True
+    assert summary["quantity_summaries"] == [
+        {
+            "quantity": "energy_deposit",
+            "label": "energy deposit",
+            "unit": "MeV",
+            "generated_artifact_count": 1,
+            "total_value": 4.0,
+            "total_value_text": "4 MeV",
+        },
+        {
+            "quantity": "n_of_step",
+            "label": "n of step",
+            "unit": "steps",
+            "generated_artifact_count": 1,
+            "total_value": 2.0,
+            "total_value_text": "2 steps",
+        },
+    ]
+    assert summary["comparison_keys"]["geometry_sha256"]
+
+
+def test_simulation_metadata_and_analysis_routes_include_environment_summary(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_metadata_project"
+
+    version_id = "analysis-version"
+    job_id = "analysis-job"
+    version_dir = Path(pm._get_version_dir(version_id))
+    run_dir = version_dir / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    env = EnvironmentState.from_dict({
+        "global_uniform_magnetic_field": {
+            "enabled": True,
+            "field_vector_tesla": {"x": 0.0, "y": 1.5, "z": -0.25},
+        }
+    })
+
+    metadata = {
+        "job_id": job_id,
+        "timestamp": "2026-04-07T00:00:00",
+        "total_events": 3,
+        "sim_options": {"events": 3},
+        "environment": env.to_dict(),
+    }
+    (run_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    with h5py.File(run_dir / "output.hdf5", 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=3)
+        hits.create_dataset('Edep', data=np.array([0.01, 0.02, 0.03]))
+        hits.create_dataset('PosX', data=np.array([0.0, 1.0, 2.0]))
+        hits.create_dataset('PosY', data=np.array([0.0, 0.5, 1.0]))
+        hits.create_dataset('PosZ', data=np.array([0.0, 0.0, 0.0]))
+        hits.create_dataset('CopyNo', data=np.array([0, 0, 0], dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-'] * 3, dtype='S2'))
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            metadata_res = client.get(f'/api/simulation/metadata/{version_id}/{job_id}')
+            analysis_res = client.get(
+                f'/api/simulation/analysis/{version_id}/{job_id}?energy_bins=10&spatial_bins=5'
+            )
+
+    metadata_data = metadata_res.get_json()
+    assert metadata_res.status_code == 200
+    assert metadata_data["success"] is True
+    assert metadata_data["metadata"]["environment_summary"]["has_active_controls"] is True
+    assert metadata_data["metadata"]["environment_summary"]["active_control_count"] == 1
+    assert metadata_data["metadata"]["environment_summary"]["summary_text"] == (
+        "Global magnetic field: (0, 1.5, -0.25) T"
+    )
+
+    analysis_data = analysis_res.get_json()
+    assert analysis_res.status_code == 200
+    assert analysis_data["success"] is True
+    assert analysis_data["analysis"]["environment_summary"] == metadata_data["metadata"]["environment_summary"]
+    assert analysis_data["analysis"]["filtering"]["sensitive_detector_supported"] is False
 
 
 def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):
@@ -5951,6 +7339,15 @@ def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):
 
     with patch('app.get_project_manager_for_session', return_value=pm):
         with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+            history_data = history_res.get_json()
+            assert history_res.status_code == 200
+            assert history_data['success'] is True
+            assert [entry['id'] for entry in history_data['history']] == [version_id]
+            assert set(history_data['history'][0]['runs']) == {'run-a', 'run-b'}
+
             resp = client.post('/api/delete_version', json={
                 'project_name': pm.project_name,
                 'version_id': version_id,
@@ -5963,6 +7360,16 @@ def test_delete_version_route_removes_version_and_child_sim_runs(pm, tmp_path):
     assert not Path(pm._get_version_dir(version_id)).exists()
     assert pm.current_version_id is None
     assert pm.is_changed is True
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+    history_data = history_res.get_json()
+    assert history_res.status_code == 200
+    assert history_data['success'] is True
+    assert history_data['history'] == []
 
 
 def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
@@ -5978,6 +7385,15 @@ def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
 
     with patch('app.get_project_manager_for_session', return_value=pm):
         with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+            history_data = history_res.get_json()
+            assert history_res.status_code == 200
+            assert history_data['success'] is True
+            assert [entry['id'] for entry in history_data['history']] == [version_id]
+            assert set(history_data['history'][0]['runs']) == {'run-target', 'run-sibling'}
+
             resp = client.post('/api/delete_simulation_run', json={
                 'project_name': pm.project_name,
                 'version_id': version_id,
@@ -5990,6 +7406,17 @@ def test_delete_simulation_run_route_removes_only_selected_run(pm, tmp_path):
     assert not target_run_dir.exists()
     assert sibling_run_dir.exists()
     assert Path(pm._get_version_dir(version_id)).exists()
+
+    with patch('app.get_project_manager_for_session', return_value=pm):
+        with flask_app.test_client() as client:
+            history_res = client.get('/api/get_project_history', query_string={
+                'project_name': pm.project_name,
+            })
+    history_data = history_res.get_json()
+    assert history_res.status_code == 200
+    assert history_data['success'] is True
+    assert [entry['id'] for entry in history_data['history']] == [version_id]
+    assert set(history_data['history'][0]['runs']) == {'run-sibling'}
 
 
 def test_simulation_analysis_route_handles_degenerate_histogram_ranges(pm, tmp_path):
@@ -6065,6 +7492,86 @@ def test_simulation_analysis_route_filters_by_sensitive_detector(pm, tmp_path):
     assert data['analysis']['filtering']['available_sensitive_detectors'] == ['SD_A', 'SD_B']
     assert data['analysis']['filtering']['selected_sensitive_detector'] == 'SD_B'
     assert sum(data['analysis']['energy_spectrum']['counts']) == 2
+
+
+def test_ai_and_http_simulation_analysis_share_sensitive_detector_filter(pm, tmp_path):
+    pm.projects_dir = str(tmp_path)
+    pm.project_name = "analysis_filter_parity_project"
+
+    version_id, _ = pm.save_project_version("analysis_filter_parity_case")
+    job_id = "analysis-filter-parity-job"
+    run_dir = Path(pm._get_version_dir(version_id)) / "sim_runs" / job_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    output_path = run_dir / "output.hdf5"
+
+    with h5py.File(output_path, 'w') as f:
+        hits = f.create_group('default_ntuples/Hits')
+        hits.create_dataset('entries', data=4)
+        hits.create_dataset('Edep', data=np.array([0.01, 0.02, 0.03, 0.04]))
+        hits.create_dataset('PosX', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosY', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('PosZ', data=np.array([0.0, 1.0, 2.0, 3.0]))
+        hits.create_dataset('CopyNo', data=np.array([0, 1, 2, 3], dtype=int))
+        hits.create_dataset('ParticleName', data=np.array([b'e-', b'e-', b'gamma', b'gamma'], dtype='S5'))
+        hits.create_dataset('SensitiveDetectorName', data=np.array([b'SD_A', b'SD_A', b'SD_B', b'SD_B'], dtype='S8'))
+
+    ai_args = {
+        "version_id": version_id,
+        "job_id": job_id,
+        "energy_bins": 10,
+        "spatial_bins": 5,
+        "sensitive_detector": "SD_B",
+    }
+
+    with patch("app.get_project_manager_for_session", return_value=pm):
+        ai_res = dispatch_ai_tool(pm, "get_simulation_analysis", ai_args)
+
+    assert ai_res["success"], ai_res
+
+    with patch("app.get_project_manager_for_session", return_value=pm):
+        with flask_app.test_client() as client:
+            http_res = client.get(
+                f"/api/simulation/analysis/{version_id}/{job_id}"
+                "?energy_bins=10&spatial_bins=5&sensitive_detector=SD_B"
+            )
+            download_res = client.get(f"/api/simulation/download/{version_id}/{job_id}")
+
+    assert http_res.status_code == 200, http_res.get_json()
+    http_analysis = http_res.get_json()["analysis"]
+    assert http_analysis == ai_res["analysis"]
+    assert http_analysis["filtering"]["sensitive_detector_supported"] is True
+    assert http_analysis["filtering"]["available_sensitive_detectors"] == ['SD_A', 'SD_B']
+    assert http_analysis["filtering"]["selected_sensitive_detector"] == 'SD_B'
+    assert http_analysis["total_hits"] == 2
+
+    assert download_res.status_code == 200, download_res.get_data(as_text=True)
+    assert download_res.mimetype == "application/x-hdf5"
+    assert "attachment" in download_res.headers.get("Content-Disposition", "")
+    assert f"sim_{job_id[:8]}_output.hdf5" in download_res.headers.get("Content-Disposition", "")
+
+    with h5py.File(io.BytesIO(download_res.data), "r") as downloaded_h5:
+        hits_group = downloaded_h5["default_ntuples/Hits"]
+        assert {
+            "entries",
+            "Edep",
+            "PosX",
+            "PosY",
+            "PosZ",
+            "CopyNo",
+            "ParticleName",
+            "SensitiveDetectorName",
+        }.issubset(set(hits_group.keys()))
+
+        entries_dataset = hits_group["entries"]
+        downloaded_entries = int(entries_dataset[()] if entries_dataset.shape == () else entries_dataset[0])
+        assert downloaded_entries == 4
+
+        sensitive_detector_names = [
+            value.decode("utf-8") if isinstance(value, bytes) else str(value)
+            for value in hits_group["SensitiveDetectorName"][:]
+        ]
+        assert sensitive_detector_names.count("SD_A") == 2
+        assert sensitive_detector_names.count("SD_B") == 2
 
 
 def test_ai_tool_batch_geometry_update_accepts_type_alias(pm):

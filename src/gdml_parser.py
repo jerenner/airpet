@@ -17,6 +17,7 @@ class GDMLParser:
     def __init__(self):
         self.geometry_state = GeometryState()
         self.aeval = create_configured_asteval()
+        self.import_warnings = []
 
     def _strip_namespace(self, gdml_content_string):
         it = ET.iterparse(io.StringIO(gdml_content_string))
@@ -24,6 +25,10 @@ class GDMLParser:
             if '}' in el.tag:
                 el.tag = el.tag.split('}', 1)[1]
         return it.root
+
+    def _record_import_warning(self, message):
+        self.import_warnings.append(message)
+        print(f"Warning: {message}")
 
     def _evaluate_name(self, name_expr):
         """
@@ -62,6 +67,24 @@ class GDMLParser:
         # Final cleanup for common GDML artifacts that are not filesystem-friendly
         return evaluated_name.replace('[','_').replace(']','_').strip('_')
 
+    def _format_density_expression(self, density_value, density_unit=None):
+        """
+        Preserve imported density units in the raw expression so later
+        evaluation keeps the intended volumic-mass meaning.
+        """
+        if density_value is None:
+            return None
+
+        raw_value = str(density_value).strip()
+        if not raw_value:
+            return None
+
+        raw_unit = str(density_unit).strip() if density_unit else ""
+        if raw_unit:
+            return f"{raw_value}*{raw_unit}"
+
+        return raw_value
+
     def _partially_evaluate(self, expression_str, loop_vars):
         """
         Substitutes the current numeric values of loop variables into an expression string.
@@ -80,11 +103,16 @@ class GDMLParser:
     def parse_gdml_string(self, gdml_content_string):
         self.aeval = create_configured_asteval()
         self.geometry_state = GeometryState()
+        self.import_warnings = []
 
         # --- Pre-parse check for unsupported <!ENTITY> tags ---
         if "<!ENTITY" in gdml_content_string:
-            raise ValueError("GDML files with external entity references (<!ENTITY ...>) are not supported. "
-                             "Please use a single, self-contained GDML file.")
+            message = (
+                "GDML entity declarations (`<!ENTITY ...>`) are not supported by this importer. "
+                "Inline the entity definitions or export a single self-contained GDML file."
+            )
+            self._record_import_warning(message)
+            raise ValueError(message)
 
         try:
             root = self._strip_namespace(gdml_content_string)
@@ -125,6 +153,9 @@ class GDMLParser:
         
     def _prune_intermediate_solids(self, intermediate_booleans):
         """Removes solid definitions that are only used as intermediates in boolean operations."""
+
+        if not intermediate_booleans:
+            return
 
         # --- 1. Build a complete reference count for all solids.
         solid_ref_counts = {name: 0 for name in intermediate_booleans}
@@ -295,7 +326,10 @@ class GDMLParser:
                     density_expr = None
                     d_el = element.find('D')
                     if d_el is not None:
-                        density_expr = d_el.get('value')
+                        density_expr = self._format_density_expression(
+                            d_el.get('value'),
+                            d_el.get('unit'),
+                        )
                     A_expr = None
                     atom_el = element.find('atom')
                     if atom_el is not None:
@@ -900,9 +934,11 @@ class GDMLParser:
         file_el = pv_el.find('file')
         if file_el is not None:
             file_name = file_el.get('name', 'unknown')
-            print(f"WARNING: GDML <file> tag found for '{file_name}'. "
-                  f"Modular file references are not supported. "
-                  f"This physical volume placement ('{name}') will be ignored.")
+            self._record_import_warning(
+                f"GDML <file> include '{file_name}' inside physvol '{name}' under logical volume "
+                f"'{parent_name}' is not supported yet. That placement will be ignored; inline the "
+                f"referenced GDML or merge the files before importing."
+            )
             return None # Skip this physical volume
 
         # Get the volumeref
@@ -1054,8 +1090,66 @@ class GDMLParser:
                 'rmin1': 'rmin1', 'rmax1': 'rmax1', 'rmin2': 'rmin2', 'rmax2': 'rmax2',
                 'z': 'z', 'startphi': 'startphi', 'deltaphi': 'deltaphi'
             },
+            'sphere_dimensions': {
+                'rmin': 'rmin', 'rmax': 'rmax', 'startphi': 'startphi',
+                'deltaphi': 'deltaphi', 'starttheta': 'starttheta', 'deltatheta': 'deltatheta'
+            },
+            'orb_dimensions': {'r': 'r'},
+            'torus_dimensions': {
+                'rmin': 'rmin', 'rmax': 'rmax', 'rtor': 'rtor',
+                'startphi': 'startphi', 'deltaphi': 'deltaphi'
+            },
+            'ellipsoid_dimensions': {
+                'ax': 'ax', 'by': 'by', 'cz': 'cz',
+                'zcut1': 'zcut1', 'zcut2': 'zcut2'
+            },
+            'para_dimensions': {
+                'x': 'x', 'y': 'y', 'z': 'z',
+                'alpha': 'alpha', 'theta': 'theta', 'phi': 'phi'
+            },
+            'hype_dimensions': {
+                'rmin': 'rmin', 'rmax': 'rmax', 'inst': 'inst',
+                'outst': 'outst', 'z': 'z'
+            },
+            'eltube_dimensions': {
+                'dx': 'dx', 'dy': 'dy', 'dz': 'dz'
+            },
+            'elcone_dimensions': {
+                'dx': 'dx', 'dy': 'dy', 'zmax': 'zmax', 'zcut': 'zcut'
+            },
+            'paraboloid_dimensions': {
+                'rlo': 'rlo', 'rhi': 'rhi', 'dz': 'dz'
+            },
+            'polycone_dimensions': {
+                'numRZ': 'numRZ', 'startPhi': 'startPhi', 'openPhi': 'openPhi'
+            },
+            'polyhedra_dimensions': {
+                'numRZ': 'numRZ', 'numSide': 'numSide',
+                'startPhi': 'startPhi', 'openPhi': 'openPhi'
+            },
+            'trd_dimensions': {'x1': 'x1', 'x2': 'x2', 'y1': 'y1', 'y2': 'y2', 'z': 'z'},
+            'trap_dimensions': {
+                'z': 'z', 'theta': 'theta', 'phi': 'phi', 'y1': 'y1',
+                'x1': 'x1', 'x2': 'x2', 'alpha1': 'alpha1', 'y2': 'y2',
+                'x3': 'x3', 'x4': 'x4', 'alpha2': 'alpha2'
+            },
+            'twistedbox_dimensions': {
+                'PhiTwist': 'PhiTwist', 'x': 'x', 'y': 'y', 'z': 'z'
+            },
+            'twistedtrd_dimensions': {
+                'PhiTwist': 'PhiTwist', 'x1': 'x1', 'x2': 'x2',
+                'y1': 'y1', 'y2': 'y2', 'z': 'z'
+            },
+            'twistedtrap_dimensions': {
+                'PhiTwist': 'PhiTwist', 'z': 'z', 'Theta': 'Theta',
+                'Phi': 'Phi', 'y1': 'y1', 'x1': 'x1', 'x2': 'x2',
+                'y2': 'y2', 'x3': 'x3', 'x4': 'x4', 'Alph': 'Alph'
+            },
+            'twistedtubs_dimensions': {
+                'twistedangle': 'twistedangle', 'endinnerrad': 'endinnerrad',
+                'endouterrad': 'endouterrad', 'zlen': 'zlen', 'phi': 'phi'
+            },
             # ... Add mappings for other supported parameterised solids here as needed ...
-            # e.g., 'trd_dimensions': {'x1': 'x1', 'x2': 'x2', ...}
         }
 
         name = param_el.get('name', f"param_{uuid.uuid4().hex[:6]}")
@@ -1118,13 +1212,23 @@ class GDMLParser:
                     # Get the correct mapping for this dimension type
                     current_map = PARAM_MAP.get(dimensions_type, {})
                     if not current_map:
-                        print(f"Warning: No parameter mapping found for '{dimensions_type}'. Using raw names.")
+                        self._record_import_warning(
+                            f"No parameter mapping found for <{dimensions_type}> in <paramvol> '{name}' "
+                            f"referencing volume '{volume_ref}'. Keeping the raw GDML attribute names; "
+                            "this parameterised solid will import without AIRPET normalization yet."
+                        )
                         dimensions = raw_dims
                     else:
                         # Translate the keys from GDML names to our internal names
                         for gdml_key, internal_key in current_map.items():
                             if gdml_key in raw_dims:
                                 dimensions[internal_key] = raw_dims[gdml_key]
+
+                        if dimensions_type in {'polycone_dimensions', 'polyhedra_dimensions'}:
+                            dimensions['zplanes'] = [
+                                {k: v for k, v in zplane_el.attrib.items()}
+                                for zplane_el in child.findall('zplane')
+                            ]
                     
                     break # Found it, stop searching
 

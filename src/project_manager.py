@@ -18,13 +18,514 @@ import threading
 from .geometry_types import GeometryState, Solid, Define, Material, Element, Isotope, \
                             LogicalVolume, PhysicalVolumePlacement, Assembly, ReplicaVolume, \
                             DivisionVolume, ParamVolume, OpticalSurface, SkinSurface, \
-                            BorderSurface, ParticleSource
+                            BorderSurface, ParticleSource, GlobalUniformMagneticField, \
+                            GlobalUniformElectricField, LocalUniformMagneticField, ScoringState, \
+                            LocalUniformElectricField, normalize_detector_feature_generator_entry
 from .gdml_parser import GDMLParser
 from .gdml_writer import GDMLWriter
 from .step_parser import parse_step_file
 from .objective_formula import evaluate_objective_formula
+from .scoring_artifacts import build_run_manifest_summary, build_scoring_runtime_plan
 
 AUTOSAVE_VERSION_ID = "autosave"
+
+
+def _normalize_step_import_offset(raw_offset):
+    if not isinstance(raw_offset, dict):
+        raw_offset = {}
+
+    return {
+        'x': str(raw_offset.get('x', '0')),
+        'y': str(raw_offset.get('y', '0')),
+        'z': str(raw_offset.get('z', '0')),
+    }
+
+
+def _collect_step_import_object_ids(imported_state):
+    placements = []
+    top_level_placements = []
+    seen_placement_ids = set()
+
+    def add_placement(pv):
+        if pv and getattr(pv, 'id', None) and pv.id not in seen_placement_ids:
+            seen_placement_ids.add(pv.id)
+            placements.append(pv)
+
+    for pv in getattr(imported_state, 'placements_to_add', []) or []:
+        if pv and getattr(pv, 'id', None) and pv.id not in seen_placement_ids:
+            seen_placement_ids.add(pv.id)
+            placements.append(pv)
+            top_level_placements.append(pv)
+
+    for assembly in imported_state.assemblies.values():
+        for pv in getattr(assembly, 'placements', []) or []:
+            add_placement(pv)
+
+    for lv in imported_state.logical_volumes.values():
+        if getattr(lv, 'content_type', None) == 'physvol' and isinstance(getattr(lv, 'content', None), list):
+            for pv in lv.content:
+                add_placement(pv)
+
+    return {
+        'solid_ids': [solid.id for solid in imported_state.solids.values()],
+        'logical_volume_ids': [lv.id for lv in imported_state.logical_volumes.values()],
+        'assembly_ids': [assembly.id for assembly in imported_state.assemblies.values()],
+        'placement_ids': [pv.id for pv in placements],
+        'top_level_placement_ids': [pv.id for pv in top_level_placements],
+    }
+
+
+def _get_step_reimport_target_import_id(options):
+    if not isinstance(options, dict):
+        return None
+
+    target_import_id = options.get('reimportTargetImportId')
+    if isinstance(target_import_id, str):
+        target_import_id = target_import_id.strip()
+        if target_import_id:
+            return target_import_id
+
+    return None
+
+
+def _build_step_import_provenance_record(temp_path, step_file_stream, options, imported_state, import_id=None):
+    import uuid
+
+    source_filename = getattr(step_file_stream, 'filename', None)
+    if source_filename:
+        source_filename = os.path.basename(source_filename)
+    else:
+        source_filename = os.path.basename(temp_path)
+
+    sha256 = hashlib.sha256()
+    with open(temp_path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(65536), b''):
+            sha256.update(chunk)
+
+    grouping_name = getattr(imported_state, 'grouping_name', None) or options.get('groupingName', 'STEP_Import')
+    grouping_name = str(grouping_name)
+    object_ids = _collect_step_import_object_ids(imported_state)
+
+    return {
+        'import_id': str(import_id).strip() if isinstance(import_id, str) and import_id.strip() else f"step_import_{uuid.uuid4().hex}",
+        'source': {
+            'format': 'step',
+            'filename': source_filename,
+            'sha256': sha256.hexdigest(),
+            'size_bytes': os.path.getsize(temp_path),
+        },
+        'options': {
+            'grouping_name': grouping_name,
+            'placement_mode': str(options.get('placementMode', 'assembly')),
+            'parent_lv_name': options.get('parentLVName'),
+            'offset': _normalize_step_import_offset(options.get('offset', {})),
+            'smart_import_enabled': bool(options.get('smartImport', options.get('smart_import', False))),
+        },
+        'created_object_ids': object_ids,
+        'created_group_names': {
+            'solid': f"{grouping_name}_solids" if object_ids['solid_ids'] else None,
+            'logical_volume': f"{grouping_name}_lvs" if object_ids['logical_volume_ids'] else None,
+            'assembly': f"{grouping_name}_assemblies" if object_ids['assembly_ids'] else None,
+        },
+    }
+
+
+def _build_step_import_smart_import_summary(smart_import_report):
+    if not isinstance(smart_import_report, dict):
+        return None
+
+    if not smart_import_report.get('enabled'):
+        return None
+
+    summary = smart_import_report.get('summary')
+    if not isinstance(summary, dict):
+        return None
+
+    normalized_summary = deepcopy(summary)
+    selected_mode_counts = normalized_summary.get('selected_mode_counts', {})
+    if not isinstance(selected_mode_counts, dict):
+        selected_mode_counts = {}
+
+    primitive_count = int(normalized_summary.get('primitive_count', 0) or 0)
+    selected_primitive_count = int(selected_mode_counts.get('primitive', 0) or 0)
+    selected_tessellated_count = int(selected_mode_counts.get('tessellated', 0) or 0)
+
+    fallback_reason_counts = {}
+    for candidate in smart_import_report.get('candidates', []) or []:
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get('selected_mode') != 'tessellated':
+            continue
+
+        fallback_reason = candidate.get('fallback_reason') or 'no_primitive_match_v1'
+        fallback_reason = str(fallback_reason).strip() or 'no_primitive_match_v1'
+        fallback_reason_counts[fallback_reason] = fallback_reason_counts.get(fallback_reason, 0) + 1
+
+    top_fallback_reasons = [
+        {'reason': reason, 'count': count}
+        for reason, count in sorted(fallback_reason_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    return {
+        'enabled': True,
+        'summary': normalized_summary,
+        'summary_text': f"{primitive_count} primitive candidates, {selected_tessellated_count} tessellated fallbacks",
+        'primitive_candidate_count': primitive_count,
+        'selected_primitive_count': selected_primitive_count,
+        'selected_tessellated_count': selected_tessellated_count,
+        'fallback_reason_counts': fallback_reason_counts,
+        'top_fallback_reasons': top_fallback_reasons,
+    }
+
+
+def _normalize_step_import_signature_value(value):
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_step_import_signature_value(val)
+            for key, val in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+
+    if isinstance(value, list):
+        return [_normalize_step_import_signature_value(item) for item in value]
+
+    if isinstance(value, tuple):
+        return [_normalize_step_import_signature_value(item) for item in value]
+
+    if isinstance(value, np.generic):
+        return value.item()
+
+    if hasattr(value, 'to_dict') and callable(value.to_dict):
+        try:
+            return _normalize_step_import_signature_value(value.to_dict())
+        except Exception:
+            return str(value)
+
+    return value
+
+
+def _hash_step_import_signature(payload):
+    normalized_payload = _normalize_step_import_signature_value(payload)
+    serialized_payload = json.dumps(
+        normalized_payload,
+        sort_keys=True,
+        separators=(',', ':'),
+        ensure_ascii=True,
+        default=str,
+    )
+    return hashlib.sha256(serialized_payload.encode('utf-8')).hexdigest()
+
+
+def _find_step_import_pv_in_state(state, pv_id):
+    if not state or not isinstance(pv_id, str) or not pv_id.strip():
+        return None
+
+    pv_id = pv_id.strip()
+
+    for lv in getattr(state, 'logical_volumes', {}).values():
+        if getattr(lv, 'content_type', None) != 'physvol' or not isinstance(getattr(lv, 'content', None), list):
+            continue
+        for pv in lv.content:
+            if getattr(pv, 'id', None) == pv_id:
+                return pv
+
+    for assembly in getattr(state, 'assemblies', {}).values():
+        for pv in getattr(assembly, 'placements', []) or []:
+            if getattr(pv, 'id', None) == pv_id:
+                return pv
+
+    return None
+
+
+def _collect_step_import_leaf_part_records(state, root_placement_ids=None):
+    if not state:
+        return []
+
+    root_placements = []
+    if root_placement_ids is None:
+        root_placements = list(getattr(state, 'placements_to_add', []) or [])
+    else:
+        seen_root_ids = set()
+        for pv_id in root_placement_ids:
+            pv = _find_step_import_pv_in_state(state, pv_id)
+            if pv and getattr(pv, 'id', None) not in seen_root_ids:
+                seen_root_ids.add(pv.id)
+                root_placements.append(pv)
+
+    root_placements = sorted(
+        root_placements,
+        key=lambda pv: (
+            getattr(pv, 'name', '') or '',
+            getattr(pv, 'id', '') or '',
+        ),
+    )
+
+    records = []
+
+    def _placement_snapshot(pv, include_parent=False):
+        snapshot = {
+            'volume_kind': 'assembly'
+            if getattr(pv, 'volume_ref', None) in getattr(state, 'assemblies', {})
+            else 'logical_volume'
+            if getattr(pv, 'volume_ref', None) in getattr(state, 'logical_volumes', {})
+            else 'missing',
+            'copy_number_expr': _normalize_step_import_signature_value(getattr(pv, 'copy_number_expr', None)),
+            'position': _normalize_step_import_signature_value(getattr(pv, 'position', None)),
+            'rotation': _normalize_step_import_signature_value(getattr(pv, 'rotation', None)),
+            'scale': _normalize_step_import_signature_value(getattr(pv, 'scale', None)),
+        }
+        if include_parent:
+            snapshot['parent_lv_name'] = _normalize_step_import_signature_value(getattr(pv, 'parent_lv_name', None))
+        return snapshot
+
+    def _solid_snapshot(lv):
+        solid = getattr(state, 'solids', {}).get(getattr(lv, 'solid_ref', None))
+        if not solid:
+            return {
+                'solid_ref': getattr(lv, 'solid_ref', None),
+                'missing': True,
+            }
+
+        return {
+            'solid_type': getattr(solid, 'type', None),
+            'raw_parameters': _normalize_step_import_signature_value(getattr(solid, 'raw_parameters', None)),
+        }
+
+    def _record_leaf_part(lv, path_snapshots):
+        part_payload = {
+            'path': path_snapshots,
+            'leaf': {
+                'solid': _solid_snapshot(lv),
+            },
+        }
+
+        if getattr(lv, 'content_type', None) != 'physvol':
+            content = getattr(lv, 'content', None)
+            if content is not None:
+                part_payload['leaf']['content_type'] = getattr(lv, 'content_type', None)
+                if hasattr(content, 'to_dict') and callable(content.to_dict):
+                    part_payload['leaf']['content'] = _normalize_step_import_signature_value(content.to_dict())
+                else:
+                    part_payload['leaf']['content'] = _normalize_step_import_signature_value(content)
+
+        records.append({
+            'kind': 'logical_volume',
+            'name': getattr(lv, 'name', ''),
+            'signature': _hash_step_import_signature(part_payload),
+        })
+
+    def _walk_placement(pv, path_snapshots, active_volume_refs):
+        if not pv:
+            return
+
+        volume_ref = getattr(pv, 'volume_ref', None)
+        if isinstance(volume_ref, str) and volume_ref in active_volume_refs:
+            return
+
+        next_active_volume_refs = set(active_volume_refs)
+        if isinstance(volume_ref, str) and volume_ref:
+            next_active_volume_refs.add(volume_ref)
+
+        next_path = path_snapshots + [_placement_snapshot(pv, include_parent=not path_snapshots)]
+
+        lv = getattr(state, 'logical_volumes', {}).get(volume_ref)
+        if lv:
+            if getattr(lv, 'content_type', None) == 'physvol' and isinstance(getattr(lv, 'content', None), list) and lv.content:
+                for child_pv in lv.content:
+                    _walk_placement(child_pv, next_path, next_active_volume_refs)
+            else:
+                _record_leaf_part(lv, next_path)
+            return
+
+        assembly = getattr(state, 'assemblies', {}).get(volume_ref)
+        if assembly:
+            for child_pv in getattr(assembly, 'placements', []) or []:
+                _walk_placement(child_pv, next_path, next_active_volume_refs)
+
+    for root_pv in root_placements:
+        _walk_placement(root_pv, [], set())
+
+    return records
+
+
+def _build_step_import_reimport_diff_summary(current_state, target_import_record, imported_state):
+    if not current_state or not isinstance(target_import_record, dict) or not imported_state:
+        return {
+            'summary': {
+                'total_before': 0,
+                'total_after': 0,
+                'unchanged_count': 0,
+                'added_count': 0,
+                'removed_count': 0,
+                'renamed_count': 0,
+                'changed_count': 0,
+            },
+            'added_parts': [],
+            'removed_parts': [],
+            'renamed_parts': [],
+            'changed_parts': [],
+        }
+
+    object_ids = target_import_record.get('created_object_ids', {}) or {}
+    root_placement_ids = object_ids.get('top_level_placement_ids') or object_ids.get('placement_ids') or []
+
+    before_records = _collect_step_import_leaf_part_records(current_state, root_placement_ids=root_placement_ids)
+    after_records = _collect_step_import_leaf_part_records(imported_state)
+
+    before_by_exact_key = {}
+    after_by_exact_key = {}
+    for index, record in enumerate(before_records):
+        before_by_exact_key.setdefault((record['name'], record['signature']), []).append(index)
+    for index, record in enumerate(after_records):
+        after_by_exact_key.setdefault((record['name'], record['signature']), []).append(index)
+
+    matched_before = set()
+    matched_after = set()
+    unchanged_count = 0
+
+    for key in sorted(set(before_by_exact_key).intersection(after_by_exact_key)):
+        before_indices = before_by_exact_key[key]
+        after_indices = after_by_exact_key[key]
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            matched_before.add(before_indices[offset])
+            matched_after.add(after_indices[offset])
+            unchanged_count += 1
+
+    before_by_signature = {}
+    after_by_signature = {}
+    for index, record in enumerate(before_records):
+        if index in matched_before:
+            continue
+        before_by_signature.setdefault(record['signature'], []).append(index)
+    for index, record in enumerate(after_records):
+        if index in matched_after:
+            continue
+        after_by_signature.setdefault(record['signature'], []).append(index)
+
+    renamed_parts = []
+    for signature in sorted(set(before_by_signature).intersection(after_by_signature)):
+        before_indices = sorted(
+            before_by_signature[signature],
+            key=lambda index: (before_records[index]['name'], index),
+        )
+        after_indices = sorted(
+            after_by_signature[signature],
+            key=lambda index: (after_records[index]['name'], index),
+        )
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            before_index = before_indices[offset]
+            after_index = after_indices[offset]
+            matched_before.add(before_index)
+            matched_after.add(after_index)
+            renamed_parts.append({
+                'kind': before_records[before_index]['kind'],
+                'before_name': before_records[before_index]['name'],
+                'after_name': after_records[after_index]['name'],
+                'signature': signature,
+            })
+
+    before_by_name = {}
+    after_by_name = {}
+    for index, record in enumerate(before_records):
+        if index in matched_before:
+            continue
+        before_by_name.setdefault(record['name'], []).append(index)
+    for index, record in enumerate(after_records):
+        if index in matched_after:
+            continue
+        after_by_name.setdefault(record['name'], []).append(index)
+
+    changed_parts = []
+    for name in sorted(set(before_by_name).intersection(after_by_name)):
+        before_indices = sorted(
+            before_by_name[name],
+            key=lambda index: (before_records[index]['signature'], index),
+        )
+        after_indices = sorted(
+            after_by_name[name],
+            key=lambda index: (after_records[index]['signature'], index),
+        )
+        pair_count = min(len(before_indices), len(after_indices))
+        for offset in range(pair_count):
+            before_index = before_indices[offset]
+            after_index = after_indices[offset]
+            matched_before.add(before_index)
+            matched_after.add(after_index)
+            changed_parts.append({
+                'kind': before_records[before_index]['kind'],
+                'name': name,
+                'before_signature': before_records[before_index]['signature'],
+                'after_signature': after_records[after_index]['signature'],
+            })
+
+    added_parts = [
+        {
+            'kind': after_records[index]['kind'],
+            'name': after_records[index]['name'],
+            'signature': after_records[index]['signature'],
+        }
+        for index in sorted(
+            (index for index in range(len(after_records)) if index not in matched_after),
+            key=lambda index: (after_records[index]['name'], after_records[index]['signature'], index),
+        )
+    ]
+
+    removed_parts = [
+        {
+            'kind': before_records[index]['kind'],
+            'name': before_records[index]['name'],
+            'signature': before_records[index]['signature'],
+        }
+        for index in sorted(
+            (index for index in range(len(before_records)) if index not in matched_before),
+            key=lambda index: (before_records[index]['name'], before_records[index]['signature'], index),
+        )
+    ]
+
+    return {
+        'summary': {
+            'total_before': len(before_records),
+            'total_after': len(after_records),
+            'unchanged_count': unchanged_count,
+            'added_count': len(added_parts),
+            'removed_count': len(removed_parts),
+            'renamed_count': len(renamed_parts),
+            'changed_count': len(changed_parts),
+        },
+        'added_parts': added_parts,
+        'removed_parts': removed_parts,
+        'renamed_parts': renamed_parts,
+        'changed_parts': changed_parts,
+    }
+
+
+def _build_step_import_reimport_cleanup_policy(reimport_diff_summary):
+    if not isinstance(reimport_diff_summary, dict):
+        return None
+
+    summary = reimport_diff_summary.get('summary', {})
+    removed_count = 0
+    if isinstance(summary, dict):
+        try:
+            removed_count = int(summary.get('removed_count', 0) or 0)
+        except Exception:
+            removed_count = 0
+
+    return {
+        'replacement_mode': 'replace_in_place',
+        'obsolete_part_action': 'remove',
+        'removed_count': max(removed_count, 0),
+        'summary_text': 'Supported STEP reimport replaces the target import in place and removes obsolete imported parts.',
+    }
+
+
+def _normalize_step_import_object_name(value):
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None
 
 class ProjectManager:
     def __init__(self, expression_evaluator):
@@ -375,6 +876,18 @@ class ProjectManager:
             # Now, capture the single, final state of the entire operation.
             self._capture_history_state(description)
 
+    def abort_transaction(self):
+        """Aborts an open transaction and restores the pre-transaction state."""
+        if self._is_transaction_open:
+            print("Aborting transaction.")
+            if self._pre_transaction_state is not None:
+                self.current_geometry_state = GeometryState.from_dict(self._pre_transaction_state.to_dict())
+                success, error_msg = self.recalculate_geometry_state()
+                if not success:
+                    print(f"CRITICAL WARNING: Aborted transaction restored an invalid state: {error_msg}")
+            self._is_transaction_open = False
+            self._pre_transaction_state = None
+
     def _capture_history_state(self, description=""):
         """Captures the current state for undo/redo."""
 
@@ -441,6 +954,2040 @@ class ProjectManager:
         while f"{base_name}_{i}" in existing_names_dict:
             i += 1
         return f"{base_name}_{i}"
+
+    def _find_step_import_record(self, import_id):
+        """Returns (index, record) for a CAD import entry if it exists."""
+        if not self.current_geometry_state or not isinstance(import_id, str) or not import_id.strip():
+            return None, None
+
+        cad_imports = getattr(self.current_geometry_state, 'cad_imports', None)
+        if not isinstance(cad_imports, list):
+            return None, None
+
+        for index, cad_import in enumerate(cad_imports):
+            if isinstance(cad_import, dict) and cad_import.get('import_id') == import_id:
+                return index, cad_import
+
+        return None, None
+
+    def _find_object_name_by_id(self, objects_by_name, object_id):
+        """Returns the object name for a given stable object id if present."""
+        if not isinstance(objects_by_name, dict) or not isinstance(object_id, str) or not object_id.strip():
+            return None
+
+        for object_name, object_value in objects_by_name.items():
+            if getattr(object_value, 'id', None) == object_id:
+                return object_name
+
+        return None
+
+    def _resolve_logical_volume_name(self, logical_volume_ref):
+        """Resolve a logical volume by name or stable id."""
+        if not isinstance(logical_volume_ref, str):
+            return None
+
+        logical_volume_ref = logical_volume_ref.strip()
+        if not logical_volume_ref or not self.current_geometry_state:
+            return None
+
+        if logical_volume_ref in self.current_geometry_state.logical_volumes:
+            return logical_volume_ref
+
+        return self._find_object_name_by_id(self.current_geometry_state.logical_volumes, logical_volume_ref)
+
+    def _resolve_detector_feature_object_name(self, object_ref, objects_by_name):
+        """Resolve a detector-feature object ref that may contain an id and/or name."""
+        if not isinstance(object_ref, dict):
+            return None
+
+        ref_id = object_ref.get('id')
+        if isinstance(ref_id, str):
+            resolved_name = self._find_object_name_by_id(objects_by_name, ref_id.strip())
+            if resolved_name:
+                return resolved_name
+
+        ref_name = object_ref.get('name')
+        if isinstance(ref_name, str):
+            ref_name = ref_name.strip()
+            if ref_name and ref_name in objects_by_name:
+                return ref_name
+
+        return None
+
+    @staticmethod
+    def _get_detector_feature_object_name_hint(object_ref):
+        if not isinstance(object_ref, dict):
+            return None
+
+        ref_name = object_ref.get('name')
+        if isinstance(ref_name, str):
+            ref_name = ref_name.strip()
+            if ref_name:
+                return ref_name
+
+        return None
+
+    @staticmethod
+    def _build_detector_feature_object_ref(obj):
+        if obj is None:
+            return None
+
+        object_ref = {}
+        object_id = getattr(obj, 'id', None)
+        object_name = getattr(obj, 'name', None)
+
+        if isinstance(object_id, str) and object_id.strip():
+            object_ref['id'] = object_id
+        if isinstance(object_name, str) and object_name.strip():
+            object_ref['name'] = object_name
+
+        return object_ref or None
+
+    def _find_detector_feature_generated_name(self, object_refs, objects_by_name, *, suffix=None, object_type=None):
+        for object_ref in object_refs or []:
+            candidate_name = (
+                self._resolve_detector_feature_object_name(object_ref, objects_by_name)
+                or self._get_detector_feature_object_name_hint(object_ref)
+            )
+            if not candidate_name or candidate_name not in objects_by_name:
+                continue
+
+            candidate_obj = objects_by_name[candidate_name]
+            if object_type and getattr(candidate_obj, 'type', None) != object_type:
+                continue
+            if suffix and not candidate_name.endswith(suffix):
+                continue
+
+            return candidate_name
+
+        return None
+
+    def _remove_detector_feature_generated_placements(self, placement_refs):
+        if not self.current_geometry_state:
+            return
+
+        placement_ids = set()
+        placement_names = set()
+        for object_ref in placement_refs or []:
+            if not isinstance(object_ref, dict):
+                continue
+            object_id = object_ref.get('id')
+            object_name = object_ref.get('name')
+            if isinstance(object_id, str) and object_id.strip():
+                placement_ids.add(object_id.strip())
+            if isinstance(object_name, str) and object_name.strip():
+                placement_names.add(object_name.strip())
+
+        if not placement_ids and not placement_names:
+            return
+
+        for lv in self.current_geometry_state.logical_volumes.values():
+            if lv.content_type != 'physvol' or not isinstance(lv.content, list):
+                continue
+            lv.content = [
+                pv for pv in lv.content
+                if pv.id not in placement_ids and pv.name not in placement_names
+            ]
+
+    @staticmethod
+    def _build_layered_stack_vis_attributes(role):
+        role_colors = {
+            'absorber': {'r': 0.55, 'g': 0.58, 'b': 0.63, 'a': 0.85},
+            'sensor': {'r': 0.18, 'g': 0.68, 'b': 0.78, 'a': 0.75},
+            'support': {'r': 0.78, 'g': 0.58, 'b': 0.2, 'a': 0.7},
+            'shield': {'r': 0.46, 'g': 0.48, 'b': 0.25, 'a': 0.72},
+            'module': {'r': 0.72, 'g': 0.76, 'b': 0.84, 'a': 0.08},
+        }
+        return {'color': role_colors.get(role, role_colors['module'])}
+
+    def _upsert_detector_feature_generated_solid(self, solid_name, solid_type, raw_parameters):
+        state = self.current_geometry_state
+        solid = state.solids.get(solid_name)
+        if solid is None:
+            solid = Solid(solid_name, solid_type, raw_parameters)
+            state.add_solid(solid)
+        else:
+            solid.type = solid_type
+            solid.raw_parameters = raw_parameters
+        return solid
+
+    def _upsert_detector_feature_generated_logical_volume(
+        self,
+        lv_name,
+        *,
+        solid_ref,
+        material_ref,
+        vis_attributes,
+        is_sensitive=False,
+    ):
+        state = self.current_geometry_state
+        lv = state.logical_volumes.get(lv_name)
+        if lv is None:
+            lv = LogicalVolume(
+                lv_name,
+                solid_ref,
+                material_ref,
+                vis_attributes=vis_attributes,
+                is_sensitive=is_sensitive,
+            )
+            state.add_logical_volume(lv)
+        else:
+            lv.solid_ref = solid_ref
+            lv.material_ref = material_ref
+            lv.vis_attributes = vis_attributes
+            lv.is_sensitive = bool(is_sensitive)
+
+        lv.content_type = 'physvol'
+        if not isinstance(lv.content, list):
+            lv.content = []
+        return lv
+
+    def _get_detector_feature_box_dimensions(self, solid_name, *, label):
+        state = self.current_geometry_state
+        solid = state.solids.get(solid_name) if state else None
+        if solid is None:
+            return None, f"{label} solid '{solid_name}' was not found."
+        if solid.type != 'box':
+            return None, f"{label} currently support only box solids."
+
+        dims = solid._evaluated_parameters or {}
+        normalized_dims = {}
+        for axis in ('x', 'y', 'z'):
+            value = float(dims.get(axis, float('nan')))
+            if not math.isfinite(value) or value <= 0.0:
+                return None, f"{label} solid '{solid_name}' has invalid evaluated {axis.upper()} size."
+            normalized_dims[axis] = value
+
+        return normalized_dims, None
+
+    def _find_detector_feature_generator(self, generator_id):
+        if not self.current_geometry_state or not isinstance(generator_id, str) or not generator_id.strip():
+            return None, None
+
+        for index, generator_entry in enumerate(self.current_geometry_state.detector_feature_generators):
+            if isinstance(generator_entry, dict) and generator_entry.get('generator_id') == generator_id.strip():
+                return index, generator_entry
+
+        return None, None
+
+    def get_detector_feature_generator_details(self, generator_name_or_id):
+        if not self.current_geometry_state:
+            return None
+        if not isinstance(generator_name_or_id, str) or not generator_name_or_id.strip():
+            return None
+
+        lookup_value = generator_name_or_id.strip()
+        _, generator_entry = self._find_detector_feature_generator(lookup_value)
+        if generator_entry is not None:
+            return deepcopy(generator_entry)
+
+        for candidate_entry in self.current_geometry_state.detector_feature_generators:
+            if not isinstance(candidate_entry, dict):
+                continue
+            candidate_name = candidate_entry.get('name')
+            if isinstance(candidate_name, str) and candidate_name.strip() == lookup_value:
+                return deepcopy(candidate_entry)
+
+        return None
+
+    def _get_detector_feature_target_logical_volume_names(
+        self,
+        generator_entry,
+        *,
+        target_solid_name,
+        prior_result_solid_name=None,
+    ):
+        state = self.current_geometry_state
+        target_section = generator_entry.get('target', {}) or {}
+        requested_refs = target_section.get('logical_volume_refs', []) or []
+        allowed_solid_refs = {target_solid_name}
+        if isinstance(prior_result_solid_name, str) and prior_result_solid_name.strip():
+            allowed_solid_refs.add(prior_result_solid_name.strip())
+
+        target_lv_names = []
+        seen_lv_names = set()
+
+        if requested_refs:
+            for object_ref in requested_refs:
+                lv_name = self._resolve_detector_feature_object_name(object_ref, state.logical_volumes)
+                if not lv_name:
+                    requested_name = (
+                        self._get_detector_feature_object_name_hint(object_ref)
+                        or object_ref.get('id')
+                        or '<unknown>'
+                    )
+                    return None, f"Target logical volume '{requested_name}' was not found."
+
+                if lv_name in seen_lv_names:
+                    continue
+
+                lv = state.logical_volumes.get(lv_name)
+                if lv is None:
+                    return None, f"Target logical volume '{lv_name}' was not found."
+
+                if lv.solid_ref not in allowed_solid_refs:
+                    allowed_solid_refs_str = ", ".join(sorted(allowed_solid_refs))
+                    return None, (
+                        f"Target logical volume '{lv_name}' must reference '{allowed_solid_refs_str}' "
+                        "before realization."
+                    )
+
+                seen_lv_names.add(lv_name)
+                target_lv_names.append(lv_name)
+
+            return target_lv_names, None
+
+        for lv_name, lv in state.logical_volumes.items():
+            if lv.solid_ref in allowed_solid_refs and lv_name not in seen_lv_names:
+                seen_lv_names.add(lv_name)
+                target_lv_names.append(lv_name)
+
+        return target_lv_names, None
+
+    def _prepare_drilled_hole_array_realization(self, generator_entry, *, generator_label):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        target_solid_name = self._resolve_detector_feature_object_name(
+            target_section.get('solid_ref'),
+            state.solids,
+        )
+        if not target_solid_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('solid_ref'))
+                or (target_section.get('solid_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Target solid '{requested_name}' was not found."
+
+        target_solid = state.solids.get(target_solid_name)
+        if target_solid is None:
+            return None, f"Target solid '{target_solid_name}' was not found."
+        if target_solid.type != 'box':
+            return None, f"{generator_label} generators currently support only box target solids."
+
+        pattern = generator_entry.get('pattern', {}) or {}
+        hole = generator_entry.get('hole', {}) or {}
+
+        if pattern.get('anchor') != 'target_center':
+            return None, f"{generator_label} generators currently require anchor 'target_center'."
+        if hole.get('shape') != 'cylindrical':
+            return None, f"{generator_label} generators currently require cylindrical holes."
+        if hole.get('axis') != 'z':
+            return None, f"{generator_label} generators currently support only z-axis drilling."
+        if hole.get('drill_from') != 'positive_z_face':
+            return None, f"{generator_label} generators currently drill only from the positive-z face."
+
+        target_dims = target_solid._evaluated_parameters or {}
+        target_depth = float(target_dims.get('z', float('nan')))
+        if not math.isfinite(target_depth) or target_depth <= 0.0:
+            return None, f"Target solid '{target_solid_name}' has invalid evaluated depth."
+
+        hole_diameter = float(hole.get('diameter_mm') or 0.0)
+        hole_depth = float(hole.get('depth_mm') or 0.0)
+        if hole_diameter <= 0.0 or hole_depth <= 0.0:
+            return None, f"{generator_label} generators require positive hole diameter and depth."
+
+        realization = generator_entry.get('realization', {}) or {}
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_generated_solid_refs = (realization.get('generated_object_refs') or {}).get('solid_refs', []) or []
+
+        existing_result_name = None
+        if prior_result_name and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'boolean':
+                existing_result_name = prior_result_name
+
+        existing_cutter_name = None
+        for object_ref in prior_generated_solid_refs:
+            candidate_name = (
+                self._resolve_detector_feature_object_name(object_ref, state.solids)
+                or self._get_detector_feature_object_name_hint(object_ref)
+            )
+            if not candidate_name or candidate_name == prior_result_name or candidate_name not in state.solids:
+                continue
+            candidate_solid = state.solids[candidate_name]
+            if candidate_solid.type == 'tube':
+                existing_cutter_name = candidate_name
+                break
+
+        cutter_name = existing_cutter_name or self._generate_unique_name(
+            f"{generator_name}__cutter",
+            state.solids,
+        )
+        result_name = existing_result_name or self._generate_unique_name(
+            f"{generator_name}__result",
+            state.solids,
+        )
+
+        return {
+            'state': state,
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'target_solid_name': target_solid_name,
+            'pattern': pattern,
+            'hole_diameter': hole_diameter,
+            'hole_depth': hole_depth,
+            'target_depth': target_depth,
+            'prior_result_name': prior_result_name,
+            'cutter_name': cutter_name,
+            'result_name': result_name,
+        }, None
+
+    def _realize_drilled_hole_array_with_positions(self, generator_entry, context, hole_positions_xy):
+        state = context['state']
+        generator_id = context['generator_id']
+        generator_name = context['generator_name']
+        target_solid_name = context['target_solid_name']
+        hole_diameter = context['hole_diameter']
+        hole_depth = context['hole_depth']
+        target_depth = context['target_depth']
+        prior_result_name = context['prior_result_name']
+        cutter_name = context['cutter_name']
+        result_name = context['result_name']
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        cutter_params = {
+            'rmin': '0',
+            'rmax': _fmt(hole_diameter / 2.0),
+            'z': _fmt(hole_depth),
+            'startphi': '0',
+            'deltaphi': '360*deg',
+        }
+
+        cutter_solid = state.solids.get(cutter_name)
+        if cutter_solid is None:
+            cutter_solid = Solid(cutter_name, 'tube', cutter_params)
+            state.add_solid(cutter_solid)
+        else:
+            cutter_solid.raw_parameters = cutter_params
+
+        z_center = (target_depth / 2.0) - (hole_depth / 2.0)
+
+        recipe = [{'op': 'base', 'solid_ref': target_solid_name}]
+        for x_position, y_position in hole_positions_xy:
+            recipe.append({
+                'op': 'subtraction',
+                'solid_ref': cutter_name,
+                'transform': {
+                    'position': {
+                        'x': _fmt(x_position),
+                        'y': _fmt(y_position),
+                        'z': _fmt(z_center),
+                    },
+                },
+            })
+
+        result_solid = state.solids.get(result_name)
+        if result_solid is None:
+            result_solid = Solid(result_name, 'boolean', {'recipe': recipe})
+            state.add_solid(result_solid)
+        else:
+            result_solid.raw_parameters = {'recipe': recipe}
+
+        target_lv_names, error_msg = self._get_detector_feature_target_logical_volume_names(
+            generator_entry,
+            target_solid_name=target_solid_name,
+            prior_result_solid_name=prior_result_name,
+        )
+        if error_msg:
+            return None, error_msg
+
+        touched_logical_volumes = []
+        touched_placement_refs = []
+        seen_placement_ids = set()
+        for lv_name in target_lv_names:
+            lv = state.logical_volumes.get(lv_name)
+            if lv is None:
+                continue
+            lv.solid_ref = result_name
+            logical_volume_ref = self._build_detector_feature_object_ref(lv)
+            if logical_volume_ref:
+                touched_logical_volumes.append(logical_volume_ref)
+
+            for pv in self._find_pvs_by_lv_name(lv_name):
+                pv_ref = self._build_detector_feature_object_ref(pv)
+                if not pv_ref:
+                    continue
+                pv_ref_id = pv_ref.get('id') or pv_ref.get('name')
+                if pv_ref_id in seen_placement_ids:
+                    continue
+                seen_placement_ids.add(pv_ref_id)
+                touched_placement_refs.append(pv_ref)
+
+        generator_entry['realization'] = {
+            'mode': 'boolean_subtraction',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(result_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(result_solid),
+                    self._build_detector_feature_object_ref(cutter_solid),
+                ],
+                'logical_volume_refs': touched_logical_volumes,
+                'placement_refs': touched_placement_refs,
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [result_name, cutter_name],
+            'result_solid_name': result_name,
+            'cutter_solid_name': cutter_name,
+            'updated_logical_volume_names': target_lv_names,
+            'hole_count': len(hole_positions_xy),
+        }, None
+
+    def _realize_rectangular_drilled_hole_array(self, generator_entry):
+        context, error_msg = self._prepare_drilled_hole_array_realization(
+            generator_entry,
+            generator_label='Rectangular drilled-hole',
+        )
+        if error_msg:
+            return None, error_msg
+
+        pattern = context['pattern']
+        count_x = int(pattern.get('count_x') or 0)
+        count_y = int(pattern.get('count_y') or 0)
+        pitch_x = float((pattern.get('pitch_mm') or {}).get('x') or 0.0)
+        pitch_y = float((pattern.get('pitch_mm') or {}).get('y') or 0.0)
+        origin_offset = pattern.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        if count_x <= 0 or count_y <= 0:
+            return None, "Rectangular drilled-hole generators require positive x/y counts."
+        if pitch_x <= 0.0 or pitch_y <= 0.0:
+            return None, "Rectangular drilled-hole generators require positive x/y pitch values."
+
+        x_origin = -((count_x - 1) * pitch_x) / 2.0 + offset_x
+        y_origin = -((count_y - 1) * pitch_y) / 2.0 + offset_y
+        hole_positions_xy = []
+        for y_index in range(count_y):
+            y_position = y_origin + y_index * pitch_y
+            for x_index in range(count_x):
+                x_position = x_origin + x_index * pitch_x
+                hole_positions_xy.append((x_position, y_position))
+
+        return self._realize_drilled_hole_array_with_positions(
+            generator_entry,
+            context,
+            hole_positions_xy,
+        )
+
+    def _realize_circular_drilled_hole_array(self, generator_entry):
+        context, error_msg = self._prepare_drilled_hole_array_realization(
+            generator_entry,
+            generator_label='Circular drilled-hole',
+        )
+        if error_msg:
+            return None, error_msg
+
+        pattern = context['pattern']
+        count = int(pattern.get('count') or 0)
+        radius_mm = float(pattern.get('radius_mm') or 0.0)
+        orientation_deg = float(pattern.get('orientation_deg') or 0.0)
+        origin_offset = pattern.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        if count <= 0:
+            return None, "Circular drilled-hole generators require a positive hole count."
+        if radius_mm <= 0.0:
+            return None, "Circular drilled-hole generators require a positive radius."
+
+        angle_step_deg = 360.0 / count
+        hole_positions_xy = []
+        for index in range(count):
+            angle_rad = math.radians(orientation_deg + (index * angle_step_deg))
+            hole_positions_xy.append((
+                offset_x + (radius_mm * math.cos(angle_rad)),
+                offset_y + (radius_mm * math.sin(angle_rad)),
+            ))
+
+        return self._realize_drilled_hole_array_with_positions(
+            generator_entry,
+            context,
+            hole_positions_xy,
+        )
+
+    def _realize_layered_detector_stack(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        stack = generator_entry.get('stack', {}) or {}
+        layers = generator_entry.get('layers', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Layered detector-stack generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+        if not self._logical_volume_is_instantiated_in_scene(parent_lv_name):
+            return None, (
+                f"Layered detector-stack generators require parent logical volume "
+                f"'{parent_lv_name}' to already be placed in the live scene so generated modules are visible."
+            )
+
+        if stack.get('anchor') != 'target_center':
+            return None, "Layered detector-stack generators currently require anchor 'target_center'."
+
+        module_size = stack.get('module_size_mm') or {}
+        module_size_x = float(module_size.get('x') or 0.0)
+        module_size_y = float(module_size.get('y') or 0.0)
+        module_count = int(stack.get('module_count') or 0)
+        module_pitch_mm = float(stack.get('module_pitch_mm') or 0.0)
+        origin_offset = stack.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+        if module_size_x <= 0.0 or module_size_y <= 0.0:
+            return None, "Layered detector-stack generators require positive module X/Y sizes."
+        if module_count <= 0:
+            return None, "Layered detector-stack generators require a positive module count."
+        if module_pitch_mm <= 0.0:
+            return None, "Layered detector-stack generators require a positive module pitch."
+
+        layer_order = ('absorber', 'sensor', 'support')
+        layer_specs = []
+        total_thickness_mm = 0.0
+        for role in layer_order:
+            layer_entry = layers.get(role) or {}
+            material_ref = str(layer_entry.get('material_ref') or '').strip()
+            thickness_mm = float(layer_entry.get('thickness_mm') or 0.0)
+            if not material_ref:
+                return None, f"Layered detector-stack generators require a material for layer '{role}'."
+            if thickness_mm <= 0.0:
+                return None, f"Layered detector-stack generators require positive thickness for layer '{role}'."
+
+            layer_specs.append({
+                'role': role,
+                'material_ref': material_ref,
+                'thickness_mm': thickness_mm,
+                'is_sensitive': bool(layer_entry.get('is_sensitive', role == 'sensor')),
+            })
+            total_thickness_mm += thickness_mm
+
+        if module_pitch_mm + 1e-9 < total_thickness_mm:
+            return None, (
+                f"Layered detector-stack generator '{generator_name}' requires module_pitch_mm "
+                "to be at least the total layer thickness."
+            )
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        module_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__module_solid',
+            object_type='box',
+        )
+        if module_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'box':
+                module_solid_name = prior_result_name
+        if module_solid_name is None:
+            module_solid_name = self._generate_unique_name(
+                f"{generator_name}__module_solid",
+                state.solids,
+            )
+
+        layer_solid_names = {}
+        for role in layer_order:
+            layer_solid_name = self._find_detector_feature_generated_name(
+                prior_solid_refs,
+                state.solids,
+                suffix=f"__{role}_solid",
+                object_type='box',
+            )
+            if layer_solid_name is None:
+                layer_solid_name = self._generate_unique_name(
+                    f"{generator_name}__{role}_solid",
+                    state.solids,
+                )
+            layer_solid_names[role] = layer_solid_name
+
+        module_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__module_lv',
+        )
+        if module_lv_name is None:
+            module_lv_name = self._generate_unique_name(
+                f"{generator_name}__module_lv",
+                state.logical_volumes,
+            )
+
+        layer_lv_names = {}
+        for role in layer_order:
+            layer_lv_name = self._find_detector_feature_generated_name(
+                prior_lv_refs,
+                state.logical_volumes,
+                suffix=f"__{role}_lv",
+            )
+            if layer_lv_name is None:
+                layer_lv_name = self._generate_unique_name(
+                    f"{generator_name}__{role}_lv",
+                    state.logical_volumes,
+                )
+            layer_lv_names[role] = layer_lv_name
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        module_solid = self._upsert_detector_feature_generated_solid(
+            module_solid_name,
+            'box',
+            {
+                'x': _fmt(module_size_x),
+                'y': _fmt(module_size_y),
+                'z': _fmt(total_thickness_mm),
+            },
+        )
+
+        layer_solids = {}
+        layer_lvs = {}
+        for layer_spec in layer_specs:
+            role = layer_spec['role']
+            layer_solids[role] = self._upsert_detector_feature_generated_solid(
+                layer_solid_names[role],
+                'box',
+                {
+                    'x': _fmt(module_size_x),
+                    'y': _fmt(module_size_y),
+                    'z': _fmt(layer_spec['thickness_mm']),
+                },
+            )
+            layer_lvs[role] = self._upsert_detector_feature_generated_logical_volume(
+                layer_lv_names[role],
+                solid_ref=layer_solid_names[role],
+                material_ref=layer_spec['material_ref'],
+                vis_attributes=self._build_layered_stack_vis_attributes(role),
+                is_sensitive=layer_spec['is_sensitive'],
+            )
+
+        module_lv = self._upsert_detector_feature_generated_logical_volume(
+            module_lv_name,
+            solid_ref=module_solid_name,
+            material_ref=parent_lv.material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('module'),
+            is_sensitive=False,
+        )
+        module_lv.content = []
+
+        layer_placements = []
+        z_cursor = -total_thickness_mm / 2.0
+        for layer_index, layer_spec in enumerate(layer_specs, start=1):
+            role = layer_spec['role']
+            z_center = z_cursor + (layer_spec['thickness_mm'] / 2.0)
+            layer_pv = PhysicalVolumePlacement(
+                name=f"{generator_name}__{role}_pv",
+                volume_ref=layer_lv_names[role],
+                parent_lv_name=module_lv_name,
+                copy_number_expr=str(layer_index),
+                position_val_or_ref={
+                    'x': '0',
+                    'y': '0',
+                    'z': _fmt(z_center),
+                },
+                rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+            )
+            module_lv.content.append(layer_pv)
+            layer_placements.append(layer_pv)
+            z_cursor += layer_spec['thickness_mm']
+
+        parent_copy_start = self._get_next_copy_number(parent_lv)
+        module_placements = []
+        z_origin = offset_z - (((module_count - 1) * module_pitch_mm) / 2.0)
+        for index in range(module_count):
+            module_pv = PhysicalVolumePlacement(
+                name=f"{generator_name}__module_{index + 1}_pv",
+                volume_ref=module_lv_name,
+                parent_lv_name=parent_lv_name,
+                copy_number_expr=str(parent_copy_start + index),
+                position_val_or_ref={
+                    'x': _fmt(offset_x),
+                    'y': _fmt(offset_y),
+                    'z': _fmt(z_origin + (index * module_pitch_mm)),
+                },
+                rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+            )
+            module_placements.append(module_pv)
+
+        parent_lv.content.extend(module_placements)
+
+        layer_detail_parts = [
+            f"{layer_spec['role']}={_fmt(layer_spec['thickness_mm'])} mm {layer_spec['material_ref']}"
+            for layer_spec in layer_specs
+        ]
+
+        generator_entry['realization'] = {
+            'mode': 'layered_stack',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(module_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(module_solid),
+                    *[
+                        self._build_detector_feature_object_ref(layer_solids[role])
+                        for role in layer_order
+                    ],
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(module_lv),
+                    *[
+                        self._build_detector_feature_object_ref(layer_lvs[role])
+                        for role in layer_order
+                    ],
+                ],
+                'placement_refs': [
+                    *[
+                        self._build_detector_feature_object_ref(module_pv)
+                        for module_pv in module_placements
+                    ],
+                    *[
+                        self._build_detector_feature_object_ref(layer_pv)
+                        for layer_pv in layer_placements
+                    ],
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [
+                module_solid_name,
+                *[layer_solid_names[role] for role in layer_order],
+            ],
+            'generated_logical_volume_names': [
+                module_lv_name,
+                *[layer_lv_names[role] for role in layer_order],
+            ],
+            'generated_placement_names': [
+                *[module_pv.name for module_pv in module_placements],
+                *[layer_pv.name for layer_pv in layer_placements],
+            ],
+            'result_solid_name': module_solid_name,
+            'module_logical_volume_name': module_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'module_count': module_count,
+            'layer_count': len(layer_specs),
+            'total_thickness_mm': total_thickness_mm,
+            'layer_summary': ", ".join(layer_detail_parts),
+        }, None
+
+    def _realize_tiled_sensor_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        sensor = generator_entry.get('sensor', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Tiled sensor-array generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+        if not self._logical_volume_is_instantiated_in_scene(parent_lv_name):
+            return None, (
+                f"Tiled sensor-array generators require parent logical volume "
+                f"'{parent_lv_name}' to already be placed in the live scene so generated sensors are visible."
+            )
+
+        if array.get('anchor') != 'target_center':
+            return None, "Tiled sensor-array generators currently require anchor 'target_center'."
+
+        count_x = int(array.get('count_x') or 0)
+        count_y = int(array.get('count_y') or 0)
+        pitch = array.get('pitch_mm') or {}
+        pitch_x = float(pitch.get('x') or 0.0)
+        pitch_y = float(pitch.get('y') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+        if count_x <= 0 or count_y <= 0:
+            return None, "Tiled sensor-array generators require positive x/y counts."
+        if pitch_x <= 0.0 or pitch_y <= 0.0:
+            return None, "Tiled sensor-array generators require positive x/y pitch values."
+
+        sensor_size = sensor.get('size_mm') or {}
+        sensor_size_x = float(sensor_size.get('x') or 0.0)
+        sensor_size_y = float(sensor_size.get('y') or 0.0)
+        sensor_thickness = float(sensor.get('thickness_mm') or 0.0)
+        sensor_material_ref = str(sensor.get('material_ref') or '').strip()
+        sensor_sensitive = bool(sensor.get('is_sensitive', True))
+        if sensor_size_x <= 0.0 or sensor_size_y <= 0.0:
+            return None, "Tiled sensor-array generators require positive sensor X/Y sizes."
+        if sensor_thickness <= 0.0:
+            return None, "Tiled sensor-array generators require positive sensor thickness."
+        if not sensor_material_ref:
+            return None, "Tiled sensor-array generators require a sensor material."
+        if pitch_x + 1e-9 < sensor_size_x or pitch_y + 1e-9 < sensor_size_y:
+            return None, (
+                f"Tiled sensor-array generator '{generator_name}' requires x/y pitch to be at least "
+                "the generated sensor size to avoid overlapping placements."
+            )
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        sensor_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__sensor_solid',
+            object_type='box',
+        )
+        if sensor_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'box':
+                sensor_solid_name = prior_result_name
+        if sensor_solid_name is None:
+            sensor_solid_name = self._generate_unique_name(
+                f"{generator_name}__sensor_solid",
+                state.solids,
+            )
+
+        sensor_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__sensor_lv',
+        )
+        if sensor_lv_name is None:
+            sensor_lv_name = self._generate_unique_name(
+                f"{generator_name}__sensor_lv",
+                state.logical_volumes,
+            )
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        sensor_solid = self._upsert_detector_feature_generated_solid(
+            sensor_solid_name,
+            'box',
+            {
+                'x': _fmt(sensor_size_x),
+                'y': _fmt(sensor_size_y),
+                'z': _fmt(sensor_thickness),
+            },
+        )
+
+        sensor_lv = self._upsert_detector_feature_generated_logical_volume(
+            sensor_lv_name,
+            solid_ref=sensor_solid_name,
+            material_ref=sensor_material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('sensor'),
+            is_sensitive=sensor_sensitive,
+        )
+        sensor_lv.content = []
+
+        parent_copy_start = self._get_next_copy_number(parent_lv)
+        x_origin = offset_x - (((count_x - 1) * pitch_x) / 2.0)
+        y_origin = offset_y - (((count_y - 1) * pitch_y) / 2.0)
+        sensor_placements = []
+        placement_index = 0
+        for row_index in range(count_y):
+            y_position = y_origin + (row_index * pitch_y)
+            for column_index in range(count_x):
+                x_position = x_origin + (column_index * pitch_x)
+                placement_index += 1
+                sensor_pv = PhysicalVolumePlacement(
+                    name=f"{generator_name}__sensor_r{row_index + 1}_c{column_index + 1}_pv",
+                    volume_ref=sensor_lv_name,
+                    parent_lv_name=parent_lv_name,
+                    copy_number_expr=str(parent_copy_start + placement_index - 1),
+                    position_val_or_ref={
+                        'x': _fmt(x_position),
+                        'y': _fmt(y_position),
+                        'z': _fmt(offset_z),
+                    },
+                    rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                    scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+                )
+                sensor_placements.append(sensor_pv)
+
+        parent_lv.content.extend(sensor_placements)
+
+        generator_entry['realization'] = {
+            'mode': 'placement_array',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(sensor_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(sensor_solid),
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(sensor_lv),
+                ],
+                'placement_refs': [
+                    self._build_detector_feature_object_ref(sensor_pv)
+                    for sensor_pv in sensor_placements
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [sensor_solid_name],
+            'generated_logical_volume_names': [sensor_lv_name],
+            'generated_placement_names': [sensor_pv.name for sensor_pv in sensor_placements],
+            'result_solid_name': sensor_solid_name,
+            'sensor_logical_volume_name': sensor_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'sensor_count': len(sensor_placements),
+            'count_x': count_x,
+            'count_y': count_y,
+            'pitch_x_mm': pitch_x,
+            'pitch_y_mm': pitch_y,
+            'sensor_size_x_mm': sensor_size_x,
+            'sensor_size_y_mm': sensor_size_y,
+            'sensor_thickness_mm': sensor_thickness,
+        }, None
+
+    def _realize_support_rib_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        rib = generator_entry.get('rib', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Support-rib generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+        if not self._logical_volume_is_instantiated_in_scene(parent_lv_name):
+            return None, (
+                f"Support-rib generators require parent logical volume "
+                f"'{parent_lv_name}' to already be placed in the live scene so generated ribs are visible."
+            )
+
+        if array.get('anchor') != 'target_center':
+            return None, "Support-rib generators currently require anchor 'target_center'."
+
+        repeat_axis = str(array.get('axis') or '').strip()
+        count = int(array.get('count') or 0)
+        linear_pitch_mm = float(array.get('linear_pitch_mm') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+        rib_width_mm = float(rib.get('width_mm') or 0.0)
+        rib_height_mm = float(rib.get('height_mm') or 0.0)
+        rib_material_ref = str(rib.get('material_ref') or '').strip()
+        rib_sensitive = bool(rib.get('is_sensitive', False))
+        if repeat_axis not in {'x', 'y'}:
+            return None, "Support-rib generators require repeat axis 'x' or 'y'."
+        if count <= 0:
+            return None, "Support-rib generators require a positive rib count."
+        if linear_pitch_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib pitch."
+        if rib_width_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib width."
+        if rib_height_mm <= 0.0:
+            return None, "Support-rib generators require a positive rib height."
+        if not rib_material_ref:
+            return None, "Support-rib generators require a rib material."
+        if count > 1 and linear_pitch_mm + 1e-9 < rib_width_mm:
+            return None, (
+                f"Support-rib generator '{generator_name}' requires pitch to be at least "
+                "the rib width to avoid overlapping placements."
+            )
+
+        parent_box_dims, error_msg = self._get_detector_feature_box_dimensions(
+            parent_lv.solid_ref,
+            label="Support-rib generators",
+        )
+        if error_msg:
+            return None, error_msg
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        rib_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__rib_solid',
+            object_type='box',
+        )
+        if rib_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'box':
+                rib_solid_name = prior_result_name
+        if rib_solid_name is None:
+            rib_solid_name = self._generate_unique_name(
+                f"{generator_name}__rib_solid",
+                state.solids,
+            )
+
+        rib_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__rib_lv',
+        )
+        if rib_lv_name is None:
+            rib_lv_name = self._generate_unique_name(
+                f"{generator_name}__rib_lv",
+                state.logical_volumes,
+            )
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        rib_size_x = rib_width_mm if repeat_axis == 'x' else parent_box_dims['x']
+        rib_size_y = parent_box_dims['y'] if repeat_axis == 'x' else rib_width_mm
+
+        rib_solid = self._upsert_detector_feature_generated_solid(
+            rib_solid_name,
+            'box',
+            {
+                'x': _fmt(rib_size_x),
+                'y': _fmt(rib_size_y),
+                'z': _fmt(rib_height_mm),
+            },
+        )
+
+        rib_lv = self._upsert_detector_feature_generated_logical_volume(
+            rib_lv_name,
+            solid_ref=rib_solid_name,
+            material_ref=rib_material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('support'),
+            is_sensitive=rib_sensitive,
+        )
+        rib_lv.content = []
+
+        parent_copy_start = self._get_next_copy_number(parent_lv)
+        axis_origin = (
+            offset_x - (((count - 1) * linear_pitch_mm) / 2.0)
+            if repeat_axis == 'x'
+            else offset_y - (((count - 1) * linear_pitch_mm) / 2.0)
+        )
+        rib_placements = []
+        for index in range(count):
+            axis_value = axis_origin + (index * linear_pitch_mm)
+            position = {
+                'x': _fmt(axis_value if repeat_axis == 'x' else offset_x),
+                'y': _fmt(offset_y if repeat_axis == 'x' else axis_value),
+                'z': _fmt(offset_z),
+            }
+            rib_pv = PhysicalVolumePlacement(
+                name=f"{generator_name}__rib_{index + 1}_pv",
+                volume_ref=rib_lv_name,
+                parent_lv_name=parent_lv_name,
+                copy_number_expr=str(parent_copy_start + index),
+                position_val_or_ref=position,
+                rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+                scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+            )
+            rib_placements.append(rib_pv)
+
+        parent_lv.content.extend(rib_placements)
+
+        generator_entry['realization'] = {
+            'mode': 'placement_array',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(rib_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(rib_solid),
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(rib_lv),
+                ],
+                'placement_refs': [
+                    self._build_detector_feature_object_ref(rib_pv)
+                    for rib_pv in rib_placements
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [rib_solid_name],
+            'generated_logical_volume_names': [rib_lv_name],
+            'generated_placement_names': [rib_pv.name for rib_pv in rib_placements],
+            'result_solid_name': rib_solid_name,
+            'rib_logical_volume_name': rib_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'rib_count': count,
+            'repeat_axis': repeat_axis,
+            'pitch_mm': linear_pitch_mm,
+            'rib_width_mm': rib_width_mm,
+            'rib_height_mm': rib_height_mm,
+        }, None
+
+    def _realize_channel_cut_array(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        array = generator_entry.get('array', {}) or {}
+        channel = generator_entry.get('channel', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        target_solid_name = self._resolve_detector_feature_object_name(
+            target_section.get('solid_ref'),
+            state.solids,
+        )
+        if not target_solid_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('solid_ref'))
+                or (target_section.get('solid_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Target solid '{requested_name}' was not found."
+
+        target_box_dims, error_msg = self._get_detector_feature_box_dimensions(
+            target_solid_name,
+            label="Channel-cut generators",
+        )
+        if error_msg:
+            return None, error_msg
+
+        if array.get('anchor') != 'target_center':
+            return None, "Channel-cut generators currently require anchor 'target_center'."
+
+        repeat_axis = str(array.get('axis') or '').strip()
+        count = int(array.get('count') or 0)
+        linear_pitch_mm = float(array.get('linear_pitch_mm') or 0.0)
+        origin_offset = array.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        channel_width_mm = float(channel.get('width_mm') or 0.0)
+        channel_depth_mm = float(channel.get('depth_mm') or 0.0)
+        if repeat_axis not in {'x', 'y'}:
+            return None, "Channel-cut generators require repeat axis 'x' or 'y'."
+        if count <= 0:
+            return None, "Channel-cut generators require a positive channel count."
+        if linear_pitch_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel pitch."
+        if channel_width_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel width."
+        if channel_depth_mm <= 0.0:
+            return None, "Channel-cut generators require a positive channel depth."
+        if count > 1 and linear_pitch_mm + 1e-9 < channel_width_mm:
+            return None, (
+                f"Channel-cut generator '{generator_name}' requires pitch to be at least "
+                "the channel width to avoid overlapping cuts."
+            )
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_generated_solid_refs = generated_refs.get('solid_refs', []) or []
+
+        existing_result_name = None
+        if prior_result_name and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'boolean':
+                existing_result_name = prior_result_name
+
+        cutter_name = self._find_detector_feature_generated_name(
+            prior_generated_solid_refs,
+            state.solids,
+            suffix='__channel_cutter',
+            object_type='box',
+        )
+        if cutter_name is None:
+            cutter_name = self._generate_unique_name(
+                f"{generator_name}__channel_cutter",
+                state.solids,
+            )
+        result_name = existing_result_name or self._generate_unique_name(
+            f"{generator_name}__result",
+            state.solids,
+        )
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        cutter_size_x = channel_width_mm if repeat_axis == 'x' else target_box_dims['x']
+        cutter_size_y = target_box_dims['y'] if repeat_axis == 'x' else channel_width_mm
+        cutter_solid = state.solids.get(cutter_name)
+        cutter_params = {
+            'x': _fmt(cutter_size_x),
+            'y': _fmt(cutter_size_y),
+            'z': _fmt(channel_depth_mm),
+        }
+        if cutter_solid is None:
+            cutter_solid = Solid(cutter_name, 'box', cutter_params)
+            state.add_solid(cutter_solid)
+        else:
+            cutter_solid.type = 'box'
+            cutter_solid.raw_parameters = cutter_params
+
+        z_center = (target_box_dims['z'] / 2.0) - (channel_depth_mm / 2.0)
+        axis_origin = (
+            offset_x - (((count - 1) * linear_pitch_mm) / 2.0)
+            if repeat_axis == 'x'
+            else offset_y - (((count - 1) * linear_pitch_mm) / 2.0)
+        )
+
+        recipe = [{'op': 'base', 'solid_ref': target_solid_name}]
+        for index in range(count):
+            axis_value = axis_origin + (index * linear_pitch_mm)
+            recipe.append({
+                'op': 'subtraction',
+                'solid_ref': cutter_name,
+                'transform': {
+                    'position': {
+                        'x': _fmt(axis_value if repeat_axis == 'x' else offset_x),
+                        'y': _fmt(offset_y if repeat_axis == 'x' else axis_value),
+                        'z': _fmt(z_center),
+                    },
+                },
+            })
+
+        result_solid = state.solids.get(result_name)
+        if result_solid is None:
+            result_solid = Solid(result_name, 'boolean', {'recipe': recipe})
+            state.add_solid(result_solid)
+        else:
+            result_solid.type = 'boolean'
+            result_solid.raw_parameters = {'recipe': recipe}
+
+        target_lv_names, error_msg = self._get_detector_feature_target_logical_volume_names(
+            generator_entry,
+            target_solid_name=target_solid_name,
+            prior_result_solid_name=prior_result_name,
+        )
+        if error_msg:
+            return None, error_msg
+        if target_lv_names and not any(
+            self._logical_volume_is_instantiated_in_scene(lv_name)
+            for lv_name in target_lv_names
+        ):
+            target_label = (
+                f"logical volume '{target_lv_names[0]}'"
+                if len(target_lv_names) == 1
+                else "logical volumes"
+            )
+            return None, (
+                "Channel-cut generators require at least one targeted "
+                f"{target_label} to already be placed in the live scene so generated cuts are visible."
+            )
+
+        touched_logical_volumes = []
+        touched_placement_refs = []
+        seen_placement_ids = set()
+        for lv_name in target_lv_names:
+            lv = state.logical_volumes.get(lv_name)
+            if lv is None:
+                continue
+            lv.solid_ref = result_name
+            logical_volume_ref = self._build_detector_feature_object_ref(lv)
+            if logical_volume_ref:
+                touched_logical_volumes.append(logical_volume_ref)
+
+            for pv in self._find_pvs_by_lv_name(lv_name):
+                pv_ref = self._build_detector_feature_object_ref(pv)
+                if not pv_ref:
+                    continue
+                pv_ref_id = pv_ref.get('id') or pv_ref.get('name')
+                if pv_ref_id in seen_placement_ids:
+                    continue
+                seen_placement_ids.add(pv_ref_id)
+                touched_placement_refs.append(pv_ref)
+
+        generator_entry['realization'] = {
+            'mode': 'boolean_subtraction',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(result_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(result_solid),
+                    self._build_detector_feature_object_ref(cutter_solid),
+                ],
+                'logical_volume_refs': touched_logical_volumes,
+                'placement_refs': touched_placement_refs,
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [result_name, cutter_name],
+            'result_solid_name': result_name,
+            'cutter_solid_name': cutter_name,
+            'updated_logical_volume_names': target_lv_names,
+            'channel_count': count,
+            'repeat_axis': repeat_axis,
+            'pitch_mm': linear_pitch_mm,
+        }, None
+
+    def _realize_annular_shield_sleeve(self, generator_entry):
+        state = self.current_geometry_state
+        generator_id = generator_entry.get('generator_id')
+        generator_name = generator_entry.get('name') or generator_id or 'detector_feature_generator'
+        target_section = generator_entry.get('target', {}) or {}
+        shield = generator_entry.get('shield', {}) or {}
+        realization = generator_entry.get('realization', {}) or {}
+        generated_refs = realization.get('generated_object_refs', {}) or {}
+
+        parent_lv_name = self._resolve_detector_feature_object_name(
+            target_section.get('parent_logical_volume_ref'),
+            state.logical_volumes,
+        )
+        if not parent_lv_name:
+            requested_name = (
+                self._get_detector_feature_object_name_hint(target_section.get('parent_logical_volume_ref'))
+                or (target_section.get('parent_logical_volume_ref') or {}).get('id')
+                or '<unknown>'
+            )
+            return None, f"Parent logical volume '{requested_name}' was not found."
+
+        parent_lv = state.logical_volumes.get(parent_lv_name)
+        if parent_lv is None:
+            return None, f"Parent logical volume '{parent_lv_name}' was not found."
+        if parent_lv.content_type != 'physvol':
+            return None, (
+                f"Annular shield-sleeve generators require parent logical volume "
+                f"'{parent_lv_name}' to use standard placements."
+            )
+        if not self._logical_volume_is_instantiated_in_scene(parent_lv_name):
+            return None, (
+                f"Annular shield-sleeve generators require parent logical volume "
+                f"'{parent_lv_name}' to already be placed in the live scene so generated shields are visible."
+            )
+
+        if shield.get('anchor') != 'target_center':
+            return None, "Annular shield-sleeve generators currently require anchor 'target_center'."
+
+        inner_radius_mm = float(shield.get('inner_radius_mm') or 0.0)
+        outer_radius_mm = float(shield.get('outer_radius_mm') or 0.0)
+        length_mm = float(shield.get('length_mm') or 0.0)
+        material_ref = str(shield.get('material_ref') or '').strip()
+        origin_offset = shield.get('origin_offset_mm') or {}
+        offset_x = float(origin_offset.get('x') or 0.0)
+        offset_y = float(origin_offset.get('y') or 0.0)
+        offset_z = float(origin_offset.get('z') or 0.0)
+
+        if inner_radius_mm <= 0.0:
+            return None, "Annular shield-sleeve generators require a positive inner radius."
+        if outer_radius_mm <= inner_radius_mm:
+            return None, (
+                f"Annular shield-sleeve generator '{generator_name}' requires outer_radius_mm "
+                "to be greater than inner_radius_mm."
+            )
+        if length_mm <= 0.0:
+            return None, "Annular shield-sleeve generators require a positive axial length."
+        if not material_ref:
+            return None, "Annular shield-sleeve generators require a shield material."
+
+        prior_result_name = (
+            self._resolve_detector_feature_object_name(realization.get('result_solid_ref'), state.solids)
+            or self._get_detector_feature_object_name_hint(realization.get('result_solid_ref'))
+        )
+        prior_solid_refs = generated_refs.get('solid_refs', []) or []
+        prior_lv_refs = generated_refs.get('logical_volume_refs', []) or []
+        prior_placement_refs = generated_refs.get('placement_refs', []) or []
+
+        shield_solid_name = self._find_detector_feature_generated_name(
+            prior_solid_refs,
+            state.solids,
+            suffix='__shield_solid',
+            object_type='tube',
+        )
+        if shield_solid_name is None and prior_result_name in state.solids:
+            prior_result_solid = state.solids[prior_result_name]
+            if prior_result_solid.type == 'tube':
+                shield_solid_name = prior_result_name
+        if shield_solid_name is None:
+            shield_solid_name = self._generate_unique_name(
+                f"{generator_name}__shield_solid",
+                state.solids,
+            )
+
+        shield_lv_name = self._find_detector_feature_generated_name(
+            prior_lv_refs,
+            state.logical_volumes,
+            suffix='__shield_lv',
+        )
+        if shield_lv_name is None:
+            shield_lv_name = self._generate_unique_name(
+                f"{generator_name}__shield_lv",
+                state.logical_volumes,
+            )
+
+        self._remove_detector_feature_generated_placements(prior_placement_refs)
+
+        def _fmt(value):
+            return f"{float(value):.12g}"
+
+        shield_solid = self._upsert_detector_feature_generated_solid(
+            shield_solid_name,
+            'tube',
+            {
+                'rmin': _fmt(inner_radius_mm),
+                'rmax': _fmt(outer_radius_mm),
+                'z': _fmt(length_mm),
+                'startphi': '0',
+                'deltaphi': '360',
+            },
+        )
+
+        shield_lv = self._upsert_detector_feature_generated_logical_volume(
+            shield_lv_name,
+            solid_ref=shield_solid_name,
+            material_ref=material_ref,
+            vis_attributes=self._build_layered_stack_vis_attributes('shield'),
+            is_sensitive=False,
+        )
+        shield_lv.content = []
+
+        shield_pv = PhysicalVolumePlacement(
+            name=f"{generator_name}__shield_pv",
+            volume_ref=shield_lv_name,
+            parent_lv_name=parent_lv_name,
+            copy_number_expr=str(self._get_next_copy_number(parent_lv)),
+            position_val_or_ref={
+                'x': _fmt(offset_x),
+                'y': _fmt(offset_y),
+                'z': _fmt(offset_z),
+            },
+            rotation_val_or_ref={'x': '0', 'y': '0', 'z': '0'},
+            scale_val_or_ref={'x': '1', 'y': '1', 'z': '1'},
+        )
+        parent_lv.content.append(shield_pv)
+
+        generator_entry['realization'] = {
+            'mode': 'placement_array',
+            'status': 'generated',
+            'result_solid_ref': self._build_detector_feature_object_ref(shield_solid),
+            'generated_object_refs': {
+                'solid_refs': [
+                    self._build_detector_feature_object_ref(shield_solid),
+                ],
+                'logical_volume_refs': [
+                    self._build_detector_feature_object_ref(shield_lv),
+                ],
+                'placement_refs': [
+                    self._build_detector_feature_object_ref(shield_pv),
+                ],
+            },
+        }
+
+        return {
+            'generator_id': generator_id,
+            'generator_name': generator_name,
+            'generated_solid_names': [shield_solid_name],
+            'generated_logical_volume_names': [shield_lv_name],
+            'generated_placement_names': [shield_pv.name],
+            'result_solid_name': shield_solid_name,
+            'shield_logical_volume_name': shield_lv_name,
+            'parent_logical_volume_name': parent_lv_name,
+            'inner_radius_mm': inner_radius_mm,
+            'outer_radius_mm': outer_radius_mm,
+            'length_mm': length_mm,
+            'material_ref': material_ref,
+        }, None
+
+    def _realize_detector_feature_generator_entry(self, generator_entry):
+        generator_type = generator_entry.get('generator_type')
+        if generator_type == 'rectangular_drilled_hole_array':
+            return self._realize_rectangular_drilled_hole_array(generator_entry)
+        if generator_type == 'circular_drilled_hole_array':
+            return self._realize_circular_drilled_hole_array(generator_entry)
+        if generator_type == 'layered_detector_stack':
+            return self._realize_layered_detector_stack(generator_entry)
+        if generator_type == 'tiled_sensor_array':
+            return self._realize_tiled_sensor_array(generator_entry)
+        if generator_type == 'support_rib_array':
+            return self._realize_support_rib_array(generator_entry)
+        if generator_type == 'channel_cut_array':
+            return self._realize_channel_cut_array(generator_entry)
+        if generator_type == 'annular_shield_sleeve':
+            return self._realize_annular_shield_sleeve(generator_entry)
+
+        return None, (
+            f"Detector feature generator type '{generator_type}' is not supported for realization."
+        )
+
+    def upsert_detector_feature_generator(self, raw_entry, *, realize_now=True):
+        """Create or update one saved detector-feature-generator contract."""
+        if not self.current_geometry_state:
+            return None, None, "No project loaded."
+        if not isinstance(raw_entry, dict):
+            return None, None, "Detector feature generator payload must be an object."
+
+        requested_generator_id = raw_entry.get('generator_id')
+        existing_index, existing_entry = self._find_detector_feature_generator(requested_generator_id)
+
+        candidate_entry = deepcopy(raw_entry)
+        if existing_entry is not None:
+            candidate_entry.setdefault('generator_id', existing_entry.get('generator_id'))
+            candidate_entry.setdefault('generator_type', existing_entry.get('generator_type'))
+            candidate_entry.setdefault('enabled', existing_entry.get('enabled', True))
+            if 'target' not in candidate_entry:
+                candidate_entry['target'] = deepcopy(existing_entry.get('target', {}))
+            if 'pattern' not in candidate_entry:
+                candidate_entry['pattern'] = deepcopy(existing_entry.get('pattern', {}))
+            if 'stack' not in candidate_entry:
+                candidate_entry['stack'] = deepcopy(existing_entry.get('stack', {}))
+            if 'array' not in candidate_entry:
+                candidate_entry['array'] = deepcopy(existing_entry.get('array', {}))
+            if 'layers' not in candidate_entry:
+                candidate_entry['layers'] = deepcopy(existing_entry.get('layers', {}))
+            if 'sensor' not in candidate_entry:
+                candidate_entry['sensor'] = deepcopy(existing_entry.get('sensor', {}))
+            if 'shield' not in candidate_entry:
+                candidate_entry['shield'] = deepcopy(existing_entry.get('shield', {}))
+            if 'hole' not in candidate_entry:
+                candidate_entry['hole'] = deepcopy(existing_entry.get('hole', {}))
+            if 'realization' not in candidate_entry:
+                candidate_entry['realization'] = deepcopy(existing_entry.get('realization', {}))
+
+        try:
+            normalized_entry = normalize_detector_feature_generator_entry(candidate_entry)
+        except ValueError as exc:
+            return None, None, str(exc)
+
+        self.begin_transaction()
+        realization_result = None
+        try:
+            if existing_index is None:
+                self.current_geometry_state.detector_feature_generators.append(normalized_entry)
+                generator_entry = self.current_geometry_state.detector_feature_generators[-1]
+            else:
+                self.current_geometry_state.detector_feature_generators[existing_index] = normalized_entry
+                generator_entry = self.current_geometry_state.detector_feature_generators[existing_index]
+
+            if realize_now:
+                success, error_msg = self.recalculate_geometry_state()
+                if not success:
+                    raise ValueError(error_msg)
+
+                realization_result, error_msg = self._realize_detector_feature_generator_entry(generator_entry)
+                if error_msg:
+                    raise ValueError(error_msg)
+
+                self.changed_object_ids['solids'].update(
+                    realization_result.get('generated_solid_names', [])
+                )
+
+                success, error_msg = self.recalculate_geometry_state()
+                if not success:
+                    raise ValueError(error_msg)
+            else:
+                realization_mode = (
+                    'layered_stack'
+                    if generator_entry.get('generator_type') == 'layered_detector_stack'
+                    else 'placement_array'
+                    if generator_entry.get('generator_type') in {'tiled_sensor_array', 'support_rib_array', 'annular_shield_sleeve'}
+                    else 'boolean_subtraction'
+                )
+                generator_entry['realization'] = {
+                    'mode': realization_mode,
+                    'status': 'spec_only',
+                    'result_solid_ref': None,
+                    'generated_object_refs': {
+                        'solid_refs': [],
+                        'logical_volume_refs': [],
+                        'placement_refs': [],
+                    },
+                }
+
+            action_verb = 'Saved and realized' if realize_now else 'Saved'
+            description = generator_entry.get('name') or generator_entry.get('generator_id') or 'detector feature generator'
+        except Exception as exc:
+            self.abort_transaction()
+            return None, None, str(exc)
+
+        self.end_transaction(f"{action_verb} detector feature generator '{description}'")
+        return deepcopy(generator_entry), realization_result, None
+
+    def realize_detector_feature_generator(self, generator_id):
+        """Materialize a saved detector-feature-generator spec into concrete geometry."""
+        if not self.current_geometry_state:
+            return None, "No project loaded."
+
+        generator_index, generator_entry = self._find_detector_feature_generator(generator_id)
+        if generator_entry is None:
+            return None, f"Detector feature generator '{generator_id}' was not found."
+        if not bool(generator_entry.get('enabled', True)):
+            return None, f"Detector feature generator '{generator_id}' is disabled."
+
+        success, error_msg = self.recalculate_geometry_state()
+        if not success:
+            return None, error_msg
+
+        self.begin_transaction()
+        try:
+            result, error_msg = self._realize_detector_feature_generator_entry(generator_entry)
+            if error_msg:
+                raise ValueError(error_msg)
+
+            self.changed_object_ids['solids'].update(result.get('generated_solid_names', []))
+
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                raise ValueError(error_msg)
+        except Exception as exc:
+            self.abort_transaction()
+            return None, str(exc)
+
+        description = generator_entry.get('name') or generator_entry.get('generator_id') or f"generator #{generator_index}"
+        self.end_transaction(f"Realized detector feature generator '{description}'")
+        return result, None
+
+    def _snapshot_step_import_annotations(self, cad_import_record):
+        """Captures user-facing annotations that should survive a supported reimport."""
+        if not self.current_geometry_state or not isinstance(cad_import_record, dict):
+            return {
+                'logical_volumes': {},
+                'sources': {},
+                'ui_groups': {},
+            }
+
+        object_ids = cad_import_record.get('created_object_ids', {}) or {}
+        imported_pv_ids = {
+            object_id
+            for object_id in (object_ids.get('placement_ids', []) or [])
+            if isinstance(object_id, str) and object_id.strip()
+        }
+
+        snapshot = {
+            'logical_volumes': {},
+            'sources': {},
+            'ui_groups': {},
+        }
+
+        imported_names_by_type = {
+            'solid': {
+                name
+                for object_id in object_ids.get('solid_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.solids, object_id))
+            },
+            'logical_volume': {
+                name
+                for object_id in object_ids.get('logical_volume_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.logical_volumes, object_id))
+            },
+            'assembly': {
+                name
+                for object_id in object_ids.get('assembly_ids', []) or []
+                if (name := self._find_object_name_by_id(self.current_geometry_state.assemblies, object_id))
+            },
+        }
+
+        for object_id in object_ids.get('logical_volume_ids', []) or []:
+            lv_name = self._find_object_name_by_id(self.current_geometry_state.logical_volumes, object_id)
+            if not lv_name:
+                continue
+            lv = self.current_geometry_state.logical_volumes.get(lv_name)
+            if not lv:
+                continue
+            snapshot['logical_volumes'][lv_name] = {
+                'material_ref': lv.material_ref,
+                'is_sensitive': lv.is_sensitive,
+                'vis_attributes': deepcopy(lv.vis_attributes),
+            }
+
+        for source in self.current_geometry_state.sources.values():
+            linked_pv_id = getattr(source, 'volume_link_id', None)
+            if linked_pv_id not in imported_pv_ids:
+                continue
+            snapshot['sources'][source.id] = {
+                'volume_link_name': getattr(self._find_pv_by_id(linked_pv_id), 'name', None),
+            }
+
+        for group_type, group_list in getattr(self.current_geometry_state, 'ui_groups', {}).items():
+            imported_names = imported_names_by_type.get(group_type, set())
+            if not imported_names or not isinstance(group_list, list):
+                continue
+
+            preserved_groups = []
+            for group in group_list:
+                if not isinstance(group, dict):
+                    continue
+                members = group.get('members', [])
+                if any(member in imported_names for member in members if isinstance(member, str)):
+                    preserved_groups.append(deepcopy(group))
+
+            if preserved_groups:
+                snapshot['ui_groups'][group_type] = preserved_groups
+
+        return snapshot
+
+    def _sync_linked_source_to_pv(self, source, pv, force_confine_name=True):
+        """Updates a source so it stays bound to the supplied physical volume."""
+        if not source or not pv:
+            return
+
+        global_pos, global_rot_rad = self._calculate_global_transform(pv)
+        source.position = {
+            'x': str(global_pos['x']),
+            'y': str(global_pos['y']),
+            'z': str(global_pos['z']),
+        }
+        source.rotation = {
+            'x': str(global_rot_rad['x']),
+            'y': str(global_rot_rad['y']),
+            'z': str(global_rot_rad['z']),
+        }
+        if force_confine_name or not source.confine_to_pv:
+            source.confine_to_pv = pv.name
+        source.volume_link_id = pv.id
+
+        lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
+        if lv:
+            solid = self.current_geometry_state.solids.get(lv.solid_ref)
+            if solid:
+                p = solid._evaluated_parameters
+                cmds = source.gps_commands
+
+                # Clear any old shape-specific confinement keys before applying the new shape.
+                for key in [
+                    'pos/shape', 'pos/radius', 'pos/halfx', 'pos/halfy', 'pos/halfz',
+                    'pos/sigma_x', 'pos/sigma_y', 'pos/sigma_r', 'pos/paralp',
+                    'pos/parthe', 'pos/parphi'
+                ]:
+                    cmds.pop(key, None)
+
+                MARGIN = 0.001  # mm
+                cmds['pos/type'] = 'Volume'
+                if solid.type in ['box']:
+                    cmds['pos/shape'] = 'Box'
+                    cmds['pos/halfx'] = f"{max(0, p.get('x', 0) / 2 - MARGIN)} mm"
+                    cmds['pos/halfy'] = f"{max(0, p.get('y', 0) / 2 - MARGIN)} mm"
+                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0) / 2 - MARGIN)} mm"
+                elif solid.type in ['tube', 'cylinder', 'tubs']:
+                    cmds['pos/shape'] = 'Cylinder'
+                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                    cmds['pos/halfz'] = f"{max(0, p.get('z', 0) / 2 - MARGIN)} mm"
+                elif solid.type in ['sphere', 'orb']:
+                    cmds['pos/shape'] = 'Sphere'
+                    cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
+                else:
+                    cmds['pos/shape'] = 'Sphere'
+                    cmds['pos/radius'] = '50 mm'
+
+        source._evaluated_position = global_pos
+        source._evaluated_rotation = global_rot_rad
+
+    def _restore_step_import_annotations(self, annotation_snapshot):
+        """Reapplies preserved annotations after a STEP reimport has replaced geometry."""
+        if not self.current_geometry_state or not isinstance(annotation_snapshot, dict):
+            return
+
+        for lv_name, lv_snapshot in (annotation_snapshot.get('logical_volumes') or {}).items():
+            lv = self.current_geometry_state.logical_volumes.get(lv_name)
+            if not lv or not isinstance(lv_snapshot, dict):
+                continue
+
+            material_ref = _normalize_step_import_object_name(lv_snapshot.get('material_ref'))
+            if material_ref is not None:
+                lv.material_ref = material_ref
+
+            if 'is_sensitive' in lv_snapshot:
+                lv.is_sensitive = bool(lv_snapshot.get('is_sensitive'))
+
+            if lv_snapshot.get('vis_attributes') is not None:
+                lv.vis_attributes = deepcopy(lv_snapshot.get('vis_attributes'))
+
+        for source_id, source_snapshot in (annotation_snapshot.get('sources') or {}).items():
+            if not isinstance(source_snapshot, dict):
+                continue
+
+            source = next(
+                (candidate for candidate in self.current_geometry_state.sources.values() if candidate.id == source_id),
+                None,
+            )
+            if not source:
+                continue
+
+            linked_name = _normalize_step_import_object_name(source_snapshot.get('volume_link_name'))
+            if not linked_name:
+                continue
+
+            linked_pv = self._find_pv_by_name(linked_name)
+            if not linked_pv:
+                continue
+
+            self._sync_linked_source_to_pv(source, linked_pv)
+
+        for group_type, preserved_groups in (annotation_snapshot.get('ui_groups') or {}).items():
+            live_groups = self.current_geometry_state.ui_groups.get(group_type)
+            if not isinstance(live_groups, list):
+                continue
+
+            current_names = {
+                'solid': set(self.current_geometry_state.solids.keys()),
+                'logical_volume': set(self.current_geometry_state.logical_volumes.keys()),
+                'assembly': set(self.current_geometry_state.assemblies.keys()),
+            }.get(group_type, set())
+
+            for preserved_group in preserved_groups:
+                if not isinstance(preserved_group, dict):
+                    continue
+
+                group_name = preserved_group.get('name')
+                if not isinstance(group_name, str) or not group_name.strip():
+                    continue
+
+                live_group = next((group for group in live_groups if group.get('name') == group_name), None)
+                if not live_group:
+                    continue
+
+                live_group['members'] = [
+                    member
+                    for member in preserved_group.get('members', [])
+                    if isinstance(member, str) and member.strip() and member in current_names
+                ]
+
+    def _delete_step_import_subsystem(self, cad_import_record):
+        """Deletes all objects and groups recorded for a STEP import."""
+        if not isinstance(cad_import_record, dict):
+            return False, "Invalid STEP import provenance record."
+
+        object_ids = cad_import_record.get('created_object_ids', {})
+        if not isinstance(object_ids, dict):
+            return False, "STEP import provenance record is missing created object ids."
+
+        deletion_specs = []
+        seen_specs = set()
+        for object_id in object_ids.get('placement_ids', []) or []:
+            if not isinstance(object_id, str) or not object_id.strip():
+                continue
+            spec = ('physical_volume', object_id.strip())
+            if spec in seen_specs:
+                continue
+            seen_specs.add(spec)
+            deletion_specs.append({'type': 'physical_volume', 'id': object_id.strip()})
+
+        if deletion_specs:
+            success, error_msg = self.delete_objects_batch(deletion_specs)
+            if not success:
+                return False, error_msg
+
+        deletion_specs = []
+        seen_specs = set()
+        for object_type, ids_key in (
+            ('solid', 'solid_ids'),
+            ('logical_volume', 'logical_volume_ids'),
+            ('assembly', 'assembly_ids'),
+        ):
+            for object_id in object_ids.get(ids_key, []) or []:
+                if not isinstance(object_id, str) or not object_id.strip():
+                    continue
+                resolved_id = object_id.strip()
+                if object_type == 'solid':
+                    resolved_id = self._find_object_name_by_id(self.current_geometry_state.solids, resolved_id)
+                elif object_type == 'logical_volume':
+                    resolved_id = self._find_object_name_by_id(self.current_geometry_state.logical_volumes, resolved_id)
+                elif object_type == 'assembly':
+                    resolved_id = self._find_object_name_by_id(self.current_geometry_state.assemblies, resolved_id)
+
+                if resolved_id is None:
+                    return False, f"Could not resolve imported {object_type} id '{object_id}' in the current project."
+
+                spec = (object_type, resolved_id)
+                if spec in seen_specs:
+                    continue
+                seen_specs.add(spec)
+                deletion_specs.append({'type': object_type, 'id': resolved_id})
+
+        if deletion_specs:
+            success, error_msg = self.delete_objects_batch(deletion_specs)
+            if not success:
+                return False, error_msg
+
+        group_names = cad_import_record.get('created_group_names', {})
+        if isinstance(group_names, dict):
+            for group_type in ('solid', 'logical_volume', 'assembly'):
+                group_name = group_names.get(group_type)
+                if isinstance(group_name, str) and group_name.strip():
+                    self.delete_group(group_type, group_name.strip())
+
+        return True, None
 
     def _get_next_copy_number(self, parent_lv: LogicalVolume):
         """Finds the highest copy number among children and returns the next one."""
@@ -517,6 +3064,36 @@ class ProjectManager:
                         evaluated_dict[axis] = default_val.get(axis, 0)
                 return evaluated_dict
             return default_val
+
+        def evaluate_param_dimension_part(raw_value, owner_name, path):
+            """Recursively evaluate parameterised dimension payloads."""
+            if isinstance(raw_value, dict):
+                return {
+                    key: evaluate_param_dimension_part(
+                        value,
+                        owner_name,
+                        f"{path}.{key}" if path else key,
+                    )
+                    for key, value in raw_value.items()
+                }
+            if isinstance(raw_value, list):
+                return [
+                    evaluate_param_dimension_part(
+                        item,
+                        owner_name,
+                        f"{path}[{index}]" if path else f"[{index}]",
+                    )
+                    for index, item in enumerate(raw_value)
+                ]
+            if isinstance(raw_value, (int, float)):
+                return float(raw_value)
+
+            try:
+                return float(evaluator.evaluate(str(raw_value))[1])
+            except Exception as e:
+                label = path or "parameter"
+                print(f"Warning: Could not eval param dimension '{label}' for '{owner_name}': {e}")
+                return 0.0
         
         # --- Stage 1: Iteratively resolve all defines ---
         unresolved_defines = list(state.defines.values())
@@ -882,11 +3459,7 @@ class ProjectManager:
                             # Evaluate each dimension expression for this instance
                             evaluated_dims = {}
                             for key, raw_expr in param_set.dimensions.items():
-                                try:
-                                    evaluated_dims[key] = float(evaluator.evaluate(str(raw_expr))[1])
-                                except Exception as e:
-                                    print(f"Warning: Could not eval param dimension '{key}' for '{lv.name}': {e}")
-                                    evaluated_dims[key] = 0.0
+                                evaluated_dims[key] = evaluate_param_dimension_part(raw_expr, lv.name, key)
                             param_set._evaluated_dimensions = evaluated_dims
 
 
@@ -992,6 +3565,9 @@ class ProjectManager:
         self.history = []
         self.history_index = -1
         self._capture_history_state("Loaded project from JSON")
+        
+        # Mark as changed so simulation will export fresh GDML
+        self.is_changed = True
 
         return self.current_geometry_state
 
@@ -1032,6 +3608,14 @@ class ProjectManager:
             state_dict['solids'] = filtered_solids
         
         return state_dict
+
+    def resolve_saved_run_manifest(self, sim_params=None, state=None):
+        target_state = state if state is not None else self.current_geometry_state
+        if target_state and hasattr(target_state, "scoring"):
+            scoring_state = target_state.scoring
+        else:
+            scoring_state = ScoringState()
+        return scoring_state.resolve_run_manifest(sim_params)
 
     def _validate_parameter_entry(self, name, entry, is_update=False):
         if not self.current_geometry_state:
@@ -1239,6 +3823,11 @@ class ProjectManager:
             'name': name,
             'mode': mode,
             'parameters': list(config.get('parameters', [])),
+            'simulation_source_ids': [
+                str(source_id).strip()
+                for source_id in (config.get('simulation_source_ids') or [])
+                if str(source_id).strip()
+            ],
             'grid': config.get('grid', {}) or {},
             'random': config.get('random', {}) or {},
             'objectives': config.get('objectives', []) or [],
@@ -2783,7 +5372,8 @@ class ProjectManager:
     def get_object_details(self, object_type, object_name_or_id):
         """
         Get details for a specific object by its type and name/ID.
-        'object_type' can be 'define', 'material', 'solid', 'logical_volume', 'physical_volume'.
+        'object_type' can be 'define', 'material', 'solid', 'logical_volume', 'physical_volume',
+        'environment', 'scoring', or 'detector_feature_generator'.
         For 'physical_volume', object_name_or_id would be its unique ID.
         """
         if not self.current_geometry_state: return None
@@ -2811,6 +5401,12 @@ class ProjectManager:
             obj = state.skin_surfaces.get(object_name_or_id)
         elif object_type == "border_surface":
             obj = state.border_surfaces.get(object_name_or_id)
+        elif object_type == "environment":
+            obj = state.environment
+        elif object_type == "scoring":
+            obj = state.scoring
+        elif object_type == "detector_feature_generator":
+            obj = self.get_detector_feature_generator_details(object_name_or_id)
         elif object_type == "physical_volume":
             # Search through all logical volumes to find the PV
             all_lvs = list(state.logical_volumes.values())
@@ -2842,6 +5438,8 @@ class ProjectManager:
                     obj = s
                     break
 
+        if isinstance(obj, dict):
+            return deepcopy(obj)
         return obj.to_dict() if obj else None
 
     def _normalize_update_property_path_parts(self, property_path):
@@ -2857,6 +5455,124 @@ class ProjectManager:
             return None, f"Invalid property path '{property_path}'"
 
         return path_parts, None
+
+    def _environment_field_descriptor(self, target_obj):
+        field_name = getattr(target_obj.__class__, "ENVIRONMENT_FIELD_NAME", None)
+        vector_name = getattr(target_obj.__class__, "FIELD_VECTOR_NAME", None)
+
+        if not field_name:
+            field_name = (
+                "environment.local_uniform_magnetic_field"
+                if hasattr(target_obj, "target_volume_names")
+                else "environment.global_uniform_magnetic_field"
+            )
+
+        if not vector_name:
+            vector_name = "field_vector_tesla"
+
+        return field_name, vector_name
+
+    def _normalize_environment_update_value(self, target_obj, property_path, new_value):
+        field_name, vector_name = self._environment_field_descriptor(target_obj)
+
+        if property_path == 'enabled':
+            if isinstance(new_value, bool):
+                return new_value, None
+
+            if isinstance(new_value, str):
+                normalized = new_value.strip().lower()
+                if normalized in {'true', '1', 'yes', 'on'}:
+                    return True, None
+                if normalized in {'false', '0', 'no', 'off'}:
+                    return False, None
+
+            return None, f"{field_name}.enabled must be a boolean."
+
+        string_properties = getattr(target_obj.__class__, "ENVIRONMENT_STRING_PROPERTIES", set())
+        if property_path in string_properties:
+            if new_value is None:
+                return None, f"{field_name}.{property_path} must be a non-empty string."
+
+            normalized = str(new_value).strip()
+            if not normalized:
+                return None, f"{field_name}.{property_path} must be a non-empty string."
+
+            return normalized, None
+
+        if property_path == 'target_volume_names':
+            if not hasattr(target_obj, "target_volume_names"):
+                return None, f"Invalid property path '{property_path}'"
+
+            if new_value is None:
+                return [], None
+
+            if isinstance(new_value, str):
+                raw_items = re.split(r"[,\n;]+", new_value)
+            elif isinstance(new_value, (list, tuple, set)):
+                raw_items = list(new_value)
+            else:
+                return None, f"{field_name}.target_volume_names must be an array of strings."
+
+            normalized = []
+            seen = set()
+            for raw_item in raw_items:
+                name = str(raw_item).strip()
+                if not name or name in seen:
+                    continue
+                normalized.append(name)
+                seen.add(name)
+
+            return normalized, None
+
+        numeric_properties = getattr(target_obj.__class__, "ENVIRONMENT_NUMERIC_PROPERTIES", set())
+        if property_path in numeric_properties:
+            try:
+                numeric_value = float(new_value)
+            except (TypeError, ValueError):
+                return None, f"{field_name}.{property_path} must be a finite number."
+
+            if not math.isfinite(numeric_value):
+                return None, f"{field_name}.{property_path} must be a finite number."
+
+            return numeric_value, None
+
+        if property_path.startswith(f'{vector_name}.'):
+            axis = property_path.split('.', 1)[1]
+            if axis not in {'x', 'y', 'z'}:
+                return None, f"Invalid property path '{property_path}'"
+
+            try:
+                numeric_value = float(new_value)
+            except (TypeError, ValueError):
+                return None, f"{field_name}.{vector_name}.{axis} must be a finite number."
+
+            if not math.isfinite(numeric_value):
+                return None, f"{field_name}.{vector_name}.{axis} must be a finite number."
+
+            return numeric_value, None
+
+        return None, f"Invalid property path '{property_path}'"
+
+    def _normalize_scoring_update_value(self, target_obj, property_path, new_value):
+        if not isinstance(target_obj, ScoringState):
+            return None, f"Invalid scoring state target for property path '{property_path}'"
+
+        candidate_state = target_obj.to_dict()
+
+        if property_path == 'state':
+            if not isinstance(new_value, dict):
+                return None, "scoring must be an object."
+            candidate_state = deepcopy(new_value)
+        elif property_path in {'schema_version', 'scoring_meshes', 'tally_requests', 'run_manifest_defaults'}:
+            candidate_state[property_path] = deepcopy(new_value)
+        else:
+            return None, f"Invalid property path '{property_path}'"
+
+        is_valid, validation_error = ScoringState.validate(candidate_state, field_name='scoring')
+        if not is_valid:
+            return None, validation_error
+
+        return ScoringState.from_dict(candidate_state), None
 
     def update_object_property(self, object_type, object_id, property_path, new_value):
         """
@@ -2876,6 +5592,21 @@ class ProjectManager:
         elif object_type == "material": target_obj = self.current_geometry_state.materials.get(object_id)
         elif object_type == "solid": target_obj = self.current_geometry_state.solids.get(object_id)
         elif object_type == "logical_volume": target_obj = self.current_geometry_state.logical_volumes.get(object_id)
+        elif object_type == "environment":
+            environment_objects = {
+                "global_uniform_magnetic_field": self.current_geometry_state.environment.global_uniform_magnetic_field,
+                "global_uniform_electric_field": self.current_geometry_state.environment.global_uniform_electric_field,
+                "local_uniform_magnetic_field": self.current_geometry_state.environment.local_uniform_magnetic_field,
+                "local_uniform_electric_field": self.current_geometry_state.environment.local_uniform_electric_field,
+                "region_cuts_and_limits": self.current_geometry_state.environment.region_cuts_and_limits,
+            }
+            target_obj = environment_objects.get(object_id)
+            if target_obj is None:
+                return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
+        elif object_type == "scoring":
+            if object_id != "scoring_state":
+                return False, f"Could not find object of type '{object_type}' with ID/Name '{object_id}'"
+            target_obj = self.current_geometry_state.scoring
         elif object_type == "physical_volume":
 
             # Iterate through LVs and Assemblies
@@ -2905,18 +5636,35 @@ class ProjectManager:
             return False, path_error
 
         try:
-            current_level_obj = target_obj
-            for part in path_parts[:-1]:
+            if object_type == "environment":
+                new_value, coercion_error = self._normalize_environment_update_value(target_obj, property_path, new_value)
+                if coercion_error:
+                    return False, coercion_error
+            elif object_type == "scoring":
+                next_scoring_state, coercion_error = self._normalize_scoring_update_value(
+                    target_obj,
+                    property_path,
+                    new_value,
+                )
+                if coercion_error:
+                    return False, coercion_error
+                self.current_geometry_state.scoring = next_scoring_state
+                target_obj = next_scoring_state
+                path_parts = None
+
+            if path_parts is not None:
+                current_level_obj = target_obj
+                for part in path_parts[:-1]:
+                    if isinstance(current_level_obj, dict):
+                        current_level_obj = current_level_obj[part]
+                    else:
+                        current_level_obj = getattr(current_level_obj, part)
+
+                final_key = path_parts[-1]
                 if isinstance(current_level_obj, dict):
-                    current_level_obj = current_level_obj[part]
+                    current_level_obj[final_key] = new_value
                 else:
-                    current_level_obj = getattr(current_level_obj, part)
-            
-            final_key = path_parts[-1]
-            if isinstance(current_level_obj, dict):
-                current_level_obj[final_key] = new_value
-            else:
-                setattr(current_level_obj, final_key, new_value)
+                    setattr(current_level_obj, final_key, new_value)
         except (AttributeError, KeyError, TypeError, IndexError) as e:
             return False, f"Invalid property path '{property_path}': {e}"
         
@@ -3312,19 +6060,59 @@ class ProjectManager:
         if not lv:
             return False, f"Logical Volume '{lv_name}' not found."
 
-        # Update standard properties if provided
-        if new_solid_ref and new_solid_ref in self.current_geometry_state.solids:
-            lv.solid_ref = new_solid_ref
-        if new_material_ref and new_material_ref in self.current_geometry_state.materials:
-            lv.material_ref = new_material_ref
+        success, error_msg = self._apply_logical_volume_update(
+            lv,
+            new_solid_ref=new_solid_ref,
+            new_material_ref=new_material_ref,
+            new_vis_attributes=new_vis_attributes,
+            new_is_sensitive=new_is_sensitive,
+            new_content_type=new_content_type,
+            new_content=new_content,
+            strict=False,
+        )
+        if not success:
+            return False, error_msg
+
+        # Capture the new state
+        self._capture_history_state(f"Updated LV {lv_name}")
+
+        self.recalculate_geometry_state()
+        return True, None
+
+    def _apply_logical_volume_update(
+        self,
+        lv,
+        new_solid_ref=None,
+        new_material_ref=None,
+        new_vis_attributes=None,
+        new_is_sensitive=None,
+        new_content_type=None,
+        new_content=None,
+        strict=False,
+    ):
+        """Apply a logical-volume update in-place, optionally validating references."""
+        if not self.current_geometry_state or lv is None:
+            return False, "No project loaded."
+
+        if new_solid_ref is not None:
+            if new_solid_ref in self.current_geometry_state.solids:
+                lv.solid_ref = new_solid_ref
+            elif strict:
+                return False, f"Solid '{new_solid_ref}' not found."
+
+        if new_material_ref is not None:
+            if new_material_ref in self.current_geometry_state.materials:
+                lv.material_ref = new_material_ref
+            elif strict:
+                return False, f"Material '{new_material_ref}' not found."
+
         if new_vis_attributes is not None:
             lv.vis_attributes = new_vis_attributes
+
         if new_is_sensitive is not None:
-            lv.is_sensitive = new_is_sensitive
-            
-        # Update content if provided
+            lv.is_sensitive = bool(new_is_sensitive)
+
         if new_content_type and new_content is not None and len(new_content) > 0:
-            print(f"Got new content {new_content}")
             lv.content_type = new_content_type
             if new_content_type == 'replica':
                 lv.content = ReplicaVolume.from_dict(new_content)
@@ -3332,15 +6120,89 @@ class ProjectManager:
                 lv.content = DivisionVolume.from_dict(new_content)
             elif new_content_type == 'parameterised':
                 lv.content = ParamVolume.from_dict(new_content)
-            else: # physvol
-                # This could be more complex, might need to update existing children
-                lv.content = [] 
+            else:
+                lv.content = []
 
-        # Capture the new state
-        self._capture_history_state(f"Updated LV {lv_name}")
-        
-        self.recalculate_geometry_state()
         return True, None
+
+    def update_logical_volume_batch(self, updates_list):
+        """Apply a batch of logical-volume updates atomically."""
+        if not self.current_geometry_state:
+            return False, "No project loaded.", []
+
+        if not isinstance(updates_list, list):
+            return False, "Invalid request: 'updates' must be a list.", []
+
+        normalized_updates = []
+        for index, update_data in enumerate(updates_list):
+            if not isinstance(update_data, dict):
+                return False, f"Logical volume update #{index + 1} must be an object.", []
+
+            lv_ref = update_data.get('id')
+            if lv_ref is None:
+                lv_ref = update_data.get('name')
+
+            lv_name = self._resolve_logical_volume_name(lv_ref)
+            if not lv_name:
+                return False, f"Logical Volume '{lv_ref}' not found.", []
+
+            new_solid_ref = update_data.get('solid_ref')
+            if isinstance(new_solid_ref, str):
+                new_solid_ref = new_solid_ref.strip() or None
+
+            new_material_ref = update_data.get('material_ref')
+            if isinstance(new_material_ref, str):
+                new_material_ref = new_material_ref.strip() or None
+
+            if new_solid_ref is not None and new_solid_ref not in self.current_geometry_state.solids:
+                return False, f"Solid '{new_solid_ref}' not found.", []
+
+            if new_material_ref is not None and new_material_ref not in self.current_geometry_state.materials:
+                return False, f"Material '{new_material_ref}' not found.", []
+
+            normalized_updates.append((
+                self.current_geometry_state.logical_volumes[lv_name],
+                lv_name,
+                new_solid_ref,
+                new_material_ref,
+                update_data.get('vis_attributes'),
+                update_data.get('is_sensitive'),
+                update_data.get('content_type'),
+                update_data.get('content'),
+            ))
+
+        if not normalized_updates:
+            return True, None, []
+
+        self.begin_transaction()
+        updated_lv_names = []
+
+        try:
+            for lv, lv_name, new_solid_ref, new_material_ref, new_vis_attributes, new_is_sensitive, new_content_type, new_content in normalized_updates:
+                success, error_msg = self._apply_logical_volume_update(
+                    lv,
+                    new_solid_ref=new_solid_ref,
+                    new_material_ref=new_material_ref,
+                    new_vis_attributes=new_vis_attributes,
+                    new_is_sensitive=new_is_sensitive,
+                    new_content_type=new_content_type,
+                    new_content=new_content,
+                    strict=True,
+                )
+                if not success:
+                    raise ValueError(error_msg)
+                if lv_name not in updated_lv_names:
+                    updated_lv_names.append(lv_name)
+
+            success, error_msg = self.recalculate_geometry_state()
+            if not success:
+                raise ValueError(error_msg)
+        except Exception as exc:
+            self.abort_transaction()
+            return False, str(exc), []
+
+        self.end_transaction(f"Batch update to {len(updated_lv_names)} logical volumes")
+        return True, None, updated_lv_names
 
     def add_physical_volume(self, parent_lv_name, pv_name_suggestion, placed_lv_ref, position, rotation, scale, copy_number_expr="0"):
         if not self.current_geometry_state: return None, "No project loaded"
@@ -3955,10 +6817,18 @@ class ProjectManager:
                     # Check parameterised volume dimensions
                     if hasattr(proc_obj, 'parameters'):
                         for param_set in proc_obj.parameters:
-                            for dim_val in param_set.dimensions.values():
-                                if isinstance(dim_val, str) and re.search(r'\b' + re.escape(search_str) + r'\b', dim_val):
-                                    dependencies.append(f"Parameterised Volume in '{lv.name}' (dimensions)")
-                                    break
+                            def _dimension_contains_search(value):
+                                if isinstance(value, str):
+                                    return re.search(r'\b' + re.escape(search_str) + r'\b', value) is not None
+                                if isinstance(value, dict):
+                                    return any(_dimension_contains_search(item) for item in value.values())
+                                if isinstance(value, list):
+                                    return any(_dimension_contains_search(item) for item in value)
+                                return False
+
+                            if any(_dimension_contains_search(dim_val) for dim_val in param_set.dimensions.values()):
+                                dependencies.append(f"Parameterised Volume in '{lv.name}' (dimensions)")
+                                break
                             if param_set.position == search_str:
                                 dependencies.append(f"Parameterised Volume in '{lv.name}' (position ref)")
                             if param_set.rotation == search_str:
@@ -4152,6 +7022,14 @@ class ProjectManager:
             # If this source was active in the incoming state, activate it in the current state
             if old_id in incoming_state.active_source_ids:
                 self.current_geometry_state.active_source_ids.append(new_id)
+
+        incoming_cad_imports = getattr(incoming_state, 'cad_imports', None)
+        if incoming_cad_imports:
+            if not isinstance(getattr(self.current_geometry_state, 'cad_imports', None), list):
+                self.current_geometry_state.cad_imports = []
+            for cad_import in incoming_cad_imports:
+                if isinstance(cad_import, dict):
+                    self.current_geometry_state.cad_imports.append(deepcopy(cad_import))
 
         # --- Process and Add Placements ---
         # Combine explicitly requested placements with those extracted from the incoming world
@@ -4582,31 +7460,101 @@ class ProjectManager:
             temp_path = temp_f.name
         
         try:
-            # The STEP parser now takes the options dictionary
-            imported_state = parse_step_file(temp_path, options)
+            target_import_id = _get_step_reimport_target_import_id(options)
+            target_import_index = None
+            target_import_record = None
 
-            # Set the new solids as "changed" so they will be sent to the front end
-            newly_created_solid_names = set(imported_state.solids.keys())
-            self.changed_object_ids['solids'].update(newly_created_solid_names)
-            print(f"Changed solids {self.changed_object_ids['solids']}")
-            
+            effective_options = deepcopy(options) if isinstance(options, dict) else {}
+            if target_import_id:
+                target_import_index, target_import_record = self._find_step_import_record(target_import_id)
+                if target_import_record is None:
+                    return False, f"STEP reimport target '{target_import_id}' was not found.", None
+
+                prior_options = target_import_record.get('options', {})
+                if isinstance(prior_options, dict):
+                    if not effective_options.get('groupingName'):
+                        effective_options['groupingName'] = prior_options.get('grouping_name', 'STEP_Import')
+                    if not effective_options.get('placementMode'):
+                        effective_options['placementMode'] = prior_options.get('placement_mode', 'assembly')
+                    if not effective_options.get('parentLVName') and prior_options.get('parent_lv_name') is not None:
+                        effective_options['parentLVName'] = prior_options.get('parent_lv_name')
+                    if not effective_options.get('offset'):
+                        effective_options['offset'] = deepcopy(prior_options.get('offset', {'x': '0', 'y': '0', 'z': '0'}))
+                    if 'smartImport' not in effective_options and 'smart_import' not in effective_options:
+                        effective_options['smartImport'] = bool(prior_options.get('smart_import_enabled', False))
+
+            # The STEP parser now takes the options dictionary
+            imported_state = parse_step_file(temp_path, effective_options)
+            reimport_diff_summary = None
+            if target_import_record is not None:
+                reimport_diff_summary = _build_step_import_reimport_diff_summary(
+                    self.current_geometry_state,
+                    target_import_record,
+                    imported_state,
+                )
+
+            cad_import_record = _build_step_import_provenance_record(
+                temp_path,
+                step_file_stream,
+                effective_options,
+                imported_state,
+                import_id=target_import_id,
+            )
+            smart_import_summary = _build_step_import_smart_import_summary(getattr(imported_state, 'smart_import_report', None))
+            if smart_import_summary is not None:
+                cad_import_record['smart_import_summary'] = smart_import_summary
+            if reimport_diff_summary is not None:
+                reimport_diff_summary['cleanup_policy'] = _build_step_import_reimport_cleanup_policy(reimport_diff_summary)
+                cad_import_record['reimport_diff_summary'] = reimport_diff_summary
+            imported_state.cad_imports = list(getattr(imported_state, 'cad_imports', []) or [])
+            imported_state.cad_imports.append(cad_import_record)
+
             import_report = getattr(imported_state, 'smart_import_report', None)
+            annotation_snapshot = None
+
+            if target_import_record is not None:
+                annotation_snapshot = self._snapshot_step_import_annotations(target_import_record)
+                self.begin_transaction()
+                delete_success, delete_error = self._delete_step_import_subsystem(target_import_record)
+                if not delete_success:
+                    self.abort_transaction()
+                    return False, f"Failed to reimport STEP geometry: {delete_error}", None
+
+                if isinstance(getattr(self.current_geometry_state, 'cad_imports', None), list) and target_import_index is not None:
+                    del self.current_geometry_state.cad_imports[target_import_index]
+            else:
+                target_import_index = None
 
             # The merge_from_state function already handles placements and grouping
             success, error_msg = self.merge_from_state(imported_state)
             
             if not success:
+                if target_import_record is not None:
+                    self.abort_transaction()
                 return False, f"Failed to merge STEP geometry: {error_msg}", None
+
+            if annotation_snapshot is not None:
+                self._restore_step_import_annotations(annotation_snapshot)
+
+            # Set the new solids as "changed" so they will be sent to the front end.
+            newly_created_solid_names = {solid.name for solid in imported_state.solids.values()}
+            self.changed_object_ids['solids'].update(newly_created_solid_names)
+            print(f"Changed solids {self.changed_object_ids['solids']}")
             
             # Recalculate is handled inside merge_from_state, but an extra one ensures consistency.
             self.recalculate_geometry_state()
             
-            # Capture this entire import as a single history event
-            self._capture_history_state(f"Imported STEP file '{options.get('groupingName')}'")
+            # Capture this entire import as a single history event.
+            if target_import_record is not None:
+                self.end_transaction(f"Reimported STEP file '{effective_options.get('groupingName')}'")
+            else:
+                self._capture_history_state(f"Imported STEP file '{effective_options.get('groupingName')}'")
 
             return True, None, import_report
             
         except Exception as e:
+            if target_import_record is not None:
+                self.abort_transaction()
             # Ensure we raise the error to be caught by the app route
             raise e
         finally:
@@ -4979,54 +7927,7 @@ class ProjectManager:
         
         name = self._generate_unique_name(name_suggestion, self.current_geometry_state.sources)
         
-        # If Linked, calculate global transform
-        if volume_link_id:
-             pv = self._find_pv_by_id(volume_link_id)
-             if pv:
-                # Override position/rotation with GLOBAL transform of the PV
-                global_pos, global_rot_rad = self._calculate_global_transform(pv)
-                position = {
-                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
-                }
-                rotation = {
-                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
-                }
-                # Also ensure confine_to_pv is set to the name (required for Geant4) if it wasn't passed or is empty
-                if not confine_to_pv:
-                    confine_to_pv = pv.name
-                
-                # Fetch shape info from the linked Logical Volume -> Solid
-                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
-                if lv:
-                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
-                    if solid:
-                        p = solid._evaluated_parameters
-                        
-                        # Clear any existing shape parameters to avoid conflicts (e.g. Para vs Cylinder)
-                        keys_to_remove = ['pos/shape', 'pos/radius', 'pos/halfx', 'pos/halfy', 'pos/halfz', 'pos/sigma_x', 'pos/sigma_y', 'pos/sigma_r', 'pos/paralp', 'pos/parthe', 'pos/parphi']
-                        for k in keys_to_remove:
-                            if k in gps_commands:
-                                del gps_commands[k]
-
-                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
-                        MARGIN = 0.001 # mm
-                        
-                        gps_commands['pos/type'] = 'Volume'
-                        if solid.type in ['box']:
-                            gps_commands['pos/shape'] = 'Box'
-                            gps_commands['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
-                            gps_commands['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
-                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['tube', 'cylinder', 'tubs']:
-                            gps_commands['pos/shape'] = 'Cylinder'
-                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                            gps_commands['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['sphere', 'orb']:
-                            gps_commands['pos/shape'] = 'Sphere'
-                            gps_commands['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                        else:
-                            gps_commands['pos/shape'] = 'Sphere'
-                            gps_commands['pos/radius'] = '50 mm'
+        linked_pv = self._find_pv_by_id(volume_link_id) if volume_link_id else None
 
         new_source = ParticleSource(
             name=name,
@@ -5037,6 +7938,9 @@ class ProjectManager:
             confine_to_pv=confine_to_pv,
             volume_link_id=volume_link_id
         )
+
+        if linked_pv:
+            self._sync_linked_source_to_pv(new_source, linked_pv, force_confine_name=False)
 
         self.current_geometry_state.add_source(new_source)
         
@@ -5098,60 +8002,13 @@ class ProjectManager:
         
         # Handle Linked Volume Updates
         source_to_update.volume_link_id = new_volume_link_id
-
-        # RE-CALCULATE GLOBAL POSITION AND SHAPE IF LINKED
         if source_to_update.volume_link_id:
-             pv = self._find_pv_by_id(source_to_update.volume_link_id)
-             if pv:
-                # 1. Update Transform
-                global_pos, global_rot_rad = self._calculate_global_transform(pv)
-                source_to_update.position = {
-                    'x': str(global_pos['x']), 'y': str(global_pos['y']), 'z': str(global_pos['z'])
-                }
-                source_to_update.rotation = {
-                    'x': str(global_rot_rad['x']), 'y': str(global_rot_rad['y']), 'z': str(global_rot_rad['z'])
-                }
-                # Ensure confine name matches
-                source_to_update.confine_to_pv = pv.name
-
-                # 2. Update Shape Parameters to match the Volume dimensions
-                # Fetch shape info from the linked Logical Volume -> Solid
-                lv = self.current_geometry_state.logical_volumes.get(pv.volume_ref)
-                if lv:
-                    solid = self.current_geometry_state.solids.get(lv.solid_ref)
-                    if solid:
-                        p = solid._evaluated_parameters
-                        cmds = source_to_update.gps_commands
-                        
-                        # Set default type to Volume
-                        cmds['pos/type'] = 'Volume'
-
-                        # SAFETY MARGIN: Confinement requires generated points to be strictly INSIDE.
-                        MARGIN = 0.001 # mm
-                        
-                        cmds['pos/type'] = 'Volume'
-                        if solid.type in ['box']:
-                            cmds['pos/shape'] = 'Box'
-                            cmds['pos/halfx'] = f"{max(0, p.get('x', 0)/2 - MARGIN)} mm"
-                            cmds['pos/halfy'] = f"{max(0, p.get('y', 0)/2 - MARGIN)} mm"
-                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['tube', 'cylinder', 'tubs']:
-                            cmds['pos/shape'] = 'Cylinder'
-                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                            cmds['pos/halfz'] = f"{max(0, p.get('z', 0)/2 - MARGIN)} mm"
-                        elif solid.type in ['sphere', 'orb']:
-                            cmds['pos/shape'] = 'Sphere'
-                            cmds['pos/radius'] = f"{max(0, p.get('rmax', 0) - MARGIN)} mm"
-                        else:
-                            cmds['pos/shape'] = 'Sphere'
-                            cmds['pos/radius'] = '50 mm'
-
-             else:
+            pv = self._find_pv_by_id(source_to_update.volume_link_id)
+            if pv:
+                self._sync_linked_source_to_pv(source_to_update, pv)
+            else:
                 # Linked ID not found? Maybe deleted. Clear link.
                 source_to_update.volume_link_id = None
-        else:
-             # Standard update of position/rotation if NOT linked (already handled above by basic property updates)
-             pass
 
         self._capture_history_state(f"Updated particle source {source_to_update.name}")
         # Recalculation is not strictly necessary unless commands affect evaluation,
@@ -5219,6 +8076,22 @@ class ProjectManager:
                     placements.append(pv)
 
         return placements
+
+    def _logical_volume_is_instantiated_in_scene(self, lv_name):
+        """Returns True when the logical volume currently has at least one live scene instance."""
+        state = self.current_geometry_state
+        if not state or not lv_name:
+            return False
+        if lv_name == state.world_volume_ref:
+            return True
+
+        for scene_item in state.get_threejs_scene_description():
+            if scene_item.get('is_source'):
+                continue
+            if str(scene_item.get('volume_ref') or '').strip() == lv_name:
+                return True
+
+        return False
 
     def _calculate_global_transform_matrix(self, start_pv):
         """Returns the 4x4 global transform matrix for a placed physical volume."""
@@ -6567,16 +9440,14 @@ class ProjectManager:
             str: The path to the generated macro file.
         """
         # --- Save metadata ---
+        raw_sim_params = dict(sim_params or {})
         metadata = {
             'job_id': job_id,
             'timestamp': datetime.now().isoformat(),
-            'total_events': sim_params.get('events', 1),
-            'sim_options': sim_params 
+            'total_events': raw_sim_params.get('events', 1),
+            'sim_options': raw_sim_params,
         }
         metadata_path = os.path.join(run_dir, "metadata.json")
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-            
         macro_path = os.path.join(run_dir, "run.mac")
         version_json_path = os.path.join(version_dir, "version.json")
 
@@ -6587,7 +9458,30 @@ class ProjectManager:
             
             # The GDML writer needs a GeometryState object
             temp_state = GeometryState.from_dict(state_dict)
+            resolved_run_manifest = self.resolve_saved_run_manifest(raw_sim_params, state=temp_state)
+            scoring_runtime = build_scoring_runtime_plan(temp_state.scoring.to_dict())
+            forced_run_manifest_overrides = {}
+            if scoring_runtime.get('requires_hits') and not resolved_run_manifest.get('save_hits', False):
+                resolved_run_manifest['save_hits'] = True
+                forced_run_manifest_overrides['save_hits'] = True
             gdml_string = GDMLWriter(temp_state).get_gdml_string()
+            metadata['total_events'] = resolved_run_manifest.get('events', 1)
+            metadata['resolved_run_manifest'] = resolved_run_manifest
+            metadata['environment'] = temp_state.environment.to_dict()
+            metadata['environment_summary'] = temp_state.environment.to_summary_dict()
+            metadata['scoring'] = temp_state.scoring.to_dict()
+            metadata['scoring_summary'] = temp_state.scoring.to_summary_dict()
+            metadata['scoring_runtime'] = {
+                'schema_version': scoring_runtime.get('schema_version', 1),
+                'supported_quantities': deepcopy(scoring_runtime.get('supported_quantities', [])),
+                'artifact_request_count': int(scoring_runtime.get('artifact_request_count', 0)),
+                'skipped_tally_count': int(scoring_runtime.get('skipped_tally_count', 0)),
+                'requires_hits': bool(scoring_runtime.get('requires_hits')),
+                'skipped_tallies': deepcopy(scoring_runtime.get('skipped_tallies', [])),
+                'forced_run_manifest_overrides': forced_run_manifest_overrides,
+            }
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
             
             gdml_output_path = os.path.join(run_dir, "geometry.gdml")
             with open(gdml_output_path, 'w') as f:
@@ -6606,8 +9500,8 @@ class ProjectManager:
         
         # --- Set random seed ---
         macro_content.append("\n# --- Random Seed ---")
-        seed1 = sim_params.get('seed1', 0)
-        seed2 = sim_params.get('seed2', 0)
+        seed1 = resolved_run_manifest.get('seed1', 0)
+        seed2 = resolved_run_manifest.get('seed2', 0)
         macro_content.append("\n# --- Random Seed ---")
         if seed1 > 0 and seed2 > 0:
             macro_content.append(f"/random/setSeeds {seed1} {seed2}")
@@ -6616,6 +9510,96 @@ class ProjectManager:
 
         # --- Load Geometry ---
         macro_content.append(f"/g4pet/detector/readFile geometry.gdml")
+        macro_content.append("")
+
+        # --- Global Field Configuration ---
+        global_magnetic_field = temp_state.environment.global_uniform_magnetic_field
+        global_electric_field = temp_state.environment.global_uniform_electric_field
+
+        macro_content.append("# --- Global Magnetic Field ---")
+        if global_magnetic_field.enabled:
+            vector = global_magnetic_field.field_vector_tesla
+            macro_content.append(
+                "/globalField/setValue "
+                f"{float(vector['x']):.12g} "
+                f"{float(vector['y']):.12g} "
+                f"{float(vector['z']):.12g} tesla"
+            )
+        else:
+            macro_content.append("# Global magnetic field is disabled.")
+        macro_content.append("")
+
+        macro_content.append("# --- Global Electric Field ---")
+        if global_electric_field.enabled:
+            vector = global_electric_field.field_vector_volt_per_meter
+            macro_content.append(
+                "/globalField/setElectricValue "
+                f"{float(vector['x']):.12g} "
+                f"{float(vector['y']):.12g} "
+                f"{float(vector['z']):.12g} volt/m"
+            )
+        else:
+            macro_content.append("# Global electric field is disabled.")
+        macro_content.append("")
+
+        local_magnetic_field = temp_state.environment.local_uniform_magnetic_field
+        macro_content.append("# --- Local Magnetic Field Assignments ---")
+        if local_magnetic_field.enabled and local_magnetic_field.target_volume_names:
+            for volume_name in local_magnetic_field.target_volume_names:
+                macro_content.append(
+                    "/g4pet/detector/addLocalMagField "
+                    f"{volume_name}|"
+                    f"{float(local_magnetic_field.field_vector_tesla['x']):.12g}|"
+                    f"{float(local_magnetic_field.field_vector_tesla['y']):.12g}|"
+                    f"{float(local_magnetic_field.field_vector_tesla['z']):.12g}"
+                )
+        elif local_magnetic_field.enabled:
+            macro_content.append("# Local magnetic field is enabled, but no target volumes were configured.")
+        elif local_magnetic_field.target_volume_names:
+            macro_content.append("# Local magnetic field assignment is disabled.")
+        else:
+            macro_content.append("# No local magnetic field assignments defined.")
+        macro_content.append("")
+
+        local_electric_field = temp_state.environment.local_uniform_electric_field
+        macro_content.append("# --- Local Electric Field Assignments ---")
+        if local_electric_field.enabled and local_electric_field.target_volume_names:
+            for volume_name in local_electric_field.target_volume_names:
+                macro_content.append(
+                    "/g4pet/detector/addLocalElecField "
+                    f"{volume_name}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['x']):.12g}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['y']):.12g}|"
+                    f"{float(local_electric_field.field_vector_volt_per_meter['z']):.12g}"
+                )
+        elif local_electric_field.enabled:
+            macro_content.append("# Local electric field is enabled, but no target volumes were configured.")
+        elif local_electric_field.target_volume_names:
+            macro_content.append("# Local electric field assignment is disabled.")
+        else:
+            macro_content.append("# No local electric field assignments defined.")
+        macro_content.append("")
+
+        region_controls = temp_state.environment.region_cuts_and_limits
+        macro_content.append("# --- Region Cuts And Limits ---")
+        if region_controls.enabled and region_controls.target_volume_names:
+            macro_content.append(
+                "/g4pet/detector/addRegionCutsAndLimits "
+                f"{region_controls.region_name}|"
+                f"{','.join(region_controls.target_volume_names)}|"
+                f"{float(region_controls.production_cut_mm):.12g}|"
+                f"{float(region_controls.max_step_mm):.12g}|"
+                f"{float(region_controls.max_track_length_mm):.12g}|"
+                f"{float(region_controls.max_time_ns):.12g}|"
+                f"{float(region_controls.min_kinetic_energy_mev):.12g}|"
+                f"{float(region_controls.min_range_mm):.12g}"
+            )
+        elif region_controls.enabled:
+            macro_content.append("# Region cuts and limits are enabled, but no target volumes were configured.")
+        elif region_controls.target_volume_names:
+            macro_content.append("# Region cuts and limits are disabled.")
+        else:
+            macro_content.append("# No region cuts and limits defined.")
         macro_content.append("")
 
         # --- Configure Sensitive Detectors ---
@@ -6637,20 +9621,21 @@ class ProjectManager:
 
         # --- Add production cuts ---
         macro_content.append("# --- Physics Cuts for Performance ---")
-        macro_content.append("/run/setCut 1.0 mm") # Stop tracking particles that can't travel at least 1mm
+        production_cut = str(resolved_run_manifest.get('production_cut') or '1.0 mm').strip()
+        macro_content.append(f"/run/setCut {production_cut}")
         macro_content.append("")
 
         # --- Add commands to control n-tuple saving ---
         macro_content.append("# --- N-tuple Saving Control ---")
-        save_particles = sim_params.get('save_particles', False)
-        save_hits = sim_params.get('save_hits', True)
-        save_hit_metadata = sim_params.get('save_hit_metadata', True)
+        save_particles = resolved_run_manifest.get('save_particles', False)
+        save_hits = resolved_run_manifest.get('save_hits', True)
+        save_hit_metadata = resolved_run_manifest.get('save_hit_metadata', True)
         macro_content.append(f"/g4pet/run/saveParticles {str(save_particles).lower()}")
         macro_content.append(f"/g4pet/run/saveHits {str(save_hits).lower()}")
         macro_content.append(f"/g4pet/run/saveHitMetadata {str(save_hit_metadata).lower()}")
         
         # Keep the default low enough that low-energy studies still produce hits.
-        hit_threshold = str(sim_params.get('hit_energy_threshold') or '1 eV').strip()
+        hit_threshold = str(resolved_run_manifest.get('hit_energy_threshold') or '1 eV').strip()
         macro_content.append(f"/g4pet/run/hitEnergyThreshold {hit_threshold}")
         macro_content.append("")
 
@@ -6802,7 +9787,7 @@ class ProjectManager:
         os.makedirs(tracks_dir, exist_ok=True)
         macro_content.append(f"/g4pet/event/printTracksToDir tracks/")
         
-        save_range_str = sim_params.get('save_tracks_range', '0-0')
+        save_range_str = raw_sim_params.get('save_tracks_range', '0-0')
         try:
             if '-' in save_range_str:
                 start_event, end_event = map(int, save_range_str.split('-'))
@@ -6816,17 +9801,25 @@ class ProjectManager:
         macro_content.append(f"/analysis/setFileName output.hdf5")
 
         # --- Add the print progress command ---
-        print_progress = sim_params.get('print_progress', 0)
+        print_progress = resolved_run_manifest.get('print_progress', 0)
         if print_progress > 0:
             macro_content.append(f"/run/printProgress {print_progress}")
 
         # --- Run Beam On ---
-        num_events = sim_params.get('events', 1)
+        num_events = resolved_run_manifest.get('events', 1)
         macro_content.append("\n# --- Start Simulation ---")
         macro_content.append(f"/run/beamOn {num_events}")
 
         # 3. Write the macro file
         with open(macro_path, 'w') as f:
             f.write("\n".join(macro_content))
+
+        metadata['run_manifest_summary'] = build_run_manifest_summary(
+            metadata,
+            run_dir,
+            version_id=os.path.basename(os.path.normpath(version_dir)) or None,
+        )
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
 
         return macro_path

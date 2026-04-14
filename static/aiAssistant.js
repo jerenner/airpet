@@ -315,14 +315,16 @@ async function loadHistory(force = false) {
         const res = await APIService.getAiChatHistory();
         console.log('loadHistory: received history with', res.history?.length || 0, 'messages');
         const serverHistoryLength = Array.isArray(res.history) ? res.history.length : 0;
+        const savedMessages = localStorage.getItem('airpet_unsaved_messages');
+
         if (res.history) {
             renderHistory(res.history);
             historyLoaded = true;
         }
-        
-        // Only load unsaved messages from localStorage if history is empty (no server data)
-        // Otherwise, messages are already in the server history and will be rendered below
-        const savedMessages = localStorage.getItem('airpet_unsaved_messages');
+
+        // Only load unsaved messages from localStorage if history is empty (no server data).
+        // Once the server history is available, treat it as the source of truth and
+        // clear the in-memory fallback cache so the next refresh starts clean.
         if (savedMessages && serverHistoryLength === 0) {
             try {
                 localUnsavedMessages = JSON.parse(savedMessages);
@@ -330,13 +332,18 @@ async function loadHistory(force = false) {
                     addMessageToUI(msg.role, msg.text);
                 });
                 localUnsavedMessages = [];
-                localStorage.removeItem('airpet_unsaved_messages');
             } catch (e) {
                 console.error('Failed to parse unsaved messages:', e);
+                localUnsavedMessages = [];
+            } finally {
+                localStorage.removeItem('airpet_unsaved_messages');
             }
-        } else if (savedMessages && serverHistoryLength > 0) {
-            // Clear localStorage since messages are now on the server
-            localStorage.removeItem('airpet_unsaved_messages');
+        } else {
+            localUnsavedMessages = [];
+            if (savedMessages) {
+                // Clear localStorage since messages are now on the server
+                localStorage.removeItem('airpet_unsaved_messages');
+            }
         }
     } catch (err) {
         console.error("Failed to load chat history:", err);

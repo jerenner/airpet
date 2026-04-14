@@ -1,0 +1,417 @@
+{
+  "materials": {
+    "G4_Galactic": {
+      "id": "mat_example_galactic",
+      "name": "G4_Galactic"
+    }
+  },
+  "solids": {
+    "world_solid": {
+      "id": "solid_example_world",
+      "name": "world_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "10000",
+        "y": "10000",
+        "z": "10000"
+      }
+    },
+    "starter_rect_block": {
+      "id": "solid_example_rect_base",
+      "name": "starter_rect_block",
+      "type": "box",
+      "raw_parameters": {
+        "x": "18",
+        "y": "12",
+        "z": "8"
+      }
+    },
+    "starter_circular_block": {
+      "id": "solid_example_circular_base",
+      "name": "starter_circular_block",
+      "type": "box",
+      "raw_parameters": {
+        "x": "16",
+        "y": "16",
+        "z": "8"
+      }
+    },
+    "starter_rectangular_holes__cutter": {
+      "id": "solid_example_rect_cutter",
+      "name": "starter_rectangular_holes__cutter",
+      "type": "tube",
+      "raw_parameters": {
+        "rmin": "0",
+        "rmax": "0.75",
+        "z": "6",
+        "startphi": "0",
+        "deltaphi": "360*deg"
+      }
+    },
+    "starter_rectangular_holes__result": {
+      "id": "solid_example_rect_result",
+      "name": "starter_rectangular_holes__result",
+      "type": "boolean",
+      "raw_parameters": {
+        "recipe": [
+          {
+            "op": "base",
+            "solid_ref": "starter_rect_block"
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "-3.75",
+                "y": "-3",
+                "z": "1"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "0.75",
+                "y": "-3",
+                "z": "1"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "5.25",
+                "y": "-3",
+                "z": "1"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "-3.75",
+                "y": "2",
+                "z": "1"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "0.75",
+                "y": "2",
+                "z": "1"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_rectangular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "5.25",
+                "y": "2",
+                "z": "1"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "starter_circular_holes__cutter": {
+      "id": "solid_example_circular_cutter",
+      "name": "starter_circular_holes__cutter",
+      "type": "tube",
+      "raw_parameters": {
+        "rmin": "0",
+        "rmax": "0.6",
+        "z": "5",
+        "startphi": "0",
+        "deltaphi": "360*deg"
+      }
+    },
+    "starter_circular_holes__result": {
+      "id": "solid_example_circular_result",
+      "name": "starter_circular_holes__result",
+      "type": "boolean",
+      "raw_parameters": {
+        "recipe": [
+          {
+            "op": "base",
+            "solid_ref": "starter_circular_block"
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_circular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "2.82869780703",
+                "y": "2.08155948031",
+                "z": "1.5"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_circular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "-0.5",
+                "y": "4.5",
+                "z": "1.5"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_circular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "-3.82869780703",
+                "y": "2.08155948031",
+                "z": "1.5"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_circular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "-2.55724838302",
+                "y": "-1.83155948031",
+                "z": "1.5"
+              }
+            }
+          },
+          {
+            "op": "subtraction",
+            "solid_ref": "starter_circular_holes__cutter",
+            "transform": {
+              "position": {
+                "x": "1.55724838302",
+                "y": "-1.83155948031",
+                "z": "1.5"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "logical_volumes": {
+    "World": {
+      "id": "lv_example_world",
+      "name": "World",
+      "solid_ref": "world_solid",
+      "material_ref": "G4_Galactic",
+      "content": [
+        {
+          "id": "pv_example_rect",
+          "name": "starter_rect_pv",
+          "volume_ref": "starter_rect_lv",
+          "position": {
+            "x": "-24",
+            "y": "0",
+            "z": "0"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World"
+        },
+        {
+          "id": "pv_example_circular",
+          "name": "starter_circular_pv",
+          "volume_ref": "starter_circular_lv",
+          "position": {
+            "x": "24",
+            "y": "0",
+            "z": "0"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World"
+        }
+      ]
+    },
+    "starter_rect_lv": {
+      "id": "lv_example_rect",
+      "name": "starter_rect_lv",
+      "solid_ref": "starter_rectangular_holes__result",
+      "material_ref": "G4_Galactic"
+    },
+    "starter_circular_lv": {
+      "id": "lv_example_circular",
+      "name": "starter_circular_lv",
+      "solid_ref": "starter_circular_holes__result",
+      "material_ref": "G4_Galactic"
+    }
+  },
+  "world_volume_ref": "World",
+  "detector_feature_generators": [
+    {
+      "generator_id": "dfg_example_rectangular",
+      "name": "starter_rectangular_holes",
+      "schema_version": 1,
+      "generator_type": "rectangular_drilled_hole_array",
+      "enabled": true,
+      "target": {
+        "solid_ref": {
+          "id": "solid_example_rect_base",
+          "name": "starter_rect_block"
+        },
+        "logical_volume_refs": [
+          {
+            "id": "lv_example_rect",
+            "name": "starter_rect_lv"
+          }
+        ]
+      },
+      "pattern": {
+        "count_x": 3,
+        "count_y": 2,
+        "pitch_mm": {
+          "x": 4.5,
+          "y": 5.0
+        },
+        "origin_offset_mm": {
+          "x": 0.75,
+          "y": -0.5
+        },
+        "anchor": "target_center"
+      },
+      "hole": {
+        "shape": "cylindrical",
+        "diameter_mm": 1.5,
+        "depth_mm": 6.0,
+        "axis": "z",
+        "drill_from": "positive_z_face"
+      },
+      "realization": {
+        "mode": "boolean_subtraction",
+        "status": "generated",
+        "result_solid_ref": {
+          "id": "solid_example_rect_result",
+          "name": "starter_rectangular_holes__result"
+        },
+        "generated_object_refs": {
+          "solid_refs": [
+            {
+              "id": "solid_example_rect_result",
+              "name": "starter_rectangular_holes__result"
+            },
+            {
+              "id": "solid_example_rect_cutter",
+              "name": "starter_rectangular_holes__cutter"
+            }
+          ],
+          "logical_volume_refs": [
+            {
+              "id": "lv_example_rect",
+              "name": "starter_rect_lv"
+            }
+          ],
+          "placement_refs": [
+            {
+              "id": "pv_example_rect",
+              "name": "starter_rect_pv"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "generator_id": "dfg_example_circular",
+      "name": "starter_circular_holes",
+      "schema_version": 1,
+      "generator_type": "circular_drilled_hole_array",
+      "enabled": true,
+      "target": {
+        "solid_ref": {
+          "id": "solid_example_circular_base",
+          "name": "starter_circular_block"
+        },
+        "logical_volume_refs": [
+          {
+            "id": "lv_example_circular",
+            "name": "starter_circular_lv"
+          }
+        ]
+      },
+      "pattern": {
+        "count": 5,
+        "radius_mm": 3.5,
+        "orientation_deg": 18.0,
+        "origin_offset_mm": {
+          "x": -0.5,
+          "y": 1.0
+        },
+        "anchor": "target_center"
+      },
+      "hole": {
+        "shape": "cylindrical",
+        "diameter_mm": 1.2,
+        "depth_mm": 5.0,
+        "axis": "z",
+        "drill_from": "positive_z_face"
+      },
+      "realization": {
+        "mode": "boolean_subtraction",
+        "status": "generated",
+        "result_solid_ref": {
+          "id": "solid_example_circular_result",
+          "name": "starter_circular_holes__result"
+        },
+        "generated_object_refs": {
+          "solid_refs": [
+            {
+              "id": "solid_example_circular_result",
+              "name": "starter_circular_holes__result"
+            },
+            {
+              "id": "solid_example_circular_cutter",
+              "name": "starter_circular_holes__cutter"
+            }
+          ],
+          "logical_volume_refs": [
+            {
+              "id": "lv_example_circular",
+              "name": "starter_circular_lv"
+            }
+          ],
+          "placement_refs": [
+            {
+              "id": "pv_example_circular",
+              "name": "starter_circular_pv"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

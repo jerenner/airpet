@@ -25,6 +25,30 @@ class GDMLWriter:
         self.written_materials = set()
         self.written_optical_surfaces = set()
 
+    def _format_density_for_gdml(self, mat_obj):
+        raw_density = str(mat_obj.density_expr or "").strip()
+        if not raw_density:
+            return None
+
+        evaluated_density = mat_obj._evaluated_density
+        if evaluated_density is None:
+            return {"value": raw_density, "unit": "g/cm3"}
+
+        # AIRPET stores evaluated material densities in internal g/mm^3 units
+        # when the original expression includes explicit mass/volume units such as
+        # 2.33*g/cm3. GDML expects a numeric value plus an explicit unit attribute.
+        uses_explicit_unit_expr = any(token in raw_density for token in ("*", "/", "cm3", "mm3", "m3"))
+
+        try:
+            density_value = float(evaluated_density)
+        except (TypeError, ValueError):
+            return {"value": raw_density, "unit": "g/cm3"}
+
+        if uses_explicit_unit_expr:
+            density_value *= 1000.0  # convert internal g/mm^3 -> g/cm^3
+
+        return {"value": f"{density_value:.12g}", "unit": "g/cm3"}
+
     def _add_defines(self):
         if not self.geometry_state.defines: return
         define_el = ET.SubElement(self.root, "define")
@@ -116,7 +140,9 @@ class GDMLWriter:
             mat_el = ET.SubElement(materials_el, "material", mat_attrs)
 
             if mat_obj.density_expr:
-                ET.SubElement(mat_el, "D", {"value": str(mat_obj.density_expr)})
+                density_attrs = self._format_density_for_gdml(mat_obj)
+                if density_attrs:
+                    ET.SubElement(mat_el, "D", density_attrs)
 
             if mat_obj.components:
                 for comp in mat_obj.components:
@@ -696,6 +722,7 @@ class GDMLWriter:
 
     def _write_divisionvol(self, parent_el, div_obj):
         attrs = {
+            "name": div_obj.name,
             "axis": div_obj.axis,
             "unit": div_obj.unit
         }
@@ -707,7 +734,14 @@ class GDMLWriter:
         ET.SubElement(div_el, "volumeref", {"ref": div_obj.volume_ref})
 
     def _write_replicavol(self, parent_el, rep_obj):
-        rep_el = ET.SubElement(parent_el, "replicavol", {"number": str(rep_obj.number)})
+        rep_el = ET.SubElement(
+            parent_el,
+            "replicavol",
+            {
+                "name": rep_obj.name,
+                "number": str(rep_obj.number),
+            },
+        )
         ET.SubElement(rep_el, "volumeref", {"ref": rep_obj.volume_ref})
         
         algo_el = ET.SubElement(rep_el, "replicate_along_axis")
@@ -716,7 +750,14 @@ class GDMLWriter:
         ET.SubElement(algo_el, "offset", {"value": str(rep_obj.offset)})
 
     def _write_paramvol(self, parent_el, param_obj):
-        param_el = ET.SubElement(parent_el, "paramvol", {"ncopies": str(param_obj.ncopies)})
+        param_el = ET.SubElement(
+            parent_el,
+            "paramvol",
+            {
+                "name": param_obj.name,
+                "ncopies": str(param_obj.ncopies),
+            },
+        )
         ET.SubElement(param_el, "volumeref", {"ref": param_obj.volume_ref})
         
         algo_el = ET.SubElement(param_el, "parameterised_position_size")
@@ -739,7 +780,12 @@ class GDMLWriter:
                     ET.SubElement(params_el, "rotation", rot)
 
             # Dimensions
-            ET.SubElement(params_el, param_set.dimensions_type, param_set.dimensions)
+            dim_attrs = {k: str(v) for k, v in param_set.dimensions.items() if k != "zplanes"}
+            dim_el = ET.SubElement(params_el, param_set.dimensions_type, dim_attrs)
+
+            if param_set.dimensions_type in {"polycone_dimensions", "polyhedra_dimensions"}:
+                for zplane in param_set.dimensions.get("zplanes", []):
+                    ET.SubElement(dim_el, "zplane", {k: str(v) for k, v in zplane.items()})
 
     def _write_skin_surface(self, parent_el, surf_obj):
         surf_el = ET.SubElement(parent_el, "skinsurface", {

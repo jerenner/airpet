@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import * as ExpressionInput from './expressionInput.js';
+import {
+    hasTargetVolume,
+} from './environmentFieldUi.js';
 
 let modalElement, titleElement, nameInput, solidSelect, materialSelect, confirmButton;
 let onConfirmCallback = null;
@@ -11,6 +14,7 @@ let contentTypeRadios, proceduralParamsDiv;
 let replicaStartTransformContainer, replicaStartPosContainer, replicaStartRotContainer;
 let paramSetsState = []; // Holds the data for each <parameters> block
 let lvSensitiveCheckbox;
+let lvLocalMagneticFieldCheckbox, lvLocalElectricFieldCheckbox;
 
 export function initLVEditor(callbacks) {
     onConfirmCallback = callbacks.onConfirm;
@@ -29,6 +33,8 @@ export function initLVEditor(callbacks) {
     replicaStartPosContainer = document.getElementById('replica_start_pos_container');
     replicaStartRotContainer = document.getElementById('replica_start_rot_container');
     lvSensitiveCheckbox = document.getElementById('lvEditorSensitive');
+    lvLocalMagneticFieldCheckbox = document.getElementById('lvEditorLocalMagneticField');
+    lvLocalElectricFieldCheckbox = document.getElementById('lvEditorLocalElectricField');
 
     document.getElementById('closeLVEditor').addEventListener('click', hide);
     confirmButton.addEventListener('click', handleConfirm);
@@ -39,6 +45,19 @@ export function initLVEditor(callbacks) {
     });
 
     console.log("Logical Volume Editor Initialized.");
+}
+
+function syncLocalFieldAssignmentControls(lvName = '') {
+    const magneticTargets = currentProjectState?.environment?.local_uniform_magnetic_field?.target_volume_names;
+    const electricTargets = currentProjectState?.environment?.local_uniform_electric_field?.target_volume_names;
+
+    if (lvLocalMagneticFieldCheckbox) {
+        lvLocalMagneticFieldCheckbox.checked = hasTargetVolume(magneticTargets, lvName);
+    }
+
+    if (lvLocalElectricFieldCheckbox) {
+        lvLocalElectricFieldCheckbox.checked = hasTargetVolume(electricTargets, lvName);
+    }
 }
 
 export function show(lvData = null, projectState = null) {
@@ -85,6 +104,7 @@ export function show(lvData = null, projectState = null) {
 
         // Set the checkbox state
         lvSensitiveCheckbox.checked = lvData.is_sensitive || false;
+        syncLocalFieldAssignmentControls(lvData.name);
         
         document.getElementById(`lv_type_${contentType}`).checked = true;
         renderProceduralParams(contentType, lvData.content);
@@ -105,6 +125,7 @@ export function show(lvData = null, projectState = null) {
 
         // Not a sensitive detector by default
         lvSensitiveCheckbox.checked = false;
+        syncLocalFieldAssignmentControls();
 
         // Default to standard physvol type
         document.getElementById('lv_type_physvol').checked = true;
@@ -470,7 +491,11 @@ function handleConfirm() {
         vis_attributes: visAttributes,
         is_sensitive: isSensitive,
         content_type: contentType,
-        content: content
+        content: content,
+        local_field_assignments: {
+            include_in_local_magnetic_field: Boolean(lvLocalMagneticFieldCheckbox?.checked),
+            include_in_local_electric_field: Boolean(lvLocalElectricFieldCheckbox?.checked),
+        },
     });
     
     hide();

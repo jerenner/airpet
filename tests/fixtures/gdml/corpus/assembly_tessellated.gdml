@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <define>
+    <position name="mesh_v0" unit="mm" x="0" y="0" z="0"/>
+    <position name="mesh_v1" unit="mm" x="18" y="0" z="0"/>
+    <position name="mesh_v2" unit="mm" x="9" y="14" z="0"/>
+    <position name="mesh_v3" unit="mm" x="9" y="5" z="10"/>
+  </define>
+  <materials>
+    <material name="Air" state="gas" Z="7.3">
+      <D value="1.205e-3" unit="g/cm3"/>
+      <atom value="14.61"/>
+    </material>
+    <material name="Silicon" state="solid" Z="14">
+      <D value="2.33" unit="g/cm3"/>
+      <atom value="28.085"/>
+    </material>
+    <material name="Aluminum" state="solid" Z="13">
+      <D value="2.70" unit="g/cm3"/>
+      <atom value="26.9815"/>
+    </material>
+  </materials>
+  <solids>
+    <box name="world_box" x="220" y="220" z="220" lunit="mm"/>
+    <box name="sensor_box" x="18" y="18" z="6" lunit="mm"/>
+    <box name="support_box" x="32" y="12" z="4" lunit="mm"/>
+    <box name="mesh_box" x="30" y="20" z="12" lunit="mm"/>
+    <tessellated name="roof_mesh" aunit="rad" lunit="mm">
+      <triangular vertex1="mesh_v0" vertex2="mesh_v1" vertex3="mesh_v3"/>
+      <triangular vertex1="mesh_v1" vertex2="mesh_v2" vertex3="mesh_v3"/>
+    </tessellated>
+  </solids>
+  <structure>
+    <volume name="sensor_lv">
+      <materialref ref="Silicon"/>
+      <solidref ref="sensor_box"/>
+    </volume>
+    <volume name="support_lv">
+      <materialref ref="Aluminum"/>
+      <solidref ref="support_box"/>
+    </volume>
+    <volume name="mesh_lv">
+      <materialref ref="Air"/>
+      <solidref ref="roof_mesh"/>
+    </volume>
+    <assembly name="detector_assembly">
+      <physvol name="sensor_arm_pv" copynumber="0">
+        <volumeref ref="sensor_lv"/>
+        <position unit="mm" x="0" y="0" z="0"/>
+      </physvol>
+      <physvol name="support_arm_pv" copynumber="1">
+        <volumeref ref="support_lv"/>
+        <position unit="mm" x="24" y="0" z="0"/>
+      </physvol>
+    </assembly>
+    <volume name="world_lv">
+      <materialref ref="Air"/>
+      <solidref ref="world_box"/>
+      <physvol name="assembly_pv" copynumber="1">
+        <volumeref ref="detector_assembly"/>
+        <position unit="mm" x="-35" y="0" z="0"/>
+      </physvol>
+      <physvol name="mesh_pv" copynumber="2">
+        <volumeref ref="mesh_lv"/>
+        <position unit="mm" x="35" y="0" z="15"/>
+      </physvol>
+    </volume>
+  </structure>
+  <setup name="Default" version="1.0">
+    <world ref="world_lv"/>
+  </setup>
+</gdml>

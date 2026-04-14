@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <materials>
+    <material name="Air" state="gas" Z="7.3">
+      <D value="1.205e-3" unit="g/cm3"/>
+      <atom value="14.61"/>
+    </material>
+    <material name="Aluminum" state="solid" Z="13">
+      <D value="2.70" unit="g/cm3"/>
+      <atom value="26.9815"/>
+    </material>
+    <material name="Silicon" state="solid" Z="14">
+      <D value="2.33" unit="g/cm3"/>
+      <atom value="28.085"/>
+    </material>
+  </materials>
+  <solids>
+    <box name="world_box" x="360" y="240" z="240" lunit="mm"/>
+    <box name="polycone_host_box" x="140" y="100" z="100" lunit="mm"/>
+    <polycone name="polycone_solid" startphi="0" deltaphi="180" lunit="mm" aunit="deg">
+      <zplane z="-12" rmin="0" rmax="20"/>
+      <zplane z="12" rmin="5" rmax="25"/>
+    </polycone>
+    <box name="polyhedra_host_box" x="140" y="100" z="100" lunit="mm"/>
+    <polyhedra name="polyhedra_solid" numsides="8" startphi="30" deltaphi="270" lunit="mm" aunit="deg">
+      <zplane z="-8" rmin="1" rmax="9"/>
+      <zplane z="8" rmin="2" rmax="10"/>
+    </polyhedra>
+  </solids>
+  <structure>
+    <volume name="polycone_lv">
+      <materialref ref="Aluminum"/>
+      <solidref ref="polycone_solid"/>
+    </volume>
+    <volume name="polycone_container_lv">
+      <materialref ref="Air"/>
+      <solidref ref="polycone_host_box"/>
+      <paramvol name="polycone_param" ncopies="2">
+        <volumeref ref="polycone_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <position unit="mm" x="-30" y="0" z="0"/>
+            <polycone_dimensions numRZ="2" startPhi="15" openPhi="90" lunit="mm" aunit="deg">
+              <zplane z="-12" rmin="0" rmax="20"/>
+              <zplane z="12" rmin="5" rmax="25"/>
+            </polycone_dimensions>
+          </parameters>
+          <parameters number="1">
+            <position unit="mm" x="30" y="0" z="0"/>
+            <polycone_dimensions numRZ="2" startPhi="15" openPhi="90" lunit="mm" aunit="deg">
+              <zplane z="-12" rmin="0" rmax="20"/>
+              <zplane z="12" rmin="5" rmax="25"/>
+            </polycone_dimensions>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+    <volume name="polyhedra_lv">
+      <materialref ref="Silicon"/>
+      <solidref ref="polyhedra_solid"/>
+    </volume>
+    <volume name="polyhedra_container_lv">
+      <materialref ref="Air"/>
+      <solidref ref="polyhedra_host_box"/>
+      <paramvol name="polyhedra_param" ncopies="2">
+        <volumeref ref="polyhedra_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <position unit="mm" x="-45" y="0" z="0"/>
+            <polyhedra_dimensions numRZ="2" numSide="8" startPhi="30" openPhi="120" lunit="mm" aunit="deg">
+              <zplane z="-8" rmin="1" rmax="9"/>
+              <zplane z="8" rmin="2" rmax="10"/>
+            </polyhedra_dimensions>
+          </parameters>
+          <parameters number="1">
+            <position unit="mm" x="45" y="0" z="0"/>
+            <polyhedra_dimensions numRZ="2" numSide="8" startPhi="30" openPhi="120" lunit="mm" aunit="deg">
+              <zplane z="-8" rmin="1" rmax="9"/>
+              <zplane z="8" rmin="2" rmax="10"/>
+            </polyhedra_dimensions>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+    <volume name="world_lv">
+      <materialref ref="Air"/>
+      <solidref ref="world_box"/>
+      <physvol name="polycone_container_pv" copynumber="1">
+        <volumeref ref="polycone_container_lv"/>
+        <position unit="mm" x="-70" y="0" z="0"/>
+      </physvol>
+      <physvol name="polyhedra_container_pv" copynumber="2">
+        <volumeref ref="polyhedra_container_lv"/>
+        <position unit="mm" x="70" y="0" z="0"/>
+      </physvol>
+    </volume>
+  </structure>
+  <setup name="Default" version="1.0">
+    <world ref="world_lv"/>
+  </setup>
+</gdml>

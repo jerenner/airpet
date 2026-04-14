@@ -1,0 +1,412 @@
+{
+  "defines": {
+    "si_thickness_mm": {
+      "id": "fe77ea0b-fe0b-4919-8f4f-e39439998bbc",
+      "name": "si_thickness_mm",
+      "type": "constant",
+      "raw_expression": "1.5",
+      "value": 1.5,
+      "unit": "mm",
+      "category": "geometry"
+    },
+    "si_half_x_mm": {
+      "id": "1ccc5726-e5cd-40ae-b2a3-0ba9d56cecb4",
+      "name": "si_half_x_mm",
+      "type": "constant",
+      "raw_expression": "12.5",
+      "value": 12.5,
+      "unit": "mm",
+      "category": "geometry"
+    },
+    "si_half_y_mm": {
+      "id": "0484ae2e-b15e-4ebf-9385-0a4005e22066",
+      "name": "si_half_y_mm",
+      "type": "constant",
+      "raw_expression": "12.5",
+      "value": 12.5,
+      "unit": "mm",
+      "category": "geometry"
+    },
+    "si_slab_z_mm": {
+      "id": "8249ed14-724c-4d92-86e9-adb0d716b0ab",
+      "name": "si_slab_z_mm",
+      "type": "constant",
+      "raw_expression": "0.0",
+      "value": 0.0,
+      "unit": "mm",
+      "category": "geometry"
+    },
+    "src_z_mm": {
+      "id": "f9cebf0a-9f90-4c5a-90cb-6739523666b7",
+      "name": "src_z_mm",
+      "type": "constant",
+      "raw_expression": "-20.0",
+      "value": -20.0,
+      "unit": "mm",
+      "category": "source"
+    }
+  },
+  "materials": {
+    "G4_Galactic": {
+      "id": "7c3e2f5f-9872-44be-a0a4-9368e3c13f0e",
+      "name": "G4_Galactic",
+      "mat_type": "standard",
+      "Z_expr": "1",
+      "A_expr": "1.01",
+      "density_expr": "1.0e-25",
+      "_evaluated_Z": 1,
+      "_evaluated_A": 1.01,
+      "_evaluated_density": 1e-25,
+      "state": "gas",
+      "components": []
+    },
+    "Silicon": {
+      "id": "00db97af-3aba-4f25-8019-0a556bf2a60f",
+      "name": "Silicon",
+      "mat_type": "standard",
+      "Z_expr": "14",
+      "A_expr": "28.085",
+      "density_expr": "2.33",
+      "_evaluated_Z": 14,
+      "_evaluated_A": 28.085,
+      "_evaluated_density": 2.33,
+      "state": "solid",
+      "components": []
+    }
+  },
+  "elements": {},
+  "isotopes": {},
+  "solids": {
+    "world_solid": {
+      "id": "a3523051-b0aa-4d43-a035-a8b6d817466c",
+      "name": "world_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "10000",
+        "y": "10000",
+        "z": "10000"
+      },
+      "_evaluated_parameters": {
+        "x": 10000,
+        "y": 10000,
+        "z": 10000
+      }
+    },
+    "box_solid": {
+      "id": "5437da64-c593-4e1b-8107-688a7b28244c",
+      "name": "box_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "100",
+        "y": "100",
+        "z": "100"
+      },
+      "_evaluated_parameters": {
+        "x": 100,
+        "y": 100,
+        "z": 100
+      }
+    },
+    "si_slab_solid": {
+      "id": "427f194a-84b9-467a-ac0c-82c1fa36fcd5",
+      "name": "si_slab_solid",
+      "type": "box",
+      "raw_parameters": {
+        "x": "si_half_x_mm",
+        "y": "si_half_y_mm",
+        "z": "si_thickness_mm"
+      },
+      "_evaluated_parameters": {
+        "x": 12.5,
+        "y": 12.5,
+        "z": 1.5
+      }
+    }
+  },
+  "logical_volumes": {
+    "World": {
+      "id": "5a0bb6ad-072f-4910-bbb9-4f8dc6baf10d",
+      "name": "World",
+      "solid_ref": "world_solid",
+      "material_ref": "G4_Galactic",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": [
+        {
+          "id": "2445a311-b3a5-4cdd-a7ce-2642c66ead33",
+          "name": "box_PV",
+          "volume_ref": "box_LV",
+          "copy_number_expr": "0",
+          "copy_number": 0,
+          "position": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World",
+          "_evaluated_position": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        },
+        {
+          "id": "9c386000-bb88-4b3a-b2a5-f4e9c6086fe2",
+          "name": "si_slab_pv",
+          "volume_ref": "si_slab_lv",
+          "copy_number_expr": "0",
+          "copy_number": 0,
+          "position": {
+            "x": "0",
+            "y": "0",
+            "z": "si_slab_z_mm"
+          },
+          "rotation": {
+            "x": "0",
+            "y": "0",
+            "z": "0"
+          },
+          "scale": {
+            "x": "1",
+            "y": "1",
+            "z": "1"
+          },
+          "parent_lv_name": "World",
+          "_evaluated_position": {
+            "x": 0,
+            "y": 0,
+            "z": 0.0
+          },
+          "_evaluated_rotation": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "_evaluated_scale": {
+            "x": 1,
+            "y": 1,
+            "z": 1
+          }
+        }
+      ]
+    },
+    "box_LV": {
+      "id": "934dedf9-6fe4-4f0b-b2de-8a6ef6006b60",
+      "name": "box_LV",
+      "solid_ref": "box_solid",
+      "material_ref": "G4_Galactic",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": false,
+      "content_type": "physvol",
+      "content": []
+    },
+    "si_slab_lv": {
+      "id": "bb18319c-9afc-4233-a729-3800d4edaa48",
+      "name": "si_slab_lv",
+      "solid_ref": "si_slab_solid",
+      "material_ref": "Silicon",
+      "vis_attributes": {
+        "color": {
+          "r": 0.8,
+          "g": 0.8,
+          "b": 0.8,
+          "a": 1.0
+        }
+      },
+      "is_sensitive": true,
+      "content_type": "physvol",
+      "content": []
+    }
+  },
+  "assemblies": {},
+  "world_volume_ref": "World",
+  "environment": {
+    "global_uniform_magnetic_field": {
+      "enabled": true,
+      "field_vector_tesla": {
+        "x": 0.0,
+        "y": 1.5,
+        "z": 0.0
+      }
+    },
+    "global_uniform_electric_field": {
+      "enabled": true,
+      "field_vector_volt_per_meter": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 2500.0
+      }
+    },
+    "local_uniform_magnetic_field": {
+      "enabled": false,
+      "target_volume_names": [],
+      "field_vector_tesla": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    },
+    "local_uniform_electric_field": {
+      "enabled": false,
+      "target_volume_names": [],
+      "field_vector_volt_per_meter": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    }
+  },
+  "optical_surfaces": {},
+  "skin_surfaces": {},
+  "border_surfaces": {},
+  "sources": {
+    "src_electron": {
+      "id": "37aefb71-466a-4cf8-96cb-d5f43843fdcc",
+      "name": "src_electron",
+      "type": "gps",
+      "gps_commands": {
+        "particle": "e-",
+        "ene/type": "Mono",
+        "ene/mono": "1000",
+        "ang/type": "iso",
+        "pos/type": "Point"
+      },
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": "src_z_mm"
+      },
+      "activity": 1.0,
+      "confine_to_pv": null,
+      "volume_link_id": null,
+      "_evaluated_position": {
+        "x": 0,
+        "y": 0,
+        "z": -20.0
+      },
+      "_evaluated_rotation": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    }
+  },
+  "active_source_ids": [
+    "37aefb71-466a-4cf8-96cb-d5f43843fdcc"
+  ],
+  "parameter_registry": {
+    "si_thickness": {
+      "name": "si_thickness",
+      "target_type": "define",
+      "target_ref": {
+        "name": "si_thickness_mm"
+      },
+      "bounds": {
+        "min": 0.05,
+        "max": 6.0
+      },
+      "default": 1.5,
+      "units": "mm",
+      "enabled": true,
+      "constraint_group": null
+    },
+    "src_z": {
+      "name": "src_z",
+      "target_type": "define",
+      "target_ref": {
+        "name": "src_z_mm"
+      },
+      "bounds": {
+        "min": -50.0,
+        "max": -5.0
+      },
+      "default": -20.0,
+      "units": "mm",
+      "enabled": true,
+      "constraint_group": null
+    }
+  },
+  "param_studies": {
+    "si_first_run": {
+      "name": "si_first_run",
+      "mode": "random",
+      "parameters": [
+        "si_thickness",
+        "src_z"
+      ],
+      "simulation_source_ids": [
+        "37aefb71-466a-4cf8-96cb-d5f43843fdcc"
+      ],
+      "grid": {
+        "steps": 4,
+        "per_parameter_steps": {}
+      },
+      "random": {
+        "samples": 16,
+        "seed": 42
+      },
+      "objectives": [
+        {
+          "metric": "sim_metric",
+          "name": "edep_sum",
+          "key": "edep_sum",
+          "direction": "maximize"
+        },
+        {
+          "metric": "formula",
+          "name": "score",
+          "direction": "maximize",
+          "expression": "edep_sum"
+        }
+      ]
+    }
+  },
+  "optimizer_runs": {},
+  "ui_groups": {
+    "define": [],
+    "material": [],
+    "element": [],
+    "solid": [],
+    "logical_volume": [],
+    "assembly": [],
+    "optical_surface": [],
+    "skin_surface": [],
+    "border_surface": []
+  },
+  "chat_history": []
+}

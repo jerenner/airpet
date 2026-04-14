@@ -3,9 +3,54 @@
 from typing import List, Dict, Any, Optional
 from .geometry_types import GeometryState
 
+
+def _list_detector_feature_generator_labels(state) -> List[str]:
+    labels = []
+    for entry in getattr(state, "detector_feature_generators", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        label = entry.get("name") or entry.get("generator_id")
+        if isinstance(label, str):
+            label = label.strip()
+            if label:
+                labels.append(label)
+    return labels
+
+
+def _list_scoring_mesh_labels(state) -> List[str]:
+    labels = []
+    scoring_state = getattr(state, "scoring", None)
+    for entry in getattr(scoring_state, "scoring_meshes", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        label = entry.get("name") or entry.get("mesh_id")
+        if isinstance(label, str):
+            label = label.strip()
+            if label:
+                labels.append(label)
+    return labels
+
+
+def _list_scoring_tally_labels(state) -> List[str]:
+    labels = []
+    scoring_state = getattr(state, "scoring", None)
+    for entry in getattr(scoring_state, "tally_requests", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        label = entry.get("name") or entry.get("quantity") or entry.get("tally_id")
+        if isinstance(label, str):
+            label = label.strip()
+            if label:
+                labels.append(label)
+    return labels
+
+
 def get_project_summary(pm) -> Dict[str, Any]:
     """Returns a high-level summary of the current project structure."""
     state = pm.current_geometry_state
+    detector_feature_generator_labels = _list_detector_feature_generator_labels(state)
+    scoring_mesh_labels = _list_scoring_mesh_labels(state)
+    scoring_tally_labels = _list_scoring_tally_labels(state)
     return {
         "project_name": pm.project_name,
         "world_volume": state.world_volume_ref,
@@ -16,17 +61,23 @@ def get_project_summary(pm) -> Dict[str, Any]:
             "solids": len(state.solids),
             "logical_volumes": len(state.logical_volumes),
             "assemblies": len(state.assemblies),
-            "sources": len(state.sources)
+            "sources": len(state.sources),
+            "detector_feature_generators": len(getattr(state, "detector_feature_generators", []) or []),
+            "scoring_meshes": len(getattr(state.scoring, "scoring_meshes", []) or []),
+            "scoring_tally_requests": len(getattr(state.scoring, "tally_requests", []) or []),
         },
         "names": {
             "materials": list(state.materials.keys()),
             "solids": list(state.solids.keys()),
-            "logical_volumes": list(state.logical_volumes.keys())
+            "logical_volumes": list(state.logical_volumes.keys()),
+            "detector_feature_generators": detector_feature_generator_labels,
+            "scoring_meshes": scoring_mesh_labels,
+            "scoring_tally_requests": scoring_tally_labels,
         }
     }
 
 def get_component_details(pm, component_type: str, name: str) -> Optional[Dict[str, Any]]:
-    """Returns full details for a specific component (define, material, solid, lv, assembly)."""
+    """Returns full details for a specific component (define, material, solid, lv, assembly, environment, scoring)."""
     return pm.get_object_details(component_type, name)
 
 
@@ -45,6 +96,20 @@ def _int_or_expr_param(description: str) -> Dict[str, Any]:
     return {
         "type": "string",
         "description": f"{description}. Use integer-like strings or expressions."
+    }
+
+
+def _bool_param(description: str) -> Dict[str, Any]:
+    return {
+        "type": "boolean",
+        "description": description,
+    }
+
+
+def _int_param(description: str) -> Dict[str, Any]:
+    return {
+        "type": "integer",
+        "description": description,
     }
 
 
@@ -303,6 +368,345 @@ def _create_primitive_solid_tool() -> Dict[str, Any]:
         "parameters": _build_create_primitive_solid_parameters()
     }
 
+
+def _detector_feature_object_ref_param(description: str) -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "description": (
+            f"{description} Prefer saved-state style refs with 'id' and 'name' when known; "
+            "at least one is required."
+        ),
+        "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+        },
+    }
+
+
+def _create_manage_detector_feature_generator_tool() -> Dict[str, Any]:
+    object_ref_schema = _detector_feature_object_ref_param("Object reference.")
+    return {
+        "name": "manage_detector_feature_generator",
+        "description": (
+            "Create or update a saved detector feature generator. Current MVP supports "
+            "rectangular drilled-hole arrays, a narrow circular bolt-circle variant, "
+            "a fixed absorber/sensor/support layered detector stack, a rectangular tiled sensor array, "
+            "a repeated support-rib array, a straight channel-cut array, and an annular shield sleeve. "
+            "Reuse generator_id to update an existing generator and keep realize_now=true "
+            "when you want regenerated geometry plus a deterministic realization summary back."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "generator_id": {
+                    "type": "string",
+                    "description": "Stable generator id. Reuse an existing id to update that generator in place.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable generator name. Defaults to a deterministic type-based name.",
+                },
+                "generator_type": {
+                    "type": "string",
+                    "enum": [
+                        "rectangular_drilled_hole_array",
+                        "circular_drilled_hole_array",
+                        "layered_detector_stack",
+                        "tiled_sensor_array",
+                        "support_rib_array",
+                        "channel_cut_array",
+                        "annular_shield_sleeve",
+                    ],
+                    "description": "Detector feature generator type.",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether the saved generator stays enabled.",
+                },
+                "realize_now": {
+                    "type": "boolean",
+                    "description": "If true, realize the saved generator into geometry immediately (default: true).",
+                },
+                "target": {
+                    "type": "object",
+                    "description": "Saved-state target contract for the generator.",
+                    "properties": {
+                        "solid_ref": _detector_feature_object_ref_param(
+                            "Target solid reference."
+                        ),
+                        "logical_volume_refs": {
+                            "type": "array",
+                            "description": (
+                                "Optional logical-volume refs to retarget. When omitted, matching logical "
+                                "volumes using the target solid are updated automatically."
+                            ),
+                            "items": object_ref_schema,
+                        },
+                        "parent_logical_volume_ref": _detector_feature_object_ref_param(
+                            "Parent logical-volume reference for layered detector stacks, tiled sensor arrays, support-rib arrays, and annular shield sleeves."
+                        ),
+                    },
+                },
+                "pattern": {
+                    "type": "object",
+                    "description": (
+                        "Pattern parameters for the drilled-hole array. "
+                        "Rectangular arrays use count_x/count_y/pitch_mm. "
+                        "Circular arrays use count/radius_mm/orientation_deg."
+                    ),
+                    "properties": {
+                        "count_x": {"type": "integer"},
+                        "count_y": {"type": "integer"},
+                        "count": {"type": "integer"},
+                        "pitch_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                            "required": ["x", "y"],
+                        },
+                        "radius_mm": {"type": "number"},
+                        "orientation_deg": {"type": "number"},
+                        "origin_offset_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "enum": ["target_center"],
+                        },
+                    },
+                },
+                "hole": {
+                    "type": "object",
+                    "description": "Hole geometry parameters for the generator.",
+                    "properties": {
+                        "shape": {
+                            "type": "string",
+                            "enum": ["cylindrical"],
+                        },
+                        "diameter_mm": {"type": "number"},
+                        "depth_mm": {"type": "number"},
+                        "axis": {
+                            "type": "string",
+                            "enum": ["z"],
+                        },
+                        "drill_from": {
+                            "type": "string",
+                            "enum": ["positive_z_face"],
+                        },
+                    },
+                },
+                "stack": {
+                    "type": "object",
+                    "description": (
+                        "Layered-stack parameters. Layered detector stacks use module_size_mm, "
+                        "module_count, module_pitch_mm, and origin_offset_mm."
+                    ),
+                    "properties": {
+                        "module_size_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                            "required": ["x", "y"],
+                        },
+                        "module_count": {"type": "integer"},
+                        "module_pitch_mm": {"type": "number"},
+                        "origin_offset_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "z": {"type": "number"},
+                            },
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "enum": ["target_center"],
+                        },
+                    },
+                },
+                "array": {
+                    "type": "object",
+                    "description": (
+                        "Rectangular tiled-sensor-array parameters. Tiled sensor arrays use "
+                        "count_x/count_y, pitch_mm, and origin_offset_mm. Support-rib arrays and "
+                        "channel-cut arrays use count, linear_pitch_mm, axis, and origin_offset_mm."
+                    ),
+                    "properties": {
+                        "count": {"type": "integer"},
+                        "count_x": {"type": "integer"},
+                        "count_y": {"type": "integer"},
+                        "linear_pitch_mm": {"type": "number"},
+                        "axis": {
+                            "type": "string",
+                            "enum": ["x", "y"],
+                        },
+                        "pitch_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                        },
+                        "origin_offset_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "z": {"type": "number"},
+                            },
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "enum": ["target_center"],
+                        },
+                    },
+                },
+                "rib": {
+                    "type": "object",
+                    "description": (
+                        "Generated support-rib parameters. Provide width_mm, height_mm, "
+                        "material_ref, and optional is_sensitive."
+                    ),
+                    "properties": {
+                        "width_mm": {"type": "number"},
+                        "height_mm": {"type": "number"},
+                        "material_ref": {"type": "string"},
+                        "is_sensitive": {"type": "boolean"},
+                    },
+                },
+                "channel": {
+                    "type": "object",
+                    "description": (
+                        "Straight channel-cut parameters for box targets. Provide width_mm and depth_mm."
+                    ),
+                    "properties": {
+                        "width_mm": {"type": "number"},
+                        "depth_mm": {"type": "number"},
+                    },
+                },
+                "shield": {
+                    "type": "object",
+                    "description": (
+                        "Annular shield-sleeve parameters. Provide inner_radius_mm, outer_radius_mm, "
+                        "length_mm, material_ref, and optional origin_offset_mm."
+                    ),
+                    "properties": {
+                        "inner_radius_mm": {"type": "number"},
+                        "outer_radius_mm": {"type": "number"},
+                        "length_mm": {"type": "number"},
+                        "material_ref": {"type": "string"},
+                        "origin_offset_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                                "z": {"type": "number"},
+                            },
+                        },
+                        "anchor": {
+                            "type": "string",
+                            "enum": ["target_center"],
+                        },
+                    },
+                },
+                "sensor": {
+                    "type": "object",
+                    "description": (
+                        "Generated sensor-cell parameters for tiled sensor arrays. "
+                        "Provide size_mm, thickness_mm, material_ref, and optional is_sensitive."
+                    ),
+                    "properties": {
+                        "size_mm": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "number"},
+                                "y": {"type": "number"},
+                            },
+                            "required": ["x", "y"],
+                        },
+                        "thickness_mm": {"type": "number"},
+                        "material_ref": {"type": "string"},
+                        "is_sensitive": {"type": "boolean"},
+                    },
+                },
+                "layers": {
+                    "type": "object",
+                    "description": (
+                        "Fixed three-layer sandwich for layered detector stacks. "
+                        "Provide absorber, sensor, and support entries with material_ref "
+                        "and thickness_mm; sensor can also set is_sensitive."
+                    ),
+                    "properties": {
+                        "absorber": {
+                            "type": "object",
+                            "properties": {
+                                "material_ref": {"type": "string"},
+                                "thickness_mm": {"type": "number"},
+                                "is_sensitive": {"type": "boolean"},
+                            },
+                            "required": ["material_ref", "thickness_mm"],
+                        },
+                        "sensor": {
+                            "type": "object",
+                            "properties": {
+                                "material_ref": {"type": "string"},
+                                "thickness_mm": {"type": "number"},
+                                "is_sensitive": {"type": "boolean"},
+                            },
+                            "required": ["material_ref", "thickness_mm"],
+                        },
+                        "support": {
+                            "type": "object",
+                            "properties": {
+                                "material_ref": {"type": "string"},
+                                "thickness_mm": {"type": "number"},
+                                "is_sensitive": {"type": "boolean"},
+                            },
+                            "required": ["material_ref", "thickness_mm"],
+                        },
+                    },
+                },
+            },
+            "required": ["generator_type", "target"],
+        },
+    }
+
+
+RUN_SIMULATION_OPTION_SPECS: Dict[str, Dict[str, Any]] = {
+    "production_cut": _expr_param(
+        "Geant4 production cut passed to /run/setCut (e.g. '1.0 mm')"
+    ),
+    "hit_energy_threshold": _expr_param(
+        "Hit energy threshold passed to /g4pet/run/hitEnergyThreshold (e.g. '1 eV')"
+    ),
+    "save_hits": _bool_param("Whether to save hit ntuples during the run."),
+    "save_hit_metadata": _bool_param("Whether to save per-hit metadata."),
+    "save_particles": _bool_param("Whether to save particle ntuples."),
+    "save_tracks_range": {
+        "type": "string",
+        "description": "Track event range to persist, e.g. '0-99'.",
+    },
+    "seed1": _int_param("Primary random seed. Use 0 to keep the Geant4 default."),
+    "seed2": _int_param("Secondary random seed. Use 0 to keep the Geant4 default."),
+    "print_progress": _int_param("Print progress every N events; use 0 to disable."),
+    "physics_list": {
+        "type": "string",
+        "description": "Physics list name for G4PHYSICSLIST (e.g. 'FTFP_BERT').",
+    },
+    "optical_physics": _bool_param("Whether to enable optical physics via G4OPTICALPHYSICS."),
+}
+
+
+RUN_SIMULATION_OPTION_KEYS = tuple(RUN_SIMULATION_OPTION_SPECS.keys())
+
 # Mapping of AI tools to ProjectManager methods
 AI_GEOMETRY_TOOLS = [
     {
@@ -312,19 +716,63 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "get_component_details",
-        "description": "Get the full JSON definition of a specific component to see its current parameters.",
+        "description": "Get the full JSON definition of a specific component to see its current parameters, including the saved environment, scoring state, field state, region cuts/limits state, and detector feature generator state.",
         "parameters": {
             "type": "object",
             "properties": {
                 "component_type": {
                     "type": "string", 
-                    "enum": ["define", "material", "element", "solid", "logical_volume", "assembly", "particle_source", "physical_volume"]
+                    "enum": ["define", "material", "element", "solid", "logical_volume", "assembly", "particle_source", "physical_volume", "environment", "scoring", "detector_feature_generator"]
                 },
-                "name": {"type": "string", "description": "The name of the component or its unique ID (for physical_volumes)."}
+                "name": {"type": "string", "description": "The name of the component, its unique ID (for physical_volumes), the singleton scoring id/name (for scoring), or the generator_id/name for detector feature generators."}
             },
             "required": ["component_type", "name"]
         }
     },
+    {
+        "name": "update_property",
+        "description": (
+            "Update a single property on a project object using the same path contract as the backend "
+            "/update_property route. For the global magnetic field, use object_type='environment', "
+            "object_id='global_uniform_magnetic_field', and property paths like 'enabled' or "
+            "'field_vector_tesla.x'. For the global electric field, use "
+            "object_id='global_uniform_electric_field' and property paths like 'enabled' or "
+            "'field_vector_volt_per_meter.y'. For local magnetic field assignments, use "
+            "object_id='local_uniform_magnetic_field' and property paths like 'enabled', "
+            "'target_volume_names', or 'field_vector_tesla.z'. For local electric field assignments, "
+            "use object_id='local_uniform_electric_field' and property paths like 'enabled', "
+            "'target_volume_names', or 'field_vector_volt_per_meter.z'. For region cuts and limits, use "
+            "object_id='region_cuts_and_limits' and property paths like 'enabled', "
+            "'region_name', 'target_volume_names', 'production_cut_mm', 'max_step_mm', "
+            "'max_track_length_mm', 'max_time_ns', 'min_kinetic_energy_mev', or 'min_range_mm'. "
+            "For scoring state, use object_type='scoring', object_id='scoring_state', and property paths "
+            "like 'state', 'scoring_meshes', 'tally_requests', or 'run_manifest_defaults'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "object_type": {
+                    "type": "string",
+                    "enum": ["define", "material", "solid", "logical_volume", "physical_volume", "environment", "scoring"],
+                    "description": "Type of object to update."
+                },
+                "object_id": {
+                    "type": "string",
+                    "description": "Name or ID of the target object."
+                },
+                "property_path": {
+                    "type": "string",
+                    "description": "Dot-separated property path, for example 'enabled', 'field_vector_tesla.z', or 'field_vector_volt_per_meter.z'."
+                },
+                "new_value": {
+                    "type": "string",
+                    "description": "New value to assign. Use JSON text or simple scalar strings such as 'true' or '1.5'."
+                }
+            },
+            "required": ["object_type", "object_id", "property_path", "new_value"]
+        }
+    },
+    _create_manage_detector_feature_generator_tool(),
     {
         "name": "search_components",
         "description": "Search for components by name using a regex pattern.",
@@ -548,6 +996,11 @@ AI_GEOMETRY_TOOLS = [
                     },
                     "description": "Objectives to optimize. At least one required for optimizer runs."
                 },
+                "simulation_source_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional source ids to persist with the study so simulation-in-loop runs use the same selected source subset as the UI."
+                },
                 "grid": {"type": "object", "description": "Grid-specific settings (steps, per_parameter_steps)."},
                 "random": {"type": "object", "description": "Random-specific settings (samples, seed)."}
             },
@@ -573,6 +1026,11 @@ AI_GEOMETRY_TOOLS = [
                 "sim_params": {"type": "object", "description": "Simulation runtime params (events, threads)."},
                 "sim_events": {"type": "integer", "description": "Legacy alias for sim_params.events."},
                 "sim_threads": {"type": "integer", "description": "Legacy alias for sim_params.threads."},
+                "selected_source_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional source ids to use for simulation-in-loop runs."
+                },
                 "max_wall_time_seconds": {"type": "integer", "description": "Optional run wall-time budget."},
                 "context": {"type": "object", "description": "Optional static context exposed to simulation objective extraction formulas."},
                 "keep_candidate_runs": {"type": "boolean", "description": "If true, persist per-candidate simulation output folders."},
@@ -981,7 +1439,8 @@ AI_GEOMETRY_TOOLS = [
             "type": "object",
             "properties": {
                 "events": {"type": "integer", "description": "Number of events to simulate (default: 1000)."},
-                "threads": {"type": "integer", "description": "Number of CPU threads (default: 1)."}
+                "threads": {"type": "integer", "description": "Number of CPU threads (default: 1)."},
+                **RUN_SIMULATION_OPTION_SPECS,
             }
         }
     },
@@ -1046,11 +1505,11 @@ AI_GEOMETRY_TOOLS = [
     },
     {
         "name": "insert_physics_template",
-        "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, or phantom).",
+        "description": "Insert a pre-defined high-level physics component (like a SiPM array, cryostat, phantom, or field probe slab).",
         "parameters": {
             "type": "object",
             "properties": {
-                "template_name": {"type": "string", "enum": ["sipm_array", "cryostat", "phantom"]},
+                "template_name": {"type": "string", "enum": ["sipm_array", "cryostat", "phantom", "field_probe_slab"]},
                 "params": {"type": "object", "description": "Parameters for the chosen template."},
                 "parent_lv_name": {"type": "string", "description": "Which volume to place the component into."},
                 "position": {"type": "object", "description": "Relative position of the whole component {'x':..., 'y':..., 'z':...}"}
@@ -1304,15 +1763,31 @@ AI_GEOMETRY_TOOLS = [
         }
     },
     {
+        "name": "get_scoring_summary",
+        "description": "Fetch a compact scoring-result summary for one simulation run, including the saved scoring setup summary, bundle status, and per-quantity totals when scoring artifacts exist.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "version_id": {"type": "string"},
+                "job_id": {"type": "string"}
+            },
+            "required": ["job_id"]
+        }
+    },
+    {
         "name": "get_simulation_analysis",
-        "description": "Fetch rich analysis outputs (spectra, heatmaps, volume/particle breakdown).",
+        "description": "Fetch rich analysis outputs (spectra, heatmaps, volume/particle breakdown). Optionally filter by sensitive_detector.",
         "parameters": {
             "type": "object",
             "properties": {
                 "version_id": {"type": "string"},
                 "job_id": {"type": "string"},
                 "energy_bins": {"type": "integer"},
-                "spatial_bins": {"type": "integer"}
+                "spatial_bins": {"type": "integer"},
+                "sensitive_detector": {
+                    "type": "string",
+                    "description": "Optional sensitive detector name to filter hits before building histograms and summaries."
+                }
             },
             "required": ["job_id"]
         }

@@ -4,6 +4,8 @@ import contextlib
 import difflib
 import io
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +22,13 @@ DEFAULT_ARTIFACT_PATH = (
     / "examples"
     / "preflight"
     / "scoped_preflight_route_ai_workflow_replay.json"
+)
+
+DEFAULT_SAVED_VERSION_COMPARE_ARTIFACT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "preflight"
+    / "saved_version_preflight_compare_workflow_replay.json"
 )
 
 
@@ -363,6 +372,298 @@ def run_scoped_preflight_workflow_replay(
 
 
 def format_scoped_preflight_replay_report(
+    result: dict[str, Any],
+    *,
+    artifact_path: str | None = None,
+) -> str:
+    lines: list[str] = []
+    lines.append(f"STATUS: {'PASS' if result.get('passed') else 'FAIL'}")
+    if artifact_path:
+        lines.append(f"artifact: {artifact_path}")
+    if result.get("route_path"):
+        lines.append(f"route: {result['route_path']}")
+    if result.get("ai_wrapper"):
+        lines.append(f"ai_wrapper: {result['ai_wrapper']}")
+
+    checks = result.get("checks") or []
+    passed_count = sum(1 for check in checks if check.get("ok"))
+    lines.append(f"checks: {passed_count}/{len(checks)} passed")
+
+    for check in checks:
+        status = "PASS" if check.get("ok") else "FAIL"
+        lines.append(f"- [{status}] {check.get('name')}: {check.get('details')}")
+
+    mismatches = result.get("mismatches") or []
+    if mismatches:
+        lines.append("mismatches:")
+        for mismatch in mismatches:
+            for idx, line in enumerate(str(mismatch).splitlines()):
+                prefix = "  - " if idx == 0 else "    "
+                lines.append(f"{prefix}{line}")
+
+    return "\n".join(lines)
+
+
+def _seed_saved_version_compare_fixture(
+    pm: ProjectManager,
+    *,
+    baseline_version_id: str,
+    candidate_version_id: str,
+) -> None:
+    baseline_version_dir = pm._get_version_dir(baseline_version_id)
+    candidate_version_dir = pm._get_version_dir(candidate_version_id)
+
+    os.makedirs(os.path.join(baseline_version_dir, "sim_runs"), exist_ok=True)
+    with open(os.path.join(baseline_version_dir, "version.json"), "w", encoding="utf-8") as handle:
+        handle.write(pm.save_project_to_json_string())
+
+    pm.current_geometry_state.logical_volumes["box_LV"].material_ref = "MissingMat"
+    pm.recalculate_geometry_state()
+
+    os.makedirs(os.path.join(candidate_version_dir, "sim_runs"), exist_ok=True)
+    with open(os.path.join(candidate_version_dir, "version.json"), "w", encoding="utf-8") as handle:
+        handle.write(pm.save_project_to_json_string())
+
+
+def _nested_subset_matches(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+        return all(
+            key in actual and _nested_subset_matches(actual[key], expected_value)
+            for key, expected_value in expected.items()
+        )
+
+    if isinstance(expected, list):
+        if not isinstance(actual, list) or len(actual) != len(expected):
+            return False
+        return all(
+            _nested_subset_matches(actual_item, expected_item)
+            for actual_item, expected_item in zip(actual, expected)
+        )
+
+    return actual == expected
+
+
+def run_saved_version_compare_workflow_replay(
+    artifact: dict[str, Any],
+    *,
+    max_diff_lines: int = 80,
+) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+
+    def record_check(name: str, ok: bool, details: str) -> None:
+        checks.append({"name": name, "ok": bool(ok), "details": details})
+
+    workflow = artifact.get("workflow") if isinstance(artifact, dict) else None
+    if not isinstance(workflow, dict):
+        return {
+            "passed": False,
+            "checks": [
+                {
+                    "name": "workflow",
+                    "ok": False,
+                    "details": "Artifact is missing an object-valued 'workflow' section.",
+                }
+            ],
+            "mismatches": ["Artifact is missing required 'workflow' structure."],
+        }
+
+    expected_contract = workflow.get("expected_contract")
+    if not isinstance(expected_contract, dict):
+        expected_contract = {}
+
+    expected_excerpt = artifact.get("expected_response_excerpt")
+    if not isinstance(expected_excerpt, dict):
+        expected_excerpt = {}
+
+    route_path = str(artifact.get("route") or "POST /api/preflight/compare_versions")
+    route_suffix = route_path.split(" ", 1)[1] if " " in route_path else route_path
+    ai_wrapper = str(artifact.get("ai_wrapper") or "compare_preflight_versions")
+
+    route_payload = workflow.get("route_payload") if isinstance(workflow.get("route_payload"), dict) else {}
+    ai_args = workflow.get("ai_args") if isinstance(workflow.get("ai_args"), dict) else {}
+
+    project_name = str(
+        route_payload.get("project_name")
+        or ai_args.get("project_name")
+        or artifact.get("project_name")
+        or "workflow_compare_project"
+    ).strip()
+    baseline_version_id = str(
+        route_payload.get("baseline_version_id")
+        or route_payload.get("baseline_version")
+        or route_payload.get("before_version")
+        or ai_args.get("baseline_version_id")
+        or ai_args.get("baseline_version")
+        or ai_args.get("before_version")
+        or "workflow_compare_baseline"
+    )
+    candidate_version_id = str(
+        route_payload.get("candidate_version_id")
+        or route_payload.get("candidate_version")
+        or route_payload.get("after_version")
+        or ai_args.get("candidate_version_id")
+        or ai_args.get("candidate_version")
+        or ai_args.get("after_version")
+        or "workflow_compare_candidate"
+    )
+
+    mismatches: list[str] = []
+
+    with tempfile.TemporaryDirectory() as projects_dir:
+        pm = _create_project_manager()
+        pm.projects_dir = projects_dir
+        pm.project_name = project_name
+        pm.create_empty_project()
+        _seed_saved_version_compare_fixture(
+            pm,
+            baseline_version_id=baseline_version_id,
+            candidate_version_id=candidate_version_id,
+        )
+
+        route_status_code, route_data = _call_preflight_route_with_pm(pm, route_suffix, route_payload)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            ai_data = dispatch_ai_tool(pm, ai_wrapper, ai_args)
+
+    if isinstance(expected_contract.get("route_status_code"), int):
+        status_ok = route_status_code == expected_contract["route_status_code"]
+        record_check(
+            "route_status_code",
+            status_ok,
+            f"expected={expected_contract['route_status_code']} actual={route_status_code}",
+        )
+        if not status_ok:
+            mismatches.append(
+                f"Route status mismatch: expected {expected_contract['route_status_code']}, got {route_status_code}."
+            )
+    else:
+        record_check(
+            "route_status_code",
+            False,
+            "Artifact missing integer workflow.expected_contract.route_status_code",
+        )
+        mismatches.append("Artifact contract is missing integer route_status_code.")
+
+    if "route_ai_payload_identical" in expected_contract:
+        identical_ok = route_data == ai_data
+        record_check(
+            "route_ai_payload_identical",
+            identical_ok == bool(expected_contract.get("route_ai_payload_identical")),
+            f"expected={expected_contract.get('route_ai_payload_identical')} actual={identical_ok}",
+        )
+        if bool(expected_contract.get("route_ai_payload_identical")) and not identical_ok:
+            mismatches.append(
+                "Route/AI payload mismatch:\n"
+                + _build_diff(route_data, ai_data, fromfile="route", tofile="ai", max_lines=max_diff_lines)
+            )
+    else:
+        identical_ok = route_data == ai_data
+        record_check("route_ai_payload_identical", identical_ok, f"expected=True actual={identical_ok}")
+        if not identical_ok:
+            mismatches.append(
+                "Route/AI payload mismatch:\n"
+                + _build_diff(route_data, ai_data, fromfile="route", tofile="ai", max_lines=max_diff_lines)
+            )
+
+    if "success" in expected_excerpt:
+        actual_success = route_data.get("success") if isinstance(route_data, dict) else None
+        success_ok = actual_success == expected_excerpt.get("success")
+        record_check(
+            "expected_response.success",
+            success_ok,
+            f"expected={expected_excerpt.get('success')} actual={actual_success}",
+        )
+        if not success_ok:
+            mismatches.append(
+                "expected_response_excerpt.success mismatch:\n"
+                + _build_diff(expected_excerpt.get("success"), actual_success, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    for field_name in ("project_name", "baseline_version_id", "candidate_version_id"):
+        if field_name in expected_excerpt:
+            actual_value = route_data.get(field_name) if isinstance(route_data, dict) else None
+            expected_value = expected_excerpt.get(field_name)
+            value_ok = actual_value == expected_value
+            record_check(
+                f"expected_response.{field_name}",
+                value_ok,
+                f"expected={expected_value} actual={actual_value}",
+            )
+            if not value_ok:
+                mismatches.append(
+                    f"expected_response_excerpt.{field_name} mismatch:\n"
+                    + _build_diff(expected_value, actual_value, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+                )
+
+    if "baseline_report" in expected_excerpt:
+        actual_baseline_report = route_data.get("baseline_report") if isinstance(route_data, dict) else None
+        expected_baseline_report = expected_excerpt.get("baseline_report")
+        baseline_ok = _nested_subset_matches(actual_baseline_report, expected_baseline_report)
+        record_check("expected_response.baseline_report", baseline_ok, "baseline_report subset comparison")
+        if not baseline_ok:
+            mismatches.append(
+                "expected_response_excerpt.baseline_report mismatch:\n"
+                + _build_diff(expected_baseline_report, actual_baseline_report, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    if "candidate_report" in expected_excerpt:
+        actual_candidate_report = route_data.get("candidate_report") if isinstance(route_data, dict) else None
+        expected_candidate_report = expected_excerpt.get("candidate_report")
+        candidate_ok = _nested_subset_matches(actual_candidate_report, expected_candidate_report)
+        record_check("expected_response.candidate_report", candidate_ok, "candidate_report subset comparison")
+        if not candidate_ok:
+            mismatches.append(
+                "expected_response_excerpt.candidate_report mismatch:\n"
+                + _build_diff(expected_candidate_report, actual_candidate_report, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    if "comparison" in expected_excerpt:
+        actual_comparison = route_data.get("comparison") if isinstance(route_data, dict) else None
+        expected_comparison = expected_excerpt.get("comparison")
+        comparison_ok = _nested_subset_matches(actual_comparison, expected_comparison)
+        record_check("expected_response.comparison", comparison_ok, "comparison subset comparison")
+        if not comparison_ok:
+            mismatches.append(
+                "expected_response_excerpt.comparison mismatch:\n"
+                + _build_diff(expected_comparison, actual_comparison, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    if "ordering_metadata" in expected_excerpt:
+        actual_ordering_metadata = route_data.get("ordering_metadata") if isinstance(route_data, dict) else None
+        expected_ordering_metadata = expected_excerpt.get("ordering_metadata")
+        ordering_ok = _nested_subset_matches(actual_ordering_metadata, expected_ordering_metadata)
+        record_check("expected_response.ordering_metadata", ordering_ok, "ordering_metadata subset comparison")
+        if not ordering_ok:
+            mismatches.append(
+                "expected_response_excerpt.ordering_metadata mismatch:\n"
+                + _build_diff(expected_ordering_metadata, actual_ordering_metadata, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    if "version_sources" in expected_excerpt:
+        actual_version_sources = route_data.get("version_sources") if isinstance(route_data, dict) else None
+        expected_version_sources = expected_excerpt.get("version_sources")
+        version_sources_ok = _nested_subset_matches(actual_version_sources, expected_version_sources)
+        record_check("expected_response.version_sources", version_sources_ok, "version_sources subset comparison")
+        if not version_sources_ok:
+            mismatches.append(
+                "expected_response_excerpt.version_sources mismatch:\n"
+                + _build_diff(expected_version_sources, actual_version_sources, fromfile="expected", tofile="actual", max_lines=max_diff_lines)
+            )
+
+    passed = all(check["ok"] for check in checks) and not mismatches
+
+    return {
+        "passed": passed,
+        "checks": checks,
+        "mismatches": mismatches,
+        "route_status_code": route_status_code,
+        "route_path": route_suffix,
+        "ai_wrapper": ai_wrapper,
+    }
+
+
+def format_saved_version_compare_replay_report(
     result: dict[str, Any],
     *,
     artifact_path: str | None = None,

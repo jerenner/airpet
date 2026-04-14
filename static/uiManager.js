@@ -24,9 +24,65 @@ import {
     buildScopedIssueCodeChips,
     buildScopedIssueFilterContextCopyText,
     buildScopedIssueExcerptCopyText,
+    buildScopedIssueExcerptCopyJson,
     filterScopedIssuesByBucket,
     getScopedIssueBucketDisplayLabel,
 } from './preflightScopedDiagnosticsUi.js';
+import {
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+    GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    GLOBAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+    LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+    LOCAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+    REGION_CUTS_AND_LIMITS_OBJECT_ID,
+    REGION_CUTS_AND_LIMITS_OBJECT_TYPE,
+    formatGlobalMagneticFieldSummary,
+    formatGlobalElectricFieldSummary,
+    formatLocalMagneticFieldSummary,
+    formatLocalElectricFieldSummary,
+    formatRegionCutsAndLimitsSummary,
+    normalizeLocalMagneticFieldState,
+    normalizeLocalElectricFieldState,
+    normalizeGlobalMagneticFieldState,
+    normalizeGlobalElectricFieldState,
+    normalizeRegionCutsAndLimitsState,
+    normalizeTargetVolumeNames,
+} from './environmentFieldUi.js';
+import { buildCadImportBatchContext, buildCadImportSelectionContext, describeCadImportRecord } from './cadImportUi.js';
+import {
+    describeDetectorFeatureGeneratorLaunchState,
+    describeDetectorFeatureGeneratorPanelState,
+    describeDetectorFeatureGenerator,
+    buildDetectorFeatureGeneratorSelectionContext,
+} from './detectorFeatureGeneratorsUi.js';
+import {
+    buildScoringStateWithUpdatedRunManifestDefaults,
+    buildScoringResultSummary,
+    SCORING_OBJECT_ID,
+    SCORING_OBJECT_TYPE,
+    SUPPORTED_SCORING_TALLY_QUANTITIES,
+    RUNTIME_READY_SCORING_QUANTITIES,
+    buildScoringStateWithAddedMesh,
+    compareScoringResultSummaries,
+    buildScoringStateWithRemovedMesh,
+    describeScoringMesh,
+    describeScoringPanelState,
+    describeScoringRunControls,
+    describeScoringResultComparison,
+    describeScoringResultSummary,
+    formatScoringQuantityLabel,
+    isMeshTallyEnabled,
+    normalizeScoringState,
+    replaceScoringMesh,
+    setMeshTallyEnabled,
+} from './scoringUi.js';
 
 // --- Module-level variables for DOM elements ---
 let newProjectButton, saveProjectButton, exportGdmlButton,
@@ -48,7 +104,24 @@ let newProjectButton, saveProjectButton, exportGdmlButton,
 let structureTreeRoot, assembliesListRoot, lvolumesListRoot, definesListRoot, materialsListRoot,
     elementsListRoot, isotopesListRoot, solidsListRoot, opticalSurfacesListRoot, skinSurfacesListRoot,
     borderSurfacesListRoot;
-let inspectorContentDiv;
+let inspectorContentDiv, environmentPanelRoot, cadImportsPanelRoot, detectorFeatureGeneratorsPanelRoot, scoringPanelRoot;
+let loadedScoringResultSummary = null;
+let previousLoadedScoringResultSummary = null;
+
+function setCadImportsAccordionVisibility(hasCadImports) {
+    if (!cadImportsPanelRoot) return;
+    const accordionItem = cadImportsPanelRoot.closest('.accordion-item');
+    if (!accordionItem) return;
+
+    accordionItem.hidden = !hasCadImports;
+
+    if (!hasCadImports) {
+        const content = accordionItem.querySelector('.accordion-content');
+        const toggle = accordionItem.querySelector('.accordion-toggle');
+        if (content) content.classList.remove('active');
+        if (toggle) toggle.textContent = '[+]';
+    }
+}
 
 // Project, history and undo/redo
 let projectNameDisplay, historyButton, historyPanel, closeHistoryPanel, historyListContainer,
@@ -61,6 +134,7 @@ let addPVButton;
 
 // Button for creating ring arrays
 let createRingArrayButton;
+let createDetectorFeatureGeneratorButton;
 
 // Loading overlay
 let loadingOverlay, loadingMessage;
@@ -91,14 +165,14 @@ const ITEMS_PER_GROUP = 100;
 // Simulation control variables
 let simEventsInput, runSimButton, stopSimButton, preflightButton, simOptionsButton, simConsole,
     simStatusDisplay, simOptionsModal, saveSimOptionsButton, simThreadsInput, simSeed1Input, simSeed2Input,
-    simSaveHitsCheckbox, simSaveHitMetadataCheckbox, simHitEnergyThresholdInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
+    simSaveHitsCheckbox, simSaveHitMetadataCheckbox, simHitEnergyThresholdInput, simProductionCutInput, simSaveParticlesCheckbox, simSaveTracksRangeInput, simPrintProgressInput,
     drawTracksCheckbox, drawTracksRangeInput,
     simPhysicsListSelect, simOpticalPhysicsCheckbox,
     preflightPanel, preflightSummaryLine, preflightScopeLine, preflightDeltaLine, preflightScopeHintLine,
     preflightScopeBucketsLine, preflightScopeBucketFilterRow,
     preflightBucketAllBtn, preflightBucketScopeOnlyBtn, preflightBucketOutsideOnlyBtn, preflightBucketSharedBtn,
     preflightIssueCodeChipRow,
-    preflightScopeContextRow, preflightCopyScopeContextBtn, preflightCopyScopeIssueExcerptBtn, preflightScopeContextStatus,
+    preflightScopeContextRow, preflightCopyScopeContextBtn, preflightCopyScopeIssueExcerptBtn, preflightCopyScopeIssueExcerptJsonBtn, preflightScopeContextStatus,
     preflightIssueToggleRow, preflightShowScopeIssuesBtn, preflightShowGlobalIssuesBtn,
     preflightIssuesLabel, preflightIssuesList;
 
@@ -109,6 +183,7 @@ let preflightScopedBucketFilter = 'all'; // all | scope_only | outside_scope_onl
 let preflightScopedIssueCodeFocus = ''; // active scoped issue-code focus chip
 let preflightLastScopedContextCopyText = '';
 let preflightLastScopedIssueExcerptCopyText = '';
+let preflightLastScopedIssueExcerptJsonCopyText = '';
 
 // Analysis control variables
 let analysisModal, closeAnalysisModalBtn, analysisModalButton,
@@ -160,6 +235,9 @@ let callbacks = {
     onEditLVClicked: (lvData) => { },
     onAddObjectClicked: () => { }, // To show modal
     onAddRingArrayClicked: () => { },
+    onAddDetectorFeatureGeneratorClicked: () => { },
+    onEditDetectorFeatureGeneratorClicked: (_generatorEntry) => { },
+    onRealizeDetectorFeatureGeneratorClicked: (_generatorEntry) => { },
     onConfirmAddObject: (type, name, params) => { },
     onDeleteSelectedClicked: () => { },
     onHierarchySelectionChanged: (selectedItems) => { },
@@ -173,6 +251,8 @@ let callbacks = {
     onInspectorPropertyChanged: (type, id, path, value) => { },
     onPVVisibilityToggle: (pvId, isVisible) => { },
     onAiGenerateClicked: (promptText) => { },
+    onReimportStepClicked: (file, importRecord) => { },
+    onCadImportBatchActionClicked: (action, importRecord) => { },
     onSetApiKeyClicked: () => { },
     onSaveApiKeyClicked: (apiKey) => { },
     onSourceActivationToggled: (sourceId) => { },
@@ -184,7 +264,8 @@ let callbacks = {
     onDrawTracksToggle: () => { },
     onAnalysisModalOpen: () => { },
     onRefreshAnalysisClicked: (energyBins, spatialBins, sensitiveDetector) => { },
-    onDownloadSimDataClicked: () => { }
+    onDownloadSimDataClicked: () => { },
+    onSelectHierarchyItems: (selectedIds) => { },
 };
 
 // --- Initialization ---
@@ -261,6 +342,7 @@ export function initUI(cb) {
 
     // Create ring array
     createRingArrayButton = document.getElementById('createRingArrayButton');
+    createDetectorFeatureGeneratorButton = document.getElementById('createDetectorFeatureGeneratorButton');
 
     // Hierarchy and Inspector Roots
     structureTreeRoot = document.getElementById('structure_tree_root');
@@ -271,6 +353,10 @@ export function initUI(cb) {
     elementsListRoot = document.getElementById('elements_list_root');
     solidsListRoot = document.getElementById('solids_list_root');
     inspectorContentDiv = document.getElementById('inspector_content');
+    environmentPanelRoot = document.getElementById('environment_panel_root');
+    cadImportsPanelRoot = document.getElementById('cad_imports_panel_root');
+    detectorFeatureGeneratorsPanelRoot = document.getElementById('detector_feature_generators_panel_root');
+    scoringPanelRoot = document.getElementById('scoring_panel_root');
 
 
     // Bottom panel (AI and simulation)
@@ -329,6 +415,7 @@ export function initUI(cb) {
     preflightScopeContextRow = document.getElementById('preflight_scope_context_row');
     preflightCopyScopeContextBtn = document.getElementById('preflight_copy_scope_context_btn');
     preflightCopyScopeIssueExcerptBtn = document.getElementById('preflight_copy_scope_issue_excerpt_btn');
+    preflightCopyScopeIssueExcerptJsonBtn = document.getElementById('preflight_copy_scope_issue_excerpt_json_btn');
     preflightScopeContextStatus = document.getElementById('preflight_scope_context_status');
     preflightIssueToggleRow = document.getElementById('preflight_issue_toggle_row');
     preflightShowScopeIssuesBtn = document.getElementById('preflight_show_scope_issues_btn');
@@ -345,6 +432,7 @@ export function initUI(cb) {
     simSaveHitsCheckbox = document.getElementById('simSaveHits');
     simSaveHitMetadataCheckbox = document.getElementById('simSaveHitMetadata');
     simHitEnergyThresholdInput = document.getElementById('simHitEnergyThreshold');
+    simProductionCutInput = document.getElementById('simProductionCut');
     simSaveParticlesCheckbox = document.getElementById('simSaveParticles');
     simSaveTracksRangeInput = document.getElementById('simSaveTracksRange');
     drawTracksCheckbox = document.getElementById('drawTracksCheckbox');
@@ -496,12 +584,34 @@ export function initUI(cb) {
     addPVButton.addEventListener('click', callbacks.onAddPVClicked);
     addPVButton.disabled = false;
 
-    // Create ring array button
-    createRingArrayButton.addEventListener('click', () => callbacks.onAddRingArrayClicked());
-
     // Tools dropdown toggle
     const toolsDropdownButton = document.getElementById('toolsDropdownButton');
     const toolsDropdownContent = document.getElementById('toolsDropdownContent');
+    const closeToolsDropdown = () => {
+        const dropdown = toolsDropdownButton?.parentElement;
+        if (dropdown) {
+            dropdown.classList.remove('show');
+        }
+    };
+
+    if (createDetectorFeatureGeneratorButton) {
+        createDetectorFeatureGeneratorButton.disabled = true;
+        createDetectorFeatureGeneratorButton.title = 'Open or create a project with eligible geometry before launching a detector generator.';
+        createDetectorFeatureGeneratorButton.addEventListener('click', () => {
+            closeToolsDropdown();
+            callbacks.onAddDetectorFeatureGeneratorClicked();
+        });
+    }
+
+    if (createRingArrayButton) {
+        createRingArrayButton.disabled = true;
+        createRingArrayButton.title = 'Open or create a project before launching the ring-array tool.';
+        createRingArrayButton.addEventListener('click', () => {
+            closeToolsDropdown();
+            callbacks.onAddRingArrayClicked();
+        });
+    }
+
     if (toolsDropdownButton && toolsDropdownContent) {
         toolsDropdownButton.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -735,6 +845,22 @@ export function initUI(cb) {
             const copied = await copyTextToClipboard(preflightLastScopedIssueExcerptCopyText);
             if (copied) {
                 setPreflightScopeContextStatus('Copied issue excerpt.', 'success');
+            } else {
+                setPreflightScopeContextStatus('Copy failed.', 'error');
+            }
+        });
+    }
+
+    if (preflightCopyScopeIssueExcerptJsonBtn) {
+        preflightCopyScopeIssueExcerptJsonBtn.addEventListener('click', async () => {
+            if (!preflightLastScopedIssueExcerptJsonCopyText) {
+                setPreflightScopeContextStatus('Nothing to copy yet.', 'warning');
+                return;
+            }
+
+            const copied = await copyTextToClipboard(preflightLastScopedIssueExcerptJsonCopyText);
+            if (copied) {
+                setPreflightScopeContextStatus('Copied issue excerpt JSON.', 'success');
             } else {
                 setPreflightScopeContextStatus('Copy failed.', 'error');
             }
@@ -1695,6 +1821,33 @@ export async function populateInspector(itemContext, projectState) {
         else { // It's a standard LV (or another procedural type for later)
             createReadOnlyProperty(inspectorContentDiv, "Solid Ref:", data.solid_ref);
             createReadOnlyProperty(inspectorContentDiv, "Material Ref:", data.material_ref);
+            
+            const sensitiveCheckbox = document.createElement('input');
+            sensitiveCheckbox.type = 'checkbox';
+            sensitiveCheckbox.id = 'inspector_lv_sensitive';
+            sensitiveCheckbox.checked = data.is_sensitive || false;
+            sensitiveCheckbox.style.margin = '5px 0';
+            
+            const sensitiveLabel = document.createElement('label');
+            sensitiveLabel.htmlFor = 'inspector_lv_sensitive';
+            sensitiveLabel.textContent = 'Sensitive Detector';
+            sensitiveLabel.style.display = 'block';
+            sensitiveLabel.style.marginTop = '10px';
+            sensitiveLabel.style.paddingTop = '10px';
+            sensitiveLabel.style.borderTop = '1px solid #ccc';
+            
+            sensitiveCheckbox.addEventListener('change', () => {
+                callbacks.onInspectorPropertyChanged(
+                    'logical_volume',
+                    id || name,
+                    'is_sensitive',
+                    sensitiveCheckbox.checked
+                );
+            });
+            
+            inspectorContentDiv.appendChild(sensitiveLabel);
+            inspectorContentDiv.appendChild(sensitiveCheckbox);
+            
             // Could add a list of its physvol children here if desired
         }
     } else if (type === 'replica') {
@@ -1735,9 +1888,1402 @@ function createReadOnlyProperty(parent, labelText, value) {
     propDiv.appendChild(label);
 
     const valueSpan = document.createElement('span');
-    valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
+    if (value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, 'text')) {
+        valueSpan.textContent = value.text;
+        if (value.title) {
+            valueSpan.title = value.title;
+        }
+    } else {
+        valueSpan.textContent = Array.isArray(value) ? `[Array of ${value.length}]` : value;
+    }
+    valueSpan.style.wordBreak = 'break-word';
     propDiv.appendChild(valueSpan);
     parent.appendChild(propDiv);
+}
+
+function createEnvironmentFieldInput(parent, { labelText, id, value, onChange, fieldLabel }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = 'any';
+    input.id = id;
+    input.value = String(value);
+    input.addEventListener('change', () => {
+        const nextValue = input.valueAsNumber;
+        if (!Number.isFinite(nextValue)) {
+            const axisLabel = labelText.replace(/\s*\([^)]+\)$/, '');
+            showError(`${fieldLabel} ${axisLabel} must be a finite number.`);
+            input.value = String(value);
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function createEnvironmentTextInput(parent, { labelText, id, value, onChange, placeholder = '' }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field environment-targets-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = id;
+    input.placeholder = placeholder;
+    input.value = value;
+    input.addEventListener('change', () => {
+        onChange(normalizeTargetVolumeNames(input.value));
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function createEnvironmentPlainTextInput(parent, { labelText, id, value, onChange, placeholder = '' }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field environment-targets-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = id;
+    input.placeholder = placeholder;
+    input.value = value;
+    input.addEventListener('change', () => {
+        const nextValue = input.value.trim();
+        if (!nextValue) {
+            showError(`${labelText} must be a non-empty string.`);
+            input.value = value;
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function createScoringIntegerInput(parent, { labelText, id, value, onChange, fieldLabel }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.step = '1';
+    input.id = id;
+    input.value = String(value);
+    input.addEventListener('change', () => {
+        const nextValue = Number.parseInt(input.value, 10);
+        if (!Number.isInteger(nextValue) || nextValue <= 0) {
+            const axisLabel = labelText.replace(/\s*\([^)]+\)$/, '');
+            showError(`${fieldLabel} ${axisLabel} must be a positive integer.`);
+            input.value = String(value);
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function createScoringNonNegativeIntegerInput(parent, { labelText, id, value, onChange, fieldLabel }) {
+    const fieldWrap = document.createElement('div');
+    fieldWrap.className = 'environment-vector-field';
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = labelText;
+    fieldWrap.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '1';
+    input.id = id;
+    input.value = String(value);
+    input.addEventListener('change', () => {
+        const nextValue = Number.parseInt(input.value, 10);
+        if (!Number.isInteger(nextValue) || nextValue < 0) {
+            const axisLabel = labelText.replace(/\s*\([^)]+\)$/, '');
+            showError(`${fieldLabel} ${axisLabel} must be a non-negative integer.`);
+            input.value = String(value);
+            return;
+        }
+
+        onChange(nextValue);
+    });
+    fieldWrap.appendChild(input);
+
+    parent.appendChild(fieldWrap);
+}
+
+function appendScoringResultCard(parent, described, quantityLinesKey = 'quantityLines') {
+    if (!parent || !described) return;
+
+    const card = document.createElement('div');
+    card.className = 'scoring-run-card';
+
+    const header = document.createElement('div');
+    header.className = 'scoring-run-card-header';
+
+    const titleWrap = document.createElement('div');
+
+    const title = document.createElement('div');
+    title.className = 'scoring-title';
+    title.textContent = described.title;
+    titleWrap.appendChild(title);
+
+    if (described.meta) {
+        const meta = document.createElement('div');
+        meta.className = 'scoring-run-meta';
+        meta.textContent = described.meta;
+        titleWrap.appendChild(meta);
+    }
+
+    header.appendChild(titleWrap);
+
+    if (described.statusBadge) {
+        const badge = document.createElement('code');
+        badge.className = 'scoring-status';
+        badge.textContent = described.statusBadge;
+        header.appendChild(badge);
+    }
+
+    card.appendChild(header);
+
+    if (described.summary) {
+        const summary = document.createElement('div');
+        summary.className = 'scoring-summary';
+        summary.textContent = described.summary;
+        card.appendChild(summary);
+    }
+
+    if (Array.isArray(described.detailLines) && described.detailLines.length > 0) {
+        const detailList = document.createElement('div');
+        detailList.className = 'scoring-run-details';
+        described.detailLines.forEach((line) => {
+            const detail = document.createElement('div');
+            detail.className = 'scoring-note';
+            detail.textContent = line;
+            detailList.appendChild(detail);
+        });
+        card.appendChild(detailList);
+    }
+
+    const quantityLines = Array.isArray(described[quantityLinesKey]) ? described[quantityLinesKey] : [];
+    if (quantityLines.length > 0) {
+        const quantityWrap = document.createElement('div');
+        quantityWrap.className = 'scoring-run-quantities';
+        quantityLines.forEach((line) => {
+            const pill = document.createElement('div');
+            pill.className = 'scoring-run-quantity';
+            pill.textContent = line;
+            quantityWrap.appendChild(pill);
+        });
+        card.appendChild(quantityWrap);
+    }
+
+    parent.appendChild(card);
+}
+
+export function clearLoadedScoringResultMetadata({ clearPrevious = true } = {}) {
+    loadedScoringResultSummary = null;
+    if (clearPrevious) {
+        previousLoadedScoringResultSummary = null;
+    }
+    renderScoringPanel(callbacks.getProjectState ? callbacks.getProjectState() : null);
+}
+
+export function setLoadedScoringResultMetadata(versionId, jobId, metadata, { shiftPrevious = true } = {}) {
+    const nextSummary = buildScoringResultSummary(metadata, { versionId, jobId });
+    const currentRunKey = loadedScoringResultSummary?.runKey || '';
+    if (shiftPrevious && loadedScoringResultSummary && currentRunKey && currentRunKey !== nextSummary.runKey) {
+        previousLoadedScoringResultSummary = loadedScoringResultSummary;
+    }
+    loadedScoringResultSummary = nextSummary;
+    renderScoringPanel(callbacks.getProjectState ? callbacks.getProjectState() : null);
+}
+
+function renderScoringPanel(projectState) {
+    if (!scoringPanelRoot) return;
+
+    scoringPanelRoot.innerHTML = '';
+
+    if (!projectState) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No project loaded.';
+        scoringPanelRoot.appendChild(empty);
+        return;
+    }
+
+    const scoringState = normalizeScoringState(projectState?.scoring);
+    const panelState = describeScoringPanelState(projectState);
+    const persistScoringState = (nextScoringState) => {
+        if (callbacks.onInspectorPropertyChanged) {
+            callbacks.onInspectorPropertyChanged(
+                SCORING_OBJECT_TYPE,
+                SCORING_OBJECT_ID,
+                'state',
+                nextScoringState,
+            );
+        }
+    };
+
+    const intro = document.createElement('p');
+    intro.className = 'scoring-intro';
+    intro.textContent = panelState.intro;
+    scoringPanelRoot.appendChild(intro);
+
+    if (panelState.hint) {
+        const hint = document.createElement('p');
+        hint.className = 'scoring-note';
+        hint.textContent = panelState.hint;
+        scoringPanelRoot.appendChild(hint);
+    }
+
+    const describedLoadedResult = describeScoringResultSummary(loadedScoringResultSummary);
+    if (describedLoadedResult) {
+        appendScoringResultCard(scoringPanelRoot, describedLoadedResult);
+    }
+
+    const describedComparison = describeScoringResultComparison(
+        compareScoringResultSummaries(previousLoadedScoringResultSummary, loadedScoringResultSummary),
+    );
+    if (describedComparison) {
+        appendScoringResultCard(scoringPanelRoot, describedComparison, 'deltaLines');
+    }
+
+    const describedRunControls = describeScoringRunControls(scoringState);
+    const runControlsCard = document.createElement('details');
+    runControlsCard.className = 'scoring-card';
+    runControlsCard.open = true;
+
+    const runControlsSummary = document.createElement('summary');
+    runControlsSummary.className = 'scoring-card-summary';
+    runControlsSummary.title = 'Inspect and revise the saved scoring-focused run defaults.';
+
+    const runControlsSummaryLayout = document.createElement('div');
+    runControlsSummaryLayout.className = 'scoring-card-summary-layout';
+
+    const runControlsSummaryText = document.createElement('div');
+    runControlsSummaryText.className = 'scoring-card-summary-text';
+
+    const runControlsTitle = document.createElement('div');
+    runControlsTitle.className = 'scoring-title';
+    runControlsTitle.textContent = describedRunControls.title;
+    runControlsSummaryText.appendChild(runControlsTitle);
+
+    const runControlsSummaryLine = document.createElement('div');
+    runControlsSummaryLine.className = 'scoring-summary';
+    runControlsSummaryLine.textContent = describedRunControls.summary;
+    runControlsSummaryText.appendChild(runControlsSummaryLine);
+
+    const runControlsSummaryMeta = document.createElement('div');
+    runControlsSummaryMeta.className = 'scoring-summary-meta';
+
+    const runControlsStatus = document.createElement('code');
+    runControlsStatus.className = 'scoring-status';
+    runControlsStatus.textContent = describedRunControls.statusBadge;
+    runControlsSummaryMeta.appendChild(runControlsStatus);
+
+    runControlsSummaryLayout.appendChild(runControlsSummaryText);
+    runControlsSummaryLayout.appendChild(runControlsSummaryMeta);
+    runControlsSummary.appendChild(runControlsSummaryLayout);
+    runControlsCard.appendChild(runControlsSummary);
+
+    const runControlsBody = document.createElement('div');
+    runControlsBody.className = 'scoring-card-body';
+
+    const persistRunManifestDefaults = (updates) => {
+        persistScoringState(buildScoringStateWithUpdatedRunManifestDefaults(scoringState, updates));
+    };
+
+    const executionRow = document.createElement('div');
+    executionRow.className = 'environment-vector-row';
+    createScoringIntegerInput(executionRow, {
+        labelText: 'Threads',
+        id: 'scoring_run_defaults_threads',
+        value: scoringState.run_manifest_defaults.threads,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ threads: nextValue });
+        },
+    });
+    createScoringNonNegativeIntegerInput(executionRow, {
+        labelText: 'Print Progress',
+        id: 'scoring_run_defaults_print_progress',
+        value: scoringState.run_manifest_defaults.print_progress,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ print_progress: nextValue });
+        },
+    });
+    runControlsBody.appendChild(executionRow);
+
+    const seedRow = document.createElement('div');
+    seedRow.className = 'environment-vector-row';
+    createScoringNonNegativeIntegerInput(seedRow, {
+        labelText: 'Seed 1',
+        id: 'scoring_run_defaults_seed1',
+        value: scoringState.run_manifest_defaults.seed1,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ seed1: nextValue });
+        },
+    });
+    createScoringNonNegativeIntegerInput(seedRow, {
+        labelText: 'Seed 2',
+        id: 'scoring_run_defaults_seed2',
+        value: scoringState.run_manifest_defaults.seed2,
+        fieldLabel: 'Run controls',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ seed2: nextValue });
+        },
+    });
+    runControlsBody.appendChild(seedRow);
+
+    const thresholdRow = document.createElement('div');
+    thresholdRow.className = 'environment-vector-row';
+    createEnvironmentPlainTextInput(thresholdRow, {
+        labelText: 'Production Cut',
+        id: 'scoring_run_defaults_production_cut',
+        value: scoringState.run_manifest_defaults.production_cut,
+        placeholder: '1.0 mm',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ production_cut: nextValue });
+        },
+    });
+    createEnvironmentPlainTextInput(thresholdRow, {
+        labelText: 'Hit Threshold',
+        id: 'scoring_run_defaults_hit_threshold',
+        value: scoringState.run_manifest_defaults.hit_energy_threshold,
+        placeholder: '1 eV',
+        onChange: (nextValue) => {
+            persistRunManifestDefaults({ hit_energy_threshold: nextValue });
+        },
+    });
+    runControlsBody.appendChild(thresholdRow);
+
+    const outputToggleSpecs = [
+        {
+            key: 'save_hits',
+            label: 'Save Hits',
+        },
+        {
+            key: 'save_hit_metadata',
+            label: 'Save Hit Metadata',
+        },
+        {
+            key: 'save_particles',
+            label: 'Save Particles',
+        },
+    ];
+    outputToggleSpecs.forEach(({ key, label }) => {
+        const toggleRow = document.createElement('div');
+        toggleRow.className = 'environment-toggle-row';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = `scoring_run_defaults_${key}`;
+        input.checked = Boolean(scoringState.run_manifest_defaults[key]);
+        input.addEventListener('change', () => {
+            persistRunManifestDefaults({ [key]: input.checked });
+        });
+        toggleRow.appendChild(input);
+
+        const labelEl = document.createElement('label');
+        labelEl.htmlFor = input.id;
+        labelEl.textContent = label;
+        toggleRow.appendChild(labelEl);
+
+        runControlsBody.appendChild(toggleRow);
+    });
+
+    (describedRunControls.detailLines || []).forEach((line) => {
+        const note = document.createElement('p');
+        note.className = 'scoring-note';
+        note.textContent = line;
+        runControlsBody.appendChild(note);
+    });
+
+    const runControlsEventsNote = document.createElement('p');
+    runControlsEventsNote.className = 'scoring-note';
+    runControlsEventsNote.textContent = 'Event count stays on the main run bar; these saved controls set the scoring-friendly defaults for the rest of the run manifest.';
+    runControlsBody.appendChild(runControlsEventsNote);
+
+    runControlsCard.appendChild(runControlsBody);
+    scoringPanelRoot.appendChild(runControlsCard);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'scoring-toolbar';
+
+    const addMeshButton = document.createElement('button');
+    addMeshButton.type = 'button';
+    addMeshButton.className = 'history-action-btn';
+    addMeshButton.textContent = 'Add Scoring Mesh';
+    addMeshButton.title = 'Create a new saved world-space box scoring mesh with a default energy_deposit tally.';
+    addMeshButton.addEventListener('click', () => {
+        if (callbacks.onInspectorPropertyChanged) {
+            callbacks.onInspectorPropertyChanged(
+                SCORING_OBJECT_TYPE,
+                SCORING_OBJECT_ID,
+                'state',
+                buildScoringStateWithAddedMesh(scoringState),
+            );
+        }
+    });
+    toolbar.appendChild(addMeshButton);
+    scoringPanelRoot.appendChild(toolbar);
+
+    if (scoringState.scoring_meshes.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'scoring-empty';
+        empty.textContent = panelState.empty;
+        scoringPanelRoot.appendChild(empty);
+        return;
+    }
+
+    scoringState.scoring_meshes.forEach((mesh, index) => {
+        const described = describeScoringMesh(mesh, scoringState);
+        const card = document.createElement('details');
+        card.className = 'scoring-card';
+        card.open = panelState.defaultExpandedIndex === index;
+
+        const summary = document.createElement('summary');
+        summary.className = 'scoring-card-summary';
+        summary.title = 'Inspect and revise this saved scoring mesh.';
+
+        const summaryLayout = document.createElement('div');
+        summaryLayout.className = 'scoring-card-summary-layout';
+
+        const summaryText = document.createElement('div');
+        summaryText.className = 'scoring-card-summary-text';
+
+        const title = document.createElement('div');
+        title.className = 'scoring-title';
+        title.textContent = described.title;
+        summaryText.appendChild(title);
+
+        const summaryLine = document.createElement('div');
+        summaryLine.className = 'scoring-summary';
+        summaryLine.textContent = described.summary;
+        summaryText.appendChild(summaryLine);
+
+        const summaryMeta = document.createElement('div');
+        summaryMeta.className = 'scoring-summary-meta';
+
+        const statusBadge = document.createElement('code');
+        statusBadge.className = 'scoring-status';
+        statusBadge.textContent = described.statusBadge;
+        summaryMeta.appendChild(statusBadge);
+
+        const summaryActions = document.createElement('div');
+        summaryActions.className = 'scoring-summary-actions';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'history-action-btn';
+        deleteButton.textContent = 'Delete';
+        deleteButton.title = 'Remove this scoring mesh and any tally requests that target it.';
+        deleteButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!confirmAction(`Delete scoring mesh '${mesh.name}' and its saved tally requests?`)) {
+                return;
+            }
+            persistScoringState(buildScoringStateWithRemovedMesh(scoringState, mesh.mesh_id));
+        });
+        summaryActions.appendChild(deleteButton);
+
+        summaryMeta.appendChild(summaryActions);
+        summaryLayout.appendChild(summaryText);
+        summaryLayout.appendChild(summaryMeta);
+        summary.appendChild(summaryLayout);
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'scoring-card-body';
+
+        const enabledRow = document.createElement('div');
+        enabledRow.className = 'environment-toggle-row';
+
+        const enabledInput = document.createElement('input');
+        enabledInput.type = 'checkbox';
+        enabledInput.id = `scoring_mesh_enabled_${mesh.mesh_id}`;
+        enabledInput.checked = Boolean(mesh.enabled);
+        enabledInput.addEventListener('change', () => {
+            persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                ...mesh,
+                enabled: enabledInput.checked,
+            }));
+        });
+        enabledRow.appendChild(enabledInput);
+
+        const enabledLabel = document.createElement('label');
+        enabledLabel.htmlFor = enabledInput.id;
+        enabledLabel.textContent = 'Mesh Enabled';
+        enabledRow.appendChild(enabledLabel);
+
+        body.appendChild(enabledRow);
+
+        const nameRow = document.createElement('div');
+        nameRow.className = 'environment-vector-row';
+        createEnvironmentPlainTextInput(nameRow, {
+            labelText: 'Mesh Name',
+            id: `scoring_mesh_name_${mesh.mesh_id}`,
+            value: mesh.name,
+            placeholder: 'study_mesh',
+            onChange: (nextValue) => {
+                persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                    ...mesh,
+                    name: nextValue,
+                }));
+            },
+        });
+        body.appendChild(nameRow);
+
+        const centerRow = document.createElement('div');
+        centerRow.className = 'environment-vector-row';
+        ['x', 'y', 'z'].forEach((axis) => {
+            createEnvironmentFieldInput(centerRow, {
+                labelText: `Center ${axis.toUpperCase()} (mm)`,
+                id: `scoring_mesh_center_${mesh.mesh_id}_${axis}`,
+                value: mesh.geometry.center_mm[axis],
+                fieldLabel: 'Scoring mesh center',
+                onChange: (nextValue) => {
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                        ...mesh,
+                        geometry: {
+                            ...mesh.geometry,
+                            center_mm: {
+                                ...mesh.geometry.center_mm,
+                                [axis]: nextValue,
+                            },
+                        },
+                    }));
+                },
+            });
+        });
+        body.appendChild(centerRow);
+
+        const sizeRow = document.createElement('div');
+        sizeRow.className = 'environment-vector-row';
+        ['x', 'y', 'z'].forEach((axis) => {
+            createEnvironmentFieldInput(sizeRow, {
+                labelText: `Size ${axis.toUpperCase()} (mm)`,
+                id: `scoring_mesh_size_${mesh.mesh_id}_${axis}`,
+                value: mesh.geometry.size_mm[axis],
+                fieldLabel: 'Scoring mesh size',
+                onChange: (nextValue) => {
+                    if (nextValue <= 0) {
+                        showError(`Scoring mesh size ${axis.toUpperCase()} must be greater than zero.`);
+                        return;
+                    }
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                        ...mesh,
+                        geometry: {
+                            ...mesh.geometry,
+                            size_mm: {
+                                ...mesh.geometry.size_mm,
+                                [axis]: nextValue,
+                            },
+                        },
+                    }));
+                },
+            });
+        });
+        body.appendChild(sizeRow);
+
+        const binsRow = document.createElement('div');
+        binsRow.className = 'environment-vector-row';
+        ['x', 'y', 'z'].forEach((axis) => {
+            createScoringIntegerInput(binsRow, {
+                labelText: `Bins ${axis.toUpperCase()}`,
+                id: `scoring_mesh_bins_${mesh.mesh_id}_${axis}`,
+                value: mesh.bins[axis],
+                fieldLabel: 'Scoring mesh bins',
+                onChange: (nextValue) => {
+                    persistScoringState(replaceScoringMesh(scoringState, mesh.mesh_id, {
+                        ...mesh,
+                        bins: {
+                            ...mesh.bins,
+                            [axis]: nextValue,
+                        },
+                    }));
+                },
+            });
+        });
+        body.appendChild(binsRow);
+
+        const tallyLabel = document.createElement('div');
+        tallyLabel.className = 'scoring-field-label';
+        tallyLabel.textContent = 'Tallies';
+        body.appendChild(tallyLabel);
+
+        const quantityGrid = document.createElement('div');
+        quantityGrid.className = 'scoring-quantity-grid';
+
+        SUPPORTED_SCORING_TALLY_QUANTITIES.forEach((quantity) => {
+            const quantityWrap = document.createElement('label');
+            quantityWrap.className = 'scoring-quantity-option';
+            quantityWrap.title = RUNTIME_READY_SCORING_QUANTITIES.includes(quantity)
+                ? 'Saved in project state and supported by the current scoring-mesh runtime slice.'
+                : 'Saved in project state now; runtime artifact generation for this quantity is planned for a later tally task.';
+
+            const quantityInput = document.createElement('input');
+            quantityInput.type = 'checkbox';
+            quantityInput.checked = isMeshTallyEnabled(scoringState, mesh.mesh_id, quantity);
+            quantityInput.addEventListener('change', () => {
+                persistScoringState(setMeshTallyEnabled(scoringState, mesh, quantity, quantityInput.checked));
+            });
+            quantityWrap.appendChild(quantityInput);
+
+            const quantityText = document.createElement('span');
+            quantityText.textContent = formatScoringQuantityLabel(quantity);
+            quantityWrap.appendChild(quantityText);
+
+            if (RUNTIME_READY_SCORING_QUANTITIES.includes(quantity)) {
+                const runtimeBadge = document.createElement('code');
+                runtimeBadge.className = 'scoring-runtime-badge';
+                runtimeBadge.textContent = 'runtime';
+                quantityWrap.appendChild(runtimeBadge);
+            }
+
+            quantityGrid.appendChild(quantityWrap);
+        });
+        body.appendChild(quantityGrid);
+
+        const note = document.createElement('p');
+        note.className = 'scoring-note';
+        note.textContent = 'Scoring meshes are fixed to world-space box meshes in this first UI slice. energy_deposit and n_of_step tallies now emit runtime artifacts; other saved tallies remain inspectable here until later runtime slices land.';
+        body.appendChild(note);
+
+        card.appendChild(body);
+        scoringPanelRoot.appendChild(card);
+    });
+}
+
+function renderEnvironmentFieldCard(parent, {
+    title,
+    summary,
+    enabledInputId,
+    enabled,
+    onEnabledChange,
+    fieldLabel,
+    targetInputId = null,
+    targetValue = null,
+    targetPlaceholder = '',
+    onTargetChange = null,
+    vectorInputPrefix,
+    vectorValues,
+    vectorAxes,
+    vectorPropertyBase,
+    vectorUnitLabel,
+    objectType,
+    objectId,
+    noteText = '',
+}) {
+    const card = document.createElement('div');
+    card.className = 'environment-field-card';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'environment-field-title';
+    titleEl.textContent = title;
+    card.appendChild(titleEl);
+
+    const summaryEl = document.createElement('p');
+    summaryEl.className = 'environment-summary';
+    summaryEl.textContent = summary;
+    card.appendChild(summaryEl);
+
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'environment-toggle-row';
+
+    const enabledInput = document.createElement('input');
+    enabledInput.type = 'checkbox';
+    enabledInput.id = enabledInputId;
+    enabledInput.checked = Boolean(enabled);
+    enabledInput.addEventListener('change', () => {
+        onEnabledChange(enabledInput.checked);
+    });
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.htmlFor = enabledInput.id;
+    enabledLabel.textContent = 'Enabled';
+
+    toggleRow.appendChild(enabledInput);
+    toggleRow.appendChild(enabledLabel);
+    card.appendChild(toggleRow);
+
+    if (targetInputId) {
+        const targetRow = document.createElement('div');
+        targetRow.className = 'environment-vector-row';
+        createEnvironmentTextInput(targetRow, {
+            labelText: 'Target Volumes',
+            id: targetInputId,
+            value: targetValue,
+            placeholder: targetPlaceholder,
+            onChange: onTargetChange,
+        });
+        card.appendChild(targetRow);
+    }
+
+    const vectorRow = document.createElement('div');
+    vectorRow.className = 'environment-vector-row';
+    vectorAxes.forEach((axis) => {
+        createEnvironmentFieldInput(vectorRow, {
+            labelText: `${axis.toUpperCase()} (${vectorUnitLabel})`,
+            id: `${vectorInputPrefix}_${axis}`,
+            value: vectorValues[axis],
+            fieldLabel,
+            onChange: (nextValue) => {
+                callbacks.onInspectorPropertyChanged(
+                    objectType,
+                    objectId,
+                    `${vectorPropertyBase}.${axis}`,
+                    nextValue
+                );
+            },
+        });
+    });
+    card.appendChild(vectorRow);
+
+    const note = document.createElement('p');
+    note.className = 'environment-note';
+    note.textContent = noteText;
+    card.appendChild(note);
+
+    parent.appendChild(card);
+}
+
+function renderEnvironmentRegionCard(parent, {
+    title,
+    summary,
+    enabledInputId,
+    enabled,
+    onEnabledChange,
+    fieldLabel,
+    regionNameInputId,
+    regionNameValue,
+    onRegionNameChange,
+    targetInputId,
+    targetValue,
+    targetPlaceholder = '',
+    onTargetChange,
+    numericFields = [],
+    objectType,
+    objectId,
+    noteText = '',
+}) {
+    const card = document.createElement('div');
+    card.className = 'environment-field-card';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'environment-field-title';
+    titleEl.textContent = title;
+    card.appendChild(titleEl);
+
+    const summaryEl = document.createElement('p');
+    summaryEl.className = 'environment-summary';
+    summaryEl.textContent = summary;
+    card.appendChild(summaryEl);
+
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'environment-toggle-row';
+
+    const enabledInput = document.createElement('input');
+    enabledInput.type = 'checkbox';
+    enabledInput.id = enabledInputId;
+    enabledInput.checked = Boolean(enabled);
+    enabledInput.addEventListener('change', () => {
+        onEnabledChange(enabledInput.checked);
+    });
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.htmlFor = enabledInput.id;
+    enabledLabel.textContent = 'Enabled';
+
+    toggleRow.appendChild(enabledInput);
+    toggleRow.appendChild(enabledLabel);
+    card.appendChild(toggleRow);
+
+    const regionRow = document.createElement('div');
+    regionRow.className = 'environment-vector-row';
+    createEnvironmentPlainTextInput(regionRow, {
+        labelText: 'Region Name',
+        id: regionNameInputId,
+        value: regionNameValue,
+        placeholder: 'airpet_region',
+        onChange: onRegionNameChange,
+    });
+    card.appendChild(regionRow);
+
+    const targetRow = document.createElement('div');
+    targetRow.className = 'environment-vector-row';
+    createEnvironmentTextInput(targetRow, {
+        labelText: 'Target Volumes',
+        id: targetInputId,
+        value: targetValue,
+        placeholder: targetPlaceholder,
+        onChange: onTargetChange,
+    });
+    card.appendChild(targetRow);
+
+    const numericRow = document.createElement('div');
+    numericRow.className = 'environment-vector-row';
+    numericFields.forEach((field) => {
+        createEnvironmentFieldInput(numericRow, {
+            labelText: `${field.labelText} (${field.unitLabel})`,
+            id: field.id,
+            value: field.value,
+            fieldLabel,
+            onChange: (nextValue) => {
+                callbacks.onInspectorPropertyChanged(
+                    objectType,
+                    objectId,
+                    field.propertyPath,
+                    nextValue
+                );
+            },
+        });
+    });
+    card.appendChild(numericRow);
+
+    const note = document.createElement('p');
+    note.className = 'environment-note';
+    note.textContent = noteText;
+    card.appendChild(note);
+
+    parent.appendChild(card);
+}
+
+function renderEnvironmentPanel(projectState) {
+    if (!environmentPanelRoot) return;
+
+    environmentPanelRoot.innerHTML = '';
+
+    if (!projectState) {
+        const empty = document.createElement('p');
+        empty.textContent = 'No project loaded.';
+        environmentPanelRoot.appendChild(empty);
+        return;
+    }
+
+    const globalMagneticField = normalizeGlobalMagneticFieldState(
+        projectState?.environment?.global_uniform_magnetic_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Global Magnetic Field',
+        summary: formatGlobalMagneticFieldSummary(globalMagneticField),
+        enabledInputId: 'global_magnetic_field_enabled',
+        enabled: globalMagneticField.enabled,
+        fieldLabel: 'Global magnetic field',
+        objectType: GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+        objectId: GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+        vectorInputPrefix: 'global_magnetic_field',
+        vectorValues: globalMagneticField.field_vector_tesla,
+        vectorAxes: GLOBAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_tesla',
+        vectorUnitLabel: 'T',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                GLOBAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        noteText: 'Saved in project state and passed to Geant4 runtime initialization.',
+    });
+
+    const globalElectricField = normalizeGlobalElectricFieldState(
+        projectState?.environment?.global_uniform_electric_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Global Electric Field',
+        summary: formatGlobalElectricFieldSummary(globalElectricField),
+        enabledInputId: 'global_electric_field_enabled',
+        enabled: globalElectricField.enabled,
+        fieldLabel: 'Global electric field',
+        objectType: GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+        objectId: GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+        vectorInputPrefix: 'global_electric_field',
+        vectorValues: globalElectricField.field_vector_volt_per_meter,
+        vectorAxes: GLOBAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_volt_per_meter',
+        vectorUnitLabel: 'V/m',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                GLOBAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        noteText: 'Saved in project state and passed to Geant4 runtime initialization.',
+    });
+
+    const localMagneticField = normalizeLocalMagneticFieldState(
+        projectState?.environment?.local_uniform_magnetic_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Local Magnetic Field',
+        summary: formatLocalMagneticFieldSummary(localMagneticField),
+        enabledInputId: 'local_magnetic_field_enabled',
+        enabled: localMagneticField.enabled,
+        fieldLabel: 'Local magnetic field',
+        objectType: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+        objectId: LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+        targetInputId: 'local_magnetic_field_target_volumes',
+        targetValue: localMagneticField.target_volume_names.join(', '),
+        targetPlaceholder: 'box_LV, detector_LV',
+        vectorInputPrefix: 'local_magnetic_field',
+        vectorValues: localMagneticField.field_vector_tesla,
+        vectorAxes: LOCAL_UNIFORM_MAGNETIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_tesla',
+        vectorUnitLabel: 'T',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        onTargetChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_MAGNETIC_FIELD_OBJECT_ID,
+                'target_volume_names',
+                nextValue
+            );
+        },
+        noteText: 'Targets are comma-separated logical volume names.',
+    });
+
+    const localElectricField = normalizeLocalElectricFieldState(
+        projectState?.environment?.local_uniform_electric_field
+    );
+    renderEnvironmentFieldCard(environmentPanelRoot, {
+        title: 'Local Electric Field',
+        summary: formatLocalElectricFieldSummary(localElectricField),
+        enabledInputId: 'local_electric_field_enabled',
+        enabled: localElectricField.enabled,
+        fieldLabel: 'Local electric field',
+        objectType: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+        objectId: LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+        targetInputId: 'local_electric_field_target_volumes',
+        targetValue: localElectricField.target_volume_names.join(', '),
+        targetPlaceholder: 'box_LV, detector_LV',
+        vectorInputPrefix: 'local_electric_field',
+        vectorValues: localElectricField.field_vector_volt_per_meter,
+        vectorAxes: LOCAL_UNIFORM_ELECTRIC_FIELD_VECTOR_AXES,
+        vectorPropertyBase: 'field_vector_volt_per_meter',
+        vectorUnitLabel: 'V/m',
+        onEnabledChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'enabled',
+                nextValue
+            );
+        },
+        onTargetChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_TYPE,
+                LOCAL_UNIFORM_ELECTRIC_FIELD_OBJECT_ID,
+                'target_volume_names',
+                nextValue
+            );
+        },
+        noteText: 'Targets are comma-separated logical volume names.',
+    });
+
+    const regionCutsAndLimits = normalizeRegionCutsAndLimitsState(
+        projectState?.environment?.region_cuts_and_limits
+    );
+    renderEnvironmentRegionCard(environmentPanelRoot, {
+        title: 'Region Cuts and Limits',
+        summary: formatRegionCutsAndLimitsSummary(regionCutsAndLimits),
+        enabledInputId: 'region_cuts_and_limits_enabled',
+        enabled: regionCutsAndLimits.enabled,
+        fieldLabel: 'Region cuts and limits',
+        regionNameInputId: 'region_cuts_and_limits_region_name',
+        regionNameValue: regionCutsAndLimits.region_name,
+        onRegionNameChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                REGION_CUTS_AND_LIMITS_OBJECT_TYPE,
+                REGION_CUTS_AND_LIMITS_OBJECT_ID,
+                'region_name',
+                nextValue
+            );
+        },
+        targetInputId: 'region_cuts_and_limits_target_volumes',
+        targetValue: regionCutsAndLimits.target_volume_names.join(', '),
+        targetPlaceholder: 'tracker_region_LV, absorber_LV',
+        onTargetChange: (nextValue) => {
+            callbacks.onInspectorPropertyChanged(
+                REGION_CUTS_AND_LIMITS_OBJECT_TYPE,
+                REGION_CUTS_AND_LIMITS_OBJECT_ID,
+                'target_volume_names',
+                nextValue
+            );
+        },
+        numericFields: [
+            {
+                labelText: 'Production Cut',
+                id: 'region_cuts_and_limits_production_cut_mm',
+                value: regionCutsAndLimits.production_cut_mm,
+                propertyPath: 'production_cut_mm',
+                unitLabel: 'mm',
+            },
+            {
+                labelText: 'Max Step',
+                id: 'region_cuts_and_limits_max_step_mm',
+                value: regionCutsAndLimits.max_step_mm,
+                propertyPath: 'max_step_mm',
+                unitLabel: 'mm',
+            },
+            {
+                labelText: 'Max Track Length',
+                id: 'region_cuts_and_limits_max_track_length_mm',
+                value: regionCutsAndLimits.max_track_length_mm,
+                propertyPath: 'max_track_length_mm',
+                unitLabel: 'mm',
+            },
+            {
+                labelText: 'Max Time',
+                id: 'region_cuts_and_limits_max_time_ns',
+                value: regionCutsAndLimits.max_time_ns,
+                propertyPath: 'max_time_ns',
+                unitLabel: 'ns',
+            },
+            {
+                labelText: 'Min Kinetic Energy',
+                id: 'region_cuts_and_limits_min_kinetic_energy_mev',
+                value: regionCutsAndLimits.min_kinetic_energy_mev,
+                propertyPath: 'min_kinetic_energy_mev',
+                unitLabel: 'MeV',
+            },
+            {
+                labelText: 'Min Range',
+                id: 'region_cuts_and_limits_min_range_mm',
+                value: regionCutsAndLimits.min_range_mm,
+                propertyPath: 'min_range_mm',
+                unitLabel: 'mm',
+            },
+        ],
+        objectType: REGION_CUTS_AND_LIMITS_OBJECT_TYPE,
+        objectId: REGION_CUTS_AND_LIMITS_OBJECT_ID,
+        noteText: 'Production cuts use mm; user limits use mm, ns, and MeV internal units.',
+    });
+}
+
+function renderCadImportsPanel(projectState) {
+    if (!cadImportsPanelRoot) return;
+
+    cadImportsPanelRoot.innerHTML = '';
+
+    const cadImports = Array.isArray(projectState?.cad_imports)
+        ? projectState.cad_imports.filter((entry) => entry && typeof entry === 'object')
+        : [];
+
+    setCadImportsAccordionVisibility(cadImports.length > 0);
+
+    if (cadImports.length === 0) {
+        return;
+    }
+
+    const intro = document.createElement('p');
+    intro.className = 'cad-imports-intro';
+    intro.textContent = 'Saved provenance records for imported STEP subsystems. Reimport from a revised STEP file to replace the matching import in place.';
+    cadImportsPanelRoot.appendChild(intro);
+
+    cadImports.forEach((rawRecord, index) => {
+        const described = describeCadImportRecord(rawRecord);
+        const selectionContext = described.selectionContext || buildCadImportSelectionContext(rawRecord);
+        const batchContext = described.batchContext || buildCadImportBatchContext(rawRecord);
+        const card = document.createElement('details');
+        card.className = 'cad-import-card';
+        card.open = cadImports.length === 1 || index === cadImports.length - 1;
+
+        const summary = document.createElement('summary');
+        summary.className = 'cad-import-card-summary';
+        summary.title = 'Inspect this imported CAD provenance record.';
+
+        const summaryText = document.createElement('div');
+        summaryText.className = 'cad-import-card-summary-text';
+
+        const title = document.createElement('div');
+        title.className = 'cad-import-title';
+        title.textContent = described.title;
+        summaryText.appendChild(title);
+
+        const summaryLine = document.createElement('div');
+        summaryLine.className = 'cad-import-summary';
+        summaryLine.textContent = described.summary;
+        summaryText.appendChild(summaryLine);
+
+        const idBadge = document.createElement('code');
+        idBadge.className = 'cad-import-id';
+        idBadge.textContent = described.reimportContext.reimportTargetImportId;
+
+        summary.appendChild(summaryText);
+        summary.appendChild(idBadge);
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'cad-import-card-body';
+
+        described.detailRows.forEach((row) => {
+            createReadOnlyProperty(body, `${row.label}:`, row.value);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'cad-import-actions';
+
+        if (selectionContext.selectionIds.length > 0) {
+            const selectButton = document.createElement('button');
+            selectButton.type = 'button';
+            selectButton.className = 'history-action-btn';
+            selectButton.textContent = 'Select Top-Level';
+            selectButton.title = 'Select the top-level imported placement(s) in the hierarchy.';
+            selectButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (callbacks.onSelectHierarchyItems) {
+                    callbacks.onSelectHierarchyItems(selectionContext.selectionIds);
+                }
+            });
+            actions.appendChild(selectButton);
+        }
+
+        if (batchContext.hasLogicalVolumes) {
+            const materialButton = document.createElement('button');
+            materialButton.type = 'button';
+            materialButton.className = 'history-action-btn';
+            materialButton.textContent = 'Set Material...';
+            materialButton.title = 'Apply one material to all imported logical volumes in this STEP record.';
+            materialButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (callbacks.onCadImportBatchActionClicked) {
+                    callbacks.onCadImportBatchActionClicked('material', rawRecord);
+                }
+            });
+            actions.appendChild(materialButton);
+
+            const sensitiveButton = document.createElement('button');
+            sensitiveButton.type = 'button';
+            sensitiveButton.className = 'history-action-btn';
+            sensitiveButton.textContent = 'Mark Sensitive';
+            sensitiveButton.title = 'Mark all imported logical volumes in this STEP record as sensitive.';
+            sensitiveButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (callbacks.onCadImportBatchActionClicked) {
+                    callbacks.onCadImportBatchActionClicked('sensitive', rawRecord);
+                }
+            });
+            actions.appendChild(sensitiveButton);
+        }
+
+        const reimportButton = document.createElement('button');
+        reimportButton.type = 'button';
+        reimportButton.className = 'history-action-btn';
+        reimportButton.textContent = 'Reimport STEP...';
+        reimportButton.title = 'Choose a replacement STEP file and open the supported reimport flow.';
+
+        const reimportFileInput = document.createElement('input');
+        reimportFileInput.type = 'file';
+        reimportFileInput.accept = '.step,.stp';
+        reimportFileInput.style.display = 'none';
+        reimportFileInput.addEventListener('change', (event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file && callbacks.onReimportStepClicked) {
+                callbacks.onReimportStepClicked(file, rawRecord);
+            }
+        });
+
+        reimportButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            reimportFileInput.click();
+        });
+
+        actions.appendChild(reimportButton);
+        actions.appendChild(reimportFileInput);
+        body.appendChild(actions);
+
+        if (batchContext.hasLogicalVolumes) {
+            const batchNote = document.createElement('p');
+            batchNote.className = 'cad-import-note';
+            batchNote.textContent = `Batch helpers apply to ${batchContext.logicalVolumeSummary}.`;
+            body.appendChild(batchNote);
+        }
+
+        const note = document.createElement('p');
+        note.className = 'cad-import-note';
+        note.textContent = 'The reimport modal will inherit the saved grouping and placement options for this import.';
+        body.appendChild(note);
+
+        card.appendChild(body);
+        cadImportsPanelRoot.appendChild(card);
+    });
+}
+
+function renderDetectorFeatureGeneratorsPanel(projectState) {
+    if (!detectorFeatureGeneratorsPanelRoot) return;
+
+    detectorFeatureGeneratorsPanelRoot.innerHTML = '';
+
+    const panelState = describeDetectorFeatureGeneratorPanelState(projectState);
+    const generators = Array.isArray(projectState?.detector_feature_generators)
+        ? projectState.detector_feature_generators.filter((entry) => entry && typeof entry === 'object')
+        : [];
+
+    const intro = document.createElement('p');
+    intro.className = 'detector-feature-generators-intro';
+    intro.textContent = panelState.intro;
+    detectorFeatureGeneratorsPanelRoot.appendChild(intro);
+
+    if (panelState.hint) {
+        const launchHint = document.createElement('p');
+        launchHint.className = 'detector-feature-note';
+        launchHint.textContent = panelState.hint;
+        detectorFeatureGeneratorsPanelRoot.appendChild(launchHint);
+    }
+
+    if (generators.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'detector-feature-generators-empty';
+        empty.textContent = panelState.empty;
+        detectorFeatureGeneratorsPanelRoot.appendChild(empty);
+        return;
+    }
+
+    generators.forEach((rawEntry, index) => {
+        const described = describeDetectorFeatureGenerator(rawEntry, projectState);
+        const selectionContext = buildDetectorFeatureGeneratorSelectionContext(rawEntry, projectState);
+        const card = document.createElement('details');
+        card.className = 'detector-feature-card';
+        card.open = panelState.defaultExpandedIndex === index;
+
+        const summary = document.createElement('summary');
+        summary.className = 'detector-feature-card-summary';
+        summary.title = 'Inspect this detector-feature-generator contract.';
+
+        const summaryLayout = document.createElement('div');
+        summaryLayout.className = 'detector-feature-card-summary-layout';
+
+        const summaryText = document.createElement('div');
+        summaryText.className = 'detector-feature-card-summary-text';
+
+        const title = document.createElement('div');
+        title.className = 'detector-feature-title';
+        title.textContent = described.title;
+        summaryText.appendChild(title);
+
+        const summaryLine = document.createElement('div');
+        summaryLine.className = 'detector-feature-summary';
+        summaryLine.textContent = described.summary;
+        summaryText.appendChild(summaryLine);
+
+        const statusBadge = document.createElement('code');
+        statusBadge.className = 'detector-feature-status';
+        statusBadge.textContent = described.statusBadge;
+
+        const summaryMeta = document.createElement('div');
+        summaryMeta.className = 'detector-feature-summary-meta';
+        summaryMeta.appendChild(statusBadge);
+
+        const summaryActions = document.createElement('div');
+        summaryActions.className = 'detector-feature-summary-actions';
+
+        if (selectionContext.selectionIds.length > 0) {
+            const selectButton = document.createElement('button');
+            selectButton.type = 'button';
+            selectButton.className = 'history-action-btn';
+            selectButton.textContent = selectionContext.buttonLabel;
+            selectButton.title = selectionContext.buttonTitle;
+            selectButton.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (callbacks.onSelectHierarchyItems) {
+                    callbacks.onSelectHierarchyItems(selectionContext.selectionIds);
+                }
+            });
+            summaryActions.appendChild(selectButton);
+        }
+
+        const editButton = document.createElement('button');
+        editButton.type = 'button';
+        editButton.className = 'history-action-btn';
+        editButton.textContent = 'Edit...';
+        editButton.title = 'Revise the saved detector-feature-generator parameters.';
+        editButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (callbacks.onEditDetectorFeatureGeneratorClicked) {
+                callbacks.onEditDetectorFeatureGeneratorClicked(rawEntry);
+            }
+        });
+        summaryActions.appendChild(editButton);
+
+        const regenerateButton = document.createElement('button');
+        regenerateButton.type = 'button';
+        regenerateButton.className = 'history-action-btn';
+        regenerateButton.textContent = 'Regenerate';
+        regenerateButton.title = 'Re-run the saved generator contract against the current target geometry.';
+        regenerateButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (callbacks.onRealizeDetectorFeatureGeneratorClicked) {
+                callbacks.onRealizeDetectorFeatureGeneratorClicked(rawEntry);
+            }
+        });
+        summaryActions.appendChild(regenerateButton);
+
+        summaryMeta.appendChild(summaryActions);
+        summaryLayout.appendChild(summaryText);
+        summaryLayout.appendChild(summaryMeta);
+        summary.appendChild(summaryLayout);
+        card.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'detector-feature-card-body';
+
+        described.detailRows.forEach((row) => {
+            createReadOnlyProperty(body, `${row.label}:`, row.value);
+        });
+
+        card.appendChild(body);
+        detectorFeatureGeneratorsPanelRoot.appendChild(card);
+    });
 }
 
 /**
@@ -1819,6 +3365,7 @@ export function triggerFileInput(inputId) {
 // --- Hierarchy Panel Management ---
 export function updateHierarchy(projectState, sceneUpdate) {
     if (!projectState) {
+        updateHierarchyToolButtons(null);
         clearHierarchy();
         return;
     }
@@ -1835,6 +3382,9 @@ export function updateHierarchy(projectState, sceneUpdate) {
     opticalSurfacesListRoot = document.getElementById('optical_surfaces_list_root');
     skinSurfacesListRoot = document.getElementById('skin_surfaces_list_root');
     borderSurfacesListRoot = document.getElementById('border_surfaces_list_root');
+    cadImportsPanelRoot = document.getElementById('cad_imports_panel_root');
+    detectorFeatureGeneratorsPanelRoot = document.getElementById('detector_feature_generators_panel_root');
+    scoringPanelRoot = document.getElementById('scoring_panel_root');
 
     // Clear all lists
     if (structureTreeRoot) structureTreeRoot.innerHTML = '';
@@ -1860,6 +3410,11 @@ export function updateHierarchy(projectState, sceneUpdate) {
     populateListWithGrouping(opticalSurfacesListRoot, Object.values(projectState.optical_surfaces || {}), 'optical_surface');
     populateListWithGrouping(skinSurfacesListRoot, Object.values(projectState.skin_surfaces || {}), 'skin_surface');
     populateListWithGrouping(borderSurfacesListRoot, Object.values(projectState.border_surfaces || {}), 'border_surface');
+    renderEnvironmentPanel(projectState);
+    renderCadImportsPanel(projectState);
+    renderDetectorFeatureGeneratorsPanel(projectState);
+    renderScoringPanel(projectState);
+    updateHierarchyToolButtons(projectState);
 
     // --- Build the physical placement tree (Structure tab) ---
     if (structureTreeRoot && sceneUpdate) {
@@ -1924,6 +3479,22 @@ export function updateHierarchy(projectState, sceneUpdate) {
         } else {
             structureTreeRoot.innerHTML = '<li>World volume data is missing or invalid.</li>';
         }
+    }
+}
+
+function updateHierarchyToolButtons(projectState) {
+    const launchState = describeDetectorFeatureGeneratorLaunchState(projectState);
+    if (createDetectorFeatureGeneratorButton) {
+        createDetectorFeatureGeneratorButton.disabled = !launchState.canLaunch;
+        createDetectorFeatureGeneratorButton.title = launchState.title;
+    }
+
+    if (createRingArrayButton) {
+        const hasProjectState = Boolean(projectState);
+        createRingArrayButton.disabled = !hasProjectState;
+        createRingArrayButton.title = hasProjectState
+            ? 'Create a detector ring array from Hierarchy > + Tools.'
+            : 'Open or create a project before launching the ring-array tool.';
     }
 }
 
@@ -2597,6 +4168,10 @@ export function clearHierarchy() {
     if (opticalSurfacesListRoot) opticalSurfacesListRoot.innerHTML = '';
     if (skinSurfacesListRoot) skinSurfacesListRoot.innerHTML = '';
     if (borderSurfacesListRoot) borderSurfacesListRoot.innerHTML = '';
+    renderEnvironmentPanel(null);
+    renderCadImportsPanel(null);
+    renderDetectorFeatureGeneratorsPanel(null);
+    renderScoringPanel(null);
 }
 
 export function clearInspector() {
@@ -2813,8 +4388,8 @@ export function populateAiModelSelector(models, localBackendDiagnostics = null) 
         aiModelSelect.appendChild(option);
     } else {
         // --- Set Default Model Preference ---
-        // Prioritize user request, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
-        const preferredModels = ['gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
+        // Prioritize user request, then gemini-3.1-flash-lite-preview, then gemini-3-flash-preview, then gemini-2.5-pro, then gemini-2.5-flash
+        const preferredModels = ['gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
 
         for (const pref of preferredModels) {
             // Check if any option value contains the preferred model name
@@ -3073,10 +4648,23 @@ function updatePreflightScopeContextCopyState({
         })
         : '';
 
+    const copyExcerptJsonText = showRow
+        ? buildScopedIssueExcerptCopyJson({
+            scopeLabel,
+            hasBucketMetadata,
+            bucketSelection,
+            issueCodeFocus,
+            visibleIssueCount,
+            totalScopedIssueCount,
+            visibleIssues,
+        })
+        : '';
+
     preflightLastScopedContextCopyText = copyContextText;
     preflightLastScopedIssueExcerptCopyText = copyExcerptText;
+    preflightLastScopedIssueExcerptJsonCopyText = copyExcerptJsonText;
 
-    const hasCopyActions = !!(copyContextText || copyExcerptText);
+    const hasCopyActions = !!(copyContextText || copyExcerptText || copyExcerptJsonText);
     if (preflightScopeContextRow) {
         preflightScopeContextRow.style.display = hasCopyActions ? 'flex' : 'none';
     }
@@ -3092,6 +4680,12 @@ function updatePreflightScopeContextCopyState({
             ? 'Copy active scoped filters plus currently visible issue lines.'
             : 'Run scoped preflight and pick filters to enable copy.';
     }
+    if (preflightCopyScopeIssueExcerptJsonBtn) {
+        preflightCopyScopeIssueExcerptJsonBtn.disabled = !copyExcerptJsonText;
+        preflightCopyScopeIssueExcerptJsonBtn.title = copyExcerptJsonText
+            ? 'Copy active scoped filters plus currently visible issue lines as structured JSON.'
+            : 'Run scoped preflight and pick filters to enable copy.';
+    }
 
     setPreflightScopeContextStatus('');
 }
@@ -3103,6 +4697,7 @@ export function clearPreflightReport() {
     preflightScopedIssueCodeFocus = '';
     preflightLastScopedContextCopyText = '';
     preflightLastScopedIssueExcerptCopyText = '';
+    preflightLastScopedIssueExcerptJsonCopyText = '';
 
     if (preflightSummaryLine) {
         preflightSummaryLine.textContent = 'Preflight: not run yet.';
@@ -3436,6 +5031,9 @@ export function setSimOptions(options) {
         simSaveHitMetadataCheckbox.checked = options.save_hit_metadata !== false;
     }
     simHitEnergyThresholdInput.value = options.hit_energy_threshold || '1 eV';
+    if (simProductionCutInput) {
+        simProductionCutInput.value = options.production_cut || '1.0 mm';
+    }
     simSaveParticlesCheckbox.checked = options.save_particles || false;
     simSaveTracksRangeInput.value = options.save_tracks_range || '';
     simPrintProgressInput.value = options.print_progress || 1000;
@@ -3450,6 +5048,7 @@ export function getSimOptions() {
         save_hits: simSaveHitsCheckbox.checked,
         save_hit_metadata: simSaveHitMetadataCheckbox ? simSaveHitMetadataCheckbox.checked : true,
         hit_energy_threshold: (simHitEnergyThresholdInput.value || '1 eV').trim(),
+        production_cut: (simProductionCutInput && simProductionCutInput.value ? simProductionCutInput.value : '1.0 mm').trim(),
         save_particles: simSaveParticlesCheckbox.checked,
         save_tracks_range: simSaveTracksRangeInput.value,
         physics_list: simPhysicsListSelect ? simPhysicsListSelect.value : 'FTFP_BERT',

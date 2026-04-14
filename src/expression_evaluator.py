@@ -24,6 +24,7 @@ def create_configured_asteval():
         'urad': 1.0e-6, 'mrad': 1.0e-3, 'rad': 1.0, 'radian': 1.0, 
         'deg': math.pi / 180.0, 'degree': math.pi / 180.0,
         'eV': 1.0e-3, 'keV': 1.0, 'MeV': 1000.0, 'GeV': 1000000.0, 'TeV': 1000000000.0,
+        'mg': 1.0e-3, 'milligram': 1.0e-3,
         'g': 1.0, 'kg': 1000.0,
         # AIRPET does not model amount-of-substance internally, but accepting
         # mol/mole keeps common Geant4 chemistry notation evaluable.
@@ -66,7 +67,7 @@ class ExpressionEvaluator:
             'nm', 'um', 'mm', 'cm', 'm', 'km', 'mm2', 'cm2', 'm2', 'mm3', 'cm3', 'm3',
             'urad', 'mrad', 'rad', 'radian', 'deg', 'degree',
             'eV', 'keV', 'MeV', 'GeV', 'TeV',
-            'g', 'kg', 'mol', 'mole',
+            'mg', 'milligram', 'g', 'kg', 'mol', 'mole',
             'ns', 'us', 'ms', 's'
         ]
         # Sort by length descending to match 'mm' before 'm'

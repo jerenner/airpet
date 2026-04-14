@@ -333,6 +333,9 @@
         "si_thickness",
         "src_z"
       ],
+      "simulation_source_ids": [
+        "37aefb71-466a-4cf8-96cb-d5f43843fdcc"
+      ],
       "grid": {
         "steps": 4,
         "per_parameter_steps": {}

@@ -79,6 +79,32 @@ def create_phantom(radius: float, length: float, material: str = "G4_WATER"):
     
     return results
 
+def create_field_probe_slab(size: float, thickness: float = 1.0, material: str = "G4_SILICON"):
+    """Creates a compact sensitive slab for field-aware comparisons."""
+    results = {"solids": [], "logical_volumes": [], "placements": []}
+
+    size_label = f"{float(size):g}"
+    thickness_label = f"{float(thickness):g}"
+
+    solid_name = f"FieldProbe_Solid_{size_label}mm_{thickness_label}mm"
+    results["solids"].append(Solid(solid_name, "box", {
+        "x": str(size),
+        "y": str(size),
+        "z": str(thickness)
+    }))
+
+    lv_name = f"FieldProbe_LV_{size_label}mm_{thickness_label}mm"
+    results["logical_volumes"].append(LogicalVolume(lv_name, solid_name, material, is_sensitive=True))
+
+    results["placements"].append({
+        "name": f"FieldProbe_PV_{size_label}mm_{thickness_label}mm",
+        "volume_ref": lv_name,
+        "position": {"x": "0", "y": "0", "z": "0"},
+        "rotation": {"x": "0", "y": "0", "z": "0"}
+    })
+
+    return results
+
 PHYSICS_TEMPLATES = {
     "sipm_array": {
         "func": create_sipm_array,
@@ -108,6 +134,15 @@ PHYSICS_TEMPLATES = {
             "radius": {"type": "number"},
             "length": {"type": "number"},
             "material": {"type": "string", "default": "G4_WATER"}
+        }
+    },
+    "field_probe_slab": {
+        "func": create_field_probe_slab,
+        "description": "Create a compact sensitive slab for field-aware comparisons.",
+        "parameters": {
+            "size": {"type": "number", "description": "Side length of the square slab (mm)"},
+            "thickness": {"type": "number", "description": "Slab thickness (mm)", "default": 1.0},
+            "material": {"type": "string", "default": "G4_SILICON"}
         }
     }
 }

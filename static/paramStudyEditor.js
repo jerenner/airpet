@@ -1,10 +1,14 @@
 let modal, tableBody;
+let savedStudiesSummaryEl;
 let nameInput, modeInput, paramsInput, paramPickerInput, paramAddBtn, paramRemoveBtn, objectivesInput, gridStepsInput, samplesInput, seedInput, maxRunsInput, runOutput;
 let legacyObjectivesToggleInput, legacyObjectivesRow;
 let rankObjectiveSelect, rankDirectionSelect, rankingTableBody;
 let decompositionTableBody, compareTopNSelect, compareRefreshBtn, compareTableWrap, whySelectedSummaryEl, whySelectedDetailsEl;
 let failureCountEl, failureGroupsCountEl, failureGroupsEl, failureHintsEl;
 let optMethodInput, optBudgetInput, optSeedInput, optPopSizeInput, optSigmaRelInput, optStagInput, verifyRepeatsInput;
+let optimizerControlsSectionEl, toggleOptimizerControlsBtn;
+let selectedResultSummaryEl, selectedResultMetaEl, selectedResultValuesEl, selectedResultObjectivesEl, selectedResultErrorEl;
+let selectedResultSourcesEl;
 let summaryStatusEl, summaryMethodEl, summaryStopReasonEl, summaryEvalsEl, summaryObjectiveEl, summaryBestScoreEl;
 let runStatusEl, runActionEl, runElapsedEl, runBudgetUsedEl, runSuccessFailureEl, runLastUpdateEl, runTimelineListEl;
 let reviewRunIdEl, reviewGateStatusEl, reviewTokenStatusEl, reviewApplyReadyEl;
@@ -22,6 +26,8 @@ let obPolicyCapsEl, obAllowedFunctionsEl, obFormulaVarsEl, obDatasetHintEl, obRu
 let obLoadExampleBtn, obValidateBtn, obBuildBtn, obUpsertBtn, obLaunchDryRunBtn, obLaunchRunBtn, obGuidedBtn;
 let obCopyOutputBtn, obCopyBuildBtn, obCopyLaunchBtn;
 let obStatusEl, obStageEl, obErrorsList, obWarningsList;
+let sourcePickerEl, sourcePickerSummaryEl, sourcesUseActiveBtn, sourcesSelectAllBtn, sourcesClearBtn;
+let advancedResultsBucketEl;
 
 // Wizard elements
 let wizardCard, wizardStep1, wizardStep2, wizardStep3;
@@ -70,6 +76,7 @@ let callbacks = {
     onObjectiveBuilderBuild: async (_payload) => ({}),
     onObjectiveBuilderUpsert: async (_payload) => ({}),
     onObjectiveBuilderLaunch: async (_payload) => ({}),
+    onGetGeometryState: async () => ({}),
 };
 
 let activeName = null;
@@ -115,6 +122,9 @@ let activeLaunchRunControlId = null;
 let lastRunProgressSignature = '';
 let runTimelineEvents = [];
 let stopRunRequestPending = false;
+let optimizerControlsVisible = false;
+let currentStudySourceOptions = [];
+let selectedStudySourceIds = [];
 
 function _setForm(study = null, name = '') {
     const s = study || {};
@@ -134,6 +144,9 @@ function _setForm(study = null, name = '') {
     samplesInput.value = s.random?.samples ?? 10;
     seedInput.value = s.random?.seed ?? 42;
     maxRunsInput.value = '';
+    selectedStudySourceIds = _sanitizeSourceIdList(s.simulation_source_ids || s.selected_source_ids || []);
+    _syncSelectedStudySourcesWithOptions({ preferActiveWhenEmpty: selectedStudySourceIds.length === 0 });
+    _renderSourcePicker();
 }
 
 function _setLegacyObjectivesVisible(visible) {
@@ -180,6 +193,166 @@ function _safeWizardParamId(name) {
 function _coerceFiniteNumber(value) {
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
+}
+
+function _escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _sanitizeSourceIdList(values) {
+    const out = [];
+    const seen = new Set();
+    (Array.isArray(values) ? values : []).forEach((value) => {
+        const normalized = String(value ?? '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        out.push(normalized);
+    });
+    return out;
+}
+
+function _syncSelectedStudySourcesWithOptions({ preferActiveWhenEmpty = false } = {}) {
+    const validIds = new Set((currentStudySourceOptions || []).map(source => source.id));
+    let next = _sanitizeSourceIdList(selectedStudySourceIds).filter(id => validIds.has(id));
+    if (next.length === 0 && preferActiveWhenEmpty && currentStudySourceOptions.length > 0) {
+        const active = currentStudySourceOptions.filter(source => source.active).map(source => source.id);
+        next = active.length > 0 ? active : currentStudySourceOptions.map(source => source.id);
+    }
+    selectedStudySourceIds = next;
+}
+
+function _getSelectedStudySourceIds() {
+    return _sanitizeSourceIdList(selectedStudySourceIds);
+}
+
+function _renderSourcePicker() {
+    if (!sourcePickerEl || !sourcePickerSummaryEl) return;
+
+    if (!Array.isArray(currentStudySourceOptions) || currentStudySourceOptions.length === 0) {
+        sourcePickerSummaryEl.textContent = 'No particle sources found yet. Create a source before running a simulation sweep.';
+        sourcePickerEl.innerHTML = '<div class="ps-subtle-note">No particle sources available.</div>';
+        if (sourcesUseActiveBtn) sourcesUseActiveBtn.disabled = true;
+        if (sourcesSelectAllBtn) sourcesSelectAllBtn.disabled = true;
+        if (sourcesClearBtn) sourcesClearBtn.disabled = true;
+        return;
+    }
+
+    const selectedSet = new Set(_getSelectedStudySourceIds());
+    const selectedCount = selectedSet.size;
+    const totalCount = currentStudySourceOptions.length;
+    if (selectedCount === 0) {
+        sourcePickerSummaryEl.textContent = `No sources selected. Run Simulation Sweep will require at least one source.`;
+        sourcePickerSummaryEl.style.color = '#b45309';
+    } else {
+        const selectedNames = currentStudySourceOptions
+            .filter(source => selectedSet.has(source.id))
+            .map(source => source.name);
+        const summaryNames = selectedNames.slice(0, 3).join(', ');
+        const extra = selectedNames.length > 3 ? ` +${selectedNames.length - 3} more` : '';
+        sourcePickerSummaryEl.textContent = `Using ${selectedCount} of ${totalCount} source${selectedCount === 1 ? '' : 's'}${summaryNames ? `: ${summaryNames}${extra}` : ''}`;
+        sourcePickerSummaryEl.style.color = '#475569';
+    }
+
+    sourcePickerEl.innerHTML = currentStudySourceOptions.map((source) => {
+        const particle = source.particle ? `particle=${_escapeHtml(source.particle)}` : 'particle=unknown';
+        const activity = source.activity == null ? '' : ` · activity=${_escapeHtml(_formatMaybeNumber(source.activity, 4))} Bq`;
+        const activeTag = source.active ? ' · currently active' : '';
+        return `
+            <label class="ps-source-option">
+                <input type="checkbox" data-ps-source-id="${_escapeHtml(source.id)}" ${selectedSet.has(source.id) ? 'checked' : ''}>
+                <span>
+                    <div class="ps-source-option-title">${_escapeHtml(source.name)}</div>
+                    <div class="ps-source-option-meta">${particle}${activity}${activeTag}</div>
+                </span>
+            </label>
+        `;
+    }).join('');
+
+    sourcePickerEl.querySelectorAll('input[type="checkbox"][data-ps-source-id]').forEach((cb) => {
+        cb.addEventListener('change', (event) => {
+            const sourceId = String(event.target.dataset.psSourceId || '').trim();
+            const selected = new Set(_getSelectedStudySourceIds());
+            if (event.target.checked) selected.add(sourceId);
+            else selected.delete(sourceId);
+            selectedStudySourceIds = [...selected];
+            _renderSourcePicker();
+        });
+    });
+
+    if (sourcesUseActiveBtn) sourcesUseActiveBtn.disabled = currentStudySourceOptions.filter(source => source.active).length === 0;
+    if (sourcesSelectAllBtn) sourcesSelectAllBtn.disabled = false;
+    if (sourcesClearBtn) sourcesClearBtn.disabled = selectedCount === 0;
+}
+
+async function _refreshStudySourcesFromGeometry(geometry = null, { preferActiveWhenEmpty = false } = {}) {
+    let state = geometry;
+    if (!state) {
+        state = await callbacks.onGetGeometryState?.();
+    }
+
+    const sources = state && typeof state === 'object' ? Object.values(state.sources || {}) : [];
+    const activeIds = new Set(Array.isArray(state?.active_source_ids) ? state.active_source_ids.map(id => String(id)) : []);
+    currentStudySourceOptions = sources
+        .map((source) => ({
+            id: String(source?.id || '').trim(),
+            name: String(source?.name || '').trim(),
+            particle: String(source?.gps_commands?.particle || '').trim(),
+            activity: _coerceFiniteNumber(source?.activity),
+            active: activeIds.has(String(source?.id || '')),
+        }))
+        .filter(source => source.id && source.name)
+        .sort((a, b) => {
+            if (a.active !== b.active) return a.active ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        });
+
+    _syncSelectedStudySourcesWithOptions({ preferActiveWhenEmpty });
+    _renderSourcePicker();
+}
+
+function _applySourceSelectionPreset(mode) {
+    if (!Array.isArray(currentStudySourceOptions) || currentStudySourceOptions.length === 0) {
+        _renderSourcePicker();
+        return;
+    }
+
+    if (mode === 'active') {
+        const activeIds = currentStudySourceOptions.filter(source => source.active).map(source => source.id);
+        if (activeIds.length === 0) {
+            _showNotice('No currently active sources were found. Select sources manually or choose Select All.', 'warning', 3200);
+            return;
+        }
+        selectedStudySourceIds = activeIds;
+    } else if (mode === 'all') {
+        selectedStudySourceIds = currentStudySourceOptions.map(source => source.id);
+    } else if (mode === 'clear') {
+        selectedStudySourceIds = [];
+    }
+
+    _renderSourcePicker();
+}
+
+function _ensureSimulationSourceSelectionReady() {
+    if (!Array.isArray(currentStudySourceOptions) || currentStudySourceOptions.length === 0) {
+        _showNotice('Create at least one particle source before running a simulation sweep.', 'warning', 4200);
+        return false;
+    }
+    if (_getSelectedStudySourceIds().length === 0) {
+        _showNotice('Select at least one source for Run Simulation Sweep.', 'warning', 4200);
+        return false;
+    }
+    return true;
+}
+
+function _revealResultsArea() {
+    if (advancedResultsBucketEl) {
+        advancedResultsBucketEl.open = true;
+    }
 }
 
 function _formatWizardNumber(value) {
@@ -523,6 +696,7 @@ function _studyFromForm() {
         name: nameInput.value.trim(),
         mode,
         parameters,
+        simulation_source_ids: _getSelectedStudySourceIds(),
         objectives,
         grid: {
             steps: gridSteps,
@@ -599,6 +773,10 @@ function _objectiveBuilderPayloadFromForm() {
     const budget = Number(optBudgetInput?.value || 20);
     const seed = Number(optSeedInput?.value || 42);
     const runMethod = (optMethodInput?.value || 'surrogate_gp').trim();
+    const selectedSourceIds = _getSelectedStudySourceIds();
+    const selectedSourceNames = currentStudySourceOptions
+        .filter(source => selectedSourceIds.includes(source.id))
+        .map(source => source.name);
 
     const payload = {
         study_name: studyName,
@@ -618,6 +796,8 @@ function _objectiveBuilderPayloadFromForm() {
         run_budget: Number.isFinite(budget) ? budget : 20,
         run_seed: Number.isFinite(seed) ? seed : 42,
         keep_candidate_runs: !!obKeepCandidateRunsInput?.checked,
+        selected_source_ids: selectedSourceIds,
+        selected_source_names: selectedSourceNames,
     };
 
     const candidateRunsRoot = (obCandidateRunsRootInput?.value || '').trim();
@@ -752,7 +932,7 @@ async function _handleCopyObjectiveBuilderOutput() {
 
 async function _handleCopyObjectiveBuilderBuild() {
     if (!lastObjectiveBuilderBuild) {
-        _showNotice('No build payload available yet. Run Build or Guided flow first.', 'warning');
+        _showNotice('No build payload available yet. Run Build or Check Setup first.', 'warning');
         return;
     }
     await _copyTextToClipboard(_toPrettyJson(lastObjectiveBuilderBuild));
@@ -760,7 +940,7 @@ async function _handleCopyObjectiveBuilderBuild() {
 
 async function _handleCopyObjectiveBuilderLaunch() {
     if (!lastObjectiveBuilderLaunch) {
-        _showNotice('No launch payload available yet. Run Launch Dry Run or Guided flow first.', 'warning');
+        _showNotice('No launch payload available yet. Run Launch Dry Run or Check Setup first.', 'warning');
         return;
     }
     await _copyTextToClipboard(_toPrettyJson(lastObjectiveBuilderLaunch));
@@ -782,6 +962,28 @@ function _setListItems(listEl, items = [], emptyText = 'none') {
         li.textContent = String(item);
         listEl.appendChild(li);
     });
+}
+
+function _formatNamedValueChips(values, digits = 4, emptyText = 'no values') {
+    const entries = values && typeof values === 'object' ? Object.entries(values) : [];
+    if (entries.length === 0) {
+        return `<span class="ps-value-chip-empty">${_escapeHtml(emptyText)}</span>`;
+    }
+    return `
+        <div class="ps-value-chip-list">
+            ${entries.map(([key, value]) => `
+                <span class="ps-value-chip">
+                    <span class="ps-value-chip-key">${_escapeHtml(key)}</span>
+                    <span>=</span>
+                    <span>${_escapeHtml(_formatMaybeNumber(value, digits))}</span>
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
+function _formatParameterValueChips(values) {
+    return _formatNamedValueChips(values, 4, 'no parameter values');
 }
 
 function _extractBuilderErrorsWarnings(result) {
@@ -943,6 +1145,9 @@ async function _handleObjectiveBuilderUpsert() {
 }
 
 async function _handleObjectiveBuilderLaunchDryRun() {
+    if (!_ensureSimulationSourceSelectionReady()) {
+        return;
+    }
     _setRunLifecycle('running', 'objective_builder_launch_dry_run', 'Preparing launch payload');
     try {
         const payload = _objectiveBuilderPayloadFromForm();
@@ -951,7 +1156,7 @@ async function _handleObjectiveBuilderLaunchDryRun() {
         lastObjectiveBuilderLaunch = result || null;
         _renderObjectiveBuilderFeedback('launch_dry_run', result || {});
         _setObjectiveBuilderOutput(result || {});
-        _showNotice('Launch dry run prepared (no simulations executed).', 'success', 3200);
+        _showNotice('Dry-run launch payload prepared. No simulations were executed.', 'success', 3200);
         _setRunLifecycle('completed', 'objective_builder_launch_dry_run', 'dry_run prepared');
     } catch (error) {
         _renderObjectiveBuilderFailure('launch_dry_run', error);
@@ -988,6 +1193,7 @@ async function _consumeObjectiveBuilderLaunchResult(result, { stage = 'launch', 
 
     _renderRankingTable();
     _renderOptimizerSummary();
+    _revealResultsArea();
     await _refreshAndRender();
 
     const evals = Number(result?.optimizer_result?.evaluations_used ?? result?.optimizer_result?.candidates?.length ?? 0);
@@ -998,7 +1204,7 @@ async function _consumeObjectiveBuilderLaunchResult(result, { stage = 'launch', 
 
     _setRunLifecycle('completed', 'objective_builder_launch', detail);
     if (!fromPoll) {
-        _showNotice('Simulation-in-loop optimization completed.', 'success', 3200);
+        _showNotice('Simulation sweep completed.', 'success', 3200);
     }
     return true;
 }
@@ -1014,7 +1220,7 @@ async function _pollObjectiveBuilderLaunchStatus() {
 
         if (state === 'completed' && status?.result) {
             await _consumeObjectiveBuilderLaunchResult(status.result, { stage: 'launch_completed', fromPoll: true });
-            _showNotice('Simulation-in-loop optimization completed.', 'success', 3200);
+            _showNotice('Simulation sweep completed.', 'success', 3200);
             activeLaunchRunControlId = null;
             _stopLaunchStatusPoller();
             return;
@@ -1053,7 +1259,10 @@ function _stopLaunchStatusPoller() {
 }
 
 async function _handleObjectiveBuilderLaunchRun() {
-    _setRunLifecycle('running', 'objective_builder_launch', 'Launching simulation-in-loop optimization');
+    if (!_ensureSimulationSourceSelectionReady()) {
+        return;
+    }
+    _setRunLifecycle('running', 'objective_builder_launch', 'Launching simulation sweep');
     try {
         const payload = _objectiveBuilderPayloadFromForm();
         payload.dry_run = false;
@@ -1068,7 +1277,7 @@ async function _handleObjectiveBuilderLaunchRun() {
             activeLaunchRunControlId = result.run_control_id;
             _setRunLifecycle('running', 'objective_builder_launch', `run_control=${activeLaunchRunControlId}`);
             _startLaunchStatusPoller();
-            _showNotice('Simulation-in-loop run started. Live progress is shown in Run Timeline.', 'info', 4200);
+            _showNotice('Simulation sweep started. Live progress is shown in Run Timeline.', 'info', 4200);
             return;
         }
 
@@ -1085,6 +1294,9 @@ async function _handleObjectiveBuilderLaunchRun() {
 }
 
 async function _handleObjectiveBuilderGuided() {
+    if (!_ensureSimulationSourceSelectionReady()) {
+        return;
+    }
     const guidedOutput = { success: true, steps: {} };
     try {
         const payload = _objectiveBuilderPayloadFromForm();
@@ -1100,7 +1312,7 @@ async function _handleObjectiveBuilderGuided() {
             };
             _renderObjectiveBuilderFeedback('guided_validate', out);
             _setObjectiveBuilderOutput(out);
-            _showNotice('Guided flow stopped at validation step.', 'warning', 3200);
+            _showNotice('Setup check stopped at validation. Fix the highlighted issues first.', 'warning', 3200);
             return;
         }
 
@@ -1112,10 +1324,10 @@ async function _handleObjectiveBuilderGuided() {
         guidedOutput.steps.launch_dry_run = launchResult;
         lastObjectiveBuilderLaunch = launchResult || null;
 
-        const out = { success: true, message: 'Guided prep completed (validate → build → dry run). No simulations executed.', ...guidedOutput };
+        const out = { success: true, message: 'Setup check completed (validate → build → dry run). No simulations executed.', ...guidedOutput };
         _renderObjectiveBuilderFeedback('guided_complete', out);
         _setObjectiveBuilderOutput(out);
-        _showNotice('Guided prep completed (no simulations executed).', 'success', 3200);
+        _showNotice('Setup check completed. No simulations were executed.', 'success', 3200);
     } catch (error) {
         const failure = {
             success: false,
@@ -1134,6 +1346,16 @@ function _renderTable(studies = {}) {
     currentStudies = studies || {};
     const entries = Object.entries(currentStudies).sort(([a], [b]) => a.localeCompare(b));
     tableBody.innerHTML = '';
+
+    if (savedStudiesSummaryEl) {
+        if (entries.length === 0) {
+            savedStudiesSummaryEl.textContent = 'No studies saved yet';
+        } else if (activeName && currentStudies[activeName]) {
+            savedStudiesSummaryEl.textContent = `${entries.length} saved • active: ${activeName}`;
+        } else {
+            savedStudiesSummaryEl.textContent = `${entries.length} saved`;
+        }
+    }
 
     if (entries.length === 0) {
         const tr = document.createElement('tr');
@@ -1156,6 +1378,261 @@ function _renderTable(studies = {}) {
             _renderTable(currentStudies);
         });
         tableBody.appendChild(tr);
+    }
+}
+
+function _setOptimizerControlsVisible(visible) {
+    optimizerControlsVisible = !!visible;
+    if (optimizerControlsSectionEl) {
+        optimizerControlsSectionEl.style.display = optimizerControlsVisible ? 'block' : 'none';
+    }
+    if (toggleOptimizerControlsBtn) {
+        toggleOptimizerControlsBtn.textContent = optimizerControlsVisible
+            ? 'Hide Optimizer Controls'
+            : 'Show Optimizer Controls';
+    }
+}
+
+function _getFocusedRankedItem(scored = []) {
+    if (!Array.isArray(scored) || scored.length === 0) return null;
+    const selectedIndex = selectedRankedRun?.run?.run_index;
+    if (selectedIndex == null) return scored[0];
+    return scored.find(item => Number(item?.run?.run_index) === Number(selectedIndex)) || scored[0];
+}
+
+function _normalizeSourceNameList(values = []) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(x => String(x || '').trim()).filter(Boolean))];
+}
+
+function _normalizeSourceIdList(values = []) {
+    if (!Array.isArray(values)) return [];
+    return [...new Set(values.map(x => String(x || '').trim()).filter(Boolean))];
+}
+
+function _formatSourcePreview(names = [], ids = []) {
+    if (names.length > 0) {
+        const preview = names.slice(0, 3).join(', ');
+        return names.length > 3
+            ? `${preview} +${names.length - 3} more`
+            : preview;
+    }
+
+    if (ids.length > 0) {
+        const preview = ids.slice(0, 2).join(', ');
+        return ids.length > 2
+            ? `Selected source IDs: ${preview} +${ids.length - 2} more`
+            : `Selected source IDs: ${preview}`;
+    }
+
+    return '';
+}
+
+function _extractRunSourceProvenance(run = {}) {
+    if (!run || typeof run !== 'object') {
+        return null;
+    }
+
+    const sim = run.simulation && typeof run.simulation === 'object' ? run.simulation : {};
+    const names = _normalizeSourceNameList(sim.selected_source_names);
+    const ids = _normalizeSourceIdList(sim.selected_source_ids);
+    const label = _formatSourcePreview(names, ids);
+
+    if (!label) {
+        return null;
+    }
+
+    return {
+        mode: 'simulation_result',
+        label,
+        selected_source_names: names,
+        selected_source_ids: ids,
+    };
+}
+
+function _extractLaunchPayloadSourceProvenance(launchPayload = null) {
+    const payload = launchPayload && typeof launchPayload === 'object' ? launchPayload : null;
+    if (!payload) {
+        return null;
+    }
+
+    const launchSources = Array.isArray(launchPayload?.selected_sources) ? launchPayload.selected_sources : [];
+    const launchNames = _normalizeSourceNameList(launchSources
+        .map(source => String(source?.name || '').trim())
+        .filter(Boolean));
+    const launchIds = _normalizeSourceIdList(
+        Array.isArray(payload.selected_source_ids)
+            ? payload.selected_source_ids
+            : launchSources.map(source => source?.id),
+    );
+    const label = _formatSourcePreview(launchNames, launchIds);
+
+    if (!label) {
+        return null;
+    }
+
+    return {
+        mode: 'launch_payload',
+        label,
+        selected_source_names: launchNames,
+        selected_source_ids: launchIds,
+    };
+}
+
+function _getRepresentativeRunWithSourceProvenance(result = {}) {
+    if (!result || typeof result !== 'object') {
+        return null;
+    }
+
+    const bestRun = result.best_run;
+    const bestRunProvenance = _extractRunSourceProvenance(bestRun);
+    if (bestRunProvenance) {
+        return bestRun;
+    }
+
+    const sequences = [];
+    if (Array.isArray(result.candidates)) sequences.push(result.candidates);
+    if (Array.isArray(result.runs)) sequences.push(result.runs);
+
+    for (const seq of sequences) {
+        const match = seq.find(item => _extractRunSourceProvenance(item));
+        if (match) return match;
+    }
+
+    return null;
+}
+
+function _resolveSourceProvenance(result = lastRunResult, launchContext = lastObjectiveBuilderLaunch) {
+    const representativeRun = _getRepresentativeRunWithSourceProvenance(result);
+    const runProvenance = representativeRun ? _extractRunSourceProvenance(representativeRun) : null;
+    if (runProvenance) {
+        return runProvenance;
+    }
+
+    const launchPayload = launchContext?.run_payload || launchContext?.result?.run_payload || result?.run_payload || result?.build?.run_sim_loop_payload || null;
+    const launchProvenance = _extractLaunchPayloadSourceProvenance(launchPayload);
+    if (launchProvenance) {
+        return launchProvenance;
+    }
+
+    if (Array.isArray(result?.runs)) {
+        return {
+            mode: 'preview_only',
+            label: 'Preview sweep only; no simulation sources were used.',
+            selected_source_names: [],
+            selected_source_ids: [],
+        };
+    }
+
+    return {
+        mode: 'unavailable',
+        label: 'No simulation source details yet.',
+        selected_source_names: [],
+        selected_source_ids: [],
+    };
+}
+
+function _selectedSourceSummaryForRun(run = {}) {
+    const runProvenance = _extractRunSourceProvenance(run);
+    if (runProvenance) {
+        return runProvenance.label;
+    }
+
+    const launchPayload = lastObjectiveBuilderLaunch?.run_payload || lastObjectiveBuilderLaunch?.result?.run_payload || null;
+    const launchProvenance = _extractLaunchPayloadSourceProvenance(launchPayload);
+    if (launchProvenance) {
+        return launchProvenance.label;
+    }
+
+    if (Array.isArray(lastRunResult?.runs)) {
+        return 'Preview sweep only; no simulation sources were used.';
+    }
+
+    return 'No simulation source details yet.';
+}
+
+export function buildResultExportSummary(result = {}, { studyName = null, launchContext = null } = {}) {
+    const safeResult = result && typeof result === 'object' ? result : {};
+    const provenance = _resolveSourceProvenance(safeResult, launchContext);
+    const kind = Array.isArray(safeResult?.candidates)
+        ? 'optimizer'
+        : (Array.isArray(safeResult?.runs) ? 'sweep' : 'result');
+    const objective = safeResult?.objective && typeof safeResult.objective === 'object'
+        ? {
+            name: safeResult.objective.name ?? null,
+            direction: safeResult.objective.direction ?? null,
+        }
+        : null;
+    const bestRun = safeResult?.best_run && typeof safeResult.best_run === 'object'
+        ? safeResult.best_run
+        : null;
+    const effectiveStudyName = String(
+        studyName
+        || safeResult.study_name
+        || launchContext?.study?.name
+        || launchContext?.run_payload?.study_name
+        || launchContext?.result?.run_payload?.study_name
+        || '',
+    ).trim() || null;
+
+    return {
+        exported_at: new Date().toISOString(),
+        study_name: effectiveStudyName,
+        kind,
+        simulation_in_loop: !!safeResult.simulation_in_loop,
+        run_id: safeResult.run_id ?? null,
+        objective,
+        requested_runs: safeResult.requested_runs ?? null,
+        evaluations_used: safeResult.evaluations_used ?? null,
+        successful_runs: safeResult.successful_runs ?? safeResult.success_count ?? null,
+        failed_runs: safeResult.failed_runs ?? safeResult.failure_count ?? null,
+        best_run_index: bestRun?.run_index ?? null,
+        stop_reason: safeResult.stop_reason ?? null,
+        source_provenance: provenance,
+    };
+}
+
+function _renderSelectedResultCard(scored, objectiveName, direction) {
+    if (!selectedResultSummaryEl || !selectedResultMetaEl || !selectedResultSourcesEl || !selectedResultValuesEl || !selectedResultObjectivesEl || !selectedResultErrorEl) return;
+
+    const focused = _getFocusedRankedItem(scored);
+    if (!focused) {
+        selectedResultSummaryEl.textContent = 'No results yet.';
+        selectedResultMetaEl.textContent = 'Run a sweep to populate the ranking table.';
+        selectedResultSourcesEl.textContent = 'No simulation source details yet.';
+        selectedResultValuesEl.innerHTML = '<span class="ps-value-chip-empty">No parameter values yet.</span>';
+        selectedResultObjectivesEl.innerHTML = '<span class="ps-value-chip-empty">No objective values yet.</span>';
+        selectedResultErrorEl.textContent = 'Select a row to inspect it in more detail.';
+        selectedResultErrorEl.style.color = '#64748b';
+        return;
+    }
+
+    const rank = Math.max(1, scored.findIndex(item => Number(item?.run?.run_index) === Number(focused?.run?.run_index)) + 1);
+    const run = focused.run || {};
+    const objectiveValue = focused.objective;
+    const scoreText = objectiveValue == null ? 'n/a' : _formatMaybeNumber(objectiveValue, 6);
+    const successText = run.success ? 'successful' : 'failed';
+
+    selectedResultSummaryEl.textContent = `Selected result: rank ${rank}, run ${run.run_index ?? '-'} (${successText})`;
+    selectedResultMetaEl.textContent = `Objective ${objectiveName || '-'} · ${direction} · value ${scoreText}`;
+    selectedResultSourcesEl.textContent = _selectedSourceSummaryForRun(run);
+    selectedResultValuesEl.innerHTML = _formatParameterValueChips(run.values || {});
+    selectedResultObjectivesEl.innerHTML = _formatNamedValueChips(run.objectives || {}, 5, 'no objective values');
+
+    const notes = [];
+    if (Array.isArray(lastRunResult?.candidates)) {
+        if (run.proposal_source) notes.push(`proposal: ${run.proposal_source}`);
+        if (Number.isFinite(Number(run.optimizer_score))) notes.push(`optimizer score: ${_formatMaybeNumber(run.optimizer_score, 5)}`);
+    }
+    if (!run.success && run.error) {
+        selectedResultErrorEl.textContent = String(run.error);
+        selectedResultErrorEl.style.color = '#b91c1c';
+    } else if (notes.length > 0) {
+        selectedResultErrorEl.textContent = notes.join(' · ');
+        selectedResultErrorEl.style.color = '#475569';
+    } else {
+        selectedResultErrorEl.textContent = 'Click another row to compare alternatives.';
+        selectedResultErrorEl.style.color = '#64748b';
     }
 }
 
@@ -2387,6 +2864,7 @@ function _renderRankingTable() {
     if (runs.length === 0) {
         selectedRankedRun = null;
         rankingTableBody.innerHTML = '<tr><td colspan="5" style="color:#64748b;">Run a study to populate ranking results.</td></tr>';
+        _renderSelectedResultCard([], '', 'maximize');
         _renderCandidateDecomposition([], '', 'maximize');
         _renderCandidateCompare([], '', 'maximize');
         _renderWhySelected([], '', 'maximize');
@@ -2402,13 +2880,12 @@ function _renderRankingTable() {
     scored.forEach((item, idx) => {
         const r = item.run;
         const tr = document.createElement('tr');
-        const paramsStr = Object.entries(r.values || {}).map(([k, v]) => `${k}=${_formatMaybeNumber(v, 4)}`).join(', ');
         tr.innerHTML = `
             <td>${idx + 1}</td>
             <td>${r.run_index}</td>
             <td>${item.objective == null ? 'n/a' : _formatMaybeNumber(item.objective, 6)}</td>
             <td>${r.success ? 'yes' : 'no'}</td>
-            <td>${paramsStr}</td>
+            <td>${_formatParameterValueChips(r.values || {})}</td>
         `;
 
         const isSelected = selectedRankedRun && selectedRankedRun?.run?.run_index === r?.run_index;
@@ -2430,6 +2907,7 @@ function _renderRankingTable() {
         rankingTableBody.appendChild(tr);
     });
 
+    _renderSelectedResultCard(scored, objectiveName, direction);
     _renderCandidateDecomposition(scored, objectiveName);
     _renderCandidateCompare(scored, objectiveName, direction);
     _renderWhySelected(scored, objectiveName, direction);
@@ -2467,6 +2945,7 @@ async function _refreshAndRender() {
     const studies = await callbacks.onRefresh();
     _renderTable(studies || {});
     await _refreshParameterRegistryFromServer();
+    await _refreshStudySourcesFromGeometry(null, { preferActiveWhenEmpty: _getSelectedStudySourceIds().length === 0 });
 }
 
 async function _refreshParameterRegistryFromServer() {
@@ -2518,6 +2997,7 @@ async function _handleRun() {
         _updateObjectiveSelector();
         _renderRankingTable();
         _renderOptimizerSummary();
+        _revealResultsArea();
 
         const runsCount = Array.isArray(result?.runs) ? result.runs.length : 0;
         const stopReason = result?.stop_reason;
@@ -2525,7 +3005,7 @@ async function _handleRun() {
             ? `runs=${runsCount}, stop_reason=${stopReason}`
             : `runs=${runsCount}`;
         _setRunLifecycle('completed', 'param_study_sweep', detail);
-        _showNotice('Parameter sweep completed (no simulation). Use Objective Builder → Run Simulation-in-Loop for physics optimization.', 'info', 4200);
+        _showNotice('Preview sweep completed. Use Run Simulation Sweep when you want physics in the loop.', 'info', 4200);
     } catch (error) {
         runOutput.value = JSON.stringify(error?.data || { success: false, error: error?.message || String(error) }, null, 2);
         _setRunLifecycle('failed', 'param_study_sweep', error?.message || String(error));
@@ -2558,6 +3038,7 @@ async function _handleApplySelectedCandidate() {
 async function _handleRunOptimizer() {
     const studyName = nameInput.value.trim() || activeName;
     if (!studyName) return;
+    _setOptimizerControlsVisible(true);
 
     const objectiveName = rankObjectiveSelect?.value || null;
     const direction = rankDirectionSelect?.value || 'maximize';
@@ -2598,6 +3079,7 @@ async function _handleRunOptimizer() {
         if (direction) rankDirectionSelect.value = direction;
         _renderRankingTable();
         _renderOptimizerSummary();
+        _revealResultsArea();
 
         const evals = Number(result?.evaluations_used ?? result?.candidates?.length ?? 0);
         const stopReason = result?.stop_reason;
@@ -2772,8 +3254,18 @@ function _handleDownloadResults() {
     const kind = Array.isArray(lastRunResult?.candidates) ? 'optimizer' : 'sweep';
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${studyName}_${kind}_results_${ts}.json`;
+    const exportPayload = {
+        ...lastRunResult,
+        summary: {
+            ...((lastRunResult?.summary && typeof lastRunResult.summary === 'object') ? lastRunResult.summary : {}),
+            ...buildResultExportSummary(lastRunResult, {
+                studyName,
+                launchContext: lastObjectiveBuilderLaunch,
+            }),
+        },
+    };
 
-    const blob = new Blob([JSON.stringify(lastRunResult, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2793,6 +3285,7 @@ export function init(newCallbacks = {}) {
     quickStatusBarEl = document.getElementById('psQuickStatusBar');
     viewModeInput = document.getElementById('ps_view_mode');
     tableBody = document.getElementById('paramStudiesTableBody');
+    savedStudiesSummaryEl = document.getElementById('psSavedStudiesSummary');
 
     // Wizard elements
     wizardCard = document.getElementById('psWizardCard');
@@ -2838,6 +3331,12 @@ export function init(newCallbacks = {}) {
     compareTableWrap = document.getElementById('psCompareTableWrap');
     whySelectedSummaryEl = document.getElementById('psWhySelectedSummary');
     whySelectedDetailsEl = document.getElementById('psWhySelectedDetails');
+    selectedResultSummaryEl = document.getElementById('psSelectedResultSummary');
+    selectedResultMetaEl = document.getElementById('psSelectedResultMeta');
+    selectedResultSourcesEl = document.getElementById('psSelectedResultSources');
+    selectedResultValuesEl = document.getElementById('psSelectedResultValues');
+    selectedResultObjectivesEl = document.getElementById('psSelectedResultObjectives');
+    selectedResultErrorEl = document.getElementById('psSelectedResultError');
     failureCountEl = document.getElementById('psFailureCount');
     failureGroupsCountEl = document.getElementById('psFailureGroupsCount');
     failureGroupsEl = document.getElementById('psFailureGroups');
@@ -2848,6 +3347,8 @@ export function init(newCallbacks = {}) {
     optPopSizeInput = document.getElementById('ps_opt_popsize');
     optSigmaRelInput = document.getElementById('ps_opt_sigma_rel');
     optStagInput = document.getElementById('ps_opt_stag');
+    optimizerControlsSectionEl = document.getElementById('psOptimizerControlsSection');
+    toggleOptimizerControlsBtn = document.getElementById('psToggleOptimizerControlsBtn');
     verifyRepeatsInput = document.getElementById('ps_verify_repeats');
     verifyMinSuccessRateInput = document.getElementById('ps_verify_min_success_rate');
     verifyMaxStdInput = document.getElementById('ps_verify_max_std');
@@ -2899,6 +3400,12 @@ export function init(newCallbacks = {}) {
     obStageEl = document.getElementById('psObStage');
     obErrorsList = document.getElementById('psObErrors');
     obWarningsList = document.getElementById('psObWarnings');
+    sourcePickerEl = document.getElementById('psSourcePicker');
+    sourcePickerSummaryEl = document.getElementById('psSourcePickerSummary');
+    sourcesUseActiveBtn = document.getElementById('psSourcesUseActiveBtn');
+    sourcesSelectAllBtn = document.getElementById('psSourcesSelectAllBtn');
+    sourcesClearBtn = document.getElementById('psSourcesClearBtn');
+    advancedResultsBucketEl = document.getElementById('psAdvancedResultsBucket');
 
     summaryStatusEl = document.getElementById('psSummaryStatus');
     summaryMethodEl = document.getElementById('psSummaryMethod');
@@ -2948,6 +3455,11 @@ export function init(newCallbacks = {}) {
     if (rankDirectionSelect) rankDirectionSelect.addEventListener('change', _renderRankingTable);
     if (compareTopNSelect) compareTopNSelect.addEventListener('change', _renderRankingTable);
     if (compareRefreshBtn) compareRefreshBtn.addEventListener('click', _renderRankingTable);
+    if (toggleOptimizerControlsBtn) {
+        toggleOptimizerControlsBtn.addEventListener('click', () => {
+            _setOptimizerControlsVisible(!optimizerControlsVisible);
+        });
+    }
 
     if (legacyObjectivesToggleInput) {
         legacyObjectivesToggleInput.addEventListener('change', () => {
@@ -2998,9 +3510,13 @@ export function init(newCallbacks = {}) {
     if (obCopyOutputBtn) obCopyOutputBtn.addEventListener('click', _handleCopyObjectiveBuilderOutput);
     if (obCopyBuildBtn) obCopyBuildBtn.addEventListener('click', _handleCopyObjectiveBuilderBuild);
     if (obCopyLaunchBtn) obCopyLaunchBtn.addEventListener('click', _handleCopyObjectiveBuilderLaunch);
+    if (sourcesUseActiveBtn) sourcesUseActiveBtn.addEventListener('click', () => _applySourceSelectionPreset('active'));
+    if (sourcesSelectAllBtn) sourcesSelectAllBtn.addEventListener('click', () => _applySourceSelectionPreset('all'));
+    if (sourcesClearBtn) sourcesClearBtn.addEventListener('click', () => _applySourceSelectionPreset('clear'));
 
     _setParamStudiesViewMode(viewModeInput?.value || 'wizard');
     _renderRunsDirStatusFromForm();
+    _renderSourcePicker();
 
     // Populate schema-driven UI hints/caps/templates.
     callbacks.onObjectiveBuilderSchema().then(schema => {
@@ -3008,6 +3524,8 @@ export function init(newCallbacks = {}) {
     }).catch(() => {
         _applyObjectiveBuilderSchemaToUI(null);
     });
+
+    _setOptimizerControlsVisible(false);
 }
 
 function _captureModalState() {
@@ -3031,6 +3549,7 @@ function _captureModalState() {
             budget: optBudgetInput?.value || '20',
             optSeed: optSeedInput?.value || '42',
             viewMode: viewModeInput?.value || 'wizard',
+            selectedSourceIds: _getSelectedStudySourceIds(),
         },
         selectedRankedRunIndex: selectedRankedRun?.run?.run_index ?? null,
         lastRunResult,
@@ -3042,6 +3561,7 @@ function _captureModalState() {
         runLifecycleState,
         runTimelineEvents,
         activeLaunchRunControlId,
+        optimizerControlsVisible,
     };
 }
 
@@ -3067,6 +3587,7 @@ function _restoreModalState(state) {
     if (optMethodInput && state.form?.method) optMethodInput.value = state.form.method;
     if (optBudgetInput) optBudgetInput.value = state.form?.budget || '20';
     if (optSeedInput) optSeedInput.value = state.form?.optSeed || '42';
+    selectedStudySourceIds = _sanitizeSourceIdList(state.form?.selectedSourceIds || []);
 
     if (viewModeInput) viewModeInput.value = state.form?.viewMode || 'wizard';
     _setParamStudiesViewMode(viewModeInput?.value || 'wizard');
@@ -3079,11 +3600,13 @@ function _restoreModalState(state) {
     runLifecycleState = state.runLifecycleState || runLifecycleState;
     runTimelineEvents = Array.isArray(state.runTimelineEvents) ? state.runTimelineEvents : [];
     activeLaunchRunControlId = state.activeLaunchRunControlId || null;
+    optimizerControlsVisible = !!state.optimizerControlsVisible;
     restoredSelectedRunIndex = state.selectedRankedRunIndex;
     selectedRankedRun = null;
 
     if (runOutput) runOutput.value = state.runOutput || '';
     if (obOutput) obOutput.value = state.obOutput || '';
+    _setOptimizerControlsVisible(optimizerControlsVisible);
 
     return true;
 }
@@ -3124,6 +3647,8 @@ export async function show(initialStudies = {}) {
         runTimelineEvents = [];
 
         _setForm();
+        selectedStudySourceIds = [];
+        currentStudySourceOptions = [];
         if (viewModeInput) viewModeInput.value = 'wizard';
         _setParamStudiesViewMode('wizard');
         _clearWizardState();
@@ -3131,9 +3656,11 @@ export async function show(initialStudies = {}) {
         if (obOutput) obOutput.value = '';
         _showNotice('', 'info', 0);
         _renderObjectiveBuilderFeedback('idle', { success: true, validation: { errors: [], warnings: [] } });
+        _setOptimizerControlsVisible(false);
     } else {
         if (viewModeInput) viewModeInput.value = 'wizard';
         _setParamStudiesViewMode('wizard');
+        _setOptimizerControlsVisible(optimizerControlsVisible);
     }
 
     _renderFormulaVariableHints();
@@ -3757,37 +4284,39 @@ async function _wizardPreviewInBasic() {
 }
 
 // Global functions for onclick handlers
-window.addWizardMetric = function(path, label) {
-    wizardState.selectedMetrics = [{
-        shortName: 'custom_dataset',
-        label: `Optimize ${label}`,
-        datasetPath: path,
-        scoreExpr: 'edep_sum',
-        helpText: `Uses the summed values from ${path} as the score.`,
-    }];
-    _renderWizardMetricsList();
-};
+if (typeof window !== 'undefined') {
+    window.addWizardMetric = function(path, label) {
+        wizardState.selectedMetrics = [{
+            shortName: 'custom_dataset',
+            label: `Optimize ${label}`,
+            datasetPath: path,
+            scoreExpr: 'edep_sum',
+            helpText: `Uses the summed values from ${path} as the score.`,
+        }];
+        _renderWizardMetricsList();
+    };
 
-window.setWizardMetricDirection = function(select, path) {
-    void select;
-    void path;
-};
+    window.setWizardMetricDirection = function(select, path) {
+        void select;
+        void path;
+    };
 
-window.closeWizardMetricsBrowser = function() {
-    _renderWizardMetricsList();
-};
+    window.closeWizardMetricsBrowser = function() {
+        _renderWizardMetricsList();
+    };
 
-window.updateWizardMetricDirection = function(index, direction) {
-    void index;
-    void direction;
-};
+    window.updateWizardMetricDirection = function(index, direction) {
+        void index;
+        void direction;
+    };
 
-window.updateWizardMetricWeight = function(index, weight) {
-    void index;
-    void weight;
-};
+    window.updateWizardMetricWeight = function(index, weight) {
+        void index;
+        void weight;
+    };
 
-window.removeWizardMetric = function(index) {
-    wizardState.selectedMetrics.splice(index, 1);
-    _renderWizardMetricsList();
-};
+    window.removeWizardMetric = function(index) {
+        wizardState.selectedMetrics.splice(index, 1);
+        _renderWizardMetricsList();
+    };
+}

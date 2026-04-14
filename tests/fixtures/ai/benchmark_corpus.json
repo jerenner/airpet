@@ -1,0 +1,549 @@
+[
+  {
+    "name": "slab_and_beam_setup",
+    "prompt": "Turn the default box into a 10 mm silicon slab and aim a 10 keV electron beam at it.",
+    "trace": [
+      {
+        "tool": "manage_material",
+        "args": {
+          "name": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "created"
+          }
+        }
+      },
+      {
+        "tool": "modify_solid",
+        "args": {
+          "name": "box_solid",
+          "params": {
+            "x": "10 mm",
+            "y": "10 mm",
+            "z": "0.5 mm"
+          }
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "manage_logical_volume",
+        "args": {
+          "name": "box_LV",
+          "solid_ref": "box_solid",
+          "material_ref": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "configure_incident_beam",
+        "args": {
+          "target": "box_LV",
+          "source_name": "slab_beam",
+          "particle": "electron",
+          "energy": "10 keV",
+          "incident_axis": "+z",
+          "offset": "1*mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "configured"
+          },
+          "source": {
+            "name": "slab_beam",
+            "target_pv_name": "box_PV",
+            "target_sensitive_updated": true,
+            "gps_commands": {
+              "particle": "e-",
+              "ang/type": "beam1d",
+              "energy": "10*keV"
+            }
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "materials": {
+        "G4_Si": {
+          "mat_type": "nist"
+        }
+      },
+      "solids": {
+        "box_solid": {
+          "_evaluated_parameters": {
+            "x": 10.0,
+            "y": 10.0,
+            "z": 0.5
+          }
+        }
+      },
+      "logical_volumes": {
+        "box_LV": {
+          "material_ref": "G4_Si",
+          "is_sensitive": true
+        }
+      },
+      "active_source_ids": {
+        "$len": 1
+      },
+      "sources": {
+        "slab_beam": {
+          "name": "slab_beam",
+          "gps_commands": {
+            "particle": "e-",
+            "ang/type": "beam1d",
+            "energy": "10*keV"
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "define_update",
+    "prompt": "Increase the slab thickness define from 0.5 mm to 0.8 mm and keep the dependent geometry in sync.",
+    "preconditions": [
+      {
+        "tool": "manage_define",
+        "args": {
+          "name": "slab_thickness",
+          "define_type": "constant",
+          "value": "0.5",
+          "unit": "mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "created"
+          }
+        }
+      },
+      {
+        "tool": "modify_solid",
+        "args": {
+          "name": "box_solid",
+          "params": {
+            "x": "10 mm",
+            "y": "10 mm",
+            "z": "slab_thickness"
+          }
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      }
+    ],
+    "trace": [
+      {
+        "tool": "manage_define",
+        "args": {
+          "name": "slab_thickness",
+          "define_type": "constant",
+          "value": "0.8",
+          "unit": "mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "defines": {
+        "slab_thickness": {
+          "unit": "mm",
+          "value": 0.8
+        }
+      },
+      "solids": {
+        "box_solid": {
+          "_evaluated_parameters": {
+            "z": 0.8
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "run_simulation",
+    "prompt": "Run a 250-event simulation with a 0.5 mm production cut, 20 eV hit threshold, saved hits, and FTFP_BERT optics.",
+    "trace": [
+      {
+        "tool": "run_simulation",
+        "args": {
+          "events": 250,
+          "threads": 2,
+          "production_cut": "0.5 mm",
+          "hit_energy_threshold": "20 eV",
+          "save_hits": true,
+          "save_hit_metadata": true,
+          "save_particles": true,
+          "save_tracks_range": "0-9",
+          "seed1": 11,
+          "seed2": 22,
+          "print_progress": 250,
+          "physics_list": "FTFP_BERT",
+          "optical_physics": true
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "Simulation started"
+          },
+          "preflight_summary": {
+            "can_run": true
+          },
+          "job_id": {
+            "$exists": true
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "current_version_id": "benchmark-version",
+      "is_changed": false
+    }
+  },
+  {
+    "name": "geometry_preflight_simulation_analysis",
+    "prompt": "Turn the default box into a sensitive silicon slab, run preflight, launch a short simulation, and inspect the filtered hit analysis for the saved run.",
+    "preconditions": [
+      {
+        "tool": "manage_material",
+        "args": {
+          "name": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "created"
+          }
+        }
+      },
+      {
+        "tool": "modify_solid",
+        "args": {
+          "name": "box_solid",
+          "params": {
+            "x": "10 mm",
+            "y": "10 mm",
+            "z": "0.5 mm"
+          }
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "manage_logical_volume",
+        "args": {
+          "name": "box_LV",
+          "solid_ref": "box_solid",
+          "material_ref": "G4_Si"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "updated"
+          }
+        }
+      },
+      {
+        "tool": "configure_incident_beam",
+        "args": {
+          "target": "box_LV",
+          "source_name": "slab_beam",
+          "particle": "electron",
+          "energy": "10 keV",
+          "incident_axis": "+z",
+          "offset": "1*mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "configured"
+          },
+          "source": {
+            "name": "slab_beam",
+            "target_pv_name": "box_PV",
+            "target_sensitive_updated": true,
+            "gps_commands": {
+              "particle": "e-",
+              "ang/type": "beam1d",
+              "energy": "10*keV"
+            }
+          }
+        }
+      }
+    ],
+    "trace": [
+      {
+        "tool": "run_preflight_checks",
+        "args": {},
+        "expected": {
+          "success": true,
+          "preflight_summary": {
+            "can_run": true
+          }
+        }
+      },
+      {
+        "tool": "run_simulation",
+        "args": {
+          "events": 8,
+          "threads": 1,
+          "production_cut": "0.5 mm",
+          "hit_energy_threshold": "20 eV",
+          "save_hits": true,
+          "save_hit_metadata": true,
+          "save_particles": true,
+          "physics_list": "FTFP_BERT",
+          "optical_physics": true
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "Simulation started"
+          },
+          "preflight_summary": {
+            "can_run": true
+          },
+          "job_id": {
+            "$exists": true
+          }
+        }
+      },
+      {
+        "tool": "get_simulation_analysis",
+        "args": {
+          "version_id": "benchmark-version",
+          "job_id": "$job_id",
+          "energy_bins": 8,
+          "spatial_bins": 4,
+          "sensitive_detector": "box_LV_SD"
+        },
+        "expected": {
+          "success": true,
+          "analysis": {
+            "total_hits": 4,
+            "filtering": {
+              "sensitive_detector_supported": true,
+              "available_sensitive_detectors": [
+                "box_LV_SD"
+              ],
+              "selected_sensitive_detector": "box_LV_SD"
+            },
+            "energy_spectrum": {
+              "counts": {
+                "$len": 8
+              }
+            },
+            "heatmaps": {
+              "xy": {
+                "z": {
+                  "$len": 4
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "materials": {
+        "G4_Si": {
+          "mat_type": "nist"
+        }
+      },
+      "solids": {
+        "box_solid": {
+          "_evaluated_parameters": {
+            "x": 10.0,
+            "y": 10.0,
+            "z": 0.5
+          }
+        }
+      },
+      "logical_volumes": {
+        "box_LV": {
+          "material_ref": "G4_Si",
+          "is_sensitive": true
+        }
+      },
+      "active_source_ids": {
+        "$len": 1
+      },
+      "sources": {
+        "slab_beam": {
+          "gps_commands": {
+            "particle": "e-",
+            "ang/type": "beam1d",
+            "energy": "10*keV"
+          }
+        }
+      },
+      "current_version_id": "benchmark-version",
+      "is_changed": false
+    }
+  },
+  {
+    "name": "analysis_filter",
+    "prompt": "Show the hit analysis for run job-1 filtered to sensitive detector SD_B.",
+    "trace": [
+      {
+        "tool": "get_simulation_analysis",
+        "args": {
+          "version_id": "v1",
+          "job_id": "job-1",
+          "energy_bins": 64,
+          "spatial_bins": 32,
+          "sensitive_detector": "SD_B"
+        },
+        "expected": {
+          "success": true,
+          "analysis": {
+            "total_hits": 5,
+            "version_id": "v1",
+            "job_id": "job-1",
+            "energy_bins": "64",
+            "spatial_bins": "32",
+            "sensitive_detector": "SD_B"
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "current_version_id": null
+    }
+  },
+  {
+    "name": "param_study_setup",
+    "prompt": "Set up a grid study for the slab thickness define and optimize success plus placement count.",
+    "preconditions": [
+      {
+        "tool": "manage_define",
+        "args": {
+          "name": "slab_thickness",
+          "define_type": "constant",
+          "value": "0.5",
+          "unit": "mm"
+        },
+        "expected": {
+          "success": true,
+          "message": {
+            "$contains": "created"
+          }
+        }
+      }
+    ],
+    "trace": [
+      {
+        "tool": "create_parameter_registry",
+        "args": {
+          "param_name": "slab_thickness",
+          "target_type": "define",
+          "target_ref": {
+            "name": "slab_thickness"
+          },
+          "bounds": {
+            "min": 0.2,
+            "max": 1.0
+          },
+          "default": 0.5,
+          "units": "mm"
+        },
+        "expected": {
+          "success": true,
+          "parameter": {
+            "name": "slab_thickness",
+            "target_type": "define",
+            "default": 0.5,
+            "bounds": {
+              "min": 0.2,
+              "max": 1.0
+            }
+          }
+        }
+      },
+      {
+        "tool": "setup_param_study",
+        "args": {
+          "study_name": "slab_thickness_grid",
+          "mode": "grid",
+          "parameters": [
+            "slab_thickness"
+          ],
+          "objectives": [
+            {
+              "name": "success",
+              "metric": "success_flag",
+              "direction": "maximize"
+            },
+            {
+              "name": "placements",
+              "metric": "placements_count",
+              "direction": "maximize"
+            }
+          ],
+          "grid": {
+            "steps": 3
+          }
+        },
+        "expected": {
+          "success": true,
+          "study": {
+            "name": "slab_thickness_grid",
+            "mode": "grid",
+            "parameters": [
+              "slab_thickness"
+            ],
+            "grid": {
+              "steps": 3
+            }
+          }
+        }
+      }
+    ],
+    "expected_state": {
+      "parameter_registry": {
+        "slab_thickness": {
+          "target_type": "define",
+          "bounds": {
+            "min": 0.2,
+            "max": 1.0
+          }
+        }
+      },
+      "param_studies": {
+        "slab_thickness_grid": {
+          "mode": "grid",
+          "parameters": [
+            "slab_thickness"
+          ],
+          "grid": {
+            "steps": 3
+          }
+        }
+      }
+    }
+  }
+]

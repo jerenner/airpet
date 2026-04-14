@@ -22,6 +22,149 @@ def test_ai_geometry_tools_schema_is_valid_for_gemini_generate_content_config():
     assert cfg is not None
 
 
+def test_run_simulation_ai_schema_exposes_advanced_simulation_options():
+    run_simulation_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "run_simulation"
+    )
+    properties = run_simulation_tool["parameters"]["properties"]
+
+    for key in (
+        "production_cut",
+        "hit_energy_threshold",
+        "save_hits",
+        "save_hit_metadata",
+        "save_particles",
+        "save_tracks_range",
+        "seed1",
+        "seed2",
+        "print_progress",
+        "physics_list",
+        "optical_physics",
+    ):
+        assert key in properties
+
+    assert properties["save_hits"]["type"] == "boolean"
+    assert properties["seed1"]["type"] == "integer"
+    assert properties["physics_list"]["type"] == "string"
+
+
+def test_get_simulation_analysis_ai_schema_exposes_sensitive_detector_filter():
+    analysis_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "get_simulation_analysis"
+    )
+    properties = analysis_tool["parameters"]["properties"]
+
+    assert "sensitive_detector" in properties
+    assert properties["sensitive_detector"]["type"] == "string"
+    assert "sensitive_detector" in analysis_tool["description"]
+
+
+def test_param_study_ai_schema_exposes_simulation_source_selection():
+    setup_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "setup_param_study"
+    )
+    setup_properties = setup_tool["parameters"]["properties"]
+
+    assert "simulation_source_ids" in setup_properties
+    assert setup_properties["simulation_source_ids"]["type"] == "array"
+    assert setup_properties["simulation_source_ids"]["items"]["type"] == "string"
+    assert "simulation-in-loop runs" in setup_properties["simulation_source_ids"]["description"]
+
+    run_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "run_optimization"
+    )
+    run_properties = run_tool["parameters"]["properties"]
+
+    assert "selected_source_ids" in run_properties
+    assert run_properties["selected_source_ids"]["type"] == "array"
+    assert run_properties["selected_source_ids"]["items"]["type"] == "string"
+    assert "simulation-in-loop" in run_properties["selected_source_ids"]["description"]
+
+
+def test_environment_ai_schema_exposes_read_and_write_tools():
+    tool_dict = {tool["name"]: tool for tool in AI_GEOMETRY_TOOLS}
+
+    details_tool = tool_dict["get_component_details"]
+    details_enum = details_tool["parameters"]["properties"]["component_type"]["enum"]
+    assert "environment" in details_enum
+    assert "scoring" in details_enum
+
+    update_tool = tool_dict["update_property"]
+    update_properties = update_tool["parameters"]["properties"]
+
+    assert "environment" in update_properties["object_type"]["enum"]
+    assert "scoring" in update_properties["object_type"]["enum"]
+    assert "object_id" in update_properties
+    assert "property_path" in update_properties
+    assert "new_value" in update_properties
+    assert "global magnetic field" in update_tool["description"]
+    assert "global electric field" in update_tool["description"]
+    assert "local magnetic field" in update_tool["description"]
+    assert "local electric field" in update_tool["description"]
+    assert "local_uniform_magnetic_field" in update_tool["description"]
+    assert "local_uniform_electric_field" in update_tool["description"]
+    assert "region cuts and limits" in update_tool["description"]
+    assert "region_cuts_and_limits" in update_tool["description"]
+    assert "scoring_state" in update_tool["description"]
+
+    scoring_tool = tool_dict["get_scoring_summary"]
+    scoring_properties = scoring_tool["parameters"]["properties"]
+    assert scoring_properties["version_id"]["type"] == "string"
+    assert scoring_properties["job_id"]["type"] == "string"
+    assert "per-quantity totals" in scoring_tool["description"]
+
+
+def test_detector_feature_generator_ai_schema_exposes_manage_and_inspect_tools():
+    tool_dict = {tool["name"]: tool for tool in AI_GEOMETRY_TOOLS}
+
+    manage_tool = tool_dict["manage_detector_feature_generator"]
+    manage_properties = manage_tool["parameters"]["properties"]
+    manage_required = manage_tool["parameters"]["required"]
+
+    assert manage_properties["generator_type"]["enum"] == [
+        "rectangular_drilled_hole_array",
+        "circular_drilled_hole_array",
+        "layered_detector_stack",
+        "tiled_sensor_array",
+        "support_rib_array",
+        "channel_cut_array",
+        "annular_shield_sleeve",
+    ]
+    assert "target" in manage_properties
+    assert "pattern" in manage_properties
+    assert "hole" in manage_properties
+    assert "stack" in manage_properties
+    assert "array" in manage_properties
+    assert "sensor" in manage_properties
+    assert "rib" in manage_properties
+    assert "channel" in manage_properties
+    assert "shield" in manage_properties
+    assert "layers" in manage_properties
+    assert "realize_now" in manage_properties
+    assert "generator_type" in manage_required
+    assert "target" in manage_required
+
+    details_tool = tool_dict["get_component_details"]
+    details_enum = details_tool["parameters"]["properties"]["component_type"]["enum"]
+    assert "detector_feature_generator" in details_enum
+    assert "detector feature generator" in details_tool["description"]
+
+
+def test_physics_template_schema_exposes_field_probe_slab():
+    template_tool = next(
+        tool for tool in AI_GEOMETRY_TOOLS
+        if tool["name"] == "insert_physics_template"
+    )
+    template_enum = template_tool["parameters"]["properties"]["template_name"]["enum"]
+
+    assert "field_probe_slab" in template_enum
+    assert "field probe slab" in template_tool["description"]
+
+
 def test_ai_chat_flow_mocked(client):
     """Verify that the AI can trigger a simulation via chat using test_client."""
     from google.genai import types
@@ -786,6 +929,87 @@ def test_ai_chat_stream_persists_final_reply_in_history_for_local_adapter(client
             msg for msg in history
             if msg.get('role') == 'assistant'
             and msg.get('content') == 'All set.'
+            and not (msg.get('metadata') or {}).get('_intermediate')
+        ]
+        assert final_messages, history
+
+
+def test_ai_chat_stream_persists_prompt_reply_and_tool_activity_in_history_for_local_adapter(client):
+    with patch('app.get_project_manager_for_session') as MockPMGetter, \
+         patch('app.invoke_text_request_for_backend') as MockInvokeAdapter, \
+         patch('app.dispatch_ai_tool') as MockDispatchTool:
+        evaluator = ExpressionEvaluator()
+        pm = ProjectManager(evaluator)
+        pm.create_empty_project()
+        MockPMGetter.return_value = pm
+
+        MockInvokeAdapter.side_effect = [
+            MagicMock(
+                backend_id='llama_cpp',
+                model='qwen-local',
+                text=(
+                    "I'll define spacing and proceed.\n\n"
+                    "```json\n"
+                    "{\n"
+                    "  \"tool_calls\": [\n"
+                    "    {\"tool\": \"manage_define\", \"name\": \"SiPM_spacing\", \"value\": \"10\"}\n"
+                    "  ]\n"
+                    "}\n"
+                    "```"
+                ),
+                usage={'prompt_tokens': 50, 'completion_tokens': 20},
+                raw_response={},
+            ),
+            MagicMock(
+                backend_id='llama_cpp',
+                model='qwen-local',
+                text='Done. Created the SiPM grid on kapton.',
+                usage={'prompt_tokens': 58, 'completion_tokens': 18},
+                raw_response={},
+            ),
+        ]
+        MockDispatchTool.return_value = {"success": True, "message": "Define updated."}
+
+        response = client.post('/api/ai/chat/stream', json={
+            'message': 'Create an 8x8 SiPM matrix.',
+            'model': 'llama_cpp::qwen-local',
+        })
+
+        assert response.status_code == 200
+        events = _parse_sse_data_events(response)
+        complete_events = [evt for evt in events if evt.get('type') == 'complete']
+        assert complete_events, events
+        assert complete_events[-1]['message'] == 'Done. Created the SiPM grid on kapton.'
+        assert MockInvokeAdapter.call_count == 2
+        MockDispatchTool.assert_called_once()
+
+        history_response = client.get('/api/ai/history')
+        assert history_response.status_code == 200
+        history = history_response.get_json()['history']
+
+        user_messages = [
+            msg for msg in history
+            if msg.get('role') == 'user'
+            and (msg.get('metadata') or {}).get('original_message') == 'Create an 8x8 SiPM matrix.'
+        ]
+        assert user_messages, history
+
+        intermediate_messages = [
+            msg for msg in history
+            if msg.get('role') == 'assistant'
+            and (msg.get('metadata') or {}).get('_intermediate')
+        ]
+        assert intermediate_messages, history
+        assert intermediate_messages[0]['tool_calls'][0]['function']['name'] == 'manage_define'
+
+        tool_messages = [msg for msg in history if msg.get('role') == 'tool']
+        assert tool_messages, history
+        assert tool_messages[0]['name'] == 'manage_define'
+
+        final_messages = [
+            msg for msg in history
+            if msg.get('role') == 'assistant'
+            and msg.get('content') == 'Done. Created the SiPM grid on kapton.'
             and not (msg.get('metadata') or {}).get('_intermediate')
         ]
         assert final_messages, history

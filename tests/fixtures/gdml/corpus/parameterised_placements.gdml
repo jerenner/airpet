@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gdml>
+  <materials>
+    <material name="Air" state="gas" Z="7.3">
+      <D value="1.205e-3" unit="g/cm3"/>
+      <atom value="14.61"/>
+    </material>
+    <material name="Silicon" state="solid" Z="14">
+      <D value="2.33" unit="g/cm3"/>
+      <atom value="28.085"/>
+    </material>
+  </materials>
+  <solids>
+    <box name="world_box" x="240" y="120" z="120" lunit="mm"/>
+    <box name="array_box" x="120" y="80" z="40" lunit="mm"/>
+    <trd name="tile_trd" x1="8" x2="12" y1="6" y2="10" z="4" lunit="mm"/>
+  </solids>
+  <structure>
+    <volume name="tile_lv">
+      <materialref ref="Silicon"/>
+      <solidref ref="tile_trd"/>
+    </volume>
+    <volume name="array_lv">
+      <materialref ref="Air"/>
+      <solidref ref="array_box"/>
+      <paramvol name="tile_param" ncopies="3">
+        <volumeref ref="tile_lv"/>
+        <parameterised_position_size>
+          <parameters number="0">
+            <position unit="mm" x="-30" y="0" z="0"/>
+            <trd_dimensions x1="8" x2="10" y1="6" y2="8" z="4" lunit="mm"/>
+          </parameters>
+          <parameters number="1">
+            <position unit="mm" x="0" y="0" z="0"/>
+            <trd_dimensions x1="9" x2="11" y1="7" y2="9" z="4" lunit="mm"/>
+          </parameters>
+          <parameters number="2">
+            <position unit="mm" x="30" y="0" z="0"/>
+            <trd_dimensions x1="10" x2="12" y1="8" y2="10" z="4" lunit="mm"/>
+          </parameters>
+        </parameterised_position_size>
+      </paramvol>
+    </volume>
+    <volume name="world_lv">
+      <materialref ref="Air"/>
+      <solidref ref="world_box"/>
+      <physvol name="array_pv" copynumber="1">
+        <volumeref ref="array_lv"/>
+        <position unit="mm" x="0" y="0" z="0"/>
+      </physvol>
+    </volume>
+  </structure>
+  <setup name="Default" version="1.0">
+    <world ref="world_lv"/>
+  </setup>
+</gdml>

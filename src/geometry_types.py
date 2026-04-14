@@ -2,7 +2,9 @@
 
 import uuid # For unique IDs
 import math
+import re
 import numpy as np
+from copy import deepcopy
 
 # --- Periodic Table Lookup (element name -> Z) ---
 PERIODIC_TABLE = {
@@ -40,6 +42,37 @@ OUTPUT_UNIT_FACTORS = {
 DEFAULT_OUTPUT_LUNIT = "mm"
 DEFAULT_OUTPUT_AUNIT = "rad"
 
+DETECTOR_FEATURE_GENERATOR_SCHEMA_VERSION = 1
+_SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES = {
+    "rectangular_drilled_hole_array",
+    "circular_drilled_hole_array",
+    "layered_detector_stack",
+    "tiled_sensor_array",
+    "support_rib_array",
+    "channel_cut_array",
+    "annular_shield_sleeve",
+}
+_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS = {"target_center"}
+_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES = {"x", "y"}
+_SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES = {"cylindrical"}
+_SUPPORTED_DETECTOR_FEATURE_HOLE_AXES = {"z"}
+_SUPPORTED_DETECTOR_FEATURE_DRILL_FROM = {"positive_z_face"}
+_SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES = {"boolean_subtraction", "layered_stack", "placement_array"}
+_SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES = {"spec_only", "generated"}
+
+SCORING_STATE_SCHEMA_VERSION = 1
+_SUPPORTED_SCORING_MESH_TYPES = {"box"}
+_SUPPORTED_SCORING_REFERENCE_FRAMES = {"world"}
+_SUPPORTED_SCORING_TALLY_QUANTITIES = {
+    "cell_flux",
+    "dose_deposit",
+    "energy_deposit",
+    "n_of_step",
+    "n_of_track",
+    "passage_cell_flux",
+    "track_length",
+}
+
 def convert_to_internal_units(value, unit_str, category="length"):
     if value is None: return None
     try:
@@ -76,6 +109,1356 @@ def get_unit_value(unit_str, category="length"):
     if unit_str and category in factors and unit_str in factors[category]:
         return factors[category][unit_str]
     return 1.0 # Default multiplier
+
+
+def _normalize_non_empty_string(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_positive_float(value, field_name):
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive number.")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a positive number.")
+    if normalized <= 0.0:
+        raise ValueError(f"{field_name} must be greater than 0.")
+    return normalized
+
+
+def _normalize_float(value, default, field_name):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be numeric.")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be numeric.")
+
+
+def _normalize_positive_int(value, field_name):
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a positive integer.")
+
+    if isinstance(value, int):
+        normalized = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{field_name} must be a positive integer.")
+        normalized = int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not re.fullmatch(r"[+-]?\d+", stripped):
+            raise ValueError(f"{field_name} must be a positive integer.")
+        normalized = int(stripped)
+    else:
+        raise ValueError(f"{field_name} must be a positive integer.")
+
+    if normalized <= 0:
+        raise ValueError(f"{field_name} must be greater than 0.")
+    return normalized
+
+
+def _normalize_non_negative_int(value, default, field_name):
+    if value is None:
+        return default
+
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a non-negative integer.")
+
+    if isinstance(value, int):
+        normalized = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"{field_name} must be a non-negative integer.")
+        normalized = int(value)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not re.fullmatch(r"[+-]?\d+", stripped):
+            raise ValueError(f"{field_name} must be a non-negative integer.")
+        normalized = int(stripped)
+    else:
+        raise ValueError(f"{field_name} must be a non-negative integer.")
+
+    if normalized < 0:
+        raise ValueError(f"{field_name} must be greater than or equal to 0.")
+    return normalized
+
+
+def _normalize_boolean(value, default, field_name):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{field_name} must be a boolean.")
+
+
+def _normalize_non_empty_string_with_default(value, default, field_name):
+    if value is None:
+        return default
+    normalized = _normalize_non_empty_string(value)
+    if normalized is None:
+        raise ValueError(f"{field_name} must be a non-empty string.")
+    return normalized
+
+
+def _normalize_detector_feature_object_ref(raw_ref, field_name, required=False):
+    if raw_ref is None:
+        if required:
+            raise ValueError(f"{field_name} is required.")
+        return None
+
+    if not isinstance(raw_ref, dict):
+        raise ValueError(f"{field_name} must be an object reference.")
+
+    ref_id = _normalize_non_empty_string(raw_ref.get("id"))
+    ref_name = _normalize_non_empty_string(raw_ref.get("name"))
+    if not ref_id and not ref_name:
+        if required:
+            raise ValueError(f"{field_name} must include id or name.")
+        return None
+
+    normalized = {}
+    if ref_id:
+        normalized["id"] = ref_id
+    if ref_name:
+        normalized["name"] = ref_name
+    return normalized
+
+
+def _normalize_detector_feature_object_ref_list(raw_refs, field_name):
+    if raw_refs is None:
+        return []
+
+    if not isinstance(raw_refs, list):
+        raise ValueError(f"{field_name} must be an array of object references.")
+
+    normalized_refs = []
+    seen_refs = set()
+    for index, raw_ref in enumerate(raw_refs):
+        normalized_ref = _normalize_detector_feature_object_ref(
+            raw_ref,
+            f"{field_name}[{index}]",
+            required=True,
+        )
+        ref_key = (normalized_ref.get("id"), normalized_ref.get("name"))
+        if ref_key in seen_refs:
+            continue
+        seen_refs.add(ref_key)
+        normalized_refs.append(normalized_ref)
+
+    return normalized_refs
+
+
+def _normalize_detector_feature_material_ref(value, field_name):
+    normalized = _normalize_non_empty_string(value)
+    if not normalized:
+        raise ValueError(f"{field_name} must be a non-empty material name.")
+    return normalized
+
+
+def _default_scoring_run_manifest_defaults():
+    return {
+        "events": 1000,
+        "threads": 1,
+        "seed1": 0,
+        "seed2": 0,
+        "print_progress": 0,
+        "save_hits": True,
+        "save_hit_metadata": True,
+        "save_particles": False,
+        "production_cut": "1.0 mm",
+        "hit_energy_threshold": "1 eV",
+    }
+
+
+def _normalize_scoring_mesh_ref(raw_ref, field_name, required=False):
+    if raw_ref is None:
+        if required:
+            raise ValueError(f"{field_name} is required.")
+        return None
+
+    if isinstance(raw_ref, str):
+        ref_name = _normalize_non_empty_string(raw_ref)
+        if not ref_name:
+            raise ValueError(f"{field_name} must be a non-empty scoring mesh reference.")
+        return {"name": ref_name}
+
+    if not isinstance(raw_ref, dict):
+        raise ValueError(f"{field_name} must be a scoring mesh reference object.")
+
+    mesh_id = _normalize_non_empty_string(raw_ref.get("mesh_id", raw_ref.get("id")))
+    mesh_name = _normalize_non_empty_string(raw_ref.get("name"))
+    if not mesh_id and not mesh_name:
+        if required:
+            raise ValueError(f"{field_name} must include mesh_id, id, or name.")
+        return None
+
+    normalized = {}
+    if mesh_id:
+        normalized["mesh_id"] = mesh_id
+    if mesh_name:
+        normalized["name"] = mesh_name
+    return normalized
+
+
+def _normalize_scoring_mesh_entry(raw_entry):
+    if not isinstance(raw_entry, dict):
+        raise ValueError("scoring.scoring_meshes[] entry must be an object.")
+
+    mesh_id = _normalize_non_empty_string(raw_entry.get("mesh_id"))
+    if not mesh_id:
+        mesh_id = f"scoring_mesh_{uuid.uuid4().hex}"
+
+    mesh_type = _normalize_non_empty_string(raw_entry.get("mesh_type")) or "box"
+    if mesh_type not in _SUPPORTED_SCORING_MESH_TYPES:
+        raise ValueError(
+            "scoring.scoring_meshes[].mesh_type must be one of: "
+            + ", ".join(sorted(_SUPPORTED_SCORING_MESH_TYPES))
+            + "."
+        )
+
+    reference_frame = _normalize_non_empty_string(raw_entry.get("reference_frame")) or "world"
+    if reference_frame not in _SUPPORTED_SCORING_REFERENCE_FRAMES:
+        raise ValueError(
+            "scoring.scoring_meshes[].reference_frame must be one of: "
+            + ", ".join(sorted(_SUPPORTED_SCORING_REFERENCE_FRAMES))
+            + "."
+        )
+
+    schema_version = _normalize_positive_int(
+        raw_entry.get("schema_version", SCORING_STATE_SCHEMA_VERSION),
+        "scoring.scoring_meshes[].schema_version",
+    )
+    enabled = _normalize_boolean(
+        raw_entry.get("enabled"),
+        True,
+        "scoring.scoring_meshes[].enabled",
+    )
+
+    geometry = raw_entry.get("geometry", {})
+    if geometry is None:
+        geometry = {}
+    if not isinstance(geometry, dict):
+        raise ValueError("scoring.scoring_meshes[].geometry must be an object.")
+
+    center_mm = geometry.get("center_mm", raw_entry.get("center_mm", {}))
+    if center_mm is None:
+        center_mm = {}
+    if not isinstance(center_mm, dict):
+        raise ValueError("scoring.scoring_meshes[].geometry.center_mm must be an object.")
+
+    size_mm = geometry.get("size_mm", raw_entry.get("size_mm", {}))
+    if size_mm is None:
+        size_mm = {}
+    if not isinstance(size_mm, dict):
+        raise ValueError("scoring.scoring_meshes[].geometry.size_mm must be an object.")
+
+    bins = raw_entry.get("bins", {})
+    if bins is None:
+        bins = {}
+    if not isinstance(bins, dict):
+        raise ValueError("scoring.scoring_meshes[].bins must be an object.")
+
+    default_name = f"{mesh_type}_mesh_{mesh_id.split('_')[-1][:8]}"
+    return {
+        "mesh_id": mesh_id,
+        "name": _normalize_non_empty_string(raw_entry.get("name")) or default_name,
+        "schema_version": schema_version,
+        "enabled": enabled,
+        "mesh_type": mesh_type,
+        "reference_frame": reference_frame,
+        "geometry": {
+            "center_mm": {
+                "x": _normalize_float(
+                    center_mm.get("x"),
+                    0.0,
+                    "scoring.scoring_meshes[].geometry.center_mm.x",
+                ),
+                "y": _normalize_float(
+                    center_mm.get("y"),
+                    0.0,
+                    "scoring.scoring_meshes[].geometry.center_mm.y",
+                ),
+                "z": _normalize_float(
+                    center_mm.get("z"),
+                    0.0,
+                    "scoring.scoring_meshes[].geometry.center_mm.z",
+                ),
+            },
+            "size_mm": {
+                "x": _normalize_positive_float(
+                    size_mm.get("x", 10.0),
+                    "scoring.scoring_meshes[].geometry.size_mm.x",
+                ),
+                "y": _normalize_positive_float(
+                    size_mm.get("y", 10.0),
+                    "scoring.scoring_meshes[].geometry.size_mm.y",
+                ),
+                "z": _normalize_positive_float(
+                    size_mm.get("z", 10.0),
+                    "scoring.scoring_meshes[].geometry.size_mm.z",
+                ),
+            },
+        },
+        "bins": {
+            "x": _normalize_positive_int(
+                bins.get("x", 10),
+                "scoring.scoring_meshes[].bins.x",
+            ),
+            "y": _normalize_positive_int(
+                bins.get("y", 10),
+                "scoring.scoring_meshes[].bins.y",
+            ),
+            "z": _normalize_positive_int(
+                bins.get("z", 10),
+                "scoring.scoring_meshes[].bins.z",
+            ),
+        },
+    }
+
+
+def _normalize_scoring_meshes(raw_meshes):
+    if raw_meshes is None:
+        return []
+    if not isinstance(raw_meshes, list):
+        raise ValueError("scoring.scoring_meshes must be an array.")
+
+    normalized_meshes = []
+    seen_mesh_ids = set()
+    for index, raw_entry in enumerate(raw_meshes):
+        try:
+            normalized_entry = _normalize_scoring_mesh_entry(raw_entry)
+        except ValueError as exc:
+            print(f"Warning: Skipping scoring mesh at index {index}: {exc}")
+            continue
+
+        mesh_id = normalized_entry["mesh_id"]
+        if mesh_id in seen_mesh_ids:
+            print(
+                "Warning: Skipping scoring mesh at index "
+                f"{index}: duplicate mesh_id '{mesh_id}'."
+            )
+            continue
+
+        seen_mesh_ids.add(mesh_id)
+        normalized_meshes.append(normalized_entry)
+
+    return normalized_meshes
+
+
+def _build_scoring_mesh_lookup(scoring_meshes):
+    mesh_ids = {}
+    mesh_names = {}
+    ambiguous_names = set()
+
+    for mesh in scoring_meshes or []:
+        mesh_id = mesh.get("mesh_id")
+        if mesh_id:
+            mesh_ids[mesh_id] = mesh
+
+        mesh_name = mesh.get("name")
+        if not mesh_name:
+            continue
+
+        if mesh_name in mesh_names:
+            ambiguous_names.add(mesh_name)
+        else:
+            mesh_names[mesh_name] = mesh
+
+    for mesh_name in ambiguous_names:
+        mesh_names.pop(mesh_name, None)
+
+    return mesh_ids, mesh_names, ambiguous_names
+
+
+def _normalize_scoring_tally_request_entry(raw_entry, mesh_lookup=None):
+    if not isinstance(raw_entry, dict):
+        raise ValueError("scoring.tally_requests[] entry must be an object.")
+
+    tally_id = _normalize_non_empty_string(raw_entry.get("tally_id"))
+    if not tally_id:
+        tally_id = f"scoring_tally_{uuid.uuid4().hex}"
+
+    schema_version = _normalize_positive_int(
+        raw_entry.get("schema_version", SCORING_STATE_SCHEMA_VERSION),
+        "scoring.tally_requests[].schema_version",
+    )
+    enabled = _normalize_boolean(
+        raw_entry.get("enabled"),
+        True,
+        "scoring.tally_requests[].enabled",
+    )
+
+    quantity = _normalize_non_empty_string(raw_entry.get("quantity")) or "energy_deposit"
+    if quantity not in _SUPPORTED_SCORING_TALLY_QUANTITIES:
+        raise ValueError(
+            "scoring.tally_requests[].quantity must be one of: "
+            + ", ".join(sorted(_SUPPORTED_SCORING_TALLY_QUANTITIES))
+            + "."
+        )
+
+    mesh_ref = raw_entry.get("mesh_ref")
+    if mesh_ref is None:
+        if raw_entry.get("mesh_id") is not None:
+            mesh_ref = {"mesh_id": raw_entry.get("mesh_id")}
+        elif raw_entry.get("mesh_name") is not None:
+            mesh_ref = {"name": raw_entry.get("mesh_name")}
+
+    normalized_mesh_ref = _normalize_scoring_mesh_ref(
+        mesh_ref,
+        "scoring.tally_requests[].mesh_ref",
+        required=True,
+    )
+
+    if mesh_lookup is not None:
+        mesh_ids, mesh_names, ambiguous_names = mesh_lookup
+        matched_mesh = None
+        mesh_id = normalized_mesh_ref.get("mesh_id")
+        mesh_name = normalized_mesh_ref.get("name")
+
+        if mesh_id:
+            matched_mesh = mesh_ids.get(mesh_id)
+            if matched_mesh is None:
+                raise ValueError(
+                    f"scoring.tally_requests[].mesh_ref.mesh_id '{mesh_id}' does not match a saved scoring mesh."
+                )
+
+        if mesh_name:
+            if mesh_name in ambiguous_names:
+                raise ValueError(
+                    f"scoring.tally_requests[].mesh_ref.name '{mesh_name}' matches multiple saved scoring meshes."
+                )
+            named_mesh = mesh_names.get(mesh_name)
+            if named_mesh is None:
+                raise ValueError(
+                    f"scoring.tally_requests[].mesh_ref.name '{mesh_name}' does not match a saved scoring mesh."
+                )
+            if matched_mesh is not None and named_mesh.get("mesh_id") != matched_mesh.get("mesh_id"):
+                raise ValueError(
+                    "scoring.tally_requests[].mesh_ref must resolve to one saved scoring mesh."
+                )
+            matched_mesh = named_mesh
+
+        if matched_mesh is not None:
+            normalized_mesh_ref["mesh_id"] = matched_mesh.get("mesh_id")
+            normalized_mesh_ref["name"] = matched_mesh.get("name")
+
+    default_name = f"{quantity}_{tally_id.split('_')[-1][:8]}"
+    return {
+        "tally_id": tally_id,
+        "name": _normalize_non_empty_string(raw_entry.get("name")) or default_name,
+        "schema_version": schema_version,
+        "enabled": enabled,
+        "mesh_ref": normalized_mesh_ref,
+        "quantity": quantity,
+    }
+
+
+def _normalize_scoring_tally_requests(raw_requests, mesh_lookup=None):
+    if raw_requests is None:
+        return []
+    if not isinstance(raw_requests, list):
+        raise ValueError("scoring.tally_requests must be an array.")
+
+    normalized_requests = []
+    seen_tally_ids = set()
+    for index, raw_entry in enumerate(raw_requests):
+        try:
+            normalized_entry = _normalize_scoring_tally_request_entry(raw_entry, mesh_lookup=mesh_lookup)
+        except ValueError as exc:
+            print(f"Warning: Skipping scoring tally request at index {index}: {exc}")
+            continue
+
+        tally_id = normalized_entry["tally_id"]
+        if tally_id in seen_tally_ids:
+            print(
+                "Warning: Skipping scoring tally request at index "
+                f"{index}: duplicate tally_id '{tally_id}'."
+            )
+            continue
+
+        seen_tally_ids.add(tally_id)
+        normalized_requests.append(normalized_entry)
+
+    return normalized_requests
+
+
+def _normalize_scoring_run_manifest_defaults(raw_defaults):
+    defaults = _default_scoring_run_manifest_defaults()
+    if raw_defaults is None:
+        raw_defaults = {}
+    if not isinstance(raw_defaults, dict):
+        raise ValueError("scoring.run_manifest_defaults must be an object.")
+
+    return {
+        "events": _normalize_positive_int(
+            raw_defaults.get("events", defaults["events"]),
+            "scoring.run_manifest_defaults.events",
+        ),
+        "threads": _normalize_positive_int(
+            raw_defaults.get("threads", defaults["threads"]),
+            "scoring.run_manifest_defaults.threads",
+        ),
+        "seed1": _normalize_non_negative_int(
+            raw_defaults.get("seed1", defaults["seed1"]),
+            defaults["seed1"],
+            "scoring.run_manifest_defaults.seed1",
+        ),
+        "seed2": _normalize_non_negative_int(
+            raw_defaults.get("seed2", defaults["seed2"]),
+            defaults["seed2"],
+            "scoring.run_manifest_defaults.seed2",
+        ),
+        "print_progress": _normalize_non_negative_int(
+            raw_defaults.get("print_progress", defaults["print_progress"]),
+            defaults["print_progress"],
+            "scoring.run_manifest_defaults.print_progress",
+        ),
+        "save_hits": _normalize_boolean(
+            raw_defaults.get("save_hits"),
+            defaults["save_hits"],
+            "scoring.run_manifest_defaults.save_hits",
+        ),
+        "save_hit_metadata": _normalize_boolean(
+            raw_defaults.get("save_hit_metadata"),
+            defaults["save_hit_metadata"],
+            "scoring.run_manifest_defaults.save_hit_metadata",
+        ),
+        "save_particles": _normalize_boolean(
+            raw_defaults.get("save_particles"),
+            defaults["save_particles"],
+            "scoring.run_manifest_defaults.save_particles",
+        ),
+        "production_cut": _normalize_non_empty_string_with_default(
+            raw_defaults.get("production_cut"),
+            defaults["production_cut"],
+            "scoring.run_manifest_defaults.production_cut",
+        ),
+        "hit_energy_threshold": _normalize_non_empty_string_with_default(
+            raw_defaults.get("hit_energy_threshold"),
+            defaults["hit_energy_threshold"],
+            "scoring.run_manifest_defaults.hit_energy_threshold",
+        ),
+    }
+
+
+def _normalize_detector_feature_generator_entry(raw_entry):
+    if not isinstance(raw_entry, dict):
+        raise ValueError("detector feature generator entry must be an object.")
+
+    generator_type = _normalize_non_empty_string(raw_entry.get("generator_type"))
+    if generator_type not in _SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES:
+        raise ValueError(
+            "detector feature generator type must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES))
+            + "."
+        )
+
+    generator_id = _normalize_non_empty_string(raw_entry.get("generator_id"))
+    if not generator_id:
+        generator_id = f"detector_feature_generator_{uuid.uuid4().hex}"
+
+    schema_version = raw_entry.get("schema_version", DETECTOR_FEATURE_GENERATOR_SCHEMA_VERSION)
+    schema_version = _normalize_positive_int(schema_version, "detector_feature_generators[].schema_version")
+
+    enabled = raw_entry.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("detector_feature_generators[].enabled must be a boolean.")
+
+    target = raw_entry.get("target", {})
+    if not isinstance(target, dict):
+        raise ValueError("detector_feature_generators[].target must be an object.")
+
+    pattern = raw_entry.get("pattern", {})
+    if pattern is None:
+        pattern = {}
+    if not isinstance(pattern, dict):
+        raise ValueError("detector_feature_generators[].pattern must be an object.")
+
+    stack = raw_entry.get("stack", {})
+    if stack is None:
+        stack = {}
+    if not isinstance(stack, dict):
+        raise ValueError("detector_feature_generators[].stack must be an object.")
+
+    array = raw_entry.get("array", {})
+    if array is None:
+        array = {}
+    if not isinstance(array, dict):
+        raise ValueError("detector_feature_generators[].array must be an object.")
+
+    layers = raw_entry.get("layers", {})
+    if layers is None:
+        layers = {}
+    if not isinstance(layers, dict):
+        raise ValueError("detector_feature_generators[].layers must be an object.")
+
+    sensor = raw_entry.get("sensor", {})
+    if sensor is None:
+        sensor = {}
+    if not isinstance(sensor, dict):
+        raise ValueError("detector_feature_generators[].sensor must be an object.")
+
+    rib = raw_entry.get("rib", {})
+    if rib is None:
+        rib = {}
+    if not isinstance(rib, dict):
+        raise ValueError("detector_feature_generators[].rib must be an object.")
+
+    channel = raw_entry.get("channel", {})
+    if channel is None:
+        channel = {}
+    if not isinstance(channel, dict):
+        raise ValueError("detector_feature_generators[].channel must be an object.")
+
+    shield = raw_entry.get("shield", {})
+    if shield is None:
+        shield = {}
+    if not isinstance(shield, dict):
+        raise ValueError("detector_feature_generators[].shield must be an object.")
+
+    hole = raw_entry.get("hole", {})
+    if hole is None:
+        hole = {}
+    if not isinstance(hole, dict):
+        raise ValueError("detector_feature_generators[].hole must be an object.")
+
+    realization = raw_entry.get("realization", {})
+    if realization is None:
+        realization = {}
+    if not isinstance(realization, dict):
+        raise ValueError("detector_feature_generators[].realization must be an object.")
+
+    default_realization_mode = (
+        "layered_stack"
+        if generator_type == "layered_detector_stack"
+        else "placement_array"
+        if generator_type in {"tiled_sensor_array", "support_rib_array", "annular_shield_sleeve"}
+        else "boolean_subtraction"
+    )
+    realization_mode = _normalize_non_empty_string(realization.get("mode")) or default_realization_mode
+    if realization_mode not in _SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES:
+        raise ValueError(
+            "detector_feature_generators[].realization.mode must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_REALIZATION_MODES))
+            + "."
+        )
+
+    realization_status = _normalize_non_empty_string(realization.get("status")) or "spec_only"
+    if realization_status not in _SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES:
+        raise ValueError(
+            "detector_feature_generators[].realization.status must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_REALIZATION_STATUSES))
+            + "."
+        )
+
+    generated_object_refs = realization.get("generated_object_refs", {})
+    if generated_object_refs is None:
+        generated_object_refs = {}
+    if not isinstance(generated_object_refs, dict):
+        raise ValueError("detector_feature_generators[].realization.generated_object_refs must be an object.")
+
+    normalized_target = {}
+    normalized_pattern = None
+    normalized_stack = None
+    normalized_array = None
+    normalized_layers = None
+    normalized_sensor = None
+    normalized_rib = None
+    normalized_channel = None
+    normalized_shield = None
+    normalized_hole = None
+
+    if generator_type == "rectangular_drilled_hole_array":
+        pitch_mm = pattern.get("pitch_mm", {})
+        if not isinstance(pitch_mm, dict):
+            raise ValueError("detector_feature_generators[].pattern.pitch_mm must be an object.")
+
+        origin_offset_mm = pattern.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].pattern.origin_offset_mm must be an object.")
+
+        anchor = _normalize_non_empty_string(pattern.get("anchor")) or "target_center"
+        if anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].pattern.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        hole_shape = _normalize_non_empty_string(hole.get("shape")) or "cylindrical"
+        if hole_shape not in _SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES:
+            raise ValueError(
+                "detector_feature_generators[].hole.shape must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES))
+                + "."
+            )
+
+        hole_axis = _normalize_non_empty_string(hole.get("axis")) or "z"
+        if hole_axis not in _SUPPORTED_DETECTOR_FEATURE_HOLE_AXES:
+            raise ValueError(
+                "detector_feature_generators[].hole.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_AXES))
+                + "."
+            )
+
+        drill_from = _normalize_non_empty_string(hole.get("drill_from")) or "positive_z_face"
+        if drill_from not in _SUPPORTED_DETECTOR_FEATURE_DRILL_FROM:
+            raise ValueError(
+                "detector_feature_generators[].hole.drill_from must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_DRILL_FROM))
+                + "."
+            )
+
+        normalized_target = {
+            "solid_ref": _normalize_detector_feature_object_ref(
+                target.get("solid_ref"),
+                "detector_feature_generators[].target.solid_ref",
+                required=True,
+            ),
+            "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                target.get("logical_volume_refs", []),
+                "detector_feature_generators[].target.logical_volume_refs",
+            ),
+        }
+        normalized_pattern = {
+            "count_x": _normalize_positive_int(
+                pattern.get("count_x"),
+                "detector_feature_generators[].pattern.count_x",
+            ),
+            "count_y": _normalize_positive_int(
+                pattern.get("count_y"),
+                "detector_feature_generators[].pattern.count_y",
+            ),
+            "pitch_mm": {
+                "x": _normalize_positive_float(
+                    pitch_mm.get("x"),
+                    "detector_feature_generators[].pattern.pitch_mm.x",
+                ),
+                "y": _normalize_positive_float(
+                    pitch_mm.get("y"),
+                    "detector_feature_generators[].pattern.pitch_mm.y",
+                ),
+            },
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.y",
+                ),
+            },
+            "anchor": anchor,
+        }
+        normalized_hole = {
+            "shape": hole_shape,
+            "diameter_mm": _normalize_positive_float(
+                hole.get("diameter_mm"),
+                "detector_feature_generators[].hole.diameter_mm",
+            ),
+            "depth_mm": _normalize_positive_float(
+                hole.get("depth_mm"),
+                "detector_feature_generators[].hole.depth_mm",
+            ),
+            "axis": hole_axis,
+            "drill_from": drill_from,
+        }
+    elif generator_type == "circular_drilled_hole_array":
+        origin_offset_mm = pattern.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].pattern.origin_offset_mm must be an object.")
+
+        anchor = _normalize_non_empty_string(pattern.get("anchor")) or "target_center"
+        if anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].pattern.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        hole_shape = _normalize_non_empty_string(hole.get("shape")) or "cylindrical"
+        if hole_shape not in _SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES:
+            raise ValueError(
+                "detector_feature_generators[].hole.shape must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_SHAPES))
+                + "."
+            )
+
+        hole_axis = _normalize_non_empty_string(hole.get("axis")) or "z"
+        if hole_axis not in _SUPPORTED_DETECTOR_FEATURE_HOLE_AXES:
+            raise ValueError(
+                "detector_feature_generators[].hole.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_HOLE_AXES))
+                + "."
+            )
+
+        drill_from = _normalize_non_empty_string(hole.get("drill_from")) or "positive_z_face"
+        if drill_from not in _SUPPORTED_DETECTOR_FEATURE_DRILL_FROM:
+            raise ValueError(
+                "detector_feature_generators[].hole.drill_from must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_DRILL_FROM))
+                + "."
+            )
+
+        normalized_target = {
+            "solid_ref": _normalize_detector_feature_object_ref(
+                target.get("solid_ref"),
+                "detector_feature_generators[].target.solid_ref",
+                required=True,
+            ),
+            "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                target.get("logical_volume_refs", []),
+                "detector_feature_generators[].target.logical_volume_refs",
+            ),
+        }
+        normalized_pattern = {
+            "count": _normalize_positive_int(
+                pattern.get("count", pattern.get("hole_count")),
+                "detector_feature_generators[].pattern.count",
+            ),
+            "radius_mm": _normalize_positive_float(
+                pattern.get("radius_mm"),
+                "detector_feature_generators[].pattern.radius_mm",
+            ),
+            "orientation_deg": _normalize_float(
+                pattern.get("orientation_deg"),
+                0.0,
+                "detector_feature_generators[].pattern.orientation_deg",
+            ),
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].pattern.origin_offset_mm.y",
+                ),
+            },
+            "anchor": anchor,
+        }
+        normalized_hole = {
+            "shape": hole_shape,
+            "diameter_mm": _normalize_positive_float(
+                hole.get("diameter_mm"),
+                "detector_feature_generators[].hole.diameter_mm",
+            ),
+            "depth_mm": _normalize_positive_float(
+                hole.get("depth_mm"),
+                "detector_feature_generators[].hole.depth_mm",
+            ),
+            "axis": hole_axis,
+            "drill_from": drill_from,
+        }
+    elif generator_type == "layered_detector_stack":
+        stack_anchor = _normalize_non_empty_string(stack.get("anchor")) or "target_center"
+        if stack_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].stack.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        module_size_mm = stack.get("module_size_mm", stack.get("size_mm", {}))
+        if not isinstance(module_size_mm, dict):
+            raise ValueError("detector_feature_generators[].stack.module_size_mm must be an object.")
+
+        origin_offset_mm = stack.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].stack.origin_offset_mm must be an object.")
+
+        normalized_target = {
+            "parent_logical_volume_ref": _normalize_detector_feature_object_ref(
+                target.get("parent_logical_volume_ref"),
+                "detector_feature_generators[].target.parent_logical_volume_ref",
+                required=True,
+            ),
+        }
+
+        normalized_layers = {}
+        total_thickness_mm = 0.0
+        for role in ("absorber", "sensor", "support"):
+            raw_layer = layers.get(role)
+            if not isinstance(raw_layer, dict):
+                raise ValueError(
+                    f"detector_feature_generators[].layers.{role} must be an object."
+                )
+
+            normalized_layer = {
+                "material_ref": _normalize_detector_feature_material_ref(
+                    raw_layer.get("material_ref", raw_layer.get("material")),
+                    f"detector_feature_generators[].layers.{role}.material_ref",
+                ),
+                "thickness_mm": _normalize_positive_float(
+                    raw_layer.get("thickness_mm"),
+                    f"detector_feature_generators[].layers.{role}.thickness_mm",
+                ),
+                "is_sensitive": bool(
+                    raw_layer.get("is_sensitive", role == "sensor")
+                ),
+            }
+            normalized_layers[role] = normalized_layer
+            total_thickness_mm += normalized_layer["thickness_mm"]
+
+        raw_module_pitch_mm = stack.get(
+            "module_pitch_mm",
+            stack.get("pitch_mm", stack.get("module_spacing_mm")),
+        )
+        if raw_module_pitch_mm is None:
+            module_pitch_mm = total_thickness_mm
+        else:
+            module_pitch_mm = _normalize_positive_float(
+                raw_module_pitch_mm,
+                "detector_feature_generators[].stack.module_pitch_mm",
+            )
+
+        normalized_stack = {
+            "module_size_mm": {
+                "x": _normalize_positive_float(
+                    module_size_mm.get("x"),
+                    "detector_feature_generators[].stack.module_size_mm.x",
+                ),
+                "y": _normalize_positive_float(
+                    module_size_mm.get("y"),
+                    "detector_feature_generators[].stack.module_size_mm.y",
+                ),
+            },
+            "module_count": _normalize_positive_int(
+                stack.get("module_count", stack.get("module_repeat_count", stack.get("count", 1))),
+                "detector_feature_generators[].stack.module_count",
+            ),
+            "module_pitch_mm": module_pitch_mm,
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].stack.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].stack.origin_offset_mm.y",
+                ),
+                "z": _normalize_float(
+                    origin_offset_mm.get("z"),
+                    0.0,
+                    "detector_feature_generators[].stack.origin_offset_mm.z",
+                ),
+            },
+            "anchor": stack_anchor,
+        }
+    elif generator_type == "tiled_sensor_array":
+        array_anchor = _normalize_non_empty_string(array.get("anchor")) or "target_center"
+        if array_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].array.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        pitch_mm = array.get("pitch_mm", {})
+        if pitch_mm is None:
+            pitch_mm = {}
+        if not isinstance(pitch_mm, dict):
+            raise ValueError("detector_feature_generators[].array.pitch_mm must be an object.")
+
+        origin_offset_mm = array.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].array.origin_offset_mm must be an object.")
+
+        size_mm = sensor.get("size_mm", sensor.get("tile_size_mm", {}))
+        if not isinstance(size_mm, dict):
+            raise ValueError("detector_feature_generators[].sensor.size_mm must be an object.")
+
+        sensor_size_x = _normalize_positive_float(
+            size_mm.get("x"),
+            "detector_feature_generators[].sensor.size_mm.x",
+        )
+        sensor_size_y = _normalize_positive_float(
+            size_mm.get("y"),
+            "detector_feature_generators[].sensor.size_mm.y",
+        )
+
+        normalized_target = {
+            "parent_logical_volume_ref": _normalize_detector_feature_object_ref(
+                target.get("parent_logical_volume_ref"),
+                "detector_feature_generators[].target.parent_logical_volume_ref",
+                required=True,
+            ),
+        }
+        normalized_array = {
+            "count_x": _normalize_positive_int(
+                array.get("count_x", array.get("columns", array.get("num_x"))),
+                "detector_feature_generators[].array.count_x",
+            ),
+            "count_y": _normalize_positive_int(
+                array.get("count_y", array.get("rows", array.get("num_y"))),
+                "detector_feature_generators[].array.count_y",
+            ),
+            "pitch_mm": {
+                "x": _normalize_positive_float(
+                    pitch_mm.get("x", sensor_size_x),
+                    "detector_feature_generators[].array.pitch_mm.x",
+                ),
+                "y": _normalize_positive_float(
+                    pitch_mm.get("y", sensor_size_y),
+                    "detector_feature_generators[].array.pitch_mm.y",
+                ),
+            },
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.y",
+                ),
+                "z": _normalize_float(
+                    origin_offset_mm.get("z"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.z",
+                ),
+            },
+            "anchor": array_anchor,
+        }
+        normalized_sensor = {
+            "size_mm": {
+                "x": sensor_size_x,
+                "y": sensor_size_y,
+            },
+            "thickness_mm": _normalize_positive_float(
+                sensor.get("thickness_mm"),
+                "detector_feature_generators[].sensor.thickness_mm",
+            ),
+            "material_ref": _normalize_detector_feature_material_ref(
+                sensor.get("material_ref", sensor.get("material")),
+                "detector_feature_generators[].sensor.material_ref",
+            ),
+            "is_sensitive": bool(sensor.get("is_sensitive", True)),
+        }
+    elif generator_type == "support_rib_array":
+        array_anchor = _normalize_non_empty_string(array.get("anchor")) or "target_center"
+        if array_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].array.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        origin_offset_mm = array.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].array.origin_offset_mm must be an object.")
+
+        repeat_axis = _normalize_non_empty_string(array.get("axis", array.get("repeat_axis")))
+        if repeat_axis not in _SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES:
+            raise ValueError(
+                "detector_feature_generators[].array.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES))
+                + "."
+            )
+
+        normalized_target = {
+            "parent_logical_volume_ref": _normalize_detector_feature_object_ref(
+                target.get("parent_logical_volume_ref"),
+                "detector_feature_generators[].target.parent_logical_volume_ref",
+                required=True,
+            ),
+        }
+        normalized_array = {
+            "count": _normalize_positive_int(
+                array.get("count", array.get("rib_count", array.get("repeat_count"))),
+                "detector_feature_generators[].array.count",
+            ),
+            "linear_pitch_mm": _normalize_positive_float(
+                array.get("linear_pitch_mm", array.get("pitch_mm", array.get("pitch"))),
+                "detector_feature_generators[].array.linear_pitch_mm",
+            ),
+            "axis": repeat_axis,
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.y",
+                ),
+                "z": _normalize_float(
+                    origin_offset_mm.get("z"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.z",
+                ),
+            },
+            "anchor": array_anchor,
+        }
+        normalized_rib = {
+            "width_mm": _normalize_positive_float(
+                rib.get("width_mm", rib.get("thickness_mm")),
+                "detector_feature_generators[].rib.width_mm",
+            ),
+            "height_mm": _normalize_positive_float(
+                rib.get("height_mm"),
+                "detector_feature_generators[].rib.height_mm",
+            ),
+            "material_ref": _normalize_detector_feature_material_ref(
+                rib.get("material_ref", rib.get("material")),
+                "detector_feature_generators[].rib.material_ref",
+            ),
+            "is_sensitive": bool(rib.get("is_sensitive", False)),
+        }
+    elif generator_type == "channel_cut_array":
+        array_anchor = _normalize_non_empty_string(array.get("anchor")) or "target_center"
+        if array_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].array.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        origin_offset_mm = array.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].array.origin_offset_mm must be an object.")
+
+        repeat_axis = _normalize_non_empty_string(array.get("axis", array.get("repeat_axis")))
+        if repeat_axis not in _SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES:
+            raise ValueError(
+                "detector_feature_generators[].array.axis must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_LINEAR_AXES))
+                + "."
+            )
+
+        normalized_target = {
+            "solid_ref": _normalize_detector_feature_object_ref(
+                target.get("solid_ref"),
+                "detector_feature_generators[].target.solid_ref",
+                required=True,
+            ),
+            "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                target.get("logical_volume_refs", []),
+                "detector_feature_generators[].target.logical_volume_refs",
+            ),
+        }
+        normalized_array = {
+            "count": _normalize_positive_int(
+                array.get("count", array.get("channel_count", array.get("repeat_count"))),
+                "detector_feature_generators[].array.count",
+            ),
+            "linear_pitch_mm": _normalize_positive_float(
+                array.get("linear_pitch_mm", array.get("pitch_mm", array.get("pitch"))),
+                "detector_feature_generators[].array.linear_pitch_mm",
+            ),
+            "axis": repeat_axis,
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].array.origin_offset_mm.y",
+                ),
+            },
+            "anchor": array_anchor,
+        }
+        normalized_channel = {
+            "width_mm": _normalize_positive_float(
+                channel.get("width_mm"),
+                "detector_feature_generators[].channel.width_mm",
+            ),
+            "depth_mm": _normalize_positive_float(
+                channel.get("depth_mm"),
+                "detector_feature_generators[].channel.depth_mm",
+            ),
+        }
+    elif generator_type == "annular_shield_sleeve":
+        shield_anchor = _normalize_non_empty_string(shield.get("anchor")) or "target_center"
+        if shield_anchor not in _SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS:
+            raise ValueError(
+                "detector_feature_generators[].shield.anchor must be one of: "
+                + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_PATTERN_ANCHORS))
+                + "."
+            )
+
+        origin_offset_mm = shield.get("origin_offset_mm", {})
+        if origin_offset_mm is None:
+            origin_offset_mm = {}
+        if not isinstance(origin_offset_mm, dict):
+            raise ValueError("detector_feature_generators[].shield.origin_offset_mm must be an object.")
+
+        normalized_target = {
+            "parent_logical_volume_ref": _normalize_detector_feature_object_ref(
+                target.get("parent_logical_volume_ref"),
+                "detector_feature_generators[].target.parent_logical_volume_ref",
+                required=True,
+            ),
+        }
+
+        inner_radius_mm = _normalize_positive_float(
+            shield.get("inner_radius_mm"),
+            "detector_feature_generators[].shield.inner_radius_mm",
+        )
+        outer_radius_mm = _normalize_positive_float(
+            shield.get("outer_radius_mm"),
+            "detector_feature_generators[].shield.outer_radius_mm",
+        )
+        if outer_radius_mm <= inner_radius_mm:
+            raise ValueError(
+                "detector_feature_generators[].shield.outer_radius_mm must be greater than inner_radius_mm."
+            )
+
+        normalized_shield = {
+            "inner_radius_mm": inner_radius_mm,
+            "outer_radius_mm": outer_radius_mm,
+            "length_mm": _normalize_positive_float(
+                shield.get("length_mm", shield.get("axial_length_mm")),
+                "detector_feature_generators[].shield.length_mm",
+            ),
+            "material_ref": _normalize_detector_feature_material_ref(
+                shield.get("material_ref", shield.get("material")),
+                "detector_feature_generators[].shield.material_ref",
+            ),
+            "origin_offset_mm": {
+                "x": _normalize_float(
+                    origin_offset_mm.get("x"),
+                    0.0,
+                    "detector_feature_generators[].shield.origin_offset_mm.x",
+                ),
+                "y": _normalize_float(
+                    origin_offset_mm.get("y"),
+                    0.0,
+                    "detector_feature_generators[].shield.origin_offset_mm.y",
+                ),
+                "z": _normalize_float(
+                    origin_offset_mm.get("z"),
+                    0.0,
+                    "detector_feature_generators[].shield.origin_offset_mm.z",
+                ),
+            },
+            "anchor": shield_anchor,
+        }
+    else:
+        raise ValueError(
+            "detector feature generator type must be one of: "
+            + ", ".join(sorted(_SUPPORTED_DETECTOR_FEATURE_GENERATOR_TYPES))
+            + "."
+        )
+
+    default_name = f"{generator_type}_{generator_id.split('_')[-1][:8]}"
+    normalized_entry = {
+        "generator_id": generator_id,
+        "name": _normalize_non_empty_string(raw_entry.get("name")) or default_name,
+        "schema_version": schema_version,
+        "generator_type": generator_type,
+        "enabled": enabled,
+        "target": normalized_target,
+        "realization": {
+            "mode": realization_mode,
+            "status": realization_status,
+            "result_solid_ref": _normalize_detector_feature_object_ref(
+                realization.get("result_solid_ref"),
+                "detector_feature_generators[].realization.result_solid_ref",
+                required=False,
+            ),
+            "generated_object_refs": {
+                "solid_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("solid_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.solid_refs",
+                ),
+                "logical_volume_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("logical_volume_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.logical_volume_refs",
+                ),
+                "placement_refs": _normalize_detector_feature_object_ref_list(
+                    generated_object_refs.get("placement_refs", []),
+                    "detector_feature_generators[].realization.generated_object_refs.placement_refs",
+                ),
+            },
+        },
+    }
+
+    if normalized_pattern is not None:
+        normalized_entry["pattern"] = normalized_pattern
+    if normalized_hole is not None:
+        normalized_entry["hole"] = normalized_hole
+    if normalized_stack is not None:
+        normalized_entry["stack"] = normalized_stack
+    if normalized_array is not None:
+        normalized_entry["array"] = normalized_array
+    if normalized_layers is not None:
+        normalized_entry["layers"] = normalized_layers
+    if normalized_sensor is not None:
+        normalized_entry["sensor"] = normalized_sensor
+    if normalized_rib is not None:
+        normalized_entry["rib"] = normalized_rib
+    if normalized_channel is not None:
+        normalized_entry["channel"] = normalized_channel
+    if normalized_shield is not None:
+        normalized_entry["shield"] = normalized_shield
+
+    return normalized_entry
+
+
+def _normalize_detector_feature_generators(raw_generators):
+    if not isinstance(raw_generators, list):
+        return []
+
+    normalized_generators = []
+    seen_generator_ids = set()
+    for index, raw_entry in enumerate(raw_generators):
+        try:
+            normalized_entry = _normalize_detector_feature_generator_entry(raw_entry)
+        except ValueError as exc:
+            print(f"Warning: Skipping detector feature generator at index {index}: {exc}")
+            continue
+
+        generator_id = normalized_entry["generator_id"]
+        if generator_id in seen_generator_ids:
+            print(
+                "Warning: Skipping detector feature generator at index "
+                f"{index}: duplicate generator_id '{generator_id}'."
+            )
+            continue
+
+        seen_generator_ids.add(generator_id)
+        normalized_generators.append(normalized_entry)
+
+    return normalized_generators
+
+
+def normalize_detector_feature_generator_entry(raw_entry):
+    """Public wrapper for validating one detector-feature-generator contract."""
+    return _normalize_detector_feature_generator_entry(raw_entry)
 
 class Define:
     """Represents a defined entity like position, rotation, or constant."""
@@ -785,6 +2168,922 @@ class ParticleSource:
         instance._evaluated_rotation = data.get('_evaluated_rotation', {'x': 0, 'y': 0, 'z': 0})
         return instance
 
+def _default_uniform_field_vector():
+    return {'x': 0.0, 'y': 0.0, 'z': 0.0}
+
+
+def _normalize_uniform_field_vector(raw_vector, field_name, vector_field_name):
+    if raw_vector is None:
+        return _default_uniform_field_vector()
+
+    if not isinstance(raw_vector, dict):
+        raise ValueError(f"{field_name}.{vector_field_name} must be an object with x/y/z.")
+
+    normalized = _default_uniform_field_vector()
+    for axis in ('x', 'y', 'z'):
+        try:
+            value = float(raw_vector.get(axis, normalized[axis]))
+        except (TypeError, ValueError):
+            raise ValueError(f"{field_name}.{vector_field_name}.{axis} must be a finite number.")
+        if not math.isfinite(value):
+            raise ValueError(f"{field_name}.{vector_field_name}.{axis} must be a finite number.")
+        normalized[axis] = value
+
+    return normalized
+
+
+def _validate_uniform_field_vector(data, field_name, vector_field_name):
+    vector = data.get(vector_field_name)
+    if vector is not None:
+        if not isinstance(vector, dict):
+            return False, f"{field_name}.{vector_field_name} must be an object with x/y/z."
+        for axis in ('x', 'y', 'z'):
+            try:
+                value = float(vector.get(axis, 0.0))
+            except (TypeError, ValueError):
+                return False, f"{field_name}.{vector_field_name}.{axis} must be a finite number."
+            if not math.isfinite(value):
+                return False, f"{field_name}.{vector_field_name}.{axis} must be a finite number."
+
+    return True, None
+
+
+def _coerce_target_volume_names(raw_names, field_name):
+    if raw_names is None:
+        return []
+
+    if isinstance(raw_names, str):
+        raw_items = re.split(r"[,\n;]+", raw_names)
+    elif isinstance(raw_names, (list, tuple, set)):
+        raw_items = list(raw_names)
+    else:
+        raise ValueError(f"{field_name}.target_volume_names must be an array of strings.")
+
+    normalized = []
+    seen = set()
+    for raw_item in raw_items:
+        name = str(raw_item).strip()
+        if not name or name in seen:
+            continue
+        normalized.append(name)
+        seen.add(name)
+
+    return normalized
+
+
+def _normalize_finite_number(raw_value, field_name, property_name):
+    try:
+        numeric_value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name}.{property_name} must be a finite number.")
+
+    if not math.isfinite(numeric_value):
+        raise ValueError(f"{field_name}.{property_name} must be a finite number.")
+
+    return numeric_value
+
+
+def _validate_finite_number(data, field_name, property_name, default_value=0.0):
+    value = data.get(property_name, default_value)
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return False, f"{field_name}.{property_name} must be a finite number."
+
+    if not math.isfinite(numeric_value):
+        return False, f"{field_name}.{property_name} must be a finite number."
+
+    return True, None
+
+
+class GlobalUniformMagneticField:
+    """Saved-project contract for a global uniform magnetic field."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.global_uniform_magnetic_field"
+    FIELD_VECTOR_NAME = "field_vector_tesla"
+
+    def __init__(self, enabled=False, field_vector_tesla=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.global_uniform_magnetic_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.field_vector_tesla = _normalize_uniform_field_vector(
+            field_vector_tesla,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @classmethod
+    def validate(cls, data, field_name=ENVIRONMENT_FIELD_NAME):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "field_vector_tesla": dict(self.field_vector_tesla),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            field_vector_tesla=data.get('field_vector_tesla'),
+        )
+
+
+class GlobalUniformElectricField:
+    """Saved-project contract for a global uniform electric field."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.global_uniform_electric_field"
+    FIELD_VECTOR_NAME = "field_vector_volt_per_meter"
+
+    def __init__(self, enabled=False, field_vector_volt_per_meter=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.global_uniform_electric_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.field_vector_volt_per_meter = _normalize_uniform_field_vector(
+            field_vector_volt_per_meter,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @classmethod
+    def validate(cls, data, field_name=ENVIRONMENT_FIELD_NAME):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "field_vector_volt_per_meter": dict(self.field_vector_volt_per_meter),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            field_vector_volt_per_meter=data.get('field_vector_volt_per_meter'),
+        )
+
+
+class LocalUniformMagneticField:
+    """Saved-project contract for a local uniform magnetic field assignment."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.local_uniform_magnetic_field"
+    FIELD_VECTOR_NAME = "field_vector_tesla"
+
+    def __init__(self, enabled=False, target_volume_names=None, field_vector_tesla=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.local_uniform_magnetic_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.target_volume_names = self._normalize_target_volume_names(target_volume_names)
+        self.field_vector_tesla = _normalize_uniform_field_vector(
+            field_vector_tesla,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @staticmethod
+    def _coerce_target_volume_names(raw_names):
+        return _coerce_target_volume_names(
+            raw_names,
+            "environment.local_uniform_magnetic_field",
+        )
+
+    @classmethod
+    def _normalize_target_volume_names(cls, raw_names):
+        return cls._coerce_target_volume_names(raw_names)
+
+    @classmethod
+    def validate(cls, data, field_name="environment.local_uniform_magnetic_field"):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        target_names = data.get('target_volume_names')
+        if target_names is not None:
+            try:
+                cls._coerce_target_volume_names(target_names)
+            except ValueError:
+                return False, f"{field_name}.target_volume_names must be an array of strings."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "target_volume_names": list(self.target_volume_names),
+            "field_vector_tesla": dict(self.field_vector_tesla),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            target_volume_names=data.get('target_volume_names'),
+            field_vector_tesla=data.get('field_vector_tesla'),
+        )
+
+
+class LocalUniformElectricField:
+    """Saved-project contract for a local uniform electric field assignment."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.local_uniform_electric_field"
+    FIELD_VECTOR_NAME = "field_vector_volt_per_meter"
+
+    def __init__(self, enabled=False, target_volume_names=None, field_vector_volt_per_meter=None):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.local_uniform_electric_field.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.target_volume_names = self._normalize_target_volume_names(target_volume_names)
+        self.field_vector_volt_per_meter = _normalize_uniform_field_vector(
+            field_vector_volt_per_meter,
+            self.ENVIRONMENT_FIELD_NAME,
+            self.FIELD_VECTOR_NAME,
+        )
+
+    @staticmethod
+    def _coerce_target_volume_names(raw_names):
+        return _coerce_target_volume_names(
+            raw_names,
+            "environment.local_uniform_electric_field",
+        )
+
+    @classmethod
+    def _normalize_target_volume_names(cls, raw_names):
+        return cls._coerce_target_volume_names(raw_names)
+
+    @classmethod
+    def validate(cls, data, field_name="environment.local_uniform_electric_field"):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        target_names = data.get('target_volume_names')
+        if target_names is not None:
+            try:
+                cls._coerce_target_volume_names(target_names)
+            except ValueError:
+                return False, f"{field_name}.target_volume_names must be an array of strings."
+
+        return _validate_uniform_field_vector(data, field_name, cls.FIELD_VECTOR_NAME)
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "target_volume_names": list(self.target_volume_names),
+            "field_vector_volt_per_meter": dict(self.field_vector_volt_per_meter),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            target_volume_names=data.get('target_volume_names'),
+            field_vector_volt_per_meter=data.get('field_vector_volt_per_meter'),
+        )
+
+
+class RegionCutsAndLimits:
+    """Saved-project contract for region-specific production cuts and user limits."""
+
+    ENVIRONMENT_FIELD_NAME = "environment.region_cuts_and_limits"
+    DEFAULT_REGION_NAME = "airpet_region"
+    ENVIRONMENT_STRING_PROPERTIES = {"region_name"}
+    ENVIRONMENT_NUMERIC_PROPERTIES = {
+        "production_cut_mm": 1.0,
+        "max_step_mm": 0.0,
+        "max_track_length_mm": 0.0,
+        "max_time_ns": 0.0,
+        "min_kinetic_energy_mev": 0.0,
+        "min_range_mm": 0.0,
+    }
+
+    def __init__(
+        self,
+        enabled=False,
+        region_name=None,
+        target_volume_names=None,
+        production_cut_mm=1.0,
+        max_step_mm=0.0,
+        max_track_length_mm=0.0,
+        max_time_ns=0.0,
+        min_kinetic_energy_mev=0.0,
+        min_range_mm=0.0,
+    ):
+        if not isinstance(enabled, bool):
+            raise ValueError("environment.region_cuts_and_limits.enabled must be a boolean.")
+
+        self.enabled = enabled
+        self.region_name = self._normalize_region_name(region_name)
+        self.target_volume_names = self._normalize_target_volume_names(target_volume_names)
+        self.production_cut_mm = _normalize_finite_number(
+            production_cut_mm,
+            self.ENVIRONMENT_FIELD_NAME,
+            "production_cut_mm",
+        )
+        self.max_step_mm = _normalize_finite_number(
+            max_step_mm,
+            self.ENVIRONMENT_FIELD_NAME,
+            "max_step_mm",
+        )
+        self.max_track_length_mm = _normalize_finite_number(
+            max_track_length_mm,
+            self.ENVIRONMENT_FIELD_NAME,
+            "max_track_length_mm",
+        )
+        self.max_time_ns = _normalize_finite_number(
+            max_time_ns,
+            self.ENVIRONMENT_FIELD_NAME,
+            "max_time_ns",
+        )
+        self.min_kinetic_energy_mev = _normalize_finite_number(
+            min_kinetic_energy_mev,
+            self.ENVIRONMENT_FIELD_NAME,
+            "min_kinetic_energy_mev",
+        )
+        self.min_range_mm = _normalize_finite_number(
+            min_range_mm,
+            self.ENVIRONMENT_FIELD_NAME,
+            "min_range_mm",
+        )
+
+    @staticmethod
+    def _normalize_region_name(raw_name):
+        if raw_name is None:
+            return RegionCutsAndLimits.DEFAULT_REGION_NAME
+
+        name = str(raw_name).strip()
+        return name or RegionCutsAndLimits.DEFAULT_REGION_NAME
+
+    @staticmethod
+    def _coerce_target_volume_names(raw_names):
+        return _coerce_target_volume_names(
+            raw_names,
+            RegionCutsAndLimits.ENVIRONMENT_FIELD_NAME,
+        )
+
+    @classmethod
+    def _normalize_target_volume_names(cls, raw_names):
+        return cls._coerce_target_volume_names(raw_names)
+
+    @classmethod
+    def validate(cls, data, field_name=ENVIRONMENT_FIELD_NAME):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        enabled = data.get('enabled', False)
+        if not isinstance(enabled, bool):
+            return False, f"{field_name}.enabled must be a boolean."
+
+        region_name = data.get('region_name', cls.DEFAULT_REGION_NAME)
+        if not isinstance(region_name, str) or not region_name.strip():
+            return False, f"{field_name}.region_name must be a non-empty string."
+
+        target_names = data.get('target_volume_names')
+        if target_names is not None:
+            try:
+                cls._coerce_target_volume_names(target_names)
+            except ValueError:
+                return False, f"{field_name}.target_volume_names must be an array of strings."
+
+        for property_name, default_value in cls.ENVIRONMENT_NUMERIC_PROPERTIES.items():
+            ok, err = _validate_finite_number(data, field_name, property_name, default_value)
+            if not ok:
+                return ok, err
+
+        return True, None
+
+    def to_dict(self):
+        return {
+            "enabled": self.enabled,
+            "region_name": self.region_name,
+            "target_volume_names": list(self.target_volume_names),
+            "production_cut_mm": self.production_cut_mm,
+            "max_step_mm": self.max_step_mm,
+            "max_track_length_mm": self.max_track_length_mm,
+            "max_time_ns": self.max_time_ns,
+            "min_kinetic_energy_mev": self.min_kinetic_energy_mev,
+            "min_range_mm": self.min_range_mm,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        ok, err = cls.validate(data)
+        if not ok:
+            raise ValueError(err)
+
+        return cls(
+            enabled=data.get('enabled', False),
+            region_name=data.get('region_name', cls.DEFAULT_REGION_NAME),
+            target_volume_names=data.get('target_volume_names'),
+            production_cut_mm=data.get('production_cut_mm', 1.0),
+            max_step_mm=data.get('max_step_mm', 0.0),
+            max_track_length_mm=data.get('max_track_length_mm', 0.0),
+            max_time_ns=data.get('max_time_ns', 0.0),
+            min_kinetic_energy_mev=data.get('min_kinetic_energy_mev', 0.0),
+            min_range_mm=data.get('min_range_mm', 0.0),
+        )
+
+class EnvironmentState:
+    """Saved-project environment state shared by UI, AI, and runtime plumbing."""
+
+    @staticmethod
+    def _summary_number(value):
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @classmethod
+    def _summary_vector(cls, vector, unit_label):
+        vector = vector if isinstance(vector, dict) else {}
+        return (
+            f"({cls._summary_number(vector.get('x', 0.0))}, "
+            f"{cls._summary_number(vector.get('y', 0.0))}, "
+            f"{cls._summary_number(vector.get('z', 0.0))}) {unit_label}"
+        )
+
+    def __init__(
+        self,
+        global_uniform_magnetic_field=None,
+        global_uniform_electric_field=None,
+        local_uniform_magnetic_field=None,
+        local_uniform_electric_field=None,
+        region_cuts_and_limits=None,
+    ):
+        if isinstance(global_uniform_magnetic_field, GlobalUniformMagneticField):
+            self.global_uniform_magnetic_field = global_uniform_magnetic_field
+        else:
+            self.global_uniform_magnetic_field = GlobalUniformMagneticField.from_dict(global_uniform_magnetic_field)
+
+        if isinstance(global_uniform_electric_field, GlobalUniformElectricField):
+            self.global_uniform_electric_field = global_uniform_electric_field
+        else:
+            self.global_uniform_electric_field = GlobalUniformElectricField.from_dict(global_uniform_electric_field)
+
+        if isinstance(local_uniform_magnetic_field, LocalUniformMagneticField):
+            self.local_uniform_magnetic_field = local_uniform_magnetic_field
+        else:
+            self.local_uniform_magnetic_field = LocalUniformMagneticField.from_dict(local_uniform_magnetic_field)
+
+        if isinstance(local_uniform_electric_field, LocalUniformElectricField):
+            self.local_uniform_electric_field = local_uniform_electric_field
+        else:
+            self.local_uniform_electric_field = LocalUniformElectricField.from_dict(local_uniform_electric_field)
+
+        if isinstance(region_cuts_and_limits, RegionCutsAndLimits):
+            self.region_cuts_and_limits = region_cuts_and_limits
+        else:
+            self.region_cuts_and_limits = RegionCutsAndLimits.from_dict(region_cuts_and_limits)
+
+    @classmethod
+    def validate(cls, data, field_name="environment"):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        field_data = data.get('global_uniform_magnetic_field')
+        if field_data is None and 'global_magnetic_field' in data:
+            field_data = data.get('global_magnetic_field')
+
+        ok, err = GlobalUniformMagneticField.validate(
+            field_data,
+            field_name=f"{field_name}.global_uniform_magnetic_field",
+        )
+        if not ok:
+            return ok, err
+
+        electric_field_data = data.get('global_uniform_electric_field')
+        if electric_field_data is None and 'global_electric_field' in data:
+            electric_field_data = data.get('global_electric_field')
+
+        ok, err = GlobalUniformElectricField.validate(
+            electric_field_data,
+            field_name=f"{field_name}.global_uniform_electric_field",
+        )
+        if not ok:
+            return ok, err
+
+        local_field_data = data.get('local_uniform_magnetic_field')
+        if local_field_data is None and 'local_magnetic_field' in data:
+            local_field_data = data.get('local_magnetic_field')
+
+        ok, err = LocalUniformMagneticField.validate(
+            local_field_data,
+            field_name=f"{field_name}.local_uniform_magnetic_field",
+        )
+        if not ok:
+            return ok, err
+
+        local_electric_field_data = data.get('local_uniform_electric_field')
+        if local_electric_field_data is None and 'local_electric_field' in data:
+            local_electric_field_data = data.get('local_electric_field')
+
+        ok, err = LocalUniformElectricField.validate(
+            local_electric_field_data,
+            field_name=f"{field_name}.local_uniform_electric_field",
+        )
+        if not ok:
+            return ok, err
+
+        region_controls_data = data.get('region_cuts_and_limits')
+        if region_controls_data is None and 'region_controls' in data:
+            region_controls_data = data.get('region_controls')
+
+        return RegionCutsAndLimits.validate(
+            region_controls_data,
+            field_name=f"{field_name}.region_cuts_and_limits",
+        )
+
+    def to_dict(self):
+        return {
+            "global_uniform_magnetic_field": self.global_uniform_magnetic_field.to_dict(),
+            "global_uniform_electric_field": self.global_uniform_electric_field.to_dict(),
+            "local_uniform_magnetic_field": self.local_uniform_magnetic_field.to_dict(),
+            "local_uniform_electric_field": self.local_uniform_electric_field.to_dict(),
+            "region_cuts_and_limits": self.region_cuts_and_limits.to_dict(),
+        }
+
+    def to_summary_dict(self):
+        active_controls = []
+
+        def add_control(kind, label, description, state):
+            active_controls.append({
+                "kind": kind,
+                "label": label,
+                "description": description,
+                "state": state,
+            })
+
+        global_magnetic_field = self.global_uniform_magnetic_field
+        if global_magnetic_field.enabled:
+            add_control(
+                "global_uniform_magnetic_field",
+                "Global magnetic field",
+                f"Global magnetic field: {self._summary_vector(global_magnetic_field.field_vector_tesla, 'T')}",
+                global_magnetic_field.to_dict(),
+            )
+
+        global_electric_field = self.global_uniform_electric_field
+        if global_electric_field.enabled:
+            add_control(
+                "global_uniform_electric_field",
+                "Global electric field",
+                f"Global electric field: {self._summary_vector(global_electric_field.field_vector_volt_per_meter, 'V/m')}",
+                global_electric_field.to_dict(),
+            )
+
+        local_magnetic_field = self.local_uniform_magnetic_field
+        if local_magnetic_field.enabled:
+            targets = ", ".join(local_magnetic_field.target_volume_names) or "(no targets)"
+            add_control(
+                "local_uniform_magnetic_field",
+                "Local magnetic field",
+                f"Local magnetic field: targets {targets}, {self._summary_vector(local_magnetic_field.field_vector_tesla, 'T')}",
+                local_magnetic_field.to_dict(),
+            )
+
+        local_electric_field = self.local_uniform_electric_field
+        if local_electric_field.enabled:
+            targets = ", ".join(local_electric_field.target_volume_names) or "(no targets)"
+            add_control(
+                "local_uniform_electric_field",
+                "Local electric field",
+                f"Local electric field: targets {targets}, {self._summary_vector(local_electric_field.field_vector_volt_per_meter, 'V/m')}",
+                local_electric_field.to_dict(),
+            )
+
+        region_controls = self.region_cuts_and_limits
+        if region_controls.enabled:
+            targets = ", ".join(region_controls.target_volume_names) or "(no targets)"
+            add_control(
+                "region_cuts_and_limits",
+                "Region cuts and limits",
+                (
+                    f"Region cuts and limits: region {region_controls.region_name}, targets {targets}, "
+                    f"cut {self._summary_number(region_controls.production_cut_mm)} mm, "
+                    f"max step {self._summary_number(region_controls.max_step_mm)} mm, "
+                    f"max track {self._summary_number(region_controls.max_track_length_mm)} mm, "
+                    f"max time {self._summary_number(region_controls.max_time_ns)} ns, "
+                    f"min Ek {self._summary_number(region_controls.min_kinetic_energy_mev)} MeV, "
+                    f"min range {self._summary_number(region_controls.min_range_mm)} mm"
+                ),
+                region_controls.to_dict(),
+            )
+
+        summary_text = "No environment controls enabled."
+        if active_controls:
+            summary_text = "; ".join(control["description"] for control in active_controls)
+
+        return {
+            "has_active_controls": bool(active_controls),
+            "active_control_count": len(active_controls),
+            "summary_text": summary_text,
+            "active_controls": active_controls,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        if not isinstance(data, dict):
+            print("Warning: Environment payload is not an object. Using defaults.")
+            return cls()
+
+        field_data = data.get('global_uniform_magnetic_field')
+        if field_data is None and 'global_magnetic_field' in data:
+            field_data = data.get('global_magnetic_field')
+        electric_field_data = data.get('global_uniform_electric_field')
+        if electric_field_data is None and 'global_electric_field' in data:
+            electric_field_data = data.get('global_electric_field')
+        local_field_data = data.get('local_uniform_magnetic_field')
+        if local_field_data is None and 'local_magnetic_field' in data:
+            local_field_data = data.get('local_magnetic_field')
+        local_electric_field_data = data.get('local_uniform_electric_field')
+        if local_electric_field_data is None and 'local_electric_field' in data:
+            local_electric_field_data = data.get('local_electric_field')
+        region_controls_data = data.get('region_cuts_and_limits')
+        if region_controls_data is None and 'region_controls' in data:
+            region_controls_data = data.get('region_controls')
+
+        try:
+            field = GlobalUniformMagneticField.from_dict(field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid global uniform magnetic field payload: {exc}. Using defaults.")
+            field = GlobalUniformMagneticField()
+
+        try:
+            electric_field = GlobalUniformElectricField.from_dict(electric_field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid global uniform electric field payload: {exc}. Using defaults.")
+            electric_field = GlobalUniformElectricField()
+
+        try:
+            local_field = LocalUniformMagneticField.from_dict(local_field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid local uniform magnetic field payload: {exc}. Using defaults.")
+            local_field = LocalUniformMagneticField()
+
+        try:
+            local_electric_field = LocalUniformElectricField.from_dict(local_electric_field_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid local uniform electric field payload: {exc}. Using defaults.")
+            local_electric_field = LocalUniformElectricField()
+
+        try:
+            region_cuts_and_limits = RegionCutsAndLimits.from_dict(region_controls_data)
+        except ValueError as exc:
+            print(f"Warning: Invalid region cuts and limits payload: {exc}. Using defaults.")
+            region_cuts_and_limits = RegionCutsAndLimits()
+
+        return cls(field, electric_field, local_field, local_electric_field, region_cuts_and_limits)
+
+
+class ScoringState:
+    """Saved-project scoring and run-control contract shared by UI, AI, and runtime plumbing."""
+
+    def __init__(
+        self,
+        schema_version=SCORING_STATE_SCHEMA_VERSION,
+        scoring_meshes=None,
+        tally_requests=None,
+        run_manifest_defaults=None,
+    ):
+        self.schema_version = schema_version
+        self.scoring_meshes = [deepcopy(entry) for entry in (scoring_meshes or [])]
+        self.tally_requests = [deepcopy(entry) for entry in (tally_requests or [])]
+        self.run_manifest_defaults = deepcopy(
+            run_manifest_defaults if run_manifest_defaults is not None else _default_scoring_run_manifest_defaults()
+        )
+
+    @classmethod
+    def validate(cls, data, field_name="scoring"):
+        if data is None:
+            return True, None
+        if not isinstance(data, dict):
+            return False, f"{field_name} must be an object."
+
+        try:
+            _normalize_positive_int(
+                data.get("schema_version", SCORING_STATE_SCHEMA_VERSION),
+                f"{field_name}.schema_version",
+            )
+            scoring_meshes_raw = data.get("scoring_meshes", [])
+            if scoring_meshes_raw is None:
+                scoring_meshes_raw = []
+            if not isinstance(scoring_meshes_raw, list):
+                raise ValueError(f"{field_name}.scoring_meshes must be an array.")
+
+            scoring_meshes = []
+            seen_mesh_ids = set()
+            for index, raw_entry in enumerate(scoring_meshes_raw):
+                normalized_entry = _normalize_scoring_mesh_entry(raw_entry)
+                mesh_id = normalized_entry["mesh_id"]
+                if mesh_id in seen_mesh_ids:
+                    raise ValueError(
+                        f"{field_name}.scoring_meshes[{index}].mesh_id duplicates '{mesh_id}'."
+                    )
+                seen_mesh_ids.add(mesh_id)
+                scoring_meshes.append(normalized_entry)
+
+            mesh_lookup = _build_scoring_mesh_lookup(scoring_meshes)
+            tally_requests_raw = data.get("tally_requests", [])
+            if tally_requests_raw is None:
+                tally_requests_raw = []
+            if not isinstance(tally_requests_raw, list):
+                raise ValueError(f"{field_name}.tally_requests must be an array.")
+
+            seen_tally_ids = set()
+            for index, raw_entry in enumerate(tally_requests_raw):
+                normalized_entry = _normalize_scoring_tally_request_entry(
+                    raw_entry,
+                    mesh_lookup=mesh_lookup,
+                )
+                tally_id = normalized_entry["tally_id"]
+                if tally_id in seen_tally_ids:
+                    raise ValueError(
+                        f"{field_name}.tally_requests[{index}].tally_id duplicates '{tally_id}'."
+                    )
+                seen_tally_ids.add(tally_id)
+
+            _normalize_scoring_run_manifest_defaults(data.get("run_manifest_defaults"))
+        except ValueError as exc:
+            return False, str(exc)
+
+        return True, None
+
+    def to_dict(self):
+        return {
+            "schema_version": self.schema_version,
+            "scoring_meshes": [deepcopy(entry) for entry in self.scoring_meshes],
+            "tally_requests": [deepcopy(entry) for entry in self.tally_requests],
+            "run_manifest_defaults": deepcopy(self.run_manifest_defaults),
+        }
+
+    def resolve_run_manifest(self, overrides=None):
+        candidate = deepcopy(self.run_manifest_defaults)
+        if isinstance(overrides, dict):
+            for key in candidate.keys():
+                if key in overrides:
+                    candidate[key] = overrides.get(key)
+        return _normalize_scoring_run_manifest_defaults(candidate)
+
+    def to_summary_dict(self):
+        enabled_meshes = [entry for entry in self.scoring_meshes if entry.get("enabled", True)]
+        enabled_tallies = [entry for entry in self.tally_requests if entry.get("enabled", True)]
+        default_run_manifest = _default_scoring_run_manifest_defaults()
+        has_run_manifest_overrides = self.run_manifest_defaults != default_run_manifest
+
+        summary_parts = []
+        if self.scoring_meshes:
+            summary_parts.append(
+                f"{len(enabled_meshes)} of {len(self.scoring_meshes)} scoring mesh(es) enabled"
+            )
+        else:
+            summary_parts.append("No scoring meshes configured")
+
+        if self.tally_requests:
+            summary_parts.append(
+                f"{len(enabled_tallies)} of {len(self.tally_requests)} tally request(s) enabled"
+            )
+        else:
+            summary_parts.append("No tally requests configured")
+
+        if has_run_manifest_overrides:
+            summary_parts.append(
+                "Run manifest defaults: "
+                f"{self.run_manifest_defaults.get('events', 0)} event(s), "
+                f"{self.run_manifest_defaults.get('threads', 0)} thread(s)"
+            )
+        else:
+            summary_parts.append("Run manifest defaults unchanged")
+
+        return {
+            "has_configured_scoring": bool(enabled_meshes or enabled_tallies),
+            "scoring_mesh_count": len(self.scoring_meshes),
+            "enabled_scoring_mesh_count": len(enabled_meshes),
+            "tally_request_count": len(self.tally_requests),
+            "enabled_tally_request_count": len(enabled_tallies),
+            "has_run_manifest_overrides": has_run_manifest_overrides,
+            "run_manifest_defaults": deepcopy(self.run_manifest_defaults),
+            "summary_text": "; ".join(summary_parts),
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        if data is None:
+            return cls()
+
+        if not isinstance(data, dict):
+            print("Warning: Scoring payload is not an object. Using defaults.")
+            return cls()
+
+        try:
+            schema_version = _normalize_positive_int(
+                data.get("schema_version", SCORING_STATE_SCHEMA_VERSION),
+                "scoring.schema_version",
+            )
+        except ValueError as exc:
+            print(f"Warning: Invalid scoring schema_version: {exc}. Using defaults.")
+            schema_version = SCORING_STATE_SCHEMA_VERSION
+
+        try:
+            scoring_meshes = _normalize_scoring_meshes(data.get("scoring_meshes", []))
+        except ValueError as exc:
+            print(f"Warning: Invalid scoring meshes payload: {exc}. Using defaults.")
+            scoring_meshes = []
+
+        mesh_lookup = _build_scoring_mesh_lookup(scoring_meshes)
+        try:
+            tally_requests = _normalize_scoring_tally_requests(
+                data.get("tally_requests", []),
+                mesh_lookup=mesh_lookup,
+            )
+        except ValueError as exc:
+            print(f"Warning: Invalid scoring tally payload: {exc}. Using defaults.")
+            tally_requests = []
+
+        try:
+            run_manifest_defaults = _normalize_scoring_run_manifest_defaults(
+                data.get("run_manifest_defaults")
+            )
+        except ValueError as exc:
+            print(f"Warning: Invalid scoring run manifest defaults: {exc}. Using defaults.")
+            run_manifest_defaults = _default_scoring_run_manifest_defaults()
+
+        return cls(
+            schema_version=schema_version,
+            scoring_meshes=scoring_meshes,
+            tally_requests=tally_requests,
+            run_manifest_defaults=run_manifest_defaults,
+        )
+
 class GeometryState:
     """Holds the entire geometry definition."""
     def __init__(self, world_volume_ref=None):
@@ -796,6 +3095,8 @@ class GeometryState:
         self.logical_volumes = {} # name: LogicalVolume object
         self.assemblies = {} # name: Assembly object
         self.world_volume_ref = world_volume_ref # Name of the world LogicalVolume
+        self.environment = EnvironmentState()
+        self.scoring = ScoringState()
 
         # Dictionaries for surface properties
         self.optical_surfaces = {}
@@ -843,6 +3144,12 @@ class GeometryState:
         #   }
         # }
         self.optimizer_runs = {}
+
+        # Provenance records for imported CAD subsystems.
+        self.cad_imports = []
+
+        # Saved detector-oriented feature generator contracts and realized outputs.
+        self.detector_feature_generators = []
 
         # Stable project scope identifier used by policy/audit systems to
         # associate records with this project instance across save/load cycles.
@@ -895,6 +3202,8 @@ class GeometryState:
             "logical_volumes": {k: v.to_dict() for k, v in self.logical_volumes.items()},
             "assemblies": {k: v.to_dict() for k, v in self.assemblies.items()},
             "world_volume_ref": self.world_volume_ref,
+            "environment": self.environment.to_dict(),
+            "scoring": self.scoring.to_dict(),
             "optical_surfaces": {k: v.to_dict() for k, v in self.optical_surfaces.items()},
             "skin_surfaces": {k: v.to_dict() for k, v in self.skin_surfaces.items()},
             "border_surfaces": {k: v.to_dict() for k, v in self.border_surfaces.items()},
@@ -903,6 +3212,8 @@ class GeometryState:
             "parameter_registry": self.parameter_registry,
             "param_studies": self.param_studies,
             "optimizer_runs": self.optimizer_runs,
+            "cad_imports": deepcopy(self.cad_imports),
+            "detector_feature_generators": deepcopy(self.detector_feature_generators),
             "project_scope_id": self.project_scope_id,
             "ui_groups": self.ui_groups
         }
@@ -930,6 +3241,21 @@ class GeometryState:
         load_objects('skin_surfaces', SkinSurface, instance.skin_surfaces)
         load_objects('border_surfaces', BorderSurface, instance.border_surfaces)
         load_objects('sources', ParticleSource, instance.sources)
+        instance.environment = EnvironmentState.from_dict(data.get('environment'))
+        instance.scoring = ScoringState.from_dict(data.get('scoring'))
+        legacy_environment = {}
+        for legacy_key in (
+            'global_uniform_magnetic_field',
+            'global_uniform_electric_field',
+            'local_uniform_magnetic_field',
+            'local_uniform_electric_field',
+            'region_cuts_and_limits',
+        ):
+            if data.get(legacy_key) is not None:
+                legacy_environment[legacy_key] = data.get(legacy_key)
+
+        if legacy_environment and data.get('environment') is None:
+            instance.environment = EnvironmentState.from_dict(legacy_environment)
 
         # Migration: Handle legacy active_source_id (single string)
         legacy_id = data.get('active_source_id')
@@ -959,6 +3285,16 @@ class GeometryState:
             instance.optimizer_runs = optimizer_runs
         else:
             instance.optimizer_runs = {}
+
+        cad_imports = data.get('cad_imports', [])
+        if isinstance(cad_imports, list):
+            instance.cad_imports = [deepcopy(entry) for entry in cad_imports if isinstance(entry, dict)]
+        else:
+            instance.cad_imports = []
+
+        instance.detector_feature_generators = _normalize_detector_feature_generators(
+            data.get('detector_feature_generators', [])
+        )
 
         project_scope_id = data.get('project_scope_id')
         if isinstance(project_scope_id, str) and project_scope_id.strip():
